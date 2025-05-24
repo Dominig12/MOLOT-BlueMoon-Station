@@ -1615,3 +1615,17 @@
 	path = /obj/item/storage/backpack/satchel/dilivery_bag
 	ckeywhitelist = list("troubleneko17th", "dimofon", "hazzi", "cupteazee", "kolhozniik", "dimakr")
 	subcategory = LOADOUT_SUBCATEGORIES_DON02
+
+/datum/gear/donator/bm/inlaid_data_dress
+	name = "Inlaid Data Dress"
+	slot = ITEM_SLOT_ICLOTHING
+	path = /obj/item/clothing/under/donator/bm/inlaid_data_dress
+	category = LOADOUT_SUBCATEGORIES_DON01
+	ckeywhitelist = list("1darkwater1")
+
+/datum/gear/donator/bm/hair_module
+	name = "Hair Module"
+	slot = ITEM_SLOT_ICLOTHING
+	path = /obj/item/clothing/mask/gas/hair_module
+	category = LOADOUT_SUBCATEGORIES_DON01
+	ckeywhitelist = list("1darkwater1")
