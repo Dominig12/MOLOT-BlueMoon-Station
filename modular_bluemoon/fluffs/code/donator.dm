@@ -1616,6 +1616,14 @@
 	ckeywhitelist = list("troubleneko17th", "dimofon", "hazzi", "cupteazee", "kolhozniik", "dimakr")
 	subcategory = LOADOUT_SUBCATEGORIES_DON02
 
+/datum/gear/donator/bm/bishop_mitre
+	name = "Book of stealing"
+	slot = ITEM_SLOT_BACKPACK
+	path = /obj/item/storage/book_of_stealing
+	ckeywhitelist = list("deadlizard")
+	cost = 3
+	subcategory = LOADOUT_SUBCATEGORIES_DON02
+
 /datum/gear/donator/bm/inlaid_data_dress
 	name = "Inlaid Data Dress"
 	slot = ITEM_SLOT_ICLOTHING
