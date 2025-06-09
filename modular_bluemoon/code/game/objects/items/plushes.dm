@@ -325,3 +325,9 @@
 	squeak_override = list('modular_bluemoon/SmiLeY/sounds/allta_mew1.ogg' = 1,
 	'modular_bluemoon/sound/voice/short_purr_silent.ogg' = 1
 	)
+
+/obj/item/toy/plush/bm/stasik/artemq
+	name = "Artems toy plush"
+	desc = "Вы видите игрушку,одетую в стандатную форму inteQ. Смотря в удивленное плюшевое лицо,она вам подозрительно кого-то напоминает. Точно можно сказать что игрушка кого то испугалась. Но кого мог испугаться плюшевый интековец?"
+	icon_state = "artems"
+	squeak_override = list('modular_bluemoon/sound/voice/graysonplush.ogg' = 2, 'modular_bluemoon/sound/voice/stasik_volcahara.ogg' = 1,)

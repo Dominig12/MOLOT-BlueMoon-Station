@@ -268,20 +268,6 @@
 	ckeywhitelist = list("vulpshiro", "dolbajob", "ordinarylife", "z67", "devildeadspace", "enigma418")
 	subcategory = LOADOUT_SUBCATEGORIES_DON02
 
-/datum/gear/donator/bm/aviator_helmet
-	name = "Aviator Helmet"
-	slot = ITEM_SLOT_HEAD
-	path = /obj/item/clothing/head/helmet/aviator_helmet/no_armor
-	ckeywhitelist = list("trollandrew")
-	subcategory = LOADOUT_SUBCATEGORIES_DON02
-
-/datum/gear/donator/bm/old_wrappings
-	name = "Old Wrappings"
-	slot = ITEM_SLOT_NECK
-	path = /obj/item/clothing/neck/mantle/cowboy
-	ckeywhitelist = list("trollandrew")
-	subcategory = LOADOUT_SUBCATEGORIES_DON02
-
 /datum/gear/donator/bm/flektarn
 	name = "Flektarn Combat Uniform"
 	slot = ITEM_SLOT_ICLOTHING
@@ -601,7 +587,14 @@
 	name = "Old Power Armor Kit"
 	slot = ITEM_SLOT_BACKPACK
 	path = /obj/item/modkit/t51armor_kit
-	ckeywhitelist = list("stasdvrz", "Pingvas")
+	ckeywhitelist = list("stasdvrz", "Pingvas", "vovakr")
+	subcategory = LOADOUT_SUBCATEGORIES_DON02
+
+/datum/gear/donator/bm/old_world_kit
+	name = "Old Wolrd Blues Kit"
+	slot = ITEM_SLOT_BACKPACK
+	path = /obj/item/storage/box/old_world_kit
+	ckeywhitelist = list("stasdvrz", "vlonger")
 	subcategory = LOADOUT_SUBCATEGORIES_DON02
 
 /datum/gear/donator/bm/money_100k
@@ -1045,7 +1038,21 @@
 	name = "Dread Kit"
 	slot = ITEM_SLOT_ICLOTHING
 	path = /obj/item/modkit/dreadmk3_kit
-	ckeywhitelist = list("stasdvrz", "mrsko", "akinight")
+	ckeywhitelist = list("stasdvrz", "mrsko", "akinight", "vovakr")
+	subcategory = LOADOUT_SUBCATEGORIES_DON02
+
+/datum/gear/donator/bm/old_laser_kit
+	name = "AER9 Kit"
+	slot = ITEM_SLOT_ICLOTHING
+	path = /obj/item/modkit/old_laser_kit
+	ckeywhitelist = list("stasdvrz", "vlonger")
+	subcategory = LOADOUT_SUBCATEGORIES_DON02
+
+/datum/gear/donator/bm/institute_kit
+	name = "institute Kit"
+	slot = ITEM_SLOT_ICLOTHING
+	path = /obj/item/modkit/institute_kit
+	ckeywhitelist = list("stasdvrz", "vlonger")
 	subcategory = LOADOUT_SUBCATEGORIES_DON02
 
 /datum/gear/donator/bm/dedication_kit
@@ -1637,3 +1644,42 @@
 	path = /obj/item/clothing/mask/gas/hair_module
 	category = LOADOUT_SUBCATEGORIES_DON01
 	ckeywhitelist = list("1darkwater1")
+
+/datum/gear/donator/bm/inlaid_data_dress
+	name = "Inlaid Data Dress"
+	slot = ITEM_SLOT_ICLOTHING
+	path = /obj/item/clothing/under/donator/bm/inlaid_data_dress
+	category = LOADOUT_SUBCATEGORIES_DON01
+	ckeywhitelist = list("1darkwater1")
+
+/datum/gear/donator/bm/hair_module
+	name = "Hair Module"
+	slot = ITEM_SLOT_MASK
+	path = /obj/item/clothing/mask/gas/hair_module
+	category = LOADOUT_SUBCATEGORIES_DON01
+	ckeywhitelist = list("1darkwater1")
+
+/datum/gear/donator/bm/aviator_helmet
+	name = "Aviator Helmet"
+	slot = ITEM_SLOT_HEAD
+	path = /obj/item/clothing/head/helmet/aviator_helmet/no_armor
+	subcategory = LOADOUT_SUBCATEGORIES_DON01
+
+/datum/gear/donator/bm/old_wrappings
+	name = "Old Wrappings"
+	slot = ITEM_SLOT_NECK
+	path = /obj/item/clothing/neck/mantle/cowboy
+	subcategory = LOADOUT_SUBCATEGORIES_DON01
+
+/datum/gear/donator/bm/old_wrappings
+	name = "Old Wrappings"
+	slot = ITEM_SLOT_NECK
+	path = /obj/item/clothing/neck/mantle/cowboy
+	subcategory = LOADOUT_SUBCATEGORIES_DON01
+
+/datum/gear/donator/bm/book_alch
+	name = "Alchemist's Book"
+	slot = ITEM_SLOT_BACKPACK
+	path = /obj/item/paper/book_alch
+	subcategory = LOADOUT_SUBCATEGORIES_DON01
+	loadout_flags = LOADOUT_CAN_NAME | LOADOUT_CAN_DESCRIPTION
