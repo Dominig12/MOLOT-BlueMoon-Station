@@ -2,8 +2,8 @@
 	var/can_you_fuck_plush = TRUE // TRUE - Да, можно сунуть в игрушку флешлайт. FALSE - Нет, нельзя. // Сделано чтобы предотвратить "нон-кон" именных игрушек. Ставить по усмотрению автора игрушки.
 
 /obj/item/toy/plush/bm
-	name = "Aiko Wierd Plushie"
-	desc = "Ugh... Something looks wierd."
+	name = "Aiko Plushie"
+	desc = "Wow... Aiko plushie!"
 	icon_state = "aiko"
 	icon = 'modular_bluemoon/icons/obj/toys/plushes.dmi'
 	lefthand_file = 'modular_bluemoon/icons/mob/inhands/items/plushes_lefthand.dmi'

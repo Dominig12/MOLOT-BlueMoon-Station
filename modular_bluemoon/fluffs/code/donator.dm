@@ -1045,14 +1045,14 @@
 	name = "AER9 Kit"
 	slot = ITEM_SLOT_ICLOTHING
 	path = /obj/item/modkit/old_laser_kit
-	ckeywhitelist = list("stasdvrz", "vlonger")
+	ckeywhitelist = list("stasdvrz", "vlonger", "vidl")
 	subcategory = LOADOUT_SUBCATEGORIES_DON02
 
 /datum/gear/donator/bm/institute_kit
 	name = "institute Kit"
 	slot = ITEM_SLOT_ICLOTHING
 	path = /obj/item/modkit/institute_kit
-	ckeywhitelist = list("stasdvrz", "vlonger")
+	ckeywhitelist = list("stasdvrz", "vlonger", "vidl")
 	subcategory = LOADOUT_SUBCATEGORIES_DON02
 
 /datum/gear/donator/bm/dedication_kit
@@ -1635,14 +1635,14 @@
 	name = "Inlaid Data Dress"
 	slot = ITEM_SLOT_ICLOTHING
 	path = /obj/item/clothing/under/donator/bm/inlaid_data_dress
-	category = LOADOUT_SUBCATEGORIES_DON01
+	subcategory = LOADOUT_SUBCATEGORIES_DON01
 	ckeywhitelist = list("1darkwater1")
 
 /datum/gear/donator/bm/hair_module
 	name = "Hair Module"
 	slot = ITEM_SLOT_MASK
 	path = /obj/item/clothing/mask/hair_module
-	category = LOADOUT_SUBCATEGORIES_DON01
+	subcategory = LOADOUT_SUBCATEGORIES_DON01
 	ckeywhitelist = list("1darkwater1")
 
 /datum/gear/donator/bm/aviator_helmet
