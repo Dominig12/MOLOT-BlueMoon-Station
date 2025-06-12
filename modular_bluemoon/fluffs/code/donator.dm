@@ -1641,7 +1641,7 @@
 /datum/gear/donator/bm/hair_module
 	name = "Hair Module"
 	slot = ITEM_SLOT_MASK
-	path = /obj/item/clothing/mask/gas/hair_module
+	path = /obj/item/clothing/mask/hair_module
 	category = LOADOUT_SUBCATEGORIES_DON01
 	ckeywhitelist = list("1darkwater1")
 
