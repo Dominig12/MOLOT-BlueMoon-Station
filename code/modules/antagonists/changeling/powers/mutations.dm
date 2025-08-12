@@ -669,6 +669,7 @@
 	recharge_slowdown = 0.1
 	glove_type = /obj/item/clothing/gloves/fingerless/pugilist/cling // just punch his head off dude
 	glove_name_simple = "bone gauntlets"
+	gamemode_restriction_type = ANTAG_DYNAMIC
 
 /datum/action/changeling/gloves/gauntlets/sting_action(mob/living/user)
 	if(HAS_TRAIT(user, TRAIT_NOPUGILIST))

@@ -74,15 +74,11 @@
 	var/mob/living/M = target
 
 	var/onLewdCooldown = FALSE
-	var/wantsNoncon = FALSE
 
 	if(get_refraction_dif() > 0)
 		onLewdCooldown = TRUE
 
-	if(M.client && M.client?.prefs.erppref == "Yes" && CHECK_BITFIELD(M.client?.prefs.toggles, VERB_CONSENT) && M.client?.prefs.nonconpref == "Yes")
-		wantsNoncon = TRUE
-
-	if(onLewdCooldown || !wantsNoncon)
+	if(onLewdCooldown)
 		LosePatience()
 		return // Do nothing
 
@@ -142,9 +138,6 @@
 
 	if(get_refraction_dif() > 0)
 		return
-
-	if(rand(1,7) == 7)
-		playlewdinteractionsound(loc, "modular_splurt/sound/lewd/deathclaw_grunt[rand(1, 5)].ogg", 30, 1, -1)
 
 	//One by one... strip em
 

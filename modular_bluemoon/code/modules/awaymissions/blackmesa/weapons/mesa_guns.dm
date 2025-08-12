@@ -113,6 +113,7 @@
 	item_state = "m870"
 	w_class = WEIGHT_CLASS_BULKY
 	recoil = 4
+	attack_speed = 10
 	force = 40
 	fire_delay = 4
 	mag_type = /obj/item/ammo_box/magazine/internal/shot/m870
@@ -122,7 +123,7 @@
 	name = "shotgun internal magazine"
 	ammo_type = /obj/item/ammo_casing/shotgun/buckshot
 	caliber = "shotgun"
-	max_ammo = 5
+	max_ammo = 4
 
 /obj/item/gun/ballistic/shotgun/spas
 	name = "SPAS 12 shotgun"
@@ -220,7 +221,7 @@
 	if(magazine)
 		icon_state = "m16hl"
 	else
-		icon_state = "m16hl_mag"
+		icon_state = "m16hl-e"
 
 /obj/item/gun/ballistic/automatic/mp7
 	name = "\improper mp7"

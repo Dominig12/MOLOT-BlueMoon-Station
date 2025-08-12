@@ -294,7 +294,6 @@ Peacekeeper Hypospray // BlueMoon 16.08 2023 - передано Вардену. 
 	name = "peacekeeper's locker"
 	req_access = list(ACCESS_PEACEKEEPER)
 	icon_state = "bs"
-	icon = 'modular_splurt/icons/obj/closet.dmi'
 
 /obj/structure/closet/secure_closet/peacekeeper/PopulateContents()
 	..()
