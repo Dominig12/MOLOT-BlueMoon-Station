@@ -115,6 +115,8 @@
 	///whether AI is anchored or not, used for checks
 	var/is_anchored = TRUE
 
+	var/hologram_color = rgb(125, 180, 225) // BLUEMOON ADD (Pe4henika)
+
 /mob/living/silicon/ai/Initialize(mapload, datum/ai_laws/L, mob/target_ai)
 	. = ..()
 	if(!target_ai) //If there is no player/brain inside.
@@ -178,7 +180,7 @@
 		add_verb(src, list(/mob/living/silicon/ai/proc/ai_network_change, \
 		/mob/living/silicon/ai/proc/ai_statuschange, /mob/living/silicon/ai/proc/ai_hologram_change, \
 		/mob/living/silicon/ai/proc/botcall, /mob/living/silicon/ai/proc/control_integrated_radio, \
-		/mob/living/silicon/ai/proc/set_automatic_say_channel))
+		/mob/living/silicon/ai/proc/set_automatic_say_channel, /mob/living/silicon/ai/proc/change_hologram_color)) // BLUEMOON EDIT
 
 	GLOB.ai_list += src
 	GLOB.shuttle_caller_list += src
@@ -630,6 +632,29 @@
 		frequency.post_signal(src, status_signal)
 	return
 
+// BLUEMOON ADD - START (Pe4henika)
+// MARK: Hologram change color
+
+/mob/living/silicon/ai/proc/change_hologram_color()
+	set name = "Изменить цвет голограммы"
+	set desc = "Изменяет цвет вашей голограммы"
+	set category = "AI Commands"
+
+	var/new_color
+	while(!new_color)
+		new_color = input(usr, "Выберите новый цвет для вашей голограммы.", "Цвет голограммы", hologram_color) as color|null
+		if(!new_color)
+			return
+		if(color_hex2num(new_color) < 200) //Colors too dark are rejected
+			to_chat(usr, span_warning("Этот цвет слишком тёмный! Выберите более светлый."))
+			new_color = null
+
+	hologram_color = new_color
+	holo_icon = getHologramIcon(icon('icons/mob/ai.dmi',"female"), FALSE, hologram_color)
+	to_chat(src, "Цвет голограммы изменён на [new_color].")
+
+// BLUEMOON ADD - END
+
 //I am the icon meister. Bow fefore me.	//>fefore
 /mob/living/silicon/ai/proc/ai_hologram_change()
 	set name = "Change Hologram"
@@ -651,7 +676,7 @@
 				var/icon/character_icon = personnel_list[input]
 				if(character_icon)
 					qdel(holo_icon)//Clear old icon so we're not storing it in memory.
-					holo_icon = getHologramIcon(icon(character_icon))
+					holo_icon = getHologramIcon(icon(character_icon), FALSE, hologram_color)
 			else
 				alert("No suitable records found. Aborting.")
 
@@ -704,11 +729,11 @@
 						if(client?.prefs?.custom_holoform_icon)
 							holo_icon = client.prefs.get_filtered_holoform(HOLOFORM_FILTER_AI)
 						else
-							holo_icon = getHologramIcon(icon('icons/mob/ai.dmi', "female"))
+							holo_icon = getHologramIcon(icon('icons/mob/ai.dmi', "female"), FALSE, hologram_color)
 					if("xeno queen")
-						holo_icon = getHologramIcon(icon(icon_list[input],"alienq"))
+						holo_icon = getHologramIcon(icon(icon_list[input],"alienq"), FALSE, hologram_color)
 					else
-						holo_icon = getHologramIcon(icon(icon_list[input], input))
+						holo_icon = getHologramIcon(icon(icon_list[input], input), FALSE, hologram_color)
 
 /mob/living/silicon/ai/proc/corereturn()
 	set category = "Malfunction"

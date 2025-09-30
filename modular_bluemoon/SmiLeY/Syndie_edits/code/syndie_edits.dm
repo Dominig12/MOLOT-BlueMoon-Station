@@ -1,17 +1,19 @@
 //DS-2/Syndicate clothing.
 
-/obj/item/clothing/suit/armor/vest/capcarapace/syndicate
+/obj/item/clothing/suit/toggle/captains_parade/syndicate
+	name = "syndicate captain's vest"
+	desc = "A sinister looking vest of advanced armor worn over a black and red fireproof jacket. The gold collar and shoulders denote that this belongs to a high ranking syndicate officer."
 	icon = 'modular_bluemoon/smiley/syndie_edits/icons/obj.dmi'
 	mob_overlay_icon = 'modular_bluemoon/smiley/syndie_edits/icons/worn.dmi'
-	icon_state = "syndievest_t"
+	icon_state = "syndievest"
 	mutantrace_variation = STYLE_DIGITIGRADE|STYLE_NO_ANTHRO_ICON
 
-/obj/item/clothing/suit/armor/vest/capcarapace/syndicate/winter
+/obj/item/clothing/suit/toggle/captains_parade/syndicate/winter
 	name = "syndicate captain's winter vest"
 	desc = "A sinister yet comfortable looking vest of advanced armor worn over a black and red fireproof jacket. The fur is said to be from wolves on the icemoon."
 	icon = 'modular_bluemoon/smiley/syndie_edits/icons/obj.dmi'
 	mob_overlay_icon = 'modular_bluemoon/smiley/syndie_edits/icons/worn.dmi'
-	icon_state = "syndievest_winter_t"
+	icon_state = "syndievest_winter"
 	body_parts_covered = CHEST|ARMS
 	cold_protection = CHEST|GROIN|ARMS
 	min_cold_protection_temperature = FIRE_SUIT_MIN_TEMP_PROTECT

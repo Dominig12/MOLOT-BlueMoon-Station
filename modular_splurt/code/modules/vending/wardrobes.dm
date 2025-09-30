@@ -139,7 +139,7 @@
 					/obj/item/storage/backpack/security = 1,
 					/obj/item/storage/backpack/satchel/sec = 1,
 					/obj/item/storage/backpack/duffelbag/sec = 1,
-					/obj/item/clothing/suit/toggle/armor/hos/hos_formal = 1,
+					/obj/item/clothing/suit/toggle/captains_parade/hos_formal = 1,
 					/obj/item/clothing/shoes/jackboots = 1,
 					/obj/item/clothing/under/rank/security/head_of_security/parade/female = 1,
 					/obj/item/clothing/under/rank/security/head_of_security/parade = 1,

@@ -111,9 +111,24 @@
 
 				var/assignment = "no_id"
 
-				var/obj/item/card/id/card = M.get_idcard()
-				if(card)
-					assignment = "[ckey(card.get_job_name())]"
+				if(ishuman(M)) // Владос уверяет, что это уменьшит лишние такты процессору
+					var/obj/item/card/id/card = M.get_idcard()
+					if(card)
+						assignment = "[ckey(card.get_job_name())]"
+
+				else if(issilicon(M) || isdrone(M)) // Для отображения иконок силиконов в orbit
+					if(iscyborg(M) || isdrone(M))
+						assignment = "cyborg"
+					else if(ispAI(M))
+						assignment = "pai"
+					else if(isAI(M))
+						assignment = "ai"
+
+				else if(isalien(M))
+					assignment = "alien"
+
+				else if(isterrorspider(M))
+					assignment = "terrorspider"
 
 				serialized["assignment"] = assignment
 

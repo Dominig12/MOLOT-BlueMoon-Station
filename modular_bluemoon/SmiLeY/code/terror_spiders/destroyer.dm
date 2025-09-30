@@ -17,7 +17,7 @@
 	gender = MALE
 	maxHealth = 120
 	health = 120
-	speed = -0.1
+	speed = 0
 	melee_damage_lower = 10
 	melee_damage_upper = 15
 	obj_damage = 50 //for effective breaching

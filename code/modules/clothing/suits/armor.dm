@@ -228,11 +228,10 @@
 	dog_fashion = null
 	resistance_flags = FIRE_PROOF
 
-/obj/item/clothing/suit/armor/vest/capcarapace/syndicate
-	name = "syndicate captain's vest"
-	desc = "A sinister looking vest of advanced armor worn over a black and red fireproof jacket. The gold collar and shoulders denote that this belongs to a high ranking syndicate officer."
-	icon_state = "syndievest"
-	mutantrace_variation = STYLE_DIGITIGRADE
+/obj/item/clothing/suit/armor/vest/capcarapace/centcom
+	name = "CentCom Officer Vest"
+	desc = "A sinister looking vest of advanced armor worn over a green and black fireproof jacket. The gold collar and shoulders denote that this belongs to a high ranking officer."
+	icon_state = "centcom_vest"
 
 /obj/item/clothing/suit/toggle/captains_parade
 	name = "captain's parade jacket"
@@ -246,6 +245,18 @@
 /obj/item/clothing/suit/toggle/captains_parade/Initialize(mapload)
 	. = ..()
 	allowed = GLOB.security_wintercoat_allowed
+
+/obj/item/clothing/suit/toggle/captains_parade/centcom_formal
+	name = "\improper CentCom formal coat"
+	desc = "A stylish coat given to CentCom Commanders. Perfect for sending ERTs to suicide missions with style!"
+	icon_state = "centcom_formal"
+	item_state = "centcom"
+
+/obj/item/clothing/suit/toggle/captains_parade/hos_formal
+	name = "\improper Head of Security's Parade Jacket"
+	desc = "For when an armoured vest isn't fashionable enough."
+	icon_state = "hosformal"
+	item_state = "hostrench"
 
 /obj/item/clothing/suit/armor/riot
 	name = "riot suit"
@@ -461,30 +472,3 @@
 	icon_state = "sov_offcoat"
 	item_state = "sov_offcoat"
 	//armor = list(MELEE = 25, BULLET = 20, LASER = 20, ENERGY = 10, BOMB = 20, BIO = 50, RAD = 50, FIRE = -10, ACID = 50,  WOUND = 10)
-
-
-/obj/item/clothing/suit/toggle/armor/vest/centcom_formal
-	name = "\improper CentCom formal coat"
-	desc = "A stylish coat given to CentCom Commanders. Perfect for sending ERTs to suicide missions with style!"
-	icon_state = "centcom_formal"
-	item_state = "centcom"
-	body_parts_covered = CHEST|GROIN|ARMS
-	armor = list(MELEE = 35, BULLET = 40, LASER = 40, ENERGY = 50, BOMB = 35, BIO = 10, RAD = 10, FIRE = 10, ACID = 60, WOUND = 35)
-	togglename = "buttons"
-
-/obj/item/clothing/suit/toggle/armor/vest/centcom_formal/Initialize(mapload)
-	. = ..()
-	allowed = GLOB.security_wintercoat_allowed
-
-/obj/item/clothing/suit/toggle/armor/hos/hos_formal
-	name = "\improper Head of Security's Parade Jacket"
-	desc = "For when an armoured vest isn't fashionable enough."
-	icon_state = "hosformal"
-	item_state = "hostrench"
-	body_parts_covered = CHEST|GROIN|ARMS
-	armor = list(MELEE = 30, BULLET = 30, LASER = 30, ENERGY = 40, BOMB = 25, BIO = 0, RAD = 0, FIRE = 70, ACID = 90, WOUND = 20)
-	togglename = "buttons"
-
-/obj/item/clothing/suit/toggle/armor/hos/hos_formal/Initialize(mapload)
-	. = ..()
-	allowed = GLOB.security_wintercoat_allowed

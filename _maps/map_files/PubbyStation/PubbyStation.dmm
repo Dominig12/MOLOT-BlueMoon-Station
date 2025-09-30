@@ -64058,7 +64058,7 @@
 	network = list("monastery");
 	pixel_y = 32
 	},
-/obj/item/clothing/suit/toggle/armor/hop/hop_formal,
+/obj/item/clothing/suit/toggle/captains_parade/hop_formal,
 /obj/item/clothing/under/rank/civilian/head_of_personnel/parade/female,
 /obj/item/clothing/under/rank/civilian/head_of_personnel/parade,
 /turf/open/floor/wood,

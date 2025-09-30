@@ -18,7 +18,7 @@
 	togglename = "buttons"
 	mutantrace_variation = STYLE_DIGITIGRADE|STYLE_NO_ANTHRO_ICON
 
-/obj/item/clothing/suit/toggle/armor/hop/hop_formal
+/obj/item/clothing/suit/toggle/captains_parade/hop_formal
 	name = "\improper Head of Personnel's parade jacket"
 	desc = "For when an armoured vest isn't fashionable enough."
 	icon_state = "hopformal"
@@ -31,6 +31,6 @@
 	togglename = "buttons"
 	mutantrace_variation = STYLE_DIGITIGRADE|STYLE_NO_ANTHRO_ICON
 
-/obj/item/clothing/suit/toggle/armor/hop/hop_formal/Initialize()
+/obj/item/clothing/suit/toggle/captains_parade/hop_formal/Initialize()
 	. = ..()
 	allowed = GLOB.security_wintercoat_allowed

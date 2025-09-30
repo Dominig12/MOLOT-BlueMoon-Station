@@ -526,6 +526,11 @@ For the other part of the code, check silicon say.dm. Particularly robot talk.*/
 	var/mob/living/silicon/ai/AI = user
 	if(istype(AI))
 		AI.current = src
+		// BLUEMOON ADD - START (Pe4henika)
+		var/obj/effect/overlay/holoray = holorays[user]
+		holoray.color = AI.hologram_color // Просто меняем цвет луча
+		h.color = AI.hologram_color // Цвет голограммы
+		// BLUEMOON ADD - END
 	SetLightsAndPower()
 	update_holoray(user, get_turf(loc))
 	return TRUE
@@ -586,6 +591,7 @@ For the other part of the code, check silicon say.dm. Particularly robot talk.*/
 			else
 				transfered = TRUE
 		//All is good.
+		holo.setDir(get_dir(holo.loc, new_turf)) // BLUEMOON ADD
 		holo.abstract_move(new_turf)
 		if(!transfered)
 			update_holoray(user,new_turf)

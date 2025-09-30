@@ -78,8 +78,8 @@
 	desc = "This one sports a nifty science paintjob, but is otherwise normal."
 	id = "handdrillsci"
 	build_type = PROTOLATHE
-	materials = list(/datum/material/iron = 3500, /datum/material/silver = 1500, /datum/material/titanium = 2500)
-	build_path = /obj/item/screwdriver/science
+	materials = list(/datum/material/iron = 2000, /datum/material/silver = 1000, /datum/material/titanium = 1500)
+	build_path = /obj/item/screwdriver/power/science
 	category = list("Tool Designs")
 	departmental_flags = DEPARTMENTAL_FLAG_SCIENCE
 
@@ -87,11 +87,13 @@
 	name = "Hybrid cutters"
 	desc = "Quite similar to the jaws of life, this tool combines the utility of a crowbar and a set of wirecutters without the hydraulic force required to pry open doors."
 	id = "jawsoflifesci"
-	build_path = /obj/item/crowbar/science
+	build_path = /obj/item/crowbar/power/science
 	build_type = PROTOLATHE
 	materials = list(/datum/material/iron = 3000, /datum/material/silver = 2000, /datum/material/titanium = 1500)
 	category = list("Tool Designs")
 	departmental_flags = DEPARTMENTAL_FLAG_SCIENCE
+
+// BLUEMOON ADD END
 
 /datum/design/exwelder
 	name = "Experimental Welding Tool"

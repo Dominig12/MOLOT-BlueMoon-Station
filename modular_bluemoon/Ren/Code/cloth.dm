@@ -358,7 +358,7 @@
 		return
 	if(!(isobj(target) && target.slot_flags & ITEM_SLOT_OCLOTHING))
 		return
-	if(target.type in typesof(/obj/item/clothing/suit/toggle/armor, /obj/item/clothing/suit/space, /obj/item/clothing/suit/armor))
+	if(target.type in typesof(/obj/item/clothing/suit/toggle/captains_parade, /obj/item/clothing/suit/space, /obj/item/clothing/suit/armor))
 		to_chat(user, span_danger("You cannot modify [target], as it already has armor or is a part of special equipment."))
 		return
 	var/obj/item/clothing/C = target

@@ -662,7 +662,7 @@
 	name = "Syndicate Battlecruiser Captain"
 	l_pocket = /obj/item/melee/transforming/energy/sword/saber/red
 	r_pocket = /obj/item/melee/classic_baton/telescopic
-	suit = /obj/item/clothing/suit/armor/vest/capcarapace/syndicate
+	suit = /obj/item/clothing/suit/toggle/captains_parade/syndicate
 	suit_store = /obj/item/gun/ballistic/revolver/mateba
 	back = /obj/item/storage/backpack/satchel/leather
 	head = /obj/item/clothing/head/HoS/syndicate
@@ -1645,7 +1645,7 @@
 	name = "DS-2 Admiral"
 	uniform = /obj/item/clothing/under/rank/captain/utility/syndicate
 	neck = /obj/item/clothing/neck/cloak/syndieadm
-	suit = /obj/item/clothing/suit/armor/vest/capcarapace/syndicate
+	suit = /obj/item/clothing/suit/toggle/captains_parade/syndicate
 	back = /obj/item/storage/backpack/duffelbag/syndie
 	belt = /obj/item/gun/ballistic/automatic/pistol/APS
 	head = /obj/item/clothing/head/HoS/syndicate

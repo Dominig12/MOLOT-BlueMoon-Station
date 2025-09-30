@@ -285,9 +285,9 @@
 	implants = list(
 		/obj/item/implant/mindshield,
 		/obj/item/implant/deathrattle/centcom,
-	 	/obj/item/implant/weapons_auth,
+		/obj/item/implant/weapons_auth,
 		/obj/item/implant/radio/centcom,
-	 	/obj/item/implant/cqc,
+		/obj/item/implant/cqc,
 	)
 
 	cybernetic_implants = list(

@@ -94,8 +94,6 @@
 	icon_state = "hateredsoul_dogtag_1"
 	item_state = "hateredsoul_dogtag_1"
 	pocket_storage_component_path = /datum/component/storage/concrete/pockets/small/collar
-	var/poly_states = 1
-	var/poly_colors = list("#00BBBB")
 	var/tagname = null
 	unique_reskin = list(
 		"Combat dogtag" = list(
@@ -107,12 +105,6 @@
 			RESKIN_ITEM_STATE = "hateredsoul_dogtag_2"
 		)
 	)
-
-/obj/item/clothing/neck/hateredsoul_dogtag/ComponentInitialize()
-	. = ..()
-	if(!poly_states)
-		return
-	AddElement(/datum/element/polychromic, poly_states)
 
 /obj/item/clothing/neck/hateredsoul_dogtag/attack_self(mob/user)
 	tagname = stripped_input(user, "Would you like to change the name on the tag?", "Name your new tag", tagname, MAX_NAME_LEN)

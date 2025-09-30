@@ -92,7 +92,7 @@
 	neck = /obj/item/clothing/neck/cloak/syndieadm
 	gloves = /obj/item/clothing/gloves/color/captain
 	uniform = /obj/item/clothing/under/rank/captain/util
-	suit = /obj/item/clothing/suit/armor/vest/capcarapace/syndicate
+	suit = /obj/item/clothing/suit/toggle/captains_parade/syndicate
 	shoes = /obj/item/clothing/shoes/jackboots/tall_default
 	head = /obj/item/clothing/head/HoS/syndicate
 

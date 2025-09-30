@@ -102,7 +102,6 @@
 	name = "blue cape"
 	desc = "Stylish."
 	icon_state = "cape_blue"
-	item_state = "cape_blue"
 	icon = 'modular_bluemoon/kovac_shitcode/icons/obj/clothing/misc.dmi'
 	mob_overlay_icon = 'modular_bluemoon/kovac_shitcode/icons/mob/clothing/misc.dmi'
 

@@ -8,6 +8,7 @@
 	weight = 1
 	max_occurrences = 1
 	min_players = 40
+	earliest_start = 90 MINUTES
 	category = EVENT_CATEGORY_ENTITIES
 	description = "Spawns spider eggs, ready to hatch."
 

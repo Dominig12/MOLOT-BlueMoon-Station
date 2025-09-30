@@ -18,7 +18,7 @@
 	maxHealth = 100
 	health = 100
 	death_sound = 'sound/creatures/terrorspiders/death5.ogg'
-	speed = -0.3
+	speed = 0
 	melee_damage_lower = 15
 	melee_damage_upper = 15
 	armour_penetration = 2

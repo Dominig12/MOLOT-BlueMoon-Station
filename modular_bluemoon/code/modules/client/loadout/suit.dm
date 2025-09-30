@@ -125,7 +125,7 @@
 
 /datum/gear/suit/ac_armoredcoat
 	name = "AC Armored Coat"
-	path = /obj/item/clothing/suit/toggle/armor/hos/hos_formal/ac
+	path = /obj/item/clothing/suit/toggle/captains_parade/hos_formal/ac
 	subcategory = LOADOUT_SUBCATEGORY_UNIFORM_JOBS
 	restricted_desc = "Head of Security, Warden, Blueshield."
 	restricted_roles = list("Head of Security", "Warden", "Blueshield")

@@ -69,10 +69,10 @@
 /obj/item/clothing/suit/armor/vest/infiltrator/gorlex_harness/civil
 	armor = list(MELEE = 0, BULLET = 0, LASER = 0, ENERGY = 0, BOMB = 0, BIO = 0, RAD = 0, FIRE = 50, ACID = 50, WOUND = 0)
 
-/obj/item/clothing/suit/armor/vest/capcarapace/syndicate/winter/civil
+/obj/item/clothing/suit/toggle/captains_parade/syndicate/winter/civil
 	armor = list(MELEE = 0, BULLET = 0, LASER = 0, ENERGY = 0, BOMB = 0, BIO = 0, RAD = 0, FIRE = 50, ACID = 50, WOUND = 0)
 
-/obj/item/clothing/suit/armor/vest/capcarapace/syndicate/civil
+/obj/item/clothing/suit/toggle/captains_parade/syndicate/civil
 	armor = list(MELEE = 0, BULLET = 0, LASER = 0, ENERGY = 0, BOMB = 0, BIO = 0, RAD = 0, FIRE = 50, ACID = 50, WOUND = 0)
 
 /obj/item/clothing/gloves/combat/maid/civil

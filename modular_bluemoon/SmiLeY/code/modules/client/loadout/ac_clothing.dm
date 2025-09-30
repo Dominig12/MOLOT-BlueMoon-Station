@@ -28,7 +28,7 @@
 //					КОСТЮМЫ					//
 //					КОСТЮМЫ					//
 
-/obj/item/clothing/suit/toggle/armor/hos/hos_formal/ac
+/obj/item/clothing/suit/toggle/captains_parade/hos_formal/ac
 	name = "AC Armored Coat"
 	desc = "An coat for a prestigious Mercenaries in the Adamas Cattus PMC."
 	icon = 'modular_bluemoon/SmiLeY/icons/obj/clothing/ac_clothing.dmi'

@@ -53197,7 +53197,7 @@
 /area/commons/dorms)
 "giR" = (
 /obj/structure/closet/secure_closet/hop,
-/obj/item/clothing/suit/toggle/armor/hop/hop_formal,
+/obj/item/clothing/suit/toggle/captains_parade/hop_formal,
 /obj/item/clothing/under/rank/civilian/head_of_personnel/parade,
 /obj/item/clothing/under/rank/civilian/head_of_personnel/parade/female,
 /turf/open/floor/wood,

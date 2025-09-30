@@ -137,12 +137,12 @@
 
 /datum/gear/suit/capcarapace/winter/civil
     name = "syndicate captain's winter vest"
-    path = /obj/item/clothing/suit/armor/vest/capcarapace/syndicate/winter/civil
+    path = /obj/item/clothing/suit/toggle/captains_parade/syndicate/winter/civil
     subcategory = LOADOUT_SUBCATEGORY_SUIT_JACKETS
 
 /datum/gear/suit/capcarapace/civil
     name = "syndicate captain's vest"
-    path = /obj/item/clothing/suit/armor/vest/capcarapace/syndicate/civil
+    path = /obj/item/clothing/suit/toggle/captains_parade/syndicate/civil
     subcategory = LOADOUT_SUBCATEGORY_SUIT_JACKETS
 
 //BM add end

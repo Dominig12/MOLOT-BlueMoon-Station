@@ -21,7 +21,7 @@
 	obj_damage = 45
 	maxHealth = 200
 	health = 200
-	speed = -0.1
+	speed = 0
 	delay_web = 20
 	deathmessage = "Emits a piercing screech and slowly falls on the ground."
 	death_sound = 'sound/creatures/terrorspiders/princess_death.ogg'

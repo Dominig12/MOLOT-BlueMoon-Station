@@ -690,8 +690,8 @@
 		/obj/item/clothing/gloves/combat/maid = 5,
 		/obj/item/clothing/head/maid/syndicate = 5,
 		/obj/item/card/id/syndicate = 5,
-		/obj/item/clothing/suit/armor/vest/capcarapace/syndicate/winter = 1,
-		/obj/item/clothing/suit/armor/vest/capcarapace/syndicate = 1,
+		/obj/item/clothing/suit/toggle/captains_parade/syndicate/winter = 1,
+		/obj/item/clothing/suit/toggle/captains_parade/syndicate = 1,
 		/obj/item/clothing/head/hats/warden/syndicate = 1,
 		/obj/item/storage/backpack/duffelbag/syndie = 2
 	)
@@ -785,8 +785,8 @@
 		/obj/item/clothing/suit/hooded/wintercoat/syndicate/civil = 5,
 		/obj/item/clothing/suit/armor/vest/infiltrator/gorlex_harness/civil = 5,
 		/obj/item/clothing/suit/armor/vest/fake = 5,
-		/obj/item/clothing/suit/armor/vest/capcarapace/syndicate/winter/civil = 5,
-		/obj/item/clothing/suit/armor/vest/capcarapace/syndicate/civil = 5,
+		/obj/item/clothing/suit/toggle/captains_parade/syndicate/winter/civil = 5,
+		/obj/item/clothing/suit/toggle/captains_parade/syndicate/civil = 5,
 		/obj/item/clothing/head/maid/syndicate/civil = 5,
 		/obj/item/clothing/head/helmet/swat/ds/civil = 5,
 		/obj/item/clothing/head/hats/warden/syndicate/civil = 5,
