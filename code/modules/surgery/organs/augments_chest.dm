@@ -222,6 +222,31 @@
 
 	return FALSE
 
+/obj/item/organ/cyberimp/chest/thrusters/ion_thrusters
+	name = "implantable ion thrusters set"
+	desc = "An implantable set of ion engines. They use the energy of synthetic creatures to create ion wind, to move in zero gravity.  Unlike \
+	conventional jetpacks, this device does not have a stabilization system."
+
+/obj/item/organ/cyberimp/chest/thrusters/ion_thrusters/move_react()
+	allow_thrust(2)
+
+/obj/item/organ/cyberimp/chest/thrusters/ion_thrusters/allow_thrust(num)
+
+	if(!on || !owner)
+		return FALSE
+
+	var/obj/item/organ/stomach/ipc/cell = locate(/obj/item/organ/stomach/ipc) in H.internal_organs
+	if(!cell)
+		return FALSE
+
+	if(owner.nutrition < num)
+		return FALSE
+
+	owner.adjust_nutrition(-num)
+
+	return TRUE
+
+
 /obj/item/organ/cyberimp/chest/chem_implant
 	name = "Chemical sequencer implant"
 	desc = "This implant can inject limited list of basic reagents into your blood."

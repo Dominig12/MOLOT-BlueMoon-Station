@@ -643,6 +643,18 @@
 	departmental_flags = DEPARTMENTAL_FLAG_MEDICAL
 	min_security_level = SEC_LEVEL_AMBER
 
+/datum/design/cyberimp_ion_thrusters
+	name = "Ion Thrusters Set Implant"
+	desc = "An implantable set of ion engines. They use the energy of synthetic creatures to create ion wind, to move in zero gravity."
+	id = "ci-ionthrusters"
+	build_type = PROTOLATHE | MECHFAB
+	construction_time = 80
+	materials = list(/datum/material/iron = 4000, /datum/material/glass = 2000, /datum/material/silver = 1000, /datum/material/diamond = 1000, /datum/material/plasma = 1000)
+	build_path = /obj/item/organ/cyberimp/chest/thrusters/ion_thrusters
+	category = list("Misc", "Medical Designs")
+	departmental_flags = DEPARTMENTAL_FLAG_MEDICAL
+	min_security_level = SEC_LEVEL_AMBER
+
 /////////////////////////////////////////
 ////////////Regular Implants/////////////
 /////////////////////////////////////////

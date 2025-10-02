@@ -139,6 +139,9 @@
 /datum/design/cyberimp_thrusters
 	category = list("Implants", "Medical Designs")
 
+/datum/design/cyberimp_ion_thrusters
+	category = list("Implants", "Medical Designs")
+
 /datum/design/cyberimp_toolset_advanced
 	category = list("Implants", "Medical Designs")
 
