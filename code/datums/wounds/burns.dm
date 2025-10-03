@@ -237,13 +237,13 @@
 	sanitization += I.uv_power
 	COOLDOWN_START(I, uv_cooldown, I.uv_cooldown_length)
 
-/datum/wound/burn/proc/wiring_repair(obj/item/stack/cable_coil/coil, mob/user)
+/datum/wound/burn/proc/wiring_repair(obj/item/stack/cable_coil/I, mob/user)
 	if(!HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
 		to_chat(user, "Это не поможет, это же не робот!")
 		return
 
 	user.visible_message("<span class='notice'>[user] пытается восстановить проводку в конечности - [limb.ru_name] - персонажа [victim] с помощью [I]...</span>", "<span class='notice'>Вы пытаетесь восстановить проводку в [user == victim ? "вашей [limb.ru_name]" : "конечности персонажа [victim]"] с помощью [I]...</span>")
-	if(!do_after(user, (user == victim ? I.self_delay : I.other_delay), target=victim, extra_checks = CALLBACK(src, PROC_REF(still_exists))))
+	if(!do_after(user, (user == victim ? 30 : 10), target=victim, extra_checks = CALLBACK(src, PROC_REF(still_exists))))
 		return
 
 	limb.heal_damage(0, 10)
@@ -302,13 +302,13 @@
 /datum/wound/burn/moderate/apply_typo_modification()
 	if(HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
 		ru_name = "Обугленная изоляция проводки"
-		ru_name_r = "обугливание изоляции проводки"
+		ru_name_r = "обугливания изоляции проводки"
 		desc = "Изоляция проводки обуглилась. На открытых участках пересекающихся проводов происходят короткие замыкания, требуется немедленный ремонт."
 		treat_text = "Заменить поврежденную проводку"
 		examine_desc = "искрится, видно обугленную изоляцию проводов"
 		occur_text = "от нагрева слышно щелчки, обугленные провода в снопах искр"
 		wound_flags = FLESH_WOUND
-		treatable_tool = TOOL_CABLECOIL
+		treatable_by = list(/obj/item/stack/cable_coil)
 
 /datum/wound/burn/severe
 	name = "Third Degree Burns"
@@ -331,13 +331,13 @@
 /datum/wound/burn/severe/apply_typo_modification()
 	if(HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
 		ru_name = "Поплавленная изоляция проводки"
-		ru_name_r = "плавление изоляции проводки"
+		ru_name_r = "плавления изоляции проводки"
 		desc = "Изоляция проводки оплавилась. На открытых участках пересекающихся проводов происходят короткие замыкания и оплавление самих проводов, происходит отказ систем, требуется немедленный ремонт поврежденных частей."
 		treat_text = "Немедленно заменить поврежденную проводку"
 		examine_desc = "искрится, видно поплавленную изоляцию проводов"
-		occur_text = "оплавляется, части проводов обплавилась и перестав искрить"
+		occur_text = "оплавляется, части проводов обплавилась и перестали искрить"
 		wound_flags = FLESH_WOUND
-		treatable_tool = TOOL_CABLECOIL
+		treatable_by = list(/obj/item/stack/cable_coil)
 
 /datum/wound/burn/critical
 	name = "Catastrophic Burns"
@@ -361,10 +361,10 @@
 /datum/wound/burn/critical/apply_typo_modification()
 	if(HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
 		ru_name = "Расплавленная проводка"
-		ru_name_r = "расплавленная проводка"
+		ru_name_r = "расплавления проводки"
 		desc = "Изоляция как и сами провода оплавлены и разорваны. Системы к которым была проводка отказали, повреждения критические. Требуется полная замена проводки в поврежденных локациях."
 		treat_text = "Полностью заменить уничтоженные части проводки"
 		examine_desc = "периодически искрится, видно полное плавление проводки и изоляции, системы не питаются"
 		occur_text = "из за отсутстивя изоляции, вся проводка была уничтожена из за коротких замыканий и выжигания"
 		wound_flags = FLESH_WOUND
-		treatable_tool = TOOL_CABLECOIL
+		treatable_by = list(/obj/item/stack/cable_coil)
