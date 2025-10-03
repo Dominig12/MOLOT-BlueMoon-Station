@@ -32,7 +32,7 @@
 	. = ..()
 	if(strikes_to_lose_limb == 0)
 		victim.adjustToxLoss(0.5)
-		if(prob(1))
+		if(prob(1) && !HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
 			victim.visible_message("<span class='danger'>Инфекция на [limb.ru_name_v] персонажа [victim] тошнотворно пузырится!</span>", "<span class='warning'>Вы чувствуете, как инфекция на вашей - [limb.ru_name_v] пульсирует и распространяется по вашим тканям!</span>")
 		return
 
@@ -55,7 +55,7 @@
 
 	// here's the check to see if we're cleared up
 	if((flesh_damage <= 0) && (infestation <= 1))
-		to_chat(victim, "<span class='green'>Вы удалили инфекцию, что находилась на [limb.ru_name_v]!</span>")
+		to_chat(victim, "<span class='green'>[HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM) ? "Проводка восстановлена, управление конечностью полностью восстановлено" : "Вы удалили инфекцию, что находилась на [limb.ru_name_v]!"]</span>")
 		qdel(src)
 		return
 
@@ -74,10 +74,10 @@
 			if(prob(30))
 				victim.adjustToxLoss(0.2)
 				if(prob(6))
-					to_chat(victim, "<span class='warning'>Ваша [limb.ru_name] сочится гноем и волдырями...</span>")
+					to_chat(victim, "<span class='warning'>Ваша [limb.ru_name] [HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM) ? "искрится и поплавляется" : "сочится гноем и волдырями..."]</span>")
 		if(WOUND_INFECTION_SEVERE to WOUND_INFECTION_CRITICAL)
 			if(!disabling && prob(2))
-				to_chat(victim, "<span class='warning'><b>Ваша [limb.ru_name] парализуется, пока вы пытаетесь бороться с инфекцией!</b></span>")
+				to_chat(victim, "<span class='warning'><b>Ваша [limb.ru_name] [HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM) ? "отказывает из за повреждения проводки, вы пробуете перенаправить питание через резервные провода" : "парализуется, пока вы пытаетесь бороться с инфекцией!"]</b></span>")
 				disabling = TRUE
 			else if(disabling && prob(8))
 				to_chat(victim, "<span class='notice'>Ваша [limb.ru_name] все ещё в ужасном состоянии, хоть вы и вернули контроль над ней!</span>")
@@ -86,10 +86,10 @@
 				victim.adjustToxLoss(0.5)
 		if(WOUND_INFECTION_CRITICAL to WOUND_INFECTION_SEPTIC)
 			if(!disabling && prob(3))
-				to_chat(victim, "<span class='warning'><b>[limb.ru_name] внезапно теряет всякую чувствительность из-за гноящейся инфекции!</b></span>")
+				to_chat(victim, "<span class='warning'><b>[limb.ru_name] [HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM) ? "отказывает из за оплавления проводов, у вас остается мало вариантов для восстановления работоспособности" : "внезапно теряет всякую чувствительность из-за гноящейся инфекции!"]</b></span>")
 				disabling = TRUE
 			else if(disabling && prob(3))
-				to_chat(victim, "<span class='notice'>Ваша [limb.ru_name] едва снова ощущается. Вам придется напрячься, чтобы сохранить моторику!</span>")
+				to_chat(victim, "<span class='notice'>Ваша [limb.ru_name] [HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM) ? "снова активна, но ее управление происходит с трудом из за отказа множества систем" : "едва снова ощущается. Вам придется напрячься, чтобы сохранить моторику!"]</span>")
 				disabling = FALSE
 			else if(prob(1))
 				to_chat(victim, "<span class='warning'>Вы задумаетесь о жизни без вашей конечности...</span>")
@@ -100,16 +100,19 @@
 			if(prob(infestation))
 				switch(strikes_to_lose_limb)
 					if(3 to INFINITY)
-						to_chat(victim, "<span class='deadsay'>Кожа на вашей [limb.ru_name_v] буквально сползает, вы чувствуете себя ужасно!</span>")
+						to_chat(victim, "<span class='deadsay'>[limb.ru_name] [HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM) ? "Проводка в вашей [limb.ru_name_v] практически полностью оплавилась, искры практически пропали, вы снизили подачу питания на конечность во избежания плавки, но происходят постоянные сбои" : "Кожа на вашей [limb.ru_name_v] буквально сползает, вы чувствуете себя ужасно!"]</span>")
 					if(2)
-						to_chat(victim, "<span class='deadsay'><b>Инфекция на вашей [limb.ru_name_v] обильно сочится, это отвратительно!</b></span>")
+						to_chat(victim, "<span class='deadsay'><b>[HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM) ? "Проводка в вашей [limb.ru_name_v] полностью оплавилась, искры практически пропали, вы снизили подачу питания на конечность во избежания плавки, но происходят постоянные сбои скоро варианты питания будут исчерпаны" : "Инфекция на вашей [limb.ru_name_v] обильно сочится, это отвратительно!"]</b></span>")
 					if(1)
-						to_chat(victim, "<span class='deadsay'><b>Ваша [limb.ru_name] целиком захвачена инфекций!</b></span>")
+						to_chat(victim, "<span class='deadsay'><b>[HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM) ? "Проводка в вашей [limb.ru_name_v] практически полностью уничтожена, искры пропали, вам сложно найти способ запитать конечность, происходят постоянные сбои" : "Ваша [limb.ru_name] целиком захвачена инфекций!"]</b></span>")
 					if(0)
-						to_chat(victim, "<span class='deadsay'><b>Последние нервные окончания на вашей [limb.ru_name_v] - затухают, инфекция целиком парализует сустав.</b></span>")
+						to_chat(victim, "<span class='deadsay'><b>[HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM) ? "Проводка в вашей [limb.ru_name_v] полностью уничтожена, искры пропали, конечность отказала, требуется замена проводки или конечности" : "Последние нервные окончания на вашей [limb.ru_name_v] - затухают, инфекция целиком парализует сустав."]</b></span>")
 						threshold_penalty = 120 // piss easy to destroy
-						var/datum/brain_trauma/severe/paralysis/sepsis = new (limb.body_zone)
-						victim.gain_trauma(sepsis)
+						if(HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
+							disabling = TRUE
+						else
+							var/datum/brain_trauma/severe/paralysis/sepsis = new (limb.body_zone)
+							victim.gain_trauma(sepsis)
 				strikes_to_lose_limb--
 
 /datum/wound/burn/get_examine_description(mob/user)
@@ -179,6 +182,11 @@
 
 /// if someone is using ointment on our burns
 /datum/wound/burn/proc/ointment(obj/item/stack/medical/ointment/I, mob/user)
+
+	if(HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
+		to_chat(user, "Это не поможет, это же робот!")
+		return
+
 	user.visible_message("<span class='notice'>[user] начинает применять [I] на конечности [victim]...</span>", "<span class='notice'>Вы начинаете применять [I] на [user == victim ? "вашей конечности" : "конечности персонажа [victim]"]...</span>")
 	if(!do_after(user, (user == victim ? I.self_delay : I.other_delay), extra_checks = CALLBACK(src, PROC_REF(still_exists))))
 		return
@@ -196,6 +204,11 @@
 
 /// if someone is using mesh on our burns
 /datum/wound/burn/proc/mesh(obj/item/stack/medical/mesh/I, mob/user)
+
+	if(HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
+		to_chat(user, "Это не поможет, это же робот!")
+		return
+
 	user.visible_message("<span class='notice'>[user] пытается перевязать конечность - [limb.ru_name] - персонажа [victim] с помощью [I]...</span>", "<span class='notice'>Вы пытаетесь перевязать [user == victim ? "вашу [limb.ru_name]" : "конечность персонажа [victim]"] с помощью [I]...</span>")
 	if(!do_after(user, (user == victim ? I.self_delay : I.other_delay), target=victim, extra_checks = CALLBACK(src, PROC_REF(still_exists))))
 		return
@@ -224,6 +237,26 @@
 	sanitization += I.uv_power
 	COOLDOWN_START(I, uv_cooldown, I.uv_cooldown_length)
 
+/datum/wound/burn/proc/wiring_repair(obj/item/stack/cable_coil/coil, mob/user)
+	if(!HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
+		to_chat(user, "Это не поможет, это же не робот!")
+		return
+
+	user.visible_message("<span class='notice'>[user] пытается восстановить проводку в конечности - [limb.ru_name] - персонажа [victim] с помощью [I]...</span>", "<span class='notice'>Вы пытаетесь восстановить проводку в [user == victim ? "вашей [limb.ru_name]" : "конечности персонажа [victim]"] с помощью [I]...</span>")
+	if(!do_after(user, (user == victim ? I.self_delay : I.other_delay), target=victim, extra_checks = CALLBACK(src, PROC_REF(still_exists))))
+		return
+
+	limb.heal_damage(0, 10)
+	user.visible_message("<span class='green'>[user] применяет [I] на [victim].</span>", "<span class='green'>Вы применяете [I] на [user == victim ? "вашу конечность." : "конечность персонажа [victim]"]</span>")
+	I.use(1)
+	sanitization += 0.3
+	flesh_healing += 10
+
+	if(flesh_damage == 0)
+		to_chat(user, "<span class='notice'>Вы починили всю доступную проводку с помощью [I], теперь подождите пока системы питания у персонажа [victim] стабилизируются.</span>")
+	else
+		try_treating(I, user)
+
 /datum/wound/burn/treat(obj/item/I, mob/user)
 	if(istype(I, /obj/item/stack/medical/ointment))
 		ointment(I, user)
@@ -231,6 +264,8 @@
 		mesh(I, user)
 	else if(istype(I, /obj/item/flashlight/pen/paramedic))
 		uv(I, user)
+	else if(istype(I, /obj/item/stack/cable_coil))
+		wiring_repair(I, user)
 
 // people complained about burns not healing on stasis beds, so in addition to checking if it's cured, they also get the special ability to very slowly heal on stasis beds if they have the healing effects stored
 /datum/wound/burn/on_stasis()
@@ -264,6 +299,17 @@
 	flesh_damage = 5
 	scar_keyword = "burnmoderate"
 
+/datum/wound/burn/moderate/apply_typo_modification()
+	if(HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
+		ru_name = "Обугленная изоляция проводки"
+		ru_name_r = "обугливание изоляции проводки"
+		desc = "Изоляция проводки обуглилась. На открытых участках пересекающихся проводов происходят короткие замыкания, требуется немедленный ремонт."
+		treat_text = "Заменить поврежденную проводку"
+		examine_desc = "искрится, видно обугленную изоляцию проводов"
+		occur_text = "от нагрева слышно щелчки, обугленные провода в снопах искр"
+		wound_flags = FLESH_WOUND
+		treatable_tool = TOOL_CABLECOIL
+
 /datum/wound/burn/severe
 	name = "Third Degree Burns"
 	ru_name = "Ожоги третьей степени"
@@ -281,6 +327,17 @@
 	infestation_rate = 0.05 // appx 13 minutes to reach sepsis without any treatment
 	flesh_damage = 12.5
 	scar_keyword = "burnsevere"
+
+/datum/wound/burn/severe/apply_typo_modification()
+	if(HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
+		ru_name = "Поплавленная изоляция проводки"
+		ru_name_r = "плавление изоляции проводки"
+		desc = "Изоляция проводки оплавилась. На открытых участках пересекающихся проводов происходят короткие замыкания и оплавление самих проводов, происходит отказ систем, требуется немедленный ремонт поврежденных частей."
+		treat_text = "Немедленно заменить поврежденную проводку"
+		examine_desc = "искрится, видно поплавленную изоляцию проводов"
+		occur_text = "оплавляется, части проводов обплавилась и перестав искрить"
+		wound_flags = FLESH_WOUND
+		treatable_tool = TOOL_CABLECOIL
 
 /datum/wound/burn/critical
 	name = "Catastrophic Burns"
@@ -300,3 +357,14 @@
 	infestation_rate = 0.15 // appx 4.33 minutes to reach sepsis without any treatment
 	flesh_damage = 20
 	scar_keyword = "burncritical"
+
+/datum/wound/burn/critical/apply_typo_modification()
+	if(HAS_TRAIT(victim, TRAIT_ROBOTIC_ORGANISM))
+		ru_name = "Расплавленная проводка"
+		ru_name_r = "расплавленная проводка"
+		desc = "Изоляция как и сами провода оплавлены и разорваны. Системы к которым была проводка отказали, повреждения критические. Требуется полная замена проводки в поврежденных локациях."
+		treat_text = "Полностью заменить уничтоженные части проводки"
+		examine_desc = "периодически искрится, видно полное плавление проводки и изоляции, системы не питаются"
+		occur_text = "из за отсутстивя изоляции, вся проводка была уничтожена из за коротких замыканий и выжигания"
+		wound_flags = FLESH_WOUND
+		treatable_tool = TOOL_CABLECOIL
