@@ -1504,6 +1504,12 @@
 	path = /obj/item/clothing/mask/hair_module
 	ckeywhitelist = list("1darkwater1")
 
+/datum/gear/donator/bm/modsuit_anomalous
+	name = "anomalous mod suit"
+	slot = ITEM_SLOT_BACKPACK
+	path = /obj/item/mod/control/pre_equipped/anomalous_archeotech
+	ckeywhitelist = list("1darkwater1")
+
 /datum/gear/donator/bm/ouroboroswinterschock
 	name = "Ouroboros"
 	slot = ITEM_SLOT_GLOVES
