@@ -1,4 +1,5 @@
 /obj/item/mod/control/pre_equipped/anomalous_archeotech
+	desc = "Высокотехнологичный MOD костюм, который встраивается напрямую в тело, невидимое энергетическое поле, защищает владельца от давления извне. Управление происходит через специальный интерфейс мозг компьютер, который подключается не инвазивно."
 	alternate_worn_layer = BACK_LAYER
 	theme = /datum/mod_theme/anomalous_archeotech
 	cell = /obj/item/stock_parts/cell/bluespace
