@@ -1,12 +1,19 @@
 /obj/item/mod/control/pre_equipped/anomalous_archeotech
-	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/modsuit/mod_clothing.dmi'
-	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/modsuit/mod_clothing.dmi'
+	alternate_worn_layer = BACK_LAYER
 	theme = /datum/mod_theme/anomalous_archeotech
 	cell = /obj/item/stock_parts/cell/bluespace
 	initial_modules = list(
 		/obj/item/mod/module/storage,
-		/obj/item/mod/module/jetpack
+		/obj/item/mod/module/jetpack,
+		/obj/item/mod/module/dna_lock
 	)
+
+/obj/item/mod/control/pre_equipped/anomalous_archeotech/Initialize(mapload, new_theme, new_skin)
+	. = ..()
+	var/list/all_parts = mod_parts.Copy() + src
+	for(var/obj/item/piece as anything in all_parts)
+		piece.icon = 'modular_bluemoon/fluffs/icons/obj/clothing/modsuit/mod_clothing.dmi'
+		piece.mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/modsuit/mod_clothing.dmi'
 
 /datum/mod_theme/anomalous_archeotech
 	name = "anomalous archeotech"
@@ -16,13 +23,12 @@
 	max_heat_protection_temperature = FIRE_SUIT_MAX_TEMP_PROTECT
 	cell_drain = DEFAULT_CHARGE_DRAIN * 3
 	complexity_max = DEFAULT_MAX_COMPLEXITY + 5
-	slowdown_inactive = 0.75
-	slowdown_active = 0.25
+	slowdown_inactive = 0.5
+	slowdown_active = 0.15
 	siemens_coefficient = 0
 	ui_theme = "hackerman"
 	skins = list(
 		"anom_arch" = list(
-			HELMET_LAYER = null,
 			HELMET_FLAGS = list(
 				UNSEALED_CLOTHING = THICKMATERIAL,
 				SEALED_CLOTHING = STOPSPRESSUREDAMAGE|ALLOWINTERNALS,
@@ -33,6 +39,7 @@
 			CHESTPLATE_FLAGS = list(
 				UNSEALED_CLOTHING = THICKMATERIAL,
 				SEALED_CLOTHING = STOPSPRESSUREDAMAGE,
+				SEALED_INVISIBILITY = null
 			),
 			GAUNTLETS_FLAGS = list(
 				UNSEALED_CLOTHING = THICKMATERIAL,
@@ -42,5 +49,6 @@
 				UNSEALED_CLOTHING = THICKMATERIAL,
 				SEALED_CLOTHING = STOPSPRESSUREDAMAGE,
 			),
+			CONTROL_LAYER = BACK_LAYER
 		),
 	)
