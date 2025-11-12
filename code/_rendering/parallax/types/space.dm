@@ -13,6 +13,7 @@
 	. += new /atom/movable/screen/parallax_layer/space/layer_1
 	. += new /atom/movable/screen/parallax_layer/space/layer_2
 	. += new /atom/movable/screen/parallax_layer/space/layer_3
+	. += new /atom/movable/screen/parallax_layer/space/glaz
 
 	var/atom/movable/screen/parallax_layer/space/planet/P = new
 	P.pixel_x = planet_offset_x
@@ -42,6 +43,12 @@
 	speed = 1.4
 	layer = 3
 	parallax_intensity = PARALLAX_HIGH
+
+/atom/movable/screen/parallax_layer/space/glaz
+	icon_state = "glaz"
+	speed = 0.6
+	layer = 4
+	parallax_intensity = PARALLAX_INSANE
 
 /atom/movable/screen/parallax_layer/space/random
 	blend_mode = BLEND_OVERLAY
