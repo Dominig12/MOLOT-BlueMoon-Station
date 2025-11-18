@@ -35,6 +35,8 @@
 #define EVENT_CATEGORY_SPACE "Space Threats"
 ///Events summoned by a wizard
 #define EVENT_CATEGORY_WIZARD "Wizard"
+///An event that will inevitably destroy the station if not prevented
+#define EVENT_CATEGORY_APOCALYPSE "Apocalypse"
 
 /// Return from admin setup to stop the event from triggering entirely.
 #define ADMIN_CANCEL_EVENT "cancel event"
