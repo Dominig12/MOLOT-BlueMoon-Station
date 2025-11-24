@@ -59,8 +59,8 @@
 	icon_state = "planet"
 	blend_mode = BLEND_OVERLAY
 	absolute = TRUE //Status of seperation
-	center_x = -320
-	center_y = -320
+	center_x = -380
+	center_y = -380
 	speed = 3
 	layer = 30
 	dynamic_self_tile = FALSE
