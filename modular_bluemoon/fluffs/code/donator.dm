@@ -1547,7 +1547,7 @@
 /datum/gear/donator/bm/modsuit_anomalous
 	name = "anomalous mod suit"
 	slot = ITEM_SLOT_BACKPACK
-	path = /obj/item/mod/control/pre_equipped/anomalous_archeotech
+	path = /obj/item/mod/construction/armor/anomalous_archeotech
 	ckeywhitelist = list("1darkwater1")
 
 /datum/gear/donator/bm/ouroboroswinterschock
