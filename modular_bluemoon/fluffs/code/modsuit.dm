@@ -1,13 +1,9 @@
-/obj/item/mod/control/pre_equipped/anomalous_archeotech
+/obj/item/mod/control/pre_equipped/mining/anomalous_archeotech
 	desc = "Высокотехнологичный MOD костюм, который встраивается напрямую в тело, невидимое энергетическое поле, защищает владельца от давления извне. \
 	Управление происходит через специальный интерфейс мозг компьютер, который подключается не инвазивно. \
 	Встроенные ядра аномалий, обеспечивают стабильность работы и работу энергетического поля"
 	alternate_worn_layer = BACK_LAYER
 	theme = /datum/mod_theme/mining/anomalous_archeotech
-	initial_modules = list(
-		/obj/item/mod/module/storage,
-		/obj/item/mod/module/dna_lock
-	)
 
 /obj/item/mod/construction/armor/anomalous_archeotech
 	theme = /datum/mod_theme/mining/anomalous_archeotech
