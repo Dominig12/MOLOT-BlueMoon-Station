@@ -5452,6 +5452,7 @@
 #include "modular_splurt\code\datums\traits\positive_quirks\bloodfledge.dm"
 #include "modular_splurt\code\datums\traits\positive_quirks\breathless.dm"
 #include "modular_splurt\code\datums\traits\positive_quirks\cloth_eater.dm"
+#include "modular_splurt\code\datums\traits\positive_quirks\compatibility_nanomachines.dm"
 #include "modular_splurt\code\datums\traits\positive_quirks\dominant_aura.dm"
 #include "modular_splurt\code\datums\traits\positive_quirks\flutter.dm"
 #include "modular_splurt\code\datums\traits\positive_quirks\hallowed.dm"
