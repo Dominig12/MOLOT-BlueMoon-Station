@@ -301,6 +301,8 @@
 	can_adjust = FALSE
 	mutantrace_variation = NONE
 
+///////////////////////////////////////////////
+
 /obj/item/clothing/under/donator/bm/inlaid_data_dress
 	name = "Inlaid Data Dress"
 	desc = "Съемный модуль для синтетика. Корпус изготовлен из легкого но прочного металла. \
@@ -502,6 +504,8 @@
 	position = generator("circle", 0, 10)
 	velocity = generator("circle", 0.3, 1)
 	fade = 1
+
+///////////////////////////////////////////////
 
 /obj/item/clothing/under/donator/bm/saareuni
 	name = "SAARE BDU G3"
