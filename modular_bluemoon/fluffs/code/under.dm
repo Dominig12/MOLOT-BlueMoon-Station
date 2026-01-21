@@ -317,11 +317,12 @@
 	body_parts_covered = CHEST|GROIN|LEGS|ARMS
 	resistance_flags = FIRE_PROOF | ACID_PROOF
 	always_reskinnable = TRUE
+	repairable_by = /obj/item/stack/sheet/metal
 	species_restricted = list("I.P.C.", "Synthetic Lizardperson", "Synthetic", "Military Synth", "Synthetic Anthropomorph")
 	unique_reskin = list(
 		"Roselia" = list("icon_state" = "InlaidDataDress_default", "skin" = "default"),
-		"Rose-1" = list("icon_state" = "InlaidDataDress_battle", "skin" = "battle"),
-		"Rose-4" = list("icon_state" = "InlaidDataDress_lust", "skin" = "lust", "can_adjust" = FALSE, "body_parts_covered" = NONE),
+		"Rose-1" = list("icon_state" = "InlaidDataDress_battle", "skin" = "battle", "active_echo" = FALSE),
+		"Rose-4" = list("icon_state" = "InlaidDataDress_lust", "skin" = "lust", "can_adjust" = FALSE, "body_parts_covered" = NONE, "active_echo" = FALSE),
 	)
 	var/equipped_slot = FALSE
 	var/obj/effect/distortion_effect/filter_on_user
@@ -398,7 +399,7 @@
 		particle_effect_holder.remove_atom_colour(coloration, colour_priority)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/process(delta_time)
-	if(active_echo)
+	if(active_echo && equipped_slot)
 		echo_animation()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/echo_animation()
