@@ -1,38 +1,48 @@
-import { Button, Dropdown, Input, NumberInput, Stack } from '../../components';
+import {
+  Button,
+  Dropdown,
+  Input,
+  NumberInput,
+  Stack,
+} from 'tgui-core/components';
+
 import { BasicInput } from './BasicInput';
+import { OPTION_DROPDOWN_LARGE_CHAR_AMOUNT } from './constants';
 
 export const FUNDAMENTAL_DATA_TYPES = {
-  'string': (props, context) => {
+  string: (props) => {
     const { name, value, setValue, color } = props;
     return (
       <BasicInput name={name} setValue={setValue} value={value} defaultValue="">
         <Input
           placeholder={name}
           value={value}
-          onChange={(e, val) => setValue(val)}
+          onChange={setValue}
           width="96px"
         />
       </BasicInput>
     );
   },
-  'number': (props, context) => {
+  number: (props) => {
     const { name, value, setValue, color } = props;
     return (
       <BasicInput
         name={name}
         setValue={setValue}
         value={value}
-        defaultValue={0}>
+        defaultValue={0}
+      >
         <NumberInput
+          step={1}
           value={value}
           color={color}
-          onChange={(e, val) => setValue(val)}
+          onChange={(val) => setValue(val)}
           unit={name}
         />
       </BasicInput>
     );
   },
-  'entity': (props, context) => {
+  entity: (props) => {
     const { name, setValue } = props;
     return (
       <Button
@@ -44,7 +54,19 @@ export const FUNDAMENTAL_DATA_TYPES = {
       />
     );
   },
-  'signal': (props, context) => {
+  datum: (props) => {
+    const { name, setValue } = props;
+    return (
+      <Button
+        content={name}
+        color="transparent"
+        icon="upload"
+        compact
+        onClick={() => setValue(null, { marked_atom: true })}
+      />
+    );
+  },
+  signal: (props) => {
     const { name, setValue } = props;
     return (
       <Button
@@ -55,29 +77,38 @@ export const FUNDAMENTAL_DATA_TYPES = {
       />
     );
   },
-  'option': (props, context) => {
-    const { value, setValue, extraData } = props;
+  option: (props) => {
+    const { value, setValue } = props;
+    let large = false;
+    const extraData = props.extraData || [];
+    const data = Array.isArray(extraData) ? extraData : Object.keys(extraData);
+
+    data.forEach((element) => {
+      if (element.length > OPTION_DROPDOWN_LARGE_CHAR_AMOUNT) {
+        large = true;
+      }
+    });
+
     return (
       <Dropdown
-        className="Datatype__Option"
-        color={"transparent"}
-        options={Array.isArray(extraData)
-          ? extraData
-          : Object.keys(extraData)}
+        className="IntegratedCircuit__BlueBorder"
+        color={'transparent'}
+        options={data}
         onSelected={setValue}
-        displayText={value}
-        noscroll
+        selected={value}
+        menuWidth={large ? '200px' : undefined}
       />
     );
   },
-  'any': (props, context) => {
+  any: (props) => {
     const { name, value, setValue, color } = props;
     return (
       <BasicInput
         name={name}
         setValue={setValue}
         value={value}
-        defaultValue={''}>
+        defaultValue={''}
+      >
         <Stack>
           <Stack.Item>
             <Button
@@ -90,7 +121,7 @@ export const FUNDAMENTAL_DATA_TYPES = {
             <Input
               placeholder={name}
               value={value}
-              onChange={(e, val) => setValue(val)}
+              onChange={setValue}
               width="64px"
             />
           </Stack.Item>
@@ -101,7 +132,7 @@ export const FUNDAMENTAL_DATA_TYPES = {
 };
 
 export const DATATYPE_DISPLAY_HANDLERS = {
-  'option': (port) => {
+  option: (port) => {
     return port.name.toLowerCase();
   },
 };

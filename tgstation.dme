@@ -2703,6 +2703,7 @@
 #include "code\modules\integrated_electronics\_defines.dm"
 #include "code\modules\integrated_electronics\core\analyzer.dm"
 #include "code\modules\integrated_electronics\core\assemblies.dm"
+#include "code\modules\integrated_electronics\core\circuit_variable.dm"
 #include "code\modules\integrated_electronics\core\debugger.dm"
 #include "code\modules\integrated_electronics\core\detailer.dm"
 #include "code\modules\integrated_electronics\core\helpers.dm"

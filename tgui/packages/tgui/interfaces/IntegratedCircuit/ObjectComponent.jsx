@@ -1,18 +1,13 @@
-import { Component } from 'inferno';
+import { Component } from 'react';
+import { Box, Button, Stack } from 'tgui-core/components';
+import { classes, shallowDiffers } from 'tgui-core/react';
 
-import { shallowDiffers } from '../../../common/react';
-import { useBackend } from '../../backend';
-import {
-  Box,
-Button,
-  Stack } from '../../components';
-import { ABSOLUTE_Y_OFFSET } from './constants';
-import { Port } from "./Port";
-
+import { ABSOLUTE_Y_OFFSET, noop } from './constants';
+import { Port } from './Port';
 
 export class ObjectComponent extends Component {
-  constructor() {
-    super();
+  constructor(props) {
+    super(props);
     this.state = {
       isDragging: false,
       dragPos: null,
@@ -39,14 +34,13 @@ export class ObjectComponent extends Component {
   }
 
   handleStopDrag(e) {
-    const { act } = useBackend(this.context);
     const { dragPos } = this.state;
-    const { index } = this.props;
+    const { index, act = () => _ } = this.props;
     if (dragPos) {
       act('set_component_coordinates', {
         component_id: index,
-        rel_x: dragPos.x,
-        rel_y: dragPos.y,
+        rel_x: this.roundToGrid(dragPos.x),
+        rel_y: this.roundToGrid(dragPos.y),
       });
     }
 
@@ -80,11 +74,17 @@ export class ObjectComponent extends Component {
     const { input_ports, output_ports } = this.props;
 
     return (
-      shallowDiffers(this.props, nextProps)
-      || shallowDiffers(this.state, nextState)
-      || shallowDiffers(input_ports, nextProps.input_ports)
-      || shallowDiffers(output_ports, nextProps.output_ports)
+      shallowDiffers(this.props, nextProps) ||
+      shallowDiffers(this.state, nextState) ||
+      shallowDiffers(input_ports, nextProps.input_ports) ||
+      shallowDiffers(output_ports, nextProps.output_ports)
     );
+  }
+
+  // Round the units to the grid (bypass if grid mode is off)
+  roundToGrid(input_value) {
+    if (!this.props.gridMode) return input_value;
+    return Math.round(input_value / 10) * 10;
   }
 
   render() {
@@ -95,23 +95,26 @@ export class ObjectComponent extends Component {
       x,
       y,
       index,
-      color = 'blue',
+      category = 'Unassigned',
       removable,
+      ui_alerts,
+      ui_buttons,
       locations,
-      onPortUpdated,
-      onPortLoaded,
-      onPortMouseDown,
-      onPortRightClick,
-      onPortMouseUp,
+      onPortUpdated = noop,
+      onPortLoaded = noop,
+      onPortMouseDown = noop,
+      onPortRightClick = noop,
+      onPortMouseUp = noop,
+      act = noop,
+      gridMode = true,
       ...rest
     } = this.props;
-    const { act } = useBackend(this.context);
     const { startPos, dragPos } = this.state;
 
     let [x_pos, y_pos] = [x, y];
     if (dragPos && startPos && startPos.x === x_pos && startPos.y === y_pos) {
-      x_pos = dragPos.x;
-      y_pos = dragPos.y;
+      x_pos = this.roundToGrid(dragPos.x);
+      y_pos = this.roundToGrid(dragPos.y);
     }
 
     // Assigned onto the ports
@@ -125,40 +128,78 @@ export class ObjectComponent extends Component {
 
     return (
       <Box
-        {...rest}
+        className="ObjectComponent"
         position="absolute"
         left={`${x_pos}px`}
         top={`${y_pos}px`}
         onMouseDown={this.handleStartDrag}
         onMouseUp={this.handleStopDrag}
-        onComponentWillUnmount={this.handleDrag}>
+        onComponentWillUnmount={this.handleDrag}
+        {...rest}
+      >
         <Box
-          backgroundColor={color}
           py={1}
           px={1}
-          className="ObjectComponent__Titlebar">
+          className={classes([
+            'ObjectComponent__Titlebar',
+            `ObjectComponent__Category__${category}`,
+          ])}
+        >
           <Stack>
             <Stack.Item grow={1} unselectable="on">
               {name}
             </Stack.Item>
+            {!!ui_buttons &&
+              Object.keys(ui_buttons).map((icon) => (
+                <Stack.Item key={icon}>
+                  <Button
+                    icon={icon}
+                    compact
+                    className={`ObjectComponent__Category__${category}`}
+                    onClick={() =>
+                      act('perform_action', {
+                        component_id: index,
+                        action_name: ui_buttons[icon],
+                      })
+                    }
+                  />
+                </Stack.Item>
+              ))}
+            {!!ui_alerts &&
+              Object.keys(ui_alerts).map((icon) => (
+                <Stack.Item key={icon}>
+                  <Button
+                    className={`ObjectComponent__Category__${category}`}
+                    icon={icon}
+                    compact
+                    tooltip={ui_alerts[icon]}
+                  />
+                </Stack.Item>
+              ))}
             <Stack.Item>
               <Button
-                color="transparent"
                 icon="info"
                 compact
-                onClick={(e) => act('set_examined_component', {
-                  component_id: index,
-                  x: e.pageX,
-                  y: e.pageY + ABSOLUTE_Y_OFFSET,
-                })} />
+                className={`ObjectComponent__Category__${category}`}
+                onClick={(e) =>
+                  act('set_examined_component', {
+                    component_id: index,
+                    x: e.pageX,
+                    y: e.pageY + ABSOLUTE_Y_OFFSET,
+                  })
+                }
+              />
             </Stack.Item>
             {!!removable && (
               <Stack.Item>
                 <Button
-                  color="transparent"
                   icon="times"
                   compact
-                  onClick={() => act('detach_component', { component_id: index })} />
+                  className={`ObjectComponent__Category__${category}`}
+                  onClick={() =>
+                    act('detach_component', { component_id: index })
+                  }
+                />
               </Stack.Item>
             )}
           </Stack>
@@ -167,9 +208,10 @@ export class ObjectComponent extends Component {
           className="ObjectComponent__Content"
           unselectable="on"
           py={1}
-          px={1}>
+          px={1}
+        >
           <Stack>
-            <Stack.Item grow={1}>
+            <Stack.Item>
               <Stack vertical fill>
                 {input_ports.map((port, portIndex) => (
                   <Stack.Item key={portIndex}>
@@ -177,6 +219,7 @@ export class ObjectComponent extends Component {
                       port={port}
                       portIndex={portIndex + 1}
                       componentId={index}
+                      act={act}
                       {...PortOptions}
                     />
                   </Stack.Item>
@@ -188,11 +231,13 @@ export class ObjectComponent extends Component {
                 {output_ports.map((port, portIndex) => (
                   <Stack.Item key={portIndex}>
                     <Port
+                      act={act}
                       port={port}
                       portIndex={portIndex + 1}
                       componentId={index}
                       {...PortOptions}
-                      isOutput />
+                      isOutput
+                    />
                   </Stack.Item>
                 ))}
               </Stack>

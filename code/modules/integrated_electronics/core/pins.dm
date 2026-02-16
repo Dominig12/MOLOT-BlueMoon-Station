@@ -1,23 +1,10 @@
-/*
-	Pins both hold data for circuits, as well move data between them.  Some also cause circuits to do their function.  DATA_CHANNEL pins are the data holding/moving kind,
-where as PULSE_CHANNEL causes circuits to work() when their pulse hits them.
-A visualization of how pins work is below.  Imagine the below image involves an addition circuit.
-When the bottom pin, the activator, receives a pulse, all the numbers on the left (input) get added, and the answer goes on the right side (output).
-Inputs      Outputs
-A [2]\      /[8] result
-B [1]-\|++|/
-C [4]-/|++|
-D [1]/  ||
-        ||
-     Activator
-*/
 /datum/integrated_io
 	var/name = "input/output"
 	var/obj/item/integrated_circuit/holder
-	var/datum/weakref/data  // This is a weakref, to reduce typecasts.  Note that oftentimes numbers and text may also occupy this.
+	var/datum/weakref/data
 	var/list/linked = list()
 	var/io_type = DATA_CHANNEL
-	var/pin_type			// IC_INPUT, IC_OUTPUT, IC_ACTIVATOR - used in saving assembly wiring
+	var/pin_type
 	var/ord
 
 /datum/integrated_io/New(loc, _name, _data, _pin_type,_ord)
@@ -28,9 +15,7 @@ D [1]/  ||
 		pin_type = _pin_type
 	if(_ord)
 		ord = _ord
-
 	holder = loc
-
 	if(!istype(holder))
 		message_admins("ERROR: An integrated_io ([name]) spawned without a valid holder!  This is a bug.")
 
@@ -49,11 +34,9 @@ D [1]/  ||
 
 /datum/integrated_io/proc/display_data(var/input)
 	if(isnull(input))
-		return "(null)" // Empty data means nothing to show.
-
+		return "(null)"
 	if(istext(input))
-		return "(\"[input]\")" // Wraps the 'string' in escaped quotes, so that people know it's a 'string'.
-
+		return "(\"[input]\")"
 	if(islist(input))
 		var/list/my_list = input
 		var/result = "list\[[my_list.len]\]("
@@ -68,13 +51,11 @@ D [1]/  ||
 			result += "<br>"
 		result += ")"
 		return result
-
 	if(isweakref(input))
 		var/datum/weakref/w = input
 		var/atom/A = w.resolve()
-		return A ? "([A.name] \[Ref\])" : "(null)" // For refs, we want just the name displayed.
-
-	return "([input])" // Nothing special needed for numbers or other stuff.
+		return A ? "([A.name] \[Ref\])" : "(null)"
+	return "([input])"
 
 /datum/integrated_io/activate/display_data()
 	return "(\[pulse\])"
@@ -110,19 +91,16 @@ D [1]/  ||
 			if("data")
 				ask_for_pin_data(user)
 				return TRUE
-
 	else if(istype(tool, /obj/item/integrated_electronics/wirer))
 		var/obj/item/integrated_electronics/wirer/wirer = tool
 		if(linked_pin)
 			wirer.wire(linked_pin, user)
 		else
 			wirer.wire(src, user)
-
 	else if(istype(tool, /obj/item/integrated_electronics/debugger))
 		var/obj/item/integrated_electronics/debugger/debugger = tool
 		debugger.write_data(src, user)
 		return TRUE
-
 	return FALSE
 
 /datum/integrated_io/proc/write_data_to_pin(new_data)
@@ -133,6 +111,10 @@ D [1]/  ||
 		var/list/new_list = new_data
 		data = new_list.Copy(max(1,new_list.len - IC_MAX_LIST_LENGTH+1),0)
 		holder.on_data_written()
+
+// Добавляем прок set_input как синоним write_data_to_pin (для совместимости)
+/datum/integrated_io/proc/set_input(new_data)
+	write_data_to_pin(new_data)
 
 /datum/integrated_io/proc/push_data()
 	for(var/k in 1 to linked.len)
@@ -154,12 +136,10 @@ D [1]/  ||
 		return "the [english_list(linked)]"
 	return "nothing"
 
-
 /datum/integrated_io/proc/connect_pin(datum/integrated_io/pin)
 	pin.linked |= src
 	linked |= pin
 
-// Iterates over every linked pin and disconnects them.
 /datum/integrated_io/proc/disconnect_all()
 	for(var/pin in linked)
 		disconnect_pin(pin)
@@ -168,22 +148,20 @@ D [1]/  ||
 	pin.linked.Remove(src)
 	linked.Remove(pin)
 
-
 /datum/integrated_io/proc/ask_for_data_type(mob/user, var/default, var/list/allowed_data_types = list("string","number","null"))
 	var/type_to_use = input("Please choose a type to use.","[src] type setting") as null|anything in allowed_data_types
 	if(!holder.check_interactivity(user))
 		return
-
 	var/new_data = null
 	switch(type_to_use)
 		if("string")
 			new_data = stripped_multiline_input(user, "Now type in a string.","[src] string writing", istext(default) ? default : null, no_trim = TRUE)
-			if(istext(new_data) && holder.check_interactivity(user) )
+			if(istext(new_data) && holder.check_interactivity(user))
 				to_chat(user, "<span class='notice'>You input "+new_data+" into the pin.</span>")
 				return new_data
 		if("number")
 			new_data = input("Now type in a number.","[src] number writing", isnum(default) ? default : null) as null|num
-			if(isnum(new_data) && holder.check_interactivity(user) )
+			if(isnum(new_data) && holder.check_interactivity(user))
 				to_chat(user, "<span class='notice'>You input [new_data] into the pin.</span>")
 				return new_data
 		if("null")
@@ -191,16 +169,20 @@ D [1]/  ||
 				to_chat(user, "<span class='notice'>You clear the pin's memory.</span>")
 				return new_data
 
-// Basically a null check
+// Добавляем прок handle_manual_input для обработки ввода из интерфейса
+/datum/integrated_io/proc/handle_manual_input(mob/user, input)
+	// Здесь можно реализовать преобразование строки в нужный тип данных
+	// По умолчанию просто передаём входное значение как есть
+	return input
+
 /datum/integrated_io/proc/is_valid()
 	return !isnull(data)
 
-// This proc asks for the data to write, then writes it.
 /datum/integrated_io/proc/ask_for_pin_data(mob/user)
 	var/new_data = ask_for_data_type(user)
 	write_data_to_pin(new_data)
 
-/datum/integrated_io/activate/ask_for_pin_data(mob/user) // This just pulses the pin.
+/datum/integrated_io/activate/ask_for_pin_data(mob/user)
 	holder.investigate_log(" was manually pulsed by [key_name(user)].", INVESTIGATE_CIRCUIT)
 	holder.check_then_do_work(ord,ignore_power = TRUE)
 	to_chat(user, "<span class='notice'>You pulse \the [holder]'s [src] pin.</span>")
@@ -209,5 +191,18 @@ D [1]/  ||
 	name = "activation pin"
 	io_type = PULSE_CHANNEL
 
-/datum/integrated_io/activate/out // All this does is just make the UI say 'out' instead of 'in'
+/datum/integrated_io/activate/out
 	data = 1
+
+// Добавляем определение для IC_FORMAT_* (если не определены)
+#define IC_FORMAT_ANY "any"
+#define IC_FORMAT_PULSE "pulse"
+#define IC_FORMAT_BOOLEAN "boolean"
+#define IC_FORMAT_CHAR "char"
+#define IC_FORMAT_COLOR "color"
+#define IC_FORMAT_DIR "dir"
+#define IC_FORMAT_INDEX "index"
+#define IC_FORMAT_LIST "list"
+#define IC_FORMAT_NUMBER "number"
+#define IC_FORMAT_REF "ref"
+#define IC_FORMAT_STRING "string"

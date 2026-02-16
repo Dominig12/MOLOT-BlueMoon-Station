@@ -1,5 +1,20 @@
-#define IC_MAX_SIZE_BASE		25
-#define IC_COMPLEXITY_BASE		75
+#define IC_MAX_SIZE_BASE        25
+#define IC_COMPLEXITY_BASE      75
+#define COMPONENT_MAX_POS 10000
+#define PORT_MAX_STRING_DISPLAY 40
+#define PORT_MAX_NAME_LENGTH 20
+#define IC_MAX_LIST_LENGTH 100
+
+// Глобальный список базовых типов для нового интерфейса (должен совпадать с FUNDAMENTAL_DATA_TYPES)
+GLOBAL_LIST_INIT(wiremod_basic_types, list(
+	"string",
+	"number",
+	"entity",
+	"datum",
+	"signal",
+	"option",
+	"any"
+))
 
 /obj/item/electronic_assembly
 	name = "electronic assembly"
@@ -9,17 +24,17 @@
 	icon = 'icons/obj/assemblies/electronic_setups.dmi'
 	icon_state = "setup_small"
 	item_flags = NOBLUDGEON
-	custom_materials = null		// To be filled later
+	custom_materials = null
 	datum_flags = DF_USE_TAG
 	var/list/assembly_components = list()
-	var/list/ckeys_allowed_to_scan = list() // Players who built the circuit can scan it as a ghost.
+	var/list/ckeys_allowed_to_scan = list()
 	var/max_components = IC_MAX_SIZE_BASE
 	var/max_complexity = IC_COMPLEXITY_BASE
 	var/opened = TRUE
-	var/obj/item/stock_parts/cell/battery // Internal cell which most circuits need to work.
+	var/obj/item/stock_parts/cell/battery
 	var/cell_type = /obj/item/stock_parts/cell
-	var/can_charge = TRUE //Can it be charged in a recharger?
-	var/can_fire_equipped = FALSE //Can it fire/throw weapons when the assembly is being held?
+	var/can_charge = TRUE
+	var/can_fire_equipped = FALSE
 	var/charge_sections = 4
 	var/charge_tick = FALSE
 	var/charge_delay = 4
@@ -27,22 +42,38 @@
 	var/ext_next_use = 0
 	var/atom/collw
 	var/obj/item/card/id/access_card
-	var/allowed_circuit_action_flags = IC_ACTION_COMBAT | IC_ACTION_LONG_RANGE //which circuit flags are allowed
-	var/combat_circuits = 0 //number of combat cicuits in the assembly, used for diagnostic hud
-	var/long_range_circuits = 0 //number of long range cicuits in the assembly, used for diagnostic hud
-	var/prefered_hud_icon = "hudstat"		// Used by the AR circuit to change the hud icon.
-	var/creator // circuit creator if any
+	var/allowed_circuit_action_flags = IC_ACTION_COMBAT | IC_ACTION_LONG_RANGE
+	var/combat_circuits = 0
+	var/long_range_circuits = 0
+	var/prefered_hud_icon = "hudstat"
+	var/creator
 	var/static/next_assembly_id = 0
 	var/sealed = FALSE
 
-	hud_possible = list(DIAG_STAT_HUD, DIAG_BATT_HUD, DIAG_TRACK_HUD, DIAG_CIRCUIT_HUD) //diagnostic hud overlays
+	// Новые переменные для TGUI
+	var/admin_only = FALSE
+	var/datum/weakref/linked_component_printer
+	var/setter_and_getter_count = 0
+	var/max_setters_and_getters = 30
+	var/list/datum/circuit_variable/circuit_variables = list()
+	var/list/datum/circuit_variable/list_variables = list()
+	var/list/datum/circuit_variable/assoc_list_variables = list()
+	var/list/datum/circuit_variable/modifiable_circuit_variables = list()
+	var/screen_x = 0
+	var/screen_y = 0
+	var/grid_mode = TRUE
+	var/examined_rel_x = 0
+	var/examined_rel_y = 0
+	var/datum/weakref/examined_component
+
+	hud_possible = list(DIAG_STAT_HUD, DIAG_BATT_HUD, DIAG_TRACK_HUD, DIAG_CIRCUIT_HUD)
 	max_integrity = 50
 	pass_flags = 0
 	armor = list(MELEE = 50, BULLET = 70, LASER = 70, ENERGY = 100, BOMB = 10, BIO = 100, RAD = 100, FIRE = 0, ACID = 0)
 	anchored = FALSE
 	var/can_anchor = TRUE
 	var/detail_color = COLOR_ASSEMBLY_BLACK
-	var/list/color_whitelist = list( //This is just for checking that hacked colors aren't in the save data.
+	var/list/color_whitelist = list(
 		COLOR_ASSEMBLY_BLACK,
 		COLOR_FLOORTILE_GRAY,
 		COLOR_ASSEMBLY_BGRAY,
@@ -59,7 +90,7 @@
 		COLOR_ASSEMBLY_LBLUE,
 		COLOR_ASSEMBLY_BLUE,
 		COLOR_ASSEMBLY_PURPLE
-		)
+	)
 
 /obj/item/electronic_assembly/New()
 	..()
@@ -94,7 +125,7 @@
 /obj/item/electronic_assembly/Bump(atom/AM)
 	collw = AM
 	.=..()
-	if((istype(collw, /obj/machinery/door/airlock) ||  istype(collw, /obj/machinery/door/window)) && (!isnull(access_card)))
+	if((istype(collw, /obj/machinery/door/airlock) || istype(collw, /obj/machinery/door/window)) && (!isnull(access_card)))
 		var/obj/machinery/door/D = collw
 		if(D.check_access(access_card))
 			D.open()
@@ -104,7 +135,6 @@
 	.=..()
 	START_PROCESSING(SScircuit, src)
 
-	//sets up diagnostic hud view
 	prepare_huds()
 	for(var/datum/atom_hud/data/diagnostic/diag_hud in GLOB.huds)
 		diag_hud.add_to_hud(src)
@@ -125,18 +155,12 @@
 /obj/item/electronic_assembly/process()
 	handle_idle_power()
 	check_pulling()
-
-	//updates diagnostic hud
 	diag_hud_set_circuithealth()
 	diag_hud_set_circuitcell()
 
 /obj/item/electronic_assembly/proc/handle_idle_power()
-
-	// First we generate power.
 	for(var/obj/item/integrated_circuit/passive/power/P in assembly_components)
 		P.make_energy()
-
-	// Now spend it.
 	for(var/obj/item/integrated_circuit/I in assembly_components)
 		if(I.power_draw_idle)
 			if(!draw_power(I.power_draw_idle))
@@ -145,269 +169,298 @@
 /obj/item/electronic_assembly/interact(mob/user, circuit)
 	ui_interact(user, circuit)
 
-/obj/item/electronic_assembly/ui_interact(mob/user, obj/item/integrated_circuit/circuit_pins)
+// TGUI Integration
+/obj/item/electronic_assembly/ui_interact(mob/user, datum/tgui/ui)
+	ui = SStgui.try_update_ui(user, src, ui)
+	if(!ui)
+		ui = new(user, src, "IntegratedCircuit", name)
+		ui.open()
+		ui.set_autoupdate(FALSE)
+
+/obj/item/electronic_assembly/ui_static_data(mob/user)
+	. = list()
+	.["global_basic_types"] = GLOB.wiremod_basic_types
+	.["screen_x"] = screen_x
+	.["screen_y"] = screen_y
+
+	// В старой системе нет машинного принтера, поэтому временно отключаем
+	// var/obj/item/integrated_circuit_printer/printer = linked_component_printer?.resolve()
+	// if(printer)
+	//	.["stored_designs"] = printer.current_unlocked_designs // нужно будет реализовать
+	.["stored_designs"] = list() // заглушка
+
+/obj/item/electronic_assembly/ui_data(mob/user)
+	. = list()
+	.["components"] = list()
+	for(var/obj/item/integrated_circuit/component as anything in assembly_components)
+		var/list/component_data = list()
+
+		// Input ports
+		component_data["input_ports"] = list()
+		for(var/index in 1 to component.inputs.len)
+			var/datum/integrated_io/input_port = component.inputs[index]
+			var/current_data = input_port.data
+			if(isatom(current_data))
+				current_data = null
+			var/list/connected_to = list()
+			for(var/datum/integrated_io/linked in input_port.linked)
+				connected_to += REF(linked)
+
+			component_data["input_ports"] += list(list(
+				"name" = input_port.name,
+				"type" = "any",
+				"ref" = REF(input_port),
+				"connected_to" = connected_to,
+				"color" = "blue",
+				"current_data" = current_data,
+				"datatype_data" = null
+			))
+
+		// Output ports
+		component_data["output_ports"] = list()
+		for(var/index in 1 to component.outputs.len)
+			var/datum/integrated_io/output_port = component.outputs[index]
+			component_data["output_ports"] += list(list(
+				"name" = output_port.name,
+				"type" = "any",
+				"ref" = REF(output_port),
+				"color" = "blue",
+				"datatype_data" = null
+			))
+
+		component_data["name"] = component.displayed_name
+		component_data["x"] = component.rel_x
+		component_data["y"] = component.rel_y
+		component_data["removable"] = component.removable
+		component_data["color"] = "blue"
+		component_data["category"] = ""
+		component_data["ui_alerts"] = list()
+		component_data["ui_buttons"] = list()
+
+		.["components"] += list(component_data)
+
+	// Variables (пустой список, если нет поддержки)
+	.["variables"] = list()
+	// Можно добавить заглушки, чтобы интерфейс не ломался
+	// for(var/var_name in circuit_variables)
+	// 	var/datum/circuit_variable/variable = circuit_variables[var_name]
+	// 	var/list/variable_data = list()
+	// 	variable_data["name"] = variable.name
+	// 	variable_data["datatype"] = variable.datatype
+	// 	variable_data["color"] = variable.color
+	// 	if(islist(variable.value))
+	// 		variable_data["is_list"] = TRUE
+	// 	.["variables"] += list(variable_data)
+
+	.["display_name"] = name
+
+	// Examined component
+	var/obj/item/integrated_circuit/examined
+	if(examined_component)
+		examined = examined_component.resolve()
+	.["examined_name"] = examined?.displayed_name
+	.["examined_desc"] = examined?.desc
+	.["examined_notices"] = list()
+	.["examined_rel_x"] = examined_rel_x
+	.["examined_rel_y"] = examined_rel_y
+	.["grid_mode"] = grid_mode
+
+	// Заменяем isAdminGhostAI на IsAdminGhost
+	.["is_admin"] = (admin_only || IsAdminGhost(user)) && check_rights_for(user.client, R_VAREDIT)
+
+#define WITHIN_RANGE(id, table) (id >= 1 && id <= length(table))
+
+/obj/item/electronic_assembly/ui_act(action, list/params, datum/tgui/ui)
 	. = ..()
-	if(!check_interactivity(user))
+	if(.)
 		return
 
-	var/total_part_size = return_total_size()
-	var/total_complexity = return_total_complexity()
-	var/datum/browser/popup = new(user, "scannernew", name, 800, 630) // Set up the popup browser window
-	popup.add_stylesheet("scannernew", 'html/browser/assembly_ui.css')
+	switch(action)
+		if("add_connection")
+			var/input_component_id = text2num(params["input_component_id"])
+			var/output_component_id = text2num(params["output_component_id"])
+			var/input_port_id = text2num(params["input_port_id"])
+			var/output_port_id = text2num(params["output_port_id"])
+			if(!WITHIN_RANGE(input_component_id, assembly_components) || !WITHIN_RANGE(output_component_id, assembly_components))
+				return
+			var/obj/item/integrated_circuit/input_component = assembly_components[input_component_id]
+			var/obj/item/integrated_circuit/output_component = assembly_components[output_component_id]
 
-	var/HTML = "<html><head>[UTF8HEADER]<title>[name]</title></head>\
-		<body><table><thead><tr> \
-		<a href='?src=[REF(src)]'>Refresh</a>  |  <a href='?src=[REF(src)];rename=1'>Rename</a><br> \
-		[total_part_size]/[max_components] ([round((total_part_size / max_components) * 100, 0.1)]%) space taken up in the assembly.<br> \
-		[total_complexity]/[max_complexity] ([round((total_complexity / max_complexity) * 100, 0.1)]%) maximum complexity.<br>"
-	if(battery)
-		HTML += "[round(battery.charge, 0.1)]/[battery.maxcharge] ([round(battery.percent(), 0.1)]%) cell charge. <a href='?src=[REF(src)];remove_cell=1'>Remove</a>"
+			if(!WITHIN_RANGE(input_port_id, input_component.inputs) || !WITHIN_RANGE(output_port_id, output_component.outputs))
+				return
+			var/datum/integrated_io/input_port = input_component.inputs[input_port_id]
+			var/datum/integrated_io/output_port = output_component.outputs[output_port_id]
+
+			input_port.connect_pin(output_port)
+			. = TRUE
+
+		if("remove_connection")
+			var/component_id = text2num(params["component_id"])
+			var/is_input = params["is_input"]
+			var/port_id = text2num(params["port_id"])
+
+			if(!WITHIN_RANGE(component_id, assembly_components))
+				return
+			var/obj/item/integrated_circuit/component = assembly_components[component_id]
+
+			var/list/port_table = is_input ? component.inputs : component.outputs
+			if(!WITHIN_RANGE(port_id, port_table))
+				return
+
+			var/datum/integrated_io/port = port_table[port_id]
+			port.disconnect_all()
+			. = TRUE
+
+		if("detach_component")
+			var/component_id = text2num(params["component_id"])
+			if(!WITHIN_RANGE(component_id, assembly_components))
+				return
+			var/obj/item/integrated_circuit/component = assembly_components[component_id]
+			if(!component.removable)
+				return
+			try_remove_component(component, ui.user)
+			. = TRUE
+
+		if("set_component_coordinates")
+			var/component_id = text2num(params["component_id"])
+			if(!WITHIN_RANGE(component_id, assembly_components))
+				return
+			var/obj/item/integrated_circuit/component = assembly_components[component_id]
+			component.rel_x = clamp(text2num(params["rel_x"]), -COMPONENT_MAX_POS, COMPONENT_MAX_POS)
+			component.rel_y = clamp(text2num(params["rel_y"]), -COMPONENT_MAX_POS, COMPONENT_MAX_POS)
+			. = TRUE
+
+		if("set_component_input")
+			var/component_id = text2num(params["component_id"])
+			var/port_id = text2num(params["port_id"])
+			if(!WITHIN_RANGE(component_id, assembly_components))
+				return
+			var/obj/item/integrated_circuit/component = assembly_components[component_id]
+			if(!WITHIN_RANGE(port_id, component.inputs))
+				return
+			var/datum/integrated_io/port = component.inputs[port_id]
+
+			if(params["set_null"])
+				port.set_input(null)
+				return TRUE
+
+			if(params["marked_atom"])
+				// Упрощённая обработка: только для админов через marked_datum
+				var/client/user = usr.client
+				if(!check_rights_for(user, R_VAREDIT))
+					return TRUE
+				var/atom/marked_atom = user.holder?.marked_datum
+				if(!marked_atom)
+					return TRUE
+				port.set_input(marked_atom)
+				balloon_alert(usr, "updated [port.name]'s value to marked object.")
+				return TRUE
+
+			port.set_input(params["input"])
+			. = TRUE
+
+		if("get_component_value")
+			var/component_id = text2num(params["component_id"])
+			var/port_id = text2num(params["port_id"])
+			if(!WITHIN_RANGE(component_id, assembly_components))
+				return
+			var/obj/item/integrated_circuit/component = assembly_components[component_id]
+			if(!WITHIN_RANGE(port_id, component.outputs))
+				return
+
+			var/datum/integrated_io/output_port = component.outputs[port_id]
+			var/value = output_port.data
+			if(isatom(value))
+				value = "atom"
+			else if(isnull(value))
+				value = "null"
+			var/string_form = copytext("[value]", 1, PORT_MAX_STRING_DISPLAY)
+			if(length(string_form) >= PORT_MAX_STRING_DISPLAY-1)
+				string_form += "..."
+			balloon_alert(usr, "[output_port.name] value: [string_form]")
+			. = TRUE
+
+		if("set_display_name")
+			var/new_name = params["display_name"]
+			set_display_name(new_name)
+			. = TRUE
+
+		if("toggle_grid_mode")
+			grid_mode = !grid_mode
+			. = TRUE
+
+		if("set_examined_component")
+			var/component_id = text2num(params["component_id"])
+			if(!WITHIN_RANGE(component_id, assembly_components))
+				return
+			examined_component = WEAKREF(assembly_components[component_id])
+			examined_rel_x = text2num(params["x"])
+			examined_rel_y = text2num(params["y"])
+			. = TRUE
+
+		if("remove_examined_component")
+			examined_component = null
+			. = TRUE
+
+		if("save_circuit")
+			return attempt_save_to(usr.client)
+
+		// Блоки, связанные с переменными, временно отключены
+		/*
+		if("add_variable")
+			...
+		if("remove_variable")
+			...
+		if("add_setter_or_getter")
+			...
+		*/
+
+		if("move_screen")
+			screen_x = text2num(params["screen_x"])
+			screen_y = text2num(params["screen_y"])
+			. = TRUE
+
+		if("perform_action")
+			var/component_id = text2num(params["component_id"])
+			if(!WITHIN_RANGE(component_id, assembly_components))
+				return
+			var/obj/item/integrated_circuit/component = assembly_components[component_id]
+			component.ui_perform_action(ui.user, params["action_name"])
+			. = TRUE
+
+#undef WITHIN_RANGE
+
+/obj/item/electronic_assembly/proc/set_display_name(new_name)
+	if(new_name)
+		name = copytext_char(new_name, 1, 24)
 	else
-		HTML += "<span class='danger'>No power cell detected!</span>"
-	HTML += "</tr></thead>"
+		name = initial(name)
 
+/obj/item/electronic_assembly/proc/clear_setter_or_getter(datum/source)
+	SIGNAL_HANDLER
+	setter_and_getter_count--
 
-	//Getting the newest viewed circuit to compare with new circuit list
-	if(!circuit_pins || !istype(circuit_pins,/obj/item/integrated_circuit) || !(circuit_pins in assembly_components))
-		if(assembly_components.len > 0)
-			circuit_pins = assembly_components[1]
+/obj/item/electronic_assembly/proc/attempt_save_to(client/saver)
+	if(!check_rights_for(saver, R_VAREDIT))
+		return FALSE
+	var/temp_file = file("data/CircuitDownloadTempFile")
+	fdel(temp_file)
+	WRITE_FILE(temp_file, SScircuit.save_electronic_assembly(src))
+	DIRECT_OUTPUT(saver, ftp(temp_file, "[name || "circuit"].json"))
 
+/obj/item/electronic_assembly/GenerateTag()
+    tag = "assembly_[next_assembly_id++]"
 
-	HTML += "<tr><td width=200px><div class=scrollleft>Components:<br><nobr>"
-
-	var/builtin_components = ""
-	var/removables = ""
-	var/remove_num = 1
-
-	for(var/obj/item/integrated_circuit/circuit in assembly_components)
-		if(!circuit.removable)
-			if(circuit == circuit_pins)
-				builtin_components += "[circuit.displayed_name]<br>"
-			else
-				builtin_components += "<a href='?src=[REF(src)]'>[circuit.displayed_name]</a><br>"
-
-		// Non-inbuilt circuits come after inbuilt circuits
-		else
-			removables += "<a href='?src=[REF(src)];component=[REF(circuit)];change_pos=1' style='text-decoration:none;'>[remove_num].</a> | "
-			if(circuit == circuit_pins)
-				removables += "[circuit.displayed_name]<br>"
-			else
-				removables += "<a href='?src=[REF(src)];component=[REF(circuit)]'>[circuit.displayed_name]</a><br>"
-			remove_num++
-
-	// Put removable circuits (if any) in separate categories from non-removable
-	if(builtin_components)
-		HTML += "<hr> Built in:<br> [builtin_components] <hr> Removable: <br>"
-
-	HTML += removables
-
-	HTML += "</nobr></div></td><td valign='top'><div class=scrollright>"
-
-
-	//Getting the newest circuit's pin
-	if(!circuit_pins || !istype(circuit_pins,/obj/item/integrated_circuit))
-		if(assembly_components.len > 0)
-			circuit_pins = assembly_components[1]
-
-	if(circuit_pins)
-		HTML += "<div valign='middle'>[circuit_pins.displayed_name]<br>"
-
-		HTML += "<a href='?src=[REF(src)];component=[REF(circuit_pins)]'>Refresh</a> | \
-		<a href='?src=[REF(src)];component=[REF(circuit_pins)];rename_component=1'>Rename</a> | \
-		<a href='?src=[REF(src)];component=[REF(circuit_pins)];scan=1'>Copy Ref</a> | \
-		<a href='?src=[REF(src)];component=[REF(circuit_pins)];interact=1'>Interact</a>"
-		if(circuit_pins.removable)
-			HTML += " | <a href='?src=[REF(src)];component=[REF(circuit_pins)];remove=1'>Remove</a>"
-		HTML += "</div><br>"
-
-		var/table_edge_width = "30%"
-		var/table_middle_width = "40%"
-
-		HTML += "<table border='1' style='undefined;table-layout: fixed; position: absolute; left: 210; right: 2;'><colgroup>\
-			<col style='width: [table_edge_width]'>\
-			<col style='width: [table_middle_width]'>\
-			<col style='width: [table_edge_width]'>\
-			</colgroup>"
-
-		var/column_width = 3
-		var/row_height = max(circuit_pins.inputs.len, circuit_pins.outputs.len, 1)
-
-		for(var/i = 1 to row_height)
-			HTML += "<tr>"
-			for(var/j = 1 to column_width)
-				var/datum/integrated_io/io = null
-				var/words = ""
-				var/height = 1
-				switch(j)
-					if(1)
-						io = circuit_pins.get_pin_ref(IC_INPUT, i)
-						if(io)
-							words += "<b><a href='?src=[REF(circuit_pins)];act=wire;pin=[REF(io)]'>[io.display_pin_type()] [io.name]</a> \
-							<a href='?src=[REF(circuit_pins)];act=data;pin=[REF(io)]'>[io.display_data(io.data)]</a></b><br>"
-							if(io.linked.len)
-								words += "<ul>"
-								for(var/k in io.linked)
-									var/datum/integrated_io/linked = k
-									words += "<li><a href='?src=[REF(circuit_pins)];act=unwire;pin=[REF(io)];link=[REF(linked)]'>[linked]</a> \
-									@ <a href='?src=[REF(linked.holder)]'>[linked.holder.displayed_name]</a></li>"
-								words += "</ul>"
-
-							if(circuit_pins.outputs.len > circuit_pins.inputs.len)
-								height = 1
-					if(2)
-						if(i == 1)
-							words += "[circuit_pins.displayed_name]<br>[circuit_pins.name != circuit_pins.displayed_name ? "([circuit_pins.name])":""]<hr>[circuit_pins.desc]"
-							height = row_height
-						else
-							continue
-					if(3)
-						io = circuit_pins.get_pin_ref(IC_OUTPUT, i)
-						if(io)
-							words += "<b><a href='?src=[REF(circuit_pins)];act=wire;pin=[REF(io)]'>[io.display_pin_type()] [io.name]</a> \
-							<a href='?src=[REF(circuit_pins)];act=data;pin=[REF(io)]'>[io.display_data(io.data)]</a></b><br>"
-							if(io.linked.len)
-								words += "<ul>"
-								for(var/k in io.linked)
-									var/datum/integrated_io/linked = k
-									words += "<li><a href='?src=[REF(circuit_pins)];act=unwire;pin=[REF(io)];link=[REF(linked)]'>[linked]</a> \
-									@ <a href='?src=[REF(linked.holder)]'>[linked.holder.displayed_name]</a></li>"
-								words += "</ul>"
-
-							if(circuit_pins.inputs.len > circuit_pins.outputs.len)
-								height = 1
-				HTML += "<td align='center' rowspan='[height]'>[words]</td>"
-			HTML += "</tr>"
-
-		for(var/activator in circuit_pins.activators)
-			var/datum/integrated_io/io = activator
-			var/words = ""
-
-			words += "<b><a href='?src=[REF(circuit_pins)];act=wire;pin=[REF(io)]'>[io]</a> \
-				<a href='?src=[REF(circuit_pins)];act=data;pin=[REF(io)]'>[io.data?"\<PULSE OUT\>":"\<PULSE IN\>"]</a></b><br>"
-			if(io.linked.len)
-				words += "<ul>"
-				for(var/k in io.linked)
-					var/datum/integrated_io/linked = k
-					words += "<li><a href='?src=[REF(circuit_pins)];act=unwire;pin=[REF(io)];link=[REF(linked)]'>[linked]</a> \
-					@ <a href='?src=[REF(linked.holder)]'>[linked.holder.displayed_name]</a></li>"
-				words += "</ul>"
-
-			HTML += "<tr><td colspan='3' align='center'>[words]</td></tr>"
-
-		HTML += "<tr>\
-			<br><font color='FFFFFF' class=lowtext>Complexity: [circuit_pins.complexity]\
-			<br>Cooldown per use: [circuit_pins.cooldown_per_use/10] sec"
-		if(circuit_pins.ext_cooldown)
-			HTML += "<br>External manipulation cooldown: [circuit_pins.ext_cooldown/10] sec"
-		if(circuit_pins.power_draw_idle)
-			HTML += "<br>Power Draw: [circuit_pins.power_draw_idle] W (Idle)"
-		if(circuit_pins.power_draw_per_use)
-			HTML += "<br>Power Draw: [circuit_pins.power_draw_per_use] W (Active)" // Borgcode says that powercells' checked_use() takes joules as input.
-		HTML += "<br>[circuit_pins.extended_desc]</font></tr></table></div>"
-
-
-	HTML += "</div></td></tr></table></body></html>"
-
-	popup.set_content(HTML)
-	popup.open()
-
-/obj/item/electronic_assembly/Topic(href, href_list)
-	if(..())
-		return TRUE
-
-	if(href_list["ghostscan"])
-		if((isobserver(usr) && ckeys_allowed_to_scan[usr.ckey]) || IsAdminGhost(usr))
-			if(assembly_components.len)
-				var/saved = "On circuit printers with cloning enabled, you may use the code below to clone the circuit:<br><br><code>[SScircuit.save_electronic_assembly(src)]</code>"
-				usr << browse(saved, "window=circuit_scan;size=500x600;border=1;can_resize=1;can_close=1;can_minimize=1")
-			else
-				to_chat(usr, "<span class='warning'>The circuit is empty!</span>")
-		return
-
-	if(!check_interactivity(usr))
-		return
-
-	if(href_list["rename"])
-		rename(usr)
-
-	if(href_list["remove_cell"])
-		if(!battery)
-			to_chat(usr, "<span class='warning'>There's no power cell to remove from \the [src].</span>")
-		else
-			battery.forceMove(drop_location())
-			playsound(src, 'sound/items/Crowbar.ogg', 50, 1)
-			to_chat(usr, "<span class='notice'>You pull \the [battery] out of \the [src]'s power supplier.</span>")
-			battery = null
-			diag_hud_set_circuitstat() //update diagnostic hud
-
-	var/obj/item/integrated_circuit/component
-
-	if(href_list["component"])
-		component = locate(href_list["component"]) in assembly_components
-
-		if(!component)
-			return
-
-
-		if(href_list["scan"])
-			var/obj/held_item = usr.get_active_held_item()
-			if(istype(held_item, /obj/item/integrated_electronics/debugger))
-				var/obj/item/integrated_electronics/debugger/D = held_item
-				if(D.accepting_refs)
-					D.afterattack(component, usr, TRUE)
-				else
-					to_chat(usr, "<span class='warning'>The debugger's 'ref scanner' needs to be on.</span>")
-			else
-				to_chat(usr, "<span class='warning'>You need a debugger set to 'ref' mode to do that.</span>")
-
-		// Builtin components are not supposed to be removed or rearranged
-		if(!component.removable)
-			return
-
-		add_allowed_scanner(usr.ckey)
-
-		// Find the position of a first removable component
-		var/first_removable_pos = 0
-		for(var/i in assembly_components)
-			first_removable_pos++
-			var/obj/item/integrated_circuit/temp_component = i
-			if(temp_component.removable)
-				break
-
-		if(href_list["remove"])
-			if(try_remove_component(component, usr))
-				component = null
-
-		if(href_list["rename_component"])
-			component.rename_component(usr)
-			if(component.assembly)
-				component.assembly.add_allowed_scanner(usr.ckey)
-
-		if(href_list["interact"])
-			var/obj/item/I = usr.get_active_held_item()
-			if(istype(I))
-				I.melee_attack_chain(usr, component)
-			else
-				component.attack_self(usr)
-
-		// Adjust the position
-		if(href_list["change_pos"])
-			var/new_pos = max(input(usr,"Write the new number","New position") as num,1)
-
-			if(new_pos > assembly_components.len)
-				new_pos = assembly_components.len
-
-			if(new_pos < first_removable_pos)
-				new_pos = first_removable_pos
-
-			assembly_components.Remove(component)
-			assembly_components.Insert(new_pos, component)
-
-	interact(usr, component) // To refresh the UI.
+/obj/item/electronic_assembly/Bump(atom/AM)
+	collw = AM
+	.=..()
+	if((istype(collw, /obj/machinery/door/airlock) ||  istype(collw, /obj/machinery/door/window)) && (!isnull(access_card)))
+		var/obj/machinery/door/D = collw
+		if(D.check_access(access_card))
+			D.open()
 
 /obj/item/electronic_assembly/pickup(mob/living/user)
 	. = ..()
-	//update diagnostic hud when picked up, true is used to force the hud to be hidden
 	diag_hud_set_circuithealth(TRUE)
 	diag_hud_set_circuitcell(TRUE)
 	diag_hud_set_circuitstat(TRUE)
@@ -415,7 +468,6 @@
 
 /obj/item/electronic_assembly/dropped(mob/user)
 	. = ..()
-	//update diagnostic hud when dropped
 	diag_hud_set_circuithealth()
 	diag_hud_set_circuitcell()
 	diag_hud_set_circuitstat()
@@ -445,7 +497,7 @@
 	else
 		icon_state = initial(icon_state)
 	cut_overlays()
-	if(detail_color == COLOR_ASSEMBLY_BLACK) //Black colored overlay looks almost but not exactly like the base sprite, so just cut the overlay and avoid it looking kinda off.
+	if(detail_color == COLOR_ASSEMBLY_BLACK)
 		return
 	var/mutable_appearance/detail_overlay = mutable_appearance('icons/obj/assemblies/electronic_setups.dmi', "[icon_state]-color")
 	detail_overlay.color = detail_color
@@ -463,7 +515,6 @@
 		returnvalue += part.size
 	return(returnvalue)
 
-// Returns true if the circuit made it inside.
 /obj/item/electronic_assembly/proc/try_add_component(obj/item/integrated_circuit/IC, mob/user)
 	if(!opened)
 		to_chat(user, "<span class='warning'>\The [src]'s hatch is closed, you can't put anything inside.</span>")
@@ -499,23 +550,18 @@
 	add_component(IC)
 	return TRUE
 
-
-// Actually puts the circuit inside, doesn't perform any checks.
 /obj/item/electronic_assembly/proc/add_component(obj/item/integrated_circuit/component)
 	component.forceMove(get_object())
 	component.assembly = src
 	assembly_components |= component
 
-	//increment numbers for diagnostic hud
 	if(component.action_flags & IC_ACTION_COMBAT)
-		combat_circuits += 1;
+		combat_circuits += 1
 	if(component.action_flags & IC_ACTION_LONG_RANGE)
-		long_range_circuits += 1;
+		long_range_circuits += 1
 
-	//diagnostic hud update
 	diag_hud_set_circuitstat()
 	diag_hud_set_circuittracking()
-
 
 /obj/item/electronic_assembly/proc/try_remove_component(obj/item/integrated_circuit/IC, mob/user, silent)
 	if(!opened)
@@ -538,7 +584,6 @@
 
 	return TRUE
 
-// Actually removes the component, doesn't perform any checks.
 /obj/item/electronic_assembly/proc/remove_component(obj/item/integrated_circuit/component)
 	component.disconnect_all()
 	component.forceMove(drop_location())
@@ -546,23 +591,19 @@
 
 	assembly_components -= component
 
-	//decrement numbers for diagnostic hud
 	if(component.action_flags & IC_ACTION_COMBAT)
-		combat_circuits -= 1;
+		combat_circuits -= 1
 	if(component.action_flags & IC_ACTION_LONG_RANGE)
-		long_range_circuits -= 1;
+		long_range_circuits -= 1
 
-	//diagnostic hud update
 	diag_hud_set_circuitstat()
 	diag_hud_set_circuittracking()
-
 
 /obj/item/electronic_assembly/afterattack(atom/target, mob/user, proximity)
 	. = ..()
 	for(var/obj/item/integrated_circuit/input/S in assembly_components)
 		if(S.sense(target,user,proximity))
 			visible_message("<span class='notice'> [user] waves [src] around [target].</span>")
-
 
 /obj/item/electronic_assembly/screwdriver_act(mob/living/user, obj/item/I)
 	if(sealed)
@@ -591,29 +632,24 @@
 				to_chat(user,"<span class='notice'>You fix the dents and scratches of the assembly.</span>")
 				to_chat(user, "<span class='notice'>Integrity: [obj_integrity] / [max_integrity]</span>")
 				return TRUE
-
 			else
 				to_chat(user,"<span class='notice'>The assembly is already in impeccable condition.</span>")
 				return FALSE
-
 		if("seal")
 			if(!opened)
 				sealed = TRUE
 				if(I.use_tool(src, user, 50, volume=100, amount=3))
 					to_chat(user,"<span class='notice'>You seal the assembly, making it impossible to be opened.</span>")
 					return TRUE
-
 			else
 				to_chat(user,"<span class='notice'>You need to close the assembly first before sealing it indefinitely!</span>")
 				return FALSE
-
 		if("unseal")
 			to_chat(user,"<span class='notice'>You start unsealing the assembly carefully...</span>")
 			if(I.use_tool(src, user, 50, volume=250, amount=3))
 				for(var/obj/item/integrated_circuit/IC in assembly_components)
 					if(prob(50))
 						IC.disconnect_all()
-
 				to_chat(user,"<span class='notice'>You unsealed the assembly.</span>")
 				sealed = FALSE
 				return TRUE
@@ -640,7 +676,6 @@
 			for(var/obj/item/integrated_circuit/input/S in assembly_components)
 				S.attackby_react(I,user,user.a_intent)
 			return ..()
-
 	else if(istype(I, /obj/item/stock_parts/cell))
 		if(!opened)
 			to_chat(user, "<span class='warning'>[src]'s hatch is closed, so you can't access \the [src]'s power supplier.</span>")
@@ -654,33 +689,28 @@
 			return ..()
 		I.forceMove(src)
 		battery = I
-		diag_hud_set_circuitstat() //update diagnostic hud
+		diag_hud_set_circuitstat()
 		playsound(get_turf(src), 'sound/items/Deconstruct.ogg', 50, 1)
 		to_chat(user, "<span class='notice'>You slot the [I] inside \the [src]'s power supplier.</span>")
 		return TRUE
-
 	else if(istype(I, /obj/item/integrated_electronics/detailer))
 		var/obj/item/integrated_electronics/detailer/D = I
 		detail_color = D.detail_color
 		update_icon()
-
 	else
 		if(user.a_intent != INTENT_HELP)
 			return ..()
 		var/list/input_selection = list()
-		//Check all the components asking for an input
 		for(var/obj/item/integrated_circuit/input in assembly_components)
 			if((input.demands_object_input && opened) || (input.demands_object_input && input.can_input_object_when_closed))
 				var/i = 0
-				//Check if there is another component with the same name and append a number for identification
 				for(var/s in input_selection)
-					var/obj/item/integrated_circuit/s_circuit = input_selection[s] //The for-loop iterates the keys of the associative list.
+					var/obj/item/integrated_circuit/s_circuit = input_selection[s]
 					if(s_circuit.name == input.name && s_circuit.displayed_name == input.displayed_name && s_circuit != input)
 						i++
 				var/disp_name= "[input.displayed_name] \[[input]\]"
 				if(i)
 					disp_name += " ([i+1])"
-				//Associative lists prevent me from needing another list and using a Find proc
 				input_selection[disp_name] = input
 
 		var/obj/item/integrated_circuit/choice
@@ -699,7 +729,6 @@
 			S.attackby_react(I,user,user.a_intent)
 		return ..()
 
-
 /obj/item/electronic_assembly/attack_self(mob/user)
 	set waitfor = FALSE
 	if(!check_interactivity(user))
@@ -708,23 +737,19 @@
 		interact(user)
 
 	var/list/input_selection = list()
-	//Check all the components asking for an input
 	for(var/obj/item/integrated_circuit/input/input in assembly_components)
 		if(input.can_be_asked_input)
 			var/i = 0
-			//Check if there is another component with the same name and append a number for identification
 			for(var/s in input_selection)
-				var/obj/item/integrated_circuit/s_circuit = input_selection[s] //The for-loop iterates the keys of an associative list.
+				var/obj/item/integrated_circuit/s_circuit = input_selection[s]
 				if(s_circuit.name == input.name && s_circuit.displayed_name == input.displayed_name && s_circuit != input)
 					i++
 			var/disp_name= "[input.displayed_name] \[[input]\]"
 			if(i)
 				disp_name += " ([i+1])"
-			//Associative lists prevent me from needing another list and using a Find proc
 			input_selection[disp_name] = input
 
 	var/obj/item/integrated_circuit/input/choice
-
 
 	if(input_selection)
 		if(input_selection.len ==1)
@@ -747,13 +772,11 @@
 		var/atom/movable/AM = I
 		AM.emp_act(severity)
 
-// Returns true if power was successfully drawn.
 /obj/item/electronic_assembly/proc/draw_power(amount)
 	if(battery && battery.use(amount * GLOB.CELLRATE))
 		return TRUE
 	return FALSE
 
-// Ditto for giving.
 /obj/item/electronic_assembly/proc/give_power(amount)
 	if(battery && battery.give(amount * GLOB.CELLRATE))
 		return TRUE
@@ -764,7 +787,7 @@
 	for(var/I in assembly_components)
 		var/obj/item/integrated_circuit/IC = I
 		IC.ext_moved(oldLoc, dir)
-	if(light) //Update lighting objects (From light circuits).
+	if(light)
 		update_light()
 
 /obj/item/electronic_assembly/stop_pulling()
@@ -773,21 +796,13 @@
 		IC.stop_pulling()
 	..()
 
-
-// Returns the object that is supposed to be used in attack messages, location checks, etc.
-// Override in children for special behavior.
 /obj/item/electronic_assembly/proc/get_object()
 	return src
 
-// Returns the location to be used for dropping items.
-// Same as the regular drop_location(), but with checks being run on acting_object if necessary.
 /obj/item/integrated_circuit/drop_location()
 	var/atom/movable/acting_object = get_object()
-
-	// plz no infinite loops
 	if(acting_object == src)
 		return ..()
-
 	return acting_object.drop_location()
 
 /obj/item/electronic_assembly/attack_tk(mob/user)
