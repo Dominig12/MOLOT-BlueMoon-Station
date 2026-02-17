@@ -186,7 +186,7 @@
 	program_type = /datum/nanite_program/purging
 	category = list("Medical Nanites")
 
-/datum/design/nanites/purging
+/datum/design/nanites/purging_corruption
 	name = "Purge Corruption"
 	desc = "Nanites clean the circuits in the host's positronic brain from corrosion."
 	id = "purging_synth_nanites"
