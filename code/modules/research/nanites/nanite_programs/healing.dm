@@ -280,6 +280,11 @@
 	trigger_cooldown = 120
 	rogue_types = list(/datum/nanite_program/shocking)
 
+/datum/nanite_program/hard_reboot/check_conditions()
+	. = ..()
+	if(!. || !(host_mob.mob_biotypes & MOB_ROBOTIC))
+		return FALSE
+
 /datum/nanite_program/hard_reboot/on_trigger(comm_message)
 	host_mob.notify_ghost_cloning("Nanites is trying to reboot you! Re-enter your corpse if you want to be revived!")
 	addtimer(CALLBACK(src, PROC_REF(reboot)), 50)
