@@ -105,3 +105,36 @@
 	if(prob(0.6*severity))
 		to_chat(owner, "<span class='warning'>Your breathing suddenly collapses!</span>")
 		owner.losebreath += 8
+
+/obj/item/organ/cyberimp/chest/nanite_pump
+	name = "Nanite pump"
+	desc = "An implant attached to the heart that contains a set of nanomachines that synchronize with the cloud, creating a local control system."
+	icon = 'modular_bluemoon/icons/obj/surgery.dmi'
+	icon_state = "chem_implant_plus"
+	slot = ORGAN_SLOT_HEART_AID
+	var/cloud_id = 1
+
+/obj/item/organ/cyberimp/chest/nanite_pump/Insert(mob/living/carbon/organ_mob, special, drop_if_replaced)
+	. = ..()
+	if(SEND_SIGNAL(owner, COMSIG_HAS_NANITES))
+		SEND_SIGNAL(owner, COMSIG_NANITE_DELETE)
+
+	owner.AddComponent(/datum/component/nanites/permanent, 75, cloud_id)
+
+/obj/item/organ/cyberimp/chest/nanite_pump/Remove(special)
+	. = ..()
+	var/datum/component/nanites/permanent/inject_nanites = owner.GetComponent(/datum/component/nanites/permanent)
+	inject_nanites.can_be_deleted = TRUE
+	SEND_SIGNAL(owner, COMSIG_NANITE_DELETE)
+
+/obj/item/organ/cyberimp/chest/nanite_pump/on_life(seconds, times_fired)
+	SEND_SIGNAL(owner, COMSIG_NANITE_ADJUST_VOLUME, 2)
+
+/obj/item/organ/cyberimp/chest/nanite_pump/attackby(obj/item/I, mob/living/user, params)
+	. = ..()
+	if(istype(I, /obj/item/multitool))
+		var/new_cloud = input("Set the public nanite chamber's Cloud ID (1-100).", "Cloud ID", cloud_id) as num|null
+		if(!new_cloud || (loc != user))
+			to_chat(user, "<span class='warning'>You must hold the implant to change its Cloud ID!</span>")
+			return
+		cloud_id = clamp(round(new_cloud, 1), 1, 100)
