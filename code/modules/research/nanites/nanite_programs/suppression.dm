@@ -50,7 +50,7 @@
 	trigger_cooldown = 300
 	rogue_types = list(/datum/nanite_program/shocking, /datum/nanite_program/nerve_decay)
 
-/datum/nanite_program/triggered/stun/trigger(delayed)
+/datum/nanite_program/stun/trigger(delayed)
 	if(!..())
 		return
 	host_mob.DefaultCombatKnockdown(80)
