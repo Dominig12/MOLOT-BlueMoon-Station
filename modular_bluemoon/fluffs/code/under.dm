@@ -355,6 +355,20 @@
 
 	START_PROCESSING(SSfastprocess, src)
 
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/Destroy()
+
+    STOP_PROCESSING(SSfastprocess, src)
+
+	LAZYREMOVE(vis_contents, filter_on_user)
+	LAZYREMOVE(vis_contents, particle_effect_holder)
+
+	qdel(echo)
+	qdel(filter_on_user)
+	qdel(particle_effect_holder)
+
+	return ..()
+
+
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/equipped(mob/user, slot)
 	. = ..()
 
