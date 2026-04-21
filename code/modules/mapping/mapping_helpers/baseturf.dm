@@ -85,3 +85,11 @@
 /obj/effect/baseturf_helper/black_mesa
 	name = "mesa baseturf editor"
 	baseturf = /turf/open/indestructible/ironsand
+
+/obj/effect/baseturf_helper/bluespace
+	name = "bluespace baseturf editor"
+	baseturf = /turf/open/indestructible/bluespace
+
+/obj/effect/baseturf_helper/bluespace/unsimulated
+	name = "bluespace-unsimulated baseturf editor"
+	baseturf = /turf/open/indestructible/bluespace/unsimulated
