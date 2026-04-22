@@ -357,7 +357,7 @@
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/Destroy()
 
-    STOP_PROCESSING(SSfastprocess, src)
+	STOP_PROCESSING(SSfastprocess, src)
 
 	LAZYREMOVE(vis_contents, filter_on_user)
 	LAZYREMOVE(vis_contents, particle_effect_holder)
