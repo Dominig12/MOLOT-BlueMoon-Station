@@ -356,6 +356,7 @@
 	START_PROCESSING(SSfastprocess, src)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/Destroy()
+	. = ..()
 
 	STOP_PROCESSING(SSfastprocess, src)
 
@@ -365,8 +366,6 @@
 	QDEL_NULL(echo)
 	QDEL_NULL(filter_on_user)
 	QDEL_NULL(particle_effect_holder)
-
-	return ..()
 
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/equipped(mob/user, slot)
