@@ -330,10 +330,12 @@
 	repairable_by = /obj/item/stack/sheet/metal
 	species_restricted = list("I.P.C.", "Synthetic Lizardperson", "Synthetic", "Military Synth", "Synthetic Anthropomorph")
 	unique_reskin = list(
-		"Roselia" = list("icon_state" = "InlaidDataDress_default", "skin" = "default"),
+		"Roselia" = list("icon_state" = "InlaidDataDress_default", "skin" = "default", "active_echo" = TRUE),
 		"Rose-1" = list("icon_state" = "InlaidDataDress_battle", "skin" = "battle", "active_echo" = FALSE),
 		"Rose-4" = list("icon_state" = "InlaidDataDress_lust", "skin" = "lust", "can_adjust" = FALSE, "body_parts_covered" = NONE, "active_echo" = FALSE),
 	)
+	max_integrity = 380
+	limb_integrity = 60
 	var/equipped_slot = FALSE
 	var/obj/effect/distortion_effect/filter_on_user
 	var/obj/effect/dress_particle_holder/particle_effect_holder
@@ -354,6 +356,7 @@
 	LAZYADD(vis_contents, particle_effect_holder)
 
 	START_PROCESSING(SSfastprocess, src)
+	ADD_TRAIT(src, TRAIT_NODROP, CLOTHING_TRAIT)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/Destroy()
 	. = ..()
@@ -367,6 +370,13 @@
 	QDEL_NULL(filter_on_user)
 	QDEL_NULL(particle_effect_holder)
 
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/on_mob_death(mob/living/L, gibbed)
+	. = ..()
+	if(gibbed)
+		qdel(src)
+		return TRUE
+
+	toggle_open_body(TRUE)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/equipped(mob/user, slot)
 	. = ..()
@@ -380,6 +390,8 @@
 	LAZYADD(user.vis_contents, echo)
 
 	echo.render_source = user.render_target
+
+	user.maptext = "TEST"
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/dropped(mob/user)
 
@@ -395,14 +407,7 @@
 	. = ..()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/toggle_jumpsuit_adjust()
-	if(!body_parts_covered)
-		icon_state = "InlaidDataDress_[skin]"
-		item_state = "InlaidDataDress_[skin]"
-		body_parts_covered = CHEST|GROIN|LEGS|ARMS
-	else
-		icon_state = "InlaidDataDress_[skin]_open"
-		item_state = "InlaidDataDress_[skin]_open"
-		body_parts_covered = NONE
+	toggle_open_body(body_parts_covered)
 	return TRUE
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/add_atom_colour(coloration, colour_priority)
@@ -424,6 +429,17 @@
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/process(delta_time)
 	if(active_echo && equipped_slot)
 		echo_animation()
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/toggle_open_body(open)
+	if(!open)
+		icon_state = "InlaidDataDress_[skin]_open"
+		item_state = "InlaidDataDress_[skin]_open"
+		body_parts_covered = NONE
+	else
+		icon_state = "InlaidDataDress_[skin]"
+		item_state = "InlaidDataDress_[skin]"
+		body_parts_covered = CHEST|GROIN|LEGS|ARMS
+	return TRUE
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/echo_animation()
 	var/matrix/m = matrix()
