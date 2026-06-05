@@ -391,8 +391,6 @@
 
 	echo.render_source = user.render_target
 
-	user.maptext = "TEST"
-
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/dropped(mob/user)
 
 	if(!equipped_slot)
