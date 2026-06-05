@@ -433,7 +433,7 @@
 		echo_animation()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/toggle_open_body(open)
-	if(can_adjust)
+	if(!can_adjust)
 		return TRUE
 	if(open)
 		icon_state = "InlaidDataDress_[skin]_open"
