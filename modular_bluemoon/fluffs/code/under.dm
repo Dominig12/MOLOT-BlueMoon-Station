@@ -377,6 +377,10 @@
 		return TRUE
 
 	toggle_open_body(TRUE)
+	var/mob/living/carbon/human/H = L
+	if(istype(H))
+		H.update_inv_w_uniform()
+		H.update_body(TRUE)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/equipped(mob/user, slot)
 	. = ..()
