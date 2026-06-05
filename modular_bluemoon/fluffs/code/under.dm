@@ -431,7 +431,7 @@
 		echo_animation()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/toggle_open_body(open)
-	if(!open)
+	if(open)
 		icon_state = "InlaidDataDress_[skin]_open"
 		item_state = "InlaidDataDress_[skin]_open"
 		body_parts_covered = NONE
