@@ -358,7 +358,7 @@
 
 	filter_on_user = new(src)
 	particle_effect_holder = new(src)
-	logs_view = ScreenText(null, "Initialize", "CENTER-5,CENTER-4", 450, 250)
+	logs_view = ScreenText(null, "Initialize", "CENTER-6,CENTER-4", 450, 250)
 	net  = LoadComponent(/datum/component/ntnet_interface)
 
 	LAZYADD(vis_contents, filter_on_user)
