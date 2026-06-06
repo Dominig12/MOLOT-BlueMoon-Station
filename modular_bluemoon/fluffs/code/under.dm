@@ -348,6 +348,7 @@
 	var/max_logs = 3
 	var/atom/movable/screen/text/logs_view
 	var/datum/component/ntnet_interface/net
+	var/char_reveal_speed = 10
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/New()
 	. = ..()
@@ -357,7 +358,7 @@
 
 	filter_on_user = new(src)
 	particle_effect_holder = new(src)
-	logs_view = ScreenText(null, "Initialize", "CENTER-3,CENTER+3", 450, 250)
+	logs_view = ScreenText(null, "Initialize", "CENTER-5,CENTER-4", 450, 250)
 	net  = LoadComponent(/datum/component/ntnet_interface)
 
 	LAZYADD(vis_contents, filter_on_user)
@@ -461,21 +462,66 @@
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/write_log(text, key="LOG", color="#4ad1fa86", size=12)
 	LAZYINITLIST(logs)
 
+	var/list/log_categories = list(
+		"SYSTEM" = "#4ad1fa86",
+		"WARNING" = "#f59e0bff",
+		"ERROR" = "#ef4444ff",
+		"INFO" = "#10b981ff",
+		"DATA" = "#8b5cf6ff",
+		"SYNC" = "#06b6d4ff",
+		"HEALTH" = "#f472b6ff",
+		"MODULE" = "#a78bffff"
+	)
+
+	if(log_categories[key])
+		color = log_categories[key]
+
+	var/plain_text = "\[[key]\] - [text]"
+
 	if(logs.len >= max_logs)
 		logs.Splice(1, 2)
 
-	LAZYADD(logs, {"<span style='font-family: \"TinyUnicode\"; color: [color]; font-size: [size]pt; line-height: 0.75; -dm-text-outline: 1px black'>\[[key]\] - [text]</span>"})
+	var/datum/log_entry/log = new()
+
+	log.plain = plain_text
+	log.color = color
+	log.char_index = 1
+	log.size = size
+
+	logs += log
+
 	return TRUE
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/compile_log()
 
-	var/write = ""
-	for(var/key in data)
-		write += "[MAPTEXT_TINY_UNICODE("\[ [key] \] - [data[key]]")]<br>"
-	for(var/log in logs)
-		write += "[log]<br>"
+	var/write = {"<span style='font-family: \"TinyUnicode\"; font-size: 12pt; color: #4ad1fa86; line-height: 0.8; -dm-text-outline: 1px black;'>── SYSTEM MODULE ──</span><br>"}
+	write += {"<span style='font-family: \"TinyUnicode\"; font-size: 12pt; color: #6b7280; line-height: 0.8;-dm-text-outline: 1px black;'>─────────────────────────</span><br>"}
+
+	if(logs.len > 0)
+		write += {"<span style='font-family: \"TinyUnicode\"; font-size: 12pt; color: #6b7280; line-height: 0.8;-dm-text-outline: 1px black;'>├─ LOG STREAM</span><br>"}
+		for(var/datum/log_entry/log_entry in logs)
+			write += "└ [log_entry.get_line()]<br>"
+
+	if(data.len > 0)
+		write += {"<span style='font-family: \"TinyUnicode\"; font-size: 12pt; color: #6b7280; line-height: 0.8;-dm-text-outline: 1px black;'>├─ DATA</span><br>"}
+		for(var/key in data)
+			write += "[MAPTEXT_TINY_UNICODE("└ [key]: [data[key]]")]<br>"
 
 	logs_view.maptext = write
+
+/datum/log_entry
+	var/plain
+	var/color
+	var/char_index
+	var/size
+
+/datum/log_entry/proc/get_line()
+	if(char_index < length(plain))
+		char_index = min(char_index + char_reveal_speed, length(plain))
+
+	var/revealed_text = copytext(plain, 1, char_index)
+
+	return {"<span style='font-family: \"TinyUnicode\"; color: [color]; font-size: [size]pt; line-height: 0.8;-dm-text-outline: 1px black;'>[revealed_text]</span>"}
 
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/toggle_open_body(open)
@@ -513,13 +559,14 @@
 	var/tox_loss = user.getToxLoss()
 	var/fire_loss = user.getFireLoss()
 	var/brute_loss = user.getBruteLoss()
-	var/mob_status = (user.stat == DEAD ? "<span class='alert'><b>DESTROIED</b></span>" : "<b>[round(user.health/user.maxHealth,0.01)*100] %</b>")
+	var/mob_status = (user.stat == DEAD ? "<span class='alert'><b>DESTROYED</b></span>" : "<b>[round(user.health/user.maxHealth,0.01)*100]</b>")
 
 	write_data("BRUTE", "[brute_loss]")
 	write_data("CORROSION", "[tox_loss]")
 	write_data("BURN", "[fire_loss]")
 	write_data("CONNECTION", "[oxy_loss]")
 	write_data("STATUS", "[mob_status]")
+	write_log("STATUS BODY UPDATED", "INFO")
 
 /obj/effect/distortion_effect
 	icon = 'modular_bluemoon/fluffs/icons/effects/32x32.dmi'
