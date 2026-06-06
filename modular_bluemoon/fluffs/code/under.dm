@@ -336,12 +336,18 @@
 	)
 	max_integrity = 380
 	limb_integrity = 60
+	has_sensor = NO_SENSORS
 	var/equipped_slot = FALSE
 	var/obj/effect/distortion_effect/filter_on_user
 	var/obj/effect/dress_particle_holder/particle_effect_holder
 	var/obj/echo
 	var/active_echo = TRUE
 	var/skin = "default"
+	var/list/logs = list()
+	var/list/data = list()
+	var/max_logs = 3
+	var/atom/movable/screen/text/logs_view
+	var/datum/component/ntnet_interface/net
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/New()
 	. = ..()
@@ -351,12 +357,15 @@
 
 	filter_on_user = new(src)
 	particle_effect_holder = new(src)
+	logs_view = ScreenText(null, "Initialize", "CENTER-3,CENTER+3", 450, 250)
+	net  = LoadComponent(/datum/component/ntnet_interface)
 
 	LAZYADD(vis_contents, filter_on_user)
 	LAZYADD(vis_contents, particle_effect_holder)
 
 	START_PROCESSING(SSfastprocess, src)
 	ADD_TRAIT(src, TRAIT_NODROP, CLOTHING_TRAIT)
+
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/Destroy()
 	. = ..()
@@ -369,6 +378,7 @@
 	QDEL_NULL(echo)
 	QDEL_NULL(filter_on_user)
 	QDEL_NULL(particle_effect_holder)
+	QDEL_NULL(logs_view)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/on_mob_death(mob/living/L, gibbed)
 	. = ..()
@@ -394,6 +404,8 @@
 	LAZYADD(user.vis_contents, echo)
 
 	echo.render_source = user.render_target
+	user.client.screen += logs_view
+	RegisterSignal(user, COMSIG_CARBON_UPDATEHEALTH, PROC_REF(host_update_health))
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/dropped(mob/user)
 
@@ -406,6 +418,7 @@
 	LAZYREMOVE(user.vis_contents, echo)
 
 	echo.render_source = null
+	user.client.screen -= logs_view
 	. = ..()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/toggle_jumpsuit_adjust()
@@ -429,11 +442,44 @@
 		particle_effect_holder.remove_atom_colour(coloration, colour_priority)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/process(delta_time)
-	if(active_echo && equipped_slot)
+	if(!equipped_slot)
+		return
+
+	compile_log()
+
+	distortion_transform()
+
+	if(active_echo)
 		echo_animation()
 
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/write_data(key, value)
+	LAZYINITLIST(data)
+
+	data[key] = value
+	return TRUE
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/write_log(text, key="LOG", color="#4ad1fa86", size=12)
+	LAZYINITLIST(logs)
+
+	if(logs.len >= max_logs)
+		logs.Splice(1, 2)
+
+	LAZYADD(logs, {"<span style='font-family: \"TinyUnicode\"; color: [color]; font-size: [size]pt; line-height: 0.75; -dm-text-outline: 1px black'>\[[key]\] - [text]</span>"})
+	return TRUE
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/compile_log()
+
+	var/write = ""
+	for(var/key in data)
+		write += "[MAPTEXT_TINY_UNICODE("\[ [key] \] - [data[key]]")]<br>"
+	for(var/log in logs)
+		write += "[log]<br>"
+
+	logs_view.maptext = write
+
+
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/toggle_open_body(open)
-	if(can_adjust)
+	if(!can_adjust)
 		return TRUE
 	if(open)
 		icon_state = "InlaidDataDress_[skin]_open"
@@ -451,6 +497,29 @@
 
 	animate(echo, transform = m, alpha = 48, time = 2, loop=0, flags=ANIMATION_END_NOW)
 	animate(transform = m.Invert(), alpha = 0, time = 2)
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/distortion_transform()
+	var/matrix/m = matrix()
+	m.Turn(rand(1, 360))
+	var/x = rand(1,250)/100
+	var/y = rand(1,250)/100
+	m.Scale(x, y)
+	m.Translate(rand(-10, 10), rand(-10,10))
+
+	filter_on_user.transform = m
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/host_update_health(mob/living/carbon/user)
+	var/oxy_loss = user.getOxyLoss()
+	var/tox_loss = user.getToxLoss()
+	var/fire_loss = user.getFireLoss()
+	var/brute_loss = user.getBruteLoss()
+	var/mob_status = (user.stat == DEAD ? "<span class='alert'><b>DESTROIED</b></span>" : "<b>[round(user.health/user.maxHealth,0.01)*100] %</b>")
+
+	write_data("BRUTE", "[brute_loss]")
+	write_data("CORROSION", "[tox_loss]")
+	write_data("BURN", "[fire_loss]")
+	write_data("CONNECTION", "[oxy_loss]")
+	write_data("STATUS", "[mob_status]")
 
 /obj/effect/distortion_effect
 	icon = 'modular_bluemoon/fluffs/icons/effects/32x32.dmi'
