@@ -367,6 +367,8 @@
 	START_PROCESSING(SSfastprocess, src)
 	ADD_TRAIT(src, TRAIT_NODROP, CLOTHING_TRAIT)
 
+	write_log("MODULE INITIALIZED - Inlaid Data Dress v1.0", "SYSTEM")
+	write_data("NTNET_STATUS", "CONNECTED")
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/Destroy()
 	. = ..()
@@ -384,8 +386,14 @@
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/on_mob_death(mob/living/L, gibbed)
 	. = ..()
 	if(gibbed)
+		write_log("HOST GIBBED - Molecular fragmentation detected", "HEALTH")
+		write_data("HOST_STATE", "GIBBED")
+		write_log("Dress will self-destruct with host", "WARNING")
 		qdel(src)
 		return TRUE
+
+	write_log("HOST DEAD signals terminated", "HEALTH")
+	write_data("HOST_STATE", "DECEASED")
 
 	toggle_open_body(TRUE)
 	var/mob/living/carbon/human/H = L
@@ -408,6 +416,13 @@
 	user.client.screen += logs_view
 	if(HAS_TRAIT(user, TRAIT_SELF_AWARE))
 		RegisterSignal(user, COMSIG_CARBON_UPDATEHEALTH, PROC_REF(host_update_health))
+		write_log("Self-Aware host detected - registering signal monitor", "SYNC")
+		write_data("HOST_TYPE", "SELF_AWARE")
+	else
+		write_log("Standard host detected - monitor inactive", "INFO")
+		write_data("HOST_TYPE", "STANDARD")
+
+	write_data("SYNC_STATUS", "ACTIVE")
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/dropped(mob/user)
 
@@ -479,7 +494,20 @@
 		"DATA" = "#8b5cf6ff",
 		"SYNC" = "#06b6d4ff",
 		"HEALTH" = "#f472b6ff",
-		"MODULE" = "#a78bffff"
+		"MODULE" = "#a78bffff",
+		"ALERT" = "#ff0000ff"
+	)
+
+	var/list/log_speed = list(
+		"SYSTEM" = 1,
+		"WARNING" = 5,
+		"ERROR" = 15,
+		"INFO" = 5,
+		"DATA" = 5,
+		"SYNC" = 1,
+		"HEALTH" = 10,
+		"MODULE" = 5,
+		"ALERT" = 30
 	)
 
 	if(log_categories[key])
@@ -498,7 +526,30 @@
 	log.char_speed = char_reveal_speed
 	log.size = size
 
+	if(log_speed[key])
+		log.char_speed = log_speed[key]
+
 	logs += log
+
+	return TRUE
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/check_integrity()
+	if(!istype(src))
+		return FALSE
+
+	var/integrity_pct = round(max_integrity ? (limb_integrity / max_integrity) * 100 : 0, 1)
+
+	write_data("CURRENT_INTEGRITY", "[limb_integrity]/[max_integrity]")
+	write_data("INTEGRITY_PERCENT", "[integrity_pct]%")
+
+	if(integrity_pct <= 10)
+		write_log("CRITICAL: Dress integrity at [integrity_pct]% - imminent module failure", "ERROR")
+	else if(integrity_pct <= 25)
+		write_log("WARNING: Dress integrity low - [integrity_pct]%", "WARNING")
+	else if(integrity_pct <= 50)
+		write_log("Dress integrity at [integrity_pct]% - structural wear detected", "INFO")
+	else
+		write_log("Integrity check passed - [integrity_pct]% structural integrity", "INFO")
 
 	return TRUE
 
@@ -542,10 +593,14 @@
 		icon_state = "InlaidDataDress_[skin]_open"
 		item_state = "InlaidDataDress_[skin]_open"
 		body_parts_covered = NONE
+		write_log("Body coverage removed - dress opened", "MODULE")
+		write_data("COVERAGE", "OPEN")
 	else
 		icon_state = "InlaidDataDress_[skin]"
 		item_state = "InlaidDataDress_[skin]"
 		body_parts_covered = CHEST|GROIN|LEGS|ARMS
+		write_log("Full body coverage restored - dress closed", "MODULE")
+		write_data("COVERAGE", "CLOSED")
 	return TRUE
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/echo_animation()
@@ -577,7 +632,21 @@
 	write_data("BURN", "[fire_loss]")
 	write_data("CONNECTION", "[oxy_loss]")
 	write_data("STATUS", "[mob_status]")
-	write_log("STATUS BODY UPDATED", "INFO")
+
+	var/total_damage = brute_loss + tox_loss + fire_loss + oxy_loss
+	var/critical_threshold = user.maxHealth * 0.25
+
+	if(user.stat == DEAD)
+		write_log("CRITICAL: Host signals TERMINATED", "ERROR")
+	else if(total_damage > critical_threshold)
+		write_log("WARNING: Host in CRITICAL condition", "ALERT")
+	else if(user.health < user.maxHealth * 0.5)
+		write_log("Host health at [round(user.health/user.maxHealth,0.01)*100]% - below 50% threshold", "ALERT")
+	else
+		write_log("STATUS BODY UPDATED", "INFO")
+
+	write_data("TOTAL_DAMAGE", "[round(total_damage)]")
+	write_data("DAMAGE_PERCENTAGE", "[round(total_damage/user.maxHealth,0.01)*100]")
 
 /obj/effect/distortion_effect
 	icon = 'modular_bluemoon/fluffs/icons/effects/32x32.dmi'
