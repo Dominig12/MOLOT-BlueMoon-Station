@@ -499,14 +499,14 @@
 	)
 
 	var/list/log_speed = list(
-		"SYSTEM" = 1,
-		"WARNING" = 5,
-		"ERROR" = 15,
-		"INFO" = 5,
-		"DATA" = 5,
-		"SYNC" = 1,
-		"HEALTH" = 10,
-		"MODULE" = 5,
+		"SYSTEM" = 15,
+		"WARNING" = 15,
+		"ERROR" = 30,
+		"INFO" = 15,
+		"DATA" = 15,
+		"SYNC" = 15,
+		"HEALTH" = 30,
+		"MODULE" = 15,
 		"ALERT" = 30
 	)
 
@@ -579,7 +579,7 @@
 
 /datum/log_entry/proc/get_line()
 	if(char_index < length(plain))
-		char_index = min(char_index + char_speed, length(plain))
+		char_index = min(char_index + char_speed, length(plain)+1)
 
 	var/revealed_text = copytext(plain, 1, char_index)
 
@@ -613,8 +613,8 @@
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/distortion_transform()
 	var/matrix/m = matrix()
 	m.Turn(rand(1, 360))
-	var/x = rand(1,250)/100
-	var/y = rand(1,250)/100
+	var/x = rand(1,200)/100
+	var/y = rand(1,200)/100
 	m.Scale(x, y)
 	m.Translate(rand(-10, 10), rand(-10,10))
 
@@ -644,9 +644,6 @@
 		write_log("Host health at [round(user.health/user.maxHealth,0.01)*100]% - below 50% threshold", "ALERT")
 	else
 		write_log("STATUS BODY UPDATED", "INFO")
-
-	write_data("TOTAL_DAMAGE", "[round(total_damage)]")
-	write_data("DAMAGE_PERCENTAGE", "[round(total_damage/user.maxHealth,0.01)*100]")
 
 /obj/effect/distortion_effect
 	icon = 'modular_bluemoon/fluffs/icons/effects/32x32.dmi'
