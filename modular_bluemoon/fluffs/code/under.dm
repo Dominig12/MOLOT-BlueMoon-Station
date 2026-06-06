@@ -406,7 +406,8 @@
 
 	echo.render_source = user.render_target
 	user.client.screen += logs_view
-	RegisterSignal(user, COMSIG_CARBON_UPDATEHEALTH, PROC_REF(host_update_health))
+	if(HAS_TRAIT(user, TRAIT_SELF_AWARE))
+		RegisterSignal(user, COMSIG_CARBON_UPDATEHEALTH, PROC_REF(host_update_health))
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/dropped(mob/user)
 
@@ -420,6 +421,8 @@
 
 	echo.render_source = null
 	user.client.screen -= logs_view
+	if(HAS_TRAIT(user, TRAIT_SELF_AWARE))
+		UnregisterSignal(user, COMSIG_CARBON_UPDATEHEALTH)
 	. = ..()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/toggle_jumpsuit_adjust()
@@ -452,6 +455,12 @@
 
 	if(active_echo)
 		echo_animation()
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/ntnet_receive(datum/netdata/packet)
+	write_data("LAST NTNET DATA", "[packet.data["data"]]")
+	write_data("LAST NTNET SEC DATA", "[packet.data["data_secondary"]]")
+	write_data("LAST NTNET SENDER", "[packet.sender_id]")
+	write_log("NTNet packet received: [packet.data["data"]], [packet.data["data_secondary"]], [packet.sender_id]", "DATA")
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/write_data(key, value)
 	LAZYINITLIST(data)
@@ -486,6 +495,7 @@
 	log.plain = plain_text
 	log.color = color
 	log.char_index = 1
+	log.char_speed = char_reveal_speed
 	log.size = size
 
 	logs += log
@@ -513,11 +523,12 @@
 	var/plain
 	var/color
 	var/char_index
+	var/char_speed
 	var/size
 
 /datum/log_entry/proc/get_line()
 	if(char_index < length(plain))
-		char_index = min(char_index + char_reveal_speed, length(plain))
+		char_index = min(char_index + char_speed, length(plain))
 
 	var/revealed_text = copytext(plain, 1, char_index)
 
