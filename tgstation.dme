@@ -744,6 +744,7 @@
 #include "code\datums\components\mood.dm"
 #include "code\datums\components\multiple_lives.dm"
 #include "code\datums\components\nanites.dm"
+#include "code\datums\components\neural_interface.dm"
 #include "code\datums\components\ntnet_interface.dm"
 #include "code\datums\components\omen.dm"
 #include "code\datums\components\orbiter.dm"
