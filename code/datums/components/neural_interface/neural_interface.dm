@@ -43,17 +43,23 @@
 // Image Holder - Highlight objects
 // ---------------------------------------------------------------------------
 /datum/image_holder_data
+	var/key
 	var/image/overlay
 	var/decay_duration
 	var/expire_time
 	var/screen_text
 
-/datum/image_holder_data/New(image/overlay_target, text_target = "", duration=5 SECOND)
+/datum/image_holder_data/New(key_target, image/overlay_target, text_target = "", duration=5 SECOND)
+	key = key_target
 	decay_duration = duration
 	expiry_time = world.time + decay_duration
 	overlay = overlay_target
 	screen_text = ScreenText(overlay, text_target, "CENTER, CENTER-1")
 	return ..()
+
+/datum/image_holder_data/Destroy()
+	qdel(screen_text)
+	qdel(overlay)
 
 // ---------------------------------------------------------------------------
 // Utility Procs
