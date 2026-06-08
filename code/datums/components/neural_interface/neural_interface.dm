@@ -33,12 +33,31 @@
 	var/expiry_time // world.time when entry expires
 	var/priority = 0 // higher priority = less likely to be removed when at capacity
 
-/datum/neural_data_entry/New()
-	decay_duration = 30 SECONDS
+/datum/neural_data_entry/New(duration=30 SECOND)
+	decay_duration = duration
 	expiry_time = world.time + decay_duration
 	return ..()
 
 
+// ---------------------------------------------------------------------------
+// Image Holder - Highlight objects
+// ---------------------------------------------------------------------------
+/datum/image_holder_data
+	var/image/overlay
+	var/decay_duration
+	var/expire_time
+	var/screen_text
+
+/datum/image_holder_data/New(image/overlay_target, text_target = "", duration=5 SECOND)
+	decay_duration = duration
+	expiry_time = world.time + decay_duration
+	overlay = overlay_target
+	screen_text = ScreenText(overlay, text_target, "CENTER, CENTER-1")
+	return ..()
+
+// ---------------------------------------------------------------------------
+// Utility Procs
+// ---------------------------------------------------------------------------
 proc/string_repeat(string, count)
 	var/result = ""
 	for(var/i in range(1, count))
@@ -61,8 +80,12 @@ proc/string_repeat(string, count)
 	var/max_logs = 3
 
 	// Data entries - list of datum/neural_data_entry with expiration
-	var/list/data_entries = list()
+	var/list/datum/neural_data_entry/data_entries = list()
 	var/max_data_entries = 10
+
+	// Data image entries - list of datum/image_holder_data with expiration
+	var/list/datum/image_holder_data/image_data_entries = list()
+	var/max_image_data_entries = 10
 
 	// Text animation settings
 	var/char_reveal_speed = 10
