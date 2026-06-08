@@ -451,7 +451,7 @@ proc/string_repeat(string, count)
 	if(L != host_mob)
 		return
 
-	warning_log("Pre-death state [gibbed == TRUE ? "(gibbed)" : ""]")
+	warn_log("Pre-death state [gibbed == TRUE ? "(gibbed)" : ""]")
 	write_data("PREDEATH_STATE", "TRUE")
 
 /datum/component/neural_interface/proc/on_living_revive(mob/living/L, full_heal, admin_revive)
@@ -470,7 +470,7 @@ proc/string_repeat(string, count)
 	if(M != host_mob)
 		return
 
-	warning_log("Host ghostized [can_reenter == TRUE ? "(can re-enter)" : ""]")
+	warn_log("Host ghostized [can_reenter == TRUE ? "(can re-enter)" : ""]")
 	write_data("GHOST_STATE", "TRUE")
 
 // ---------------------------------------------------------------------------
@@ -488,7 +488,7 @@ proc/string_repeat(string, count)
 	if(L != host_mob)
 		return
 
-	warning_log("Minor shock received")
+	warn_log("Minor shock received")
 	write_data("MINOR_SHOCK", "TRUE")
 
 // ---------------------------------------------------------------------------
@@ -511,7 +511,7 @@ proc/string_repeat(string, count)
 	if(damage > 30)
 		write_log("Significant damage applied!", "ALERT")
 	else if(damage > 15)
-		warning_log("Moderate damage applied")
+		warn_log("Moderate damage applied")
 
 // ---------------------------------------------------------------------------
 // Client Reconnect - Re-attach display
