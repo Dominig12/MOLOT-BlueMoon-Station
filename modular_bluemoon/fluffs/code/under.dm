@@ -378,12 +378,12 @@
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/on_mob_death(mob/living/L, gibbed)
 	. = ..()
 	if(gibbed)
-		neural_interface.write_log("HOST GIBBED - Molecular fragmentation detected", "HEALTH")
-		neural_interface.write_log("Dress will self-destruct with host", "WARNING")
+		neural_interface.write_data("HOST_STATUS", "HOST GIBBED", 10 SECONDS)
+		neural_interface.write_data("DESTROY_DRESS", "TRUE", 10 SECONDS)
 		qdel(src)
 		return TRUE
 
-	neural_interface.write_log("HOST DEAD signals terminated", "HEALTH")
+	neural_interface.write_data("HOST_STATUS", "HOST DEAD", 10 SECONDS)
 
 	toggle_open_body(TRUE)
 	var/mob/living/carbon/human/H = L
@@ -406,14 +406,13 @@
 	neural_interface = user.LoadComponent(/datum/component/neural_interface)
 
 	if(HAS_TRAIT(user, TRAIT_SELF_AWARE))
-		RegisterSignal(user, COMSIG_CARBON_UPDATEHEALTH, PROC_REF(host_update_health))
-		neural_interface.write_log("Self-Aware host detected - registering signal monitor", "SYNC")
-		neural_interface.write_data("HOST_TYPE", "SELF_AWARE")
+		neural_interface.write_data("HOST_TYPE", "SELF_AWARE", 5 SECONDS)
+		neural_interface.write_log("Self-Aware host detected - auto monitor active", "SYNC")
 	else
-		neural_interface.write_log("Standard host detected - monitor inactive", "INFO")
-		neural_interface.write_data("HOST_TYPE", "STANDARD")
+		neural_interface.write_data("HOST_TYPE", "STANDARD", 5 SECONDS)
+		neural_interface.write_log("Standard host detected", "INFO")
 
-	neural_interface.write_data("SYNC_STATUS", "ACTIVE")
+	neural_interface.write_data("SYNC_STATUS", "ACTIVE", 5 SECONDS)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/dropped(mob/user)
 
@@ -429,8 +428,6 @@
 
 	if(neural_interface)
 		neural_interface.RemoveComponent()
-	if(HAS_TRAIT(user, TRAIT_SELF_AWARE))
-		UnregisterSignal(user, COMSIG_CARBON_UPDATEHEALTH)
 	. = ..()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/toggle_jumpsuit_adjust()
@@ -457,7 +454,7 @@
 	if(!equipped_slot)
 		return
 
-	neural_interface.compile_log()
+	neural_interface.compile_display()
 
 	distortion_transform()
 
@@ -465,7 +462,7 @@
 		echo_animation()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/ntnet_receive(datum/netdata/packet)
-	neural_interface.write_log("NTNet packet received: [packet.data["data"]], [packet.data["data_secondary"]], [packet.sender_id]", "DATA")
+	neural_interface.write_data("NTPACKET", "[packet.data["data"]]", 15 SECONDS)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/toggle_open_body(open)
 	if(!can_adjust)
@@ -474,14 +471,12 @@
 		icon_state = "InlaidDataDress_[skin]_open"
 		item_state = "InlaidDataDress_[skin]_open"
 		body_parts_covered = NONE
-		neural_interface.write_log("Body coverage removed - dress opened", "MODULE")
-		neural_interface.write_data("COVERAGE", "OPEN")
+		neural_interface.write_data("COVERAGE", "OPEN", 10 SECONDS)
 	else
 		icon_state = "InlaidDataDress_[skin]"
 		item_state = "InlaidDataDress_[skin]"
 		body_parts_covered = CHEST|GROIN|LEGS|ARMS
-		neural_interface.write_log("Full body coverage restored - dress closed", "MODULE")
-		neural_interface.write_data("COVERAGE", "CLOSED")
+		neural_interface.write_data("COVERAGE", "CLOSED", 10 SECONDS)
 	return TRUE
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/echo_animation()
@@ -500,31 +495,6 @@
 	m.Translate(rand(-10, 10), rand(-10,10))
 
 	filter_on_user.transform = m
-
-/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/host_update_health(mob/living/carbon/user)
-	var/oxy_loss = user.getOxyLoss()
-	var/tox_loss = user.getToxLoss()
-	var/fire_loss = user.getFireLoss()
-	var/brute_loss = user.getBruteLoss()
-	var/mob_status = (user.stat == DEAD ? "<span class='alert'><b>DESTROYED</b></span>" : "<b>[round(user.health/user.maxHealth,0.01)*100]</b>")
-
-	neural_interface.write_data("BRUTE", "[brute_loss]")
-	neural_interface.write_data("CORROSION", "[tox_loss]")
-	neural_interface.write_data("BURN", "[fire_loss]")
-	neural_interface.write_data("CONNECTION", "[oxy_loss]")
-	neural_interface.write_data("STATUS", "[mob_status]")
-
-	var/total_damage = brute_loss + tox_loss + fire_loss + oxy_loss
-	var/critical_threshold = user.maxHealth * 0.25
-
-	if(user.stat == DEAD)
-		neural_interface.write_log("CRITICAL: Host signals TERMINATED", "ERROR")
-	else if(total_damage > critical_threshold)
-		neural_interface.write_log("WARNING: Host in CRITICAL condition", "ALERT")
-	else if(user.health < user.maxHealth * 0.5)
-		neural_interface.write_log("Host health at [round(user.health/user.maxHealth,0.01)*100]% - below 50% threshold", "ALERT")
-	else
-		neural_interface.write_log("STATUS BODY UPDATED", "INFO")
 
 /obj/effect/distortion_effect
 	icon = 'modular_bluemoon/fluffs/icons/effects/32x32.dmi'
