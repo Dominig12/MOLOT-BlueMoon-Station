@@ -151,6 +151,8 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/Destroy(force, silent)
 	unregister_all_signals()
 	unregister_all_monitors()
+	clear_image_data_entries()
+	clear_data_entries()
 	delete_user()
 
 	return ..()
@@ -206,7 +208,6 @@ proc/string_repeat(string, count)
 
 	if(attached_client)
 		RegisterSignal(host_mob, COMSIG_MOB_GHOSTIZE, PROC_REF(on_mob_ghostize))
-		RegisterSignal(attached_client, COMSIG_PARENT_QDELETING, PROC_REF(on_client_deleted))
 		RegisterSignal(host_mob, COMSIG_MOB_KEY_CHANGE, PROC_REF(on_mob_key_change))
 		RegisterSignal(host_mob, COMSIG_MOB_PRE_PLAYER_CHANGE, PROC_REF(on_mob_key_change))
 		RegisterSignal(host_mob, COMSIG_CLIENT_MOB_LOGIN, PROC_REF(on_client_reconnect))
@@ -222,30 +223,10 @@ proc/string_repeat(string, count)
 // Signal unregistration
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/unregister_all_signals()
-	UnregisterSignal(attached_client, COMSIG_PARENT_QDELETING)
 	for(var/signal_handle in signal_registrations)
 		UnregisterSignal(host_mob, signal_handle)
 	signal_registrations = list()
 
-// ---------------------------------------------------------------------------
-// Client Callback - Client events
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_client_deleted(datum/source)
-	if(!host_mob)
-		return
-
-	write_log("Client detached from host", "SYNC")
-	write_data("CLIENT_STATUS", "DETACHED")
-	attached_client = null
-	is_client_attached = FALSE
-
-	if(logs_view && host_mob?.client)
-		// Client reattached (new client object)
-		attached_client = host_mob.client
-		host_mob.client.screen += logs_view
-		is_client_attached = TRUE
-		logs_view.maptext = ""
-		compile_display()
 
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/on_mob_key_change(mob/M, mob/new_mob, old_mob)
@@ -493,7 +474,7 @@ proc/string_repeat(string, count)
 			host_mob.client.screen += logs_view
 
 	// Throttle updates
-	if(world.time - last_update < update_interval / 10)
+	if(world.time - last_update < update_interval)
 		return
 
 	last_update = world.time

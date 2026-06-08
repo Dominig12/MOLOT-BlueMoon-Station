@@ -373,7 +373,8 @@
 	QDEL_NULL(echo)
 	QDEL_NULL(filter_on_user)
 	QDEL_NULL(particle_effect_holder)
-	qdel(neural_interface)
+	QDEL_NULL(neural_interface)
+	QDEL_NULL(net)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/on_mob_death(mob/living/L, gibbed)
 	. = ..()
