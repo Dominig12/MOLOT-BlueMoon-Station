@@ -33,7 +33,7 @@
 	var/expiry_time // world.time when entry expires
 	var/priority = 0 // higher priority = less likely to be removed when at capacity
 
-/datum/neural_data_entry/New(duration=30 SECOND)
+/datum/neural_data_entry/New(duration=30 SECONDS)
 	decay_duration = duration
 	expiry_time = world.time + decay_duration
 	return ..()
@@ -47,19 +47,27 @@
 	var/image/overlay
 	var/decay_duration
 	var/expire_time
-	var/screen_text
+	var/priority = 0
 
-/datum/image_holder_data/New(key_target, image/overlay_target, text_target = "", duration=5 SECOND)
+/datum/image_holder_data/New(key_target, image/overlay_target, text_target = "", duration=20 SECONDS)
 	key = key_target
 	decay_duration = duration
-	expiry_time = world.time + decay_duration
+	expire_time = world.time + decay_duration
 	overlay = overlay_target
-	screen_text = ScreenText(overlay, text_target, "CENTER, CENTER-1")
-	return ..()
+	overlay.plane = BYOND_LIGHTING_PLANE
+	overlay.maptext = MAPTEXT(text_target)
+	overlay.maptext_height = 250
+	overlay.maptext_width = 250
+	overlay.screen_loc = "CENTER, CENTER-1"
+	priority = 0
+
+/datum/image_holder_data/proc/change_text(text)
+	if(overlay)
+		overlay.maptext = text
 
 /datum/image_holder_data/Destroy()
-	qdel(screen_text)
-	qdel(overlay)
+	QDEL_NULL(overlay)
+	return ..()
 
 // ---------------------------------------------------------------------------
 // Utility Procs
@@ -322,13 +330,13 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/remove_oldest_data_entry()
 	var/datum/neural_data_entry/target
 	var/lowest_priority = 999999
-	var/latest_expiry = 0
+	var/latest_expiry = INFINITY
 
-	// Find entry with lowest priority (highest = most important)
 	for(var/datum/neural_data_entry/entry in data_entries)
 		if(entry.priority < lowest_priority)
 			lowest_priority = entry.priority
 			target = entry
+			latest_expiry = entry.expiry_time
 		else if(entry.priority == lowest_priority && entry.expiry_time < latest_expiry)
 			// Same priority, remove the one expiring sooner
 			target = entry
@@ -470,7 +478,7 @@ proc/string_repeat(string, count)
 
 /datum/component/neural_interface/proc/remove_log(index)
 	if(index >= 1 && index <= logs.len)
-		logs = logs - index
+		logs.Cut(index, index + 1)
 		return TRUE
 	return FALSE
 
@@ -495,6 +503,9 @@ proc/string_repeat(string, count)
 
 	// Cleanup expired data entries
 	cleanup_expired_data()
+
+	// Cleanup expired image data entries
+	cleanup_expired_image_data()
 
 	var/write = get_display_header()
 
@@ -570,3 +581,128 @@ proc/string_repeat(string, count)
 
 /datum/component/neural_interface/proc/info_log(text)
 	return write_log(text, "INFO")
+
+// ============================================================================
+// IMAGE DATA ENTRY MANAGEMENT - Images with expiration timers
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// Write Image Data Entry - Creates or replaces image with decay timer
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/write_image_data(key, image/overlay, text, decay_duration=30 SECONDS, priority=0)
+	if(!host_mob?.client)
+		return FALSE
+
+	// Check if entry with same key already exists
+	for(var/datum/image_holder_data/existing_entry in image_data_entries)
+		if(existing_entry.key == key)
+			// Remove old overlay from host client images
+			if(existing_entry.overlay)
+				host_mob.client.images -= existing_entry.overlay
+			image_data_entries -= existing_entry
+			QDEL_NULL(existing_entry)
+			break
+
+	// Create new entry
+	var/datum/image_holder_data/new_entry = new(key, overlay, text, decay_duration)
+	new_entry.priority = priority
+
+	// Add overlay to host client images
+	if(new_entry.overlay)
+		host_mob.client.images += new_entry.overlay
+
+	// Remove oldest/expires-next entry if at capacity
+	if(image_data_entries.len >= max_image_data_entries)
+		remove_oldest_image_data_entry()
+
+	image_data_entries += new_entry
+	return TRUE
+
+// ---------------------------------------------------------------------------
+// Remove oldest image data entry - lowest priority first, then earliest expiry
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/remove_oldest_image_data_entry()
+	var/datum/image_holder_data/target
+	var/lowest_priority = 999999
+	var/earliest_expiry = world.time + 999999999
+
+	// Find entry with lowest priority (lower number = less important) and earliest expiry
+	for(var/datum/image_holder_data/entry in image_data_entries)
+		if(entry.priority < lowest_priority || (entry.priority == lowest_priority && entry.expire_time < earliest_expiry))
+			lowest_priority = entry.priority
+			earliest_expiry = entry.expire_time
+			target = entry
+
+	if(target)
+		image_data_entries -= target
+		if(target.overlay && host_mob?.client)
+			host_mob.client.images -= target.overlay
+		QDEL_NULL(target)
+
+// ---------------------------------------------------------------------------
+// Remove specific image data entry by key
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/remove_image_data_entry(key)
+	for(var/datum/image_holder_data/entry in image_data_entries)
+		if(entry.key == key)
+			if(entry.overlay && host_mob?.client)
+				host_mob.client.images -= entry.overlay
+			image_data_entries -= entry
+			QDEL_NULL(entry)
+			return TRUE
+	return FALSE
+
+// ---------------------------------------------------------------------------
+// Clear all image data entries
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/clear_image_data_entries()
+	for(var/datum/image_holder_data/entry in image_data_entries)
+		if(entry.overlay && host_mob?.client)
+			host_mob.client.images -= entry.overlay
+		QDEL_NULL(entry)
+	image_data_entries = list()
+	return TRUE
+
+// ---------------------------------------------------------------------------
+// Cleanup expired image data entries
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/cleanup_expired_image_data()
+	var/list/datum/image_holder_data/to_remove = list()
+
+	for(var/datum/image_holder_data/entry in image_data_entries)
+		if(world.time >= entry.expire_time)
+			to_remove += entry
+
+	for(var/datum/image_holder_data/removed in to_remove)
+		if(removed.overlay && host_mob?.client)
+			host_mob.client.images -= removed
+		image_data_entries -= removed
+		qdel(removed)
+
+// ---------------------------------------------------------------------------
+// Get active image data entries (non-expired)
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/get_active_image_data_entries()
+	var/list/active = list()
+	for(var/datum/image_holder_data/entry in image_data_entries)
+		if(world.time < entry.expire_time)
+			active[entry.key] = entry.overlay
+	return active
+
+// ---------------------------------------------------------------------------
+// Check if image data entry exists and is not expired
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/image_data_entry_exists(key)
+	for(var/datum/image_holder_data/entry in image_data_entries)
+		if(entry.key == key && world.time < entry.expire_time)
+			return TRUE
+	return FALSE
+
+// ---------------------------------------------------------------------------
+// Get image data entry overlay by key (returns null if not found or expired)
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/get_image_data_entry_overlay(key)
+	for(var/datum/image_holder_data/entry in image_data_entries)
+		if(entry.key == key && world.time < entry.expire_time)
+			return entry.overlay
+	return null
