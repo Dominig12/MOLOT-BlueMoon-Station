@@ -13,12 +13,31 @@
 	var/datum/component/neural_interface/owner // datum/component/neural_interface
 	var/atom/monitor_atom
 	var/enabled = FALSE
+	var/processing = FALSE
+	var/next_activate
+	var/periodic = 1 SECONDS
 
-/datum/neural_monitor/New(datum/component/neural_interface/owner_comp, atom/monitor_target)
+/datum/neural_monitor/New(datum/component/neural_interface/owner_comp, ...)
+	var/list/arguments = args.Copy()
 	owner = owner_comp
-	monitor_atom = monitor_target
+	monitor_atom = arguments[2]
 
 	owner.system_log("INITIALIZE: [name]")
+
+	if(processing)
+		START_PROCESSING(SSfastprocess, src)
+		next_activate = world.time + periodic
+
+/datum/neural_monitor/Destroy(force, ...)
+	disable()
+	. = ..()
+
+/datum/neural_monitor/process(delta_time)
+	if(next_activate > world.time)
+		return FALSE
+
+	next_activate = world.time + periodic
+	return TRUE
 
 /datum/neural_monitor/proc/register_signals()
 	// Override in child classes
@@ -35,6 +54,8 @@
 /datum/neural_monitor/proc/disable()
 	enabled = FALSE
 	owner.system_log("[name]: DISABLED")
+	if(processing)
+		STOP_PROCESSING(SSobj, src)
 	if(monitor_atom)
 		unregister_signals()
 
@@ -298,12 +319,120 @@
 /datum/neural_monitor/nt_net/register_signals()
 	if(!monitor_atom)
 		return
-	RegisterSignal(monitor_atom, COMSIG_COMPONENT_NTNET_RECEIVE, PROC_REF(ob_packet_received))
+	RegisterSignal(monitor_atom, COMSIG_COMPONENT_NTNET_RECEIVE, PROC_REF(on_packet_received))
 
 /datum/neural_monitor/nt_net/unregister_signals()
 	if(!monitor_atom)
 		return
 	UnregisterSignal(monitor_atom, COMSIG_COMPONENT_NTNET_RECEIVE)
 
-/datum/neural_monitor/nt_net/proc/ob_packet_received(datum/source, datum/netdata/packet)
+/datum/neural_monitor/nt_net/proc/on_packet_received(datum/source, datum/netdata/packet)
+	if(!enabled || !packet || !islist(packet.data) || isnull(packet.data["data"]))
+		return
 	owner.write_data("NTPACKET", "[packet.data["data"]]", 5 SECONDS)
+
+// ---------------------------------------------------------------------------
+// Nanite Monitor - Tracks nanite status
+// ---------------------------------------------------------------------------
+/datum/neural_monitor/nanite
+	name = "NANITE MONITOR"
+	processing = TRUE
+
+/datum/neural_monitor/nanite/process(delta_time)
+	if(!..())
+		return FALSE
+
+	if(!SEND_SIGNAL(monitor_atom, COMSIG_HAS_NANITES))
+		return FALSE
+
+	var/volume = SEND_SIGNAL(monitor_atom, COMSIG_NANITE_GET_VOLUME)
+	owner.write_data("NANITE VOLUME", "[volume]", 5 SECONDS)
+	return TRUE
+
+// ---------------------------------------------------------------------------
+// Observers Monitor - Tracks who examine you
+// ---------------------------------------------------------------------------
+/datum/neural_monitor/observers
+	name = "OBSERVERS MONITOR"
+	var/icon/overlay_observer
+
+/datum/neural_monitor/observers/New(...)
+	. = ..()
+	overlay_observer = new(icon='icons/effects/effects.dmi', icon_state="emark2")
+
+/datum/neural_monitor/observers/Destroy(force, ...)
+	QDEL_NULL(overlay_observer)
+	. = ..()
+
+/datum/neural_monitor/observers/register_signals()
+	if(!monitor_atom)
+		return
+	RegisterSignal(monitor_atom, COMSIG_PARENT_EXAMINE, PROC_REF(on_examine))
+
+/datum/neural_monitor/observers/unregister_signals()
+	if(!monitor_atom)
+		return
+	UnregisterSignal(monitor_atom, COMSIG_PARENT_EXAMINE)
+
+/datum/neural_monitor/observers/proc/on_examine(datum/source, mob/user)
+	var/image/overlay = image(icon = overlay_observer, loc = user)
+	overlay.alpha = 60
+	owner.write_image_data("\ref[user];OBSERVER", overlay, "", 3 SECONDS)
+
+// ---------------------------------------------------------------------------
+// Health Scan Monitor - Scan Health marked with you
+// ---------------------------------------------------------------------------
+/datum/neural_monitor/health_scan
+	name = "HEALTH SCAN MONITOR"
+	processing = TRUE
+	var/icon/overlay_observer
+	var/mob/living/carbon/target
+
+/datum/neural_monitor/health_scan/New(...)
+	. = ..()
+	overlay_observer = icon(icon='icons/effects/effects.dmi', icon_state="medi_holo")
+
+/datum/neural_monitor/health_scan/register_signals()
+	if(!monitor_atom)
+		return
+	RegisterSignal(monitor_atom, COMSIG_MOB_EXAMINATE, PROC_REF(on_examine_target))
+
+/datum/neural_monitor/health_scan/unregister_signals()
+	if(!monitor_atom)
+		return
+	UnregisterSignal(monitor_atom, COMSIG_MOB_EXAMINATE)
+
+/datum/neural_monitor/health_scan/process(delta_time)
+	if(!..())
+		return FALSE
+
+	if(target == null)
+		return FALSE
+
+	var/health_percent = target.health / target.maxHealth * 100
+	var/oxy_loss = target.getOxyLoss()
+	var/tox_loss = target.getToxLoss()
+	var/fire_loss = target.getFireLoss()
+	var/brute_loss = target.getBruteLoss()
+
+	var/write = "HEALTH:[health_percent]\nOXY:[oxy_loss]\nTOX:[tox_loss]\nBURN:[fire_loss]\nBRUTE:[brute_loss]"
+
+	var/image/overlay = image(icon = overlay_observer, loc = target)
+	overlay.alpha = 200
+	owner.write_image_data("\ref[target];HEALTH_SCAN", overlay, write, 1 SECONDS, 32, -2)
+
+	return TRUE
+
+/datum/neural_monitor/health_scan/proc/on_examine_target(datum/source, mob/user)
+	if(!istype(user) || !isliving(user) || !iscarbon(user))
+		return
+
+	if(user == target)
+		target = null
+		return
+
+	target = user
+
+	var/image/overlay = image(icon = overlay_observer, loc = user)
+	overlay.alpha = 200
+	owner.write_image_data("\ref[user];HEALTH_SCAN", overlay, "", 1 SECONDS, , 32, -2)

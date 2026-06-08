@@ -45,27 +45,35 @@
 /datum/image_holder_data
 	var/key
 	var/image/overlay
+	var/atom/movable/screen/text/screen_text
 	var/decay_duration
 	var/expire_time
 	var/priority = 0
 
-/datum/image_holder_data/New(key_target, image/overlay_target, text_target = "", duration=5 SECONDS)
+/datum/image_holder_data/New(key_target, image/overlay_target, text_target = "", duration=5 SECONDS, pixel_x_text=0, pixel_y_text=0)
 	key = key_target
 	decay_duration = duration
 	expire_time = world.time + decay_duration
 	overlay = overlay_target
 	overlay.plane = BYOND_LIGHTING_PLANE
-	overlay.maptext = MAPTEXT(text_target)
-	overlay.maptext_height = 250
-	overlay.maptext_width = 250
-	overlay.screen_loc = "CENTER, CENTER-1"
+	if(text_target)
+		screen_text = new /atom/movable/screen/text()
+		screen_text.maptext = MAPTEXT_TINY_UNICODE(text_target)
+		screen_text.maptext_height = 250
+		screen_text.maptext_width = 250
+		screen_text.pixel_x = pixel_x_text
+		screen_text.pixel_y = pixel_y_text
+		overlay.add_overlay(screen_text)
 	priority = 0
 
 /datum/image_holder_data/proc/change_text(text)
-	if(overlay)
-		overlay.maptext = text
+	if(screen_text)
+		screen_text.maptext = text
 
 /datum/image_holder_data/Destroy()
+	if(screen_text)
+		overlay.cut_overlay(screen_text)
+		QDEL_NULL(screen_text)
 	QDEL_NULL(overlay)
 	return ..()
 
@@ -85,6 +93,7 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface
 	// Host mob reference
 	var/mob/living/host_mob
+	var/list/sources = list()
 
 	// Screen display object
 	var/atom/movable/screen/logs_view
@@ -126,15 +135,61 @@ proc/string_repeat(string, count)
 
 	// Monitor instances - composition pattern
 	var/list/datum/neural_monitor/monitors = list()
+	var/list/monitors_types = list()
 
 	// Signal registration handles
 	var/list/signal_registrations = list()
 
-/datum/component/neural_interface/Initialize(mob/user)
+	// Log category configuration
+	var/list/log_categories = list(
+		"SYSTEM" = "#4ad1fa86",
+		"WARNING" = "#f59e0bff",
+		"ERROR" = "#ef4444ff",
+		"INFO" = "#10b981ff",
+		"DATA" = "#8b5cf6ff",
+		"SYNC" = "#06b6d4ff",
+		"HEALTH" = "#f472b6ff",
+		"MODULE" = "#a78bffff",
+		"ALERT" = "#ff0000ff",
+		"STATUS" = "#6b7280ff",
+		"DEBUG" = "#94a3b8ff"
+	)
+
+	// Category-specific speeds (0 = use default)
+	var/list/log_speeds = list(
+		"SYSTEM" = 15,
+		"WARNING" = 15,
+		"ERROR" = 30,
+		"INFO" = 15,
+		"DATA" = 15,
+		"SYNC" = 15,
+		"HEALTH" = 30,
+		"MODULE" = 15,
+		"ALERT" = 30,
+		"STATUS" = 10,
+		"DEBUG" = 20
+	)
+
+/datum/component/neural_interface/Initialize(
+		mob/user,
+		display_title = "NEURAL INTERFACE",
+		max_logs = 3,
+		max_data_entries = 10,
+		max_image_data_entries = 10,
+		char_reveal_speed = 10,
+		screen_loc = "LEFT+1.5,CENTER-1.5"
+	)
+
 	if(!isliving(parent))
 		return COMPONENT_INCOMPATIBLE
 
 	host_mob = parent
+	display_title = display_title
+	max_logs = max_logs
+	max_data_entries = max_data_entries
+	max_image_data_entries = max_image_data_entries
+	char_reveal_speed = char_reveal_speed
+	screen_loc = screen_loc
 
 	// Create screen display
 	logs_view = ScreenText(null, "Initialize", screen_loc, maptext_height, maptext_width)
@@ -146,7 +201,12 @@ proc/string_repeat(string, count)
 
 	register_client_signals()
 
+	START_PROCESSING(SSfastprocess, src)
+
 	return ..()
+
+/datum/component/neural_interface/process(delta_time)
+	compile_display()
 
 /datum/component/neural_interface/Destroy(force, silent)
 	unregister_all_signals()
@@ -157,26 +217,67 @@ proc/string_repeat(string, count)
 
 	return ..()
 
+/datum/component/neural_interface/proc/AddSource(id)
+	LAZYINITLIST(sources)
+	sources[id] = list()
+
+/datum/component/neural_interface/proc/RemoveSource(id)
+	LAZYINITLIST(sources)
+	LAZYREMOVE(sources, id)
+
+	if(!sources)
+		qdel(src)
+
 // ---------------------------------------------------------------------------
 // Monitor Management
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/unregister_all_monitors()
+	LAZYINITLIST(monitors)
+	LAZYINITLIST(monitors_types)
 	for(var/datum/neural_monitor/monitor in monitors)
+		LAZYCLEARLIST(monitors_types)
 		monitor.disable()
 		QDEL_NULL(monitor)
 
-/datum/component/neural_interface/proc/add_monitor(datum/neural_monitor/monitor)
+/datum/component/neural_interface/proc/add_monitor_by_type(type, atom/monitor_atom)
 	LAZYINITLIST(monitors)
-	monitors += monitor
-	monitor.enable()
-
-/datum/component/neural_interface/proc/add_monitor_by_type(type)
-	LAZYINITLIST(monitors)
-	var/datum/neural_monitor/monitor = new type(src, host_mob)
+	LAZYINITLIST(monitors_types)
+	if(type in monitors_types)
+		return FALSE
+	var/list/arguments = args.Copy()
+	arguments.Splice(1, 3)
+	if(!monitor_atom)
+		monitor_atom = host_mob
+	var/datum/neural_monitor/monitor = new type(arglist(list(src, monitor_atom) + arguments))
 	if(!istype(monitor))
 		return FALSE
 	monitors += monitor
+	monitors_types += type
 	monitor.enable()
+
+/datum/component/neural_interface/proc/add_monitors_by_types(list/types)
+	LAZYINITLIST(monitors)
+	LAZYINITLIST(monitors_types)
+	for(var/type in types)
+		if(type in monitors_types)
+			continue
+		var/datum/neural_monitor/monitor = new type(src, host_mob)
+		if(!istype(monitor))
+			continue
+		monitors += monitor
+		monitors_types += type
+		monitor.enable()
+
+/datum/component/neural_interface/proc/remove_monitor_by_type(type)
+	LAZYINITLIST(monitors)
+	LAZYINITLIST(monitors_types)
+	for(var/datum/neural_monitor/monitor in monitors)
+		if(istype(monitor, type))
+			monitor.disable()
+			monitors -= monitor
+			QDEL_NULL(monitor)
+			monitors_types -= type
+			break
 
 // ---------------------------------------------------------------------------
 // User Management
@@ -279,7 +380,7 @@ proc/string_repeat(string, count)
 // ---------------------------------------------------------------------------
 // Write Data Entry - Creates or updates with decay timer
 // ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/write_data(key, value, decay_duration=30 SECONDS, priority=0)
+/datum/component/neural_interface/proc/write_data(key, value, decay_duration=3 SECONDS, priority=0)
 	// Check if entry with same key already exists
 	for(var/datum/neural_data_entry/entry in data_entries)
 		if(entry.key == key)
@@ -394,36 +495,6 @@ proc/string_repeat(string, count)
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/write_log(text, key="LOG", color="#4ad1fa86", size=12, speed=0)
 	LAZYINITLIST(logs)
-
-	// Log category configuration
-	var/list/log_categories = list(
-		"SYSTEM" = "#4ad1fa86",
-		"WARNING" = "#f59e0bff",
-		"ERROR" = "#ef4444ff",
-		"INFO" = "#10b981ff",
-		"DATA" = "#8b5cf6ff",
-		"SYNC" = "#06b6d4ff",
-		"HEALTH" = "#f472b6ff",
-		"MODULE" = "#a78bffff",
-		"ALERT" = "#ff0000ff",
-		"STATUS" = "#6b7280ff",
-		"DEBUG" = "#94a3b8ff"
-	)
-
-	// Category-specific speeds (0 = use default)
-	var/list/log_speeds = list(
-		"SYSTEM" = 15,
-		"WARNING" = 15,
-		"ERROR" = 30,
-		"INFO" = 15,
-		"DATA" = 15,
-		"SYNC" = 15,
-		"HEALTH" = 30,
-		"MODULE" = 15,
-		"ALERT" = 30,
-		"STATUS" = 10,
-		"DEBUG" = 20
-	)
 
 	// Apply category color if defined
 	if(log_categories[key])
@@ -570,7 +641,7 @@ proc/string_repeat(string, count)
 // ---------------------------------------------------------------------------
 // Write Image Data Entry - Creates or replaces image with decay timer
 // ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/write_image_data(key, image/overlay, text, decay_duration=30 SECONDS, priority=0)
+/datum/component/neural_interface/proc/write_image_data(key, image/overlay, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
 	if(!host_mob?.client)
 		return FALSE
 
@@ -585,7 +656,7 @@ proc/string_repeat(string, count)
 			break
 
 	// Create new entry
-	var/datum/image_holder_data/new_entry = new(key, overlay, text, decay_duration)
+	var/datum/image_holder_data/new_entry = new(key, overlay, text, decay_duration, pixel_x_text, pixel_y_text)
 	new_entry.priority = priority
 
 	// Add overlay to host client images

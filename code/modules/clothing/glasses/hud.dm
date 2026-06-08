@@ -8,6 +8,9 @@
 	/// Tracks whether this item actually granted a HUD (i.e. was worn in the eyes slot). Prevents spurious remove_hud_from when held in hands.
 	var/hud_granted = FALSE
 
+	var/datum/component/neural_interface/interface
+	var/list/datum/neural_monitor/monitors = list()
+
 /obj/item/clothing/glasses/hud/CheckParts(list/parts_list)
 	. = ..()
 	if(vision_correction)
@@ -22,6 +25,9 @@
 /obj/item/clothing/glasses/hud/equipped(mob/living/carbon/human/user, slot)
 	..()
 	if(hud_type && slot == ITEM_SLOT_EYES)
+		interface = user.LoadComponent(/datum/component/neural_interface)
+		interface.add_monitors_by_types(monitors)
+		interface.AddSource("HUD")
 		var/datum/atom_hud/H = GLOB.huds[hud_type]
 		H.add_hud_to(user)
 		hud_granted = TRUE
@@ -29,6 +35,8 @@
 /obj/item/clothing/glasses/hud/dropped(mob/living/carbon/human/user)
 	..()
 	if(hud_type && istype(user) && hud_granted)
+		interface.RemoveSource("HUD")
+		interface = null
 		hud_granted = FALSE
 		var/datum/atom_hud/H = GLOB.huds[hud_type]
 		H.remove_hud_from(user)
@@ -61,6 +69,10 @@
 	hud_type = DATA_HUD_MEDICAL_ADVANCED
 	glass_colour_type = /datum/client_colour/glass_colour/lightblue
 	glasses_type = "med"
+	monitors = list(
+		/datum/neural_monitor/health_scan,
+		/datum/neural_monitor/health
+	)
 
 /obj/item/clothing/glasses/hud/health/prescription/Initialize(mapload)
 	. = ..()

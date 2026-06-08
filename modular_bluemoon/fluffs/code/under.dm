@@ -405,13 +405,24 @@
 
 	echo.render_source = user.render_target
 	neural_interface = user.LoadComponent(/datum/component/neural_interface)
+	neural_interface.AddSource("ROSELIA_DRESS")
 
-	neural_interface.add_monitor_by_type(/datum/neural_monitor/shock)
-	neural_interface.add_monitor(new /datum/neural_monitor/nt_net(neural_interface, src))
+	neural_interface.add_monitor_by_type(/datum/neural_monitor/nt_net, src)
+	neural_interface.add_monitors_by_types(
+		list(
+			/datum/neural_monitor/shock,
+			/datum/neural_monitor/observers
+		)
+	)
 
 	if(HAS_TRAIT(user, TRAIT_SELF_AWARE))
-		neural_interface.add_monitor_by_type(/datum/neural_monitor/health)
-		neural_interface.add_monitor_by_type(/datum/neural_monitor/wound)
+		neural_interface.add_monitors_by_types(
+			list(
+				/datum/neural_monitor/health,
+				/datum/neural_monitor/wound,
+				/datum/neural_monitor/nanite
+			)
+		)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/dropped(mob/user)
 
@@ -425,8 +436,7 @@
 
 	echo.render_source = null
 
-	if(neural_interface)
-		neural_interface.RemoveComponent()
+	neural_interface.RemoveSource("ROSELIA_DRESS")
 	. = ..()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/toggle_jumpsuit_adjust()
@@ -452,8 +462,6 @@
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/process(delta_time)
 	if(!equipped_slot)
 		return
-
-	neural_interface.compile_display()
 
 	distortion_transform()
 
