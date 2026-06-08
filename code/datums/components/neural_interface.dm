@@ -14,7 +14,6 @@
 	var/char_index
 	var/char_speed
 	var/size
-	var/flags = 0 // bitflags for log behavior
 
 /datum/log_entry/proc/get_line()
 	if(char_index < length(plain))
@@ -135,6 +134,8 @@ proc/string_repeat(string, count)
 	if(auto_monitor_shock)
 		register_shock_signals()
 
+	register_client_signals()
+
 	return ..()
 
 /datum/component/neural_interface/Destroy(force, silent)
@@ -228,9 +229,11 @@ proc/string_repeat(string, count)
 	if(attached_client)
 		RegisterSignal(attached_client, COMSIG_PARENT_QDELETING, PROC_REF(on_client_deleted))
 		RegisterSignal(host_mob, COMSIG_MOB_KEY_CHANGE, PROC_REF(on_mob_key_change))
+		RegisterSignal(host_mob, COMSIG_CLIENT_MOB_LOGIN, PROC_REF(on_client_reconnect))
 		signal_registrations += list(
 			COMSIG_PARENT_QDELETING,
-			COMSIG_MOB_KEY_CHANGE
+			COMSIG_MOB_KEY_CHANGE,
+			COMSIG_CLIENT_MOB_LOGIN
 		)
 		is_client_attached = TRUE
 
@@ -433,13 +436,13 @@ proc/string_repeat(string, count)
 	if(M != host_mob)
 		return
 
-	write_log("Mob death signal received", "ERROR")
+	error_log("Mob death signal received")
 
 /datum/component/neural_interface/proc/on_living_death(mob/living/L, gibbed)
 	if(L != host_mob)
 		return
 
-	write_log("Living death signal received [gibbed ? "(gibbed)" : ""]", "ERROR")
+	error_log("Living death signal received [gibbed ? "(gibbed)" : ""]")
 	write_data("DEATH_STATE", "DIED")
 	write_log("Vital signals TERMINATED", "ALERT")
 
@@ -447,14 +450,14 @@ proc/string_repeat(string, count)
 	if(L != host_mob)
 		return
 
-	write_log("Pre-death state [gibbed == TRUE ? "(gibbed)" : ""]", "WARNING")
+	warning_log("Pre-death state [gibbed == TRUE ? "(gibbed)" : ""]")
 	write_data("PREDEATH_STATE", "TRUE")
 
 /datum/component/neural_interface/proc/on_living_revive(mob/living/L, full_heal, admin_revive)
 	if(L != host_mob)
 		return
 
-	write_log("Revived [full_heal == TRUE ? "(full heal)" : ""]", "INFO")
+	info_log("Revived [full_heal == TRUE ? "(full heal)" : ""]")
 	write_data("DEATH_STATE", "ALIVE")
 	write_data("PREDEATH_STATE", "FALSE")
 	write_log("Vital signals RESTORED", "SYNC")
@@ -466,7 +469,7 @@ proc/string_repeat(string, count)
 	if(M != host_mob)
 		return
 
-	write_log("Host ghostized [can_reenter == TRUE ? "(can re-enter)" : ""]", "WARNING")
+	warning_log("Host ghostized [can_reenter == TRUE ? "(can re-enter)" : ""]")
 	write_data("GHOST_STATE", "TRUE")
 
 // ---------------------------------------------------------------------------
@@ -484,7 +487,7 @@ proc/string_repeat(string, count)
 	if(L != host_mob)
 		return
 
-	write_log("Minor shock received", "WARNING")
+	warning_log("Minor shock received")
 	write_data("MINOR_SHOCK", "TRUE")
 
 // ---------------------------------------------------------------------------
@@ -507,7 +510,7 @@ proc/string_repeat(string, count)
 	if(damage > 30)
 		write_log("Significant damage applied!", "ALERT")
 	else if(damage > 15)
-		write_log("Moderate damage applied", "WARNING")
+		warning_log("Moderate damage applied")
 
 // ---------------------------------------------------------------------------
 // Client Reconnect - Re-attach display
@@ -527,9 +530,6 @@ proc/string_repeat(string, count)
 		if(visible)
 			logs_view.maptext = ""
 			compile_display()
-
-/datum/component/neural_interface/proc/get_view()
-	return logs_view
 
 // ============================================================================
 // DATA ENTRY MANAGEMENT - Objects with expiration timers
@@ -799,147 +799,16 @@ proc/string_repeat(string, count)
 		logs_view.maptext = ""
 
 // ---------------------------------------------------------------------------
-// Template System - Custom display layouts
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/use_template(template)
-	if(istype(template, /datum/neural_interface_template))
-		current_template = template
-		return TRUE
-	return FALSE
-
-/datum/component/neural_interface/proc/release_template()
-	current_template = null
-
-// ---------------------------------------------------------------------------
-// Notification System - Quick display messages
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/notify(message, type="INFO", duration=0)
-	write_log(message, type)
-
-	if(duration > 0)
-		// Auto-remove after duration (simple approach via log count)
-		var/target_max = max_logs
-		max_logs = target_max
-
-	return TRUE
-
-// ---------------------------------------------------------------------------
-// Status Display - Common status information patterns
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/update_health_status(mob/living/user)
-	if(!user || !isliving(user))
-		return
-
-	var/oxy_loss = user.getOxyLoss()
-	var/tox_loss = user.getToxLoss()
-	var/fire_loss = user.getFireLoss()
-	var/brute_loss = user.getBruteLoss()
-
-	write_data("BRUTE", "[brute_loss]")
-	write_data("TOKSIN", "[tox_loss]")
-	write_data("BURN", "[fire_loss]")
-	write_data("OXYGEN", "[oxy_loss]")
-
-	var/health_percent = user.health / user.maxHealth * 100
-	var/status_text = "<b>[round(health_percent, 0.1)]%</b>"
-
-	if(user.stat == DEAD)
-		status_text = "<span class='alert'><b>DESTROYED</b></span>"
-		write_log("Host signals TERMINATED", "ERROR")
-	else if(health_percent < 25)
-		status_text = "<span class='alert'><b>CRITICAL</b></span>"
-		write_log("Host in CRITICAL condition", "ALERT")
-	else if(health_percent < 50)
-		status_text = "<span class='userdanger'><b>DANGER</b></span>"
-		write_log("Health below 50% threshold", "WARNING")
-	else
-		write_log("Health status updated", "STATUS")
-
-	write_data("STATUS", status_text)
-
-// ---------------------------------------------------------------------------
-// Connection Status - Network/ sync indicators
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/update_connection_status(status, details="")
-	write_data("CONNECTION", status)
-
-	if(details)
-		write_data("DETAILS", details)
-
-	var/log_type = "SYNC"
-	if(status == "DISCONNECTED" || status == "ERROR")
-		log_type = "ERROR"
-	else if(status == "UNSTABLE")
-		log_type = "WARNING"
-
-	write_log("Connection: [status] [details]", log_type)
-
-// ---------------------------------------------------------------------------
-// Batch Operations - Multiple updates at once
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/batch_update(batch_data)
-	// batch_data is a list of list(key, value) entries
-	for(var/list/entry in batch_data)
-		if(entry.len >= 2)
-			write_data(entry[1], entry[2])
-
-	compile_display()
-	return TRUE
-
-// ---------------------------------------------------------------------------
 // Quick Access - Common operations
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/system_log(text)
 	return write_log(text, "SYSTEM")
 
-/datum/component/neural_interface/proc/warn(text)
+/datum/component/neural_interface/proc/warn_log(text)
 	return write_log(text, "WARNING")
 
-/datum/component/neural_interface/proc/error(text)
+/datum/component/neural_interface/proc/error_log(text)
 	return write_log(text, "ERROR")
 
-/datum/component/neural_interface/proc/info(text)
+/datum/component/neural_interface/proc/info_log(text)
 	return write_log(text, "INFO")
-
-// ============================================================================
-// Neural Interface Template - Custom display layouts
-// ============================================================================
-/datum/neural_interface_template
-	var/name
-	var/description
-
-/datum/neural_interface_template/proc/compile_custom(component)
-	return
-// ---------------------------------------------------------------------------
-// Default template - Standard log + data display
-// ---------------------------------------------------------------------------
-/datum/neural_interface_template/default
-	name = "Default"
-	description = "Standard log and data display"
-
-// ---------------------------------------------------------------------------
-// Health monitor template - Focused on health statistics
-// ---------------------------------------------------------------------------
-/datum/neural_interface_template/health_monitor
-	name = "Health Monitor"
-	description = "Focused health monitoring display"
-
-/datum/neural_interface_template/health_monitor/compile_custom(datum/component/neural_interface/component)
-	var/write = ""
-
-	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [component.font_size]pt; color: [component.header_color]; line-height: 0.8; -dm-text-outline: 1px black;'>── HEALTH MONITOR ──</span><br>"}
-	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [component.font_size]pt; color: [component.separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>[string_repeat("─", 17)]</span><br>"}
-
-	var/list/active_data = component.get_active_data_entries()
-	if(active_data["STATUS"])
-		write += "[MAPTEXT_TINY_UNICODE("├ Status: [active_data["STATUS"]]")]<br>"
-	if(active_data["BRUTE"])
-		write += "[MAPTEXT_TINY_UNICODE("├ Brute: [active_data["BRUTE"]]")]<br>"
-	if(active_data["TOKSIN"])
-		write += "[MAPTEXT_TINY_UNICODE("├ Toxin: [active_data["TOKSIN"]]")]<br>"
-	if(active_data["BURN"])
-		write += "[MAPTEXT_TINY_UNICODE("├ Burn: [active_data["BURN"]]")]<br>"
-	if(active_data["OXYGEN"])
-		write += "[MAPTEXT_TINY_UNICODE("├ Oxygen: [active_data["OXYGEN"]]")]<br>"
-
-	return write
