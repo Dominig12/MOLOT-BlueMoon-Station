@@ -163,7 +163,7 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/unregister_all_monitors()
 	for(var/datum/neural_monitor/monitor in monitors)
 		monitor.disable()
-		qdel(monitor)
+		QDEL_NULL(monitor)
 
 /datum/component/neural_interface/proc/add_monitor(datum/neural_monitor/monitor)
 	LAZYINITLIST(monitors)
@@ -189,7 +189,7 @@ proc/string_repeat(string, count)
 	if(logs_view)
 		if(host_mob?.client)
 			host_mob.client.screen -= logs_view
-		qdel(logs_view)
+		QDEL_NULL(logs_view)
 		logs_view = null
 
 	attached_client = null
@@ -325,7 +325,7 @@ proc/string_repeat(string, count)
 
 	if(target)
 		data_entries -= target
-		qdel(target)
+		QDEL_NULL(target)
 
 // ---------------------------------------------------------------------------
 // Remove specific data entry by key
@@ -334,7 +334,7 @@ proc/string_repeat(string, count)
 	for(var/datum/neural_data_entry/entry in data_entries)
 		if(entry.key == key)
 			data_entries -= entry
-			qdel(entry)
+			QDEL_NULL(entry)
 			return TRUE
 	return FALSE
 
@@ -343,7 +343,7 @@ proc/string_repeat(string, count)
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/clear_data_entries()
 	for(var/datum/neural_data_entry/entry in data_entries)
-		qdel(entry)
+		QDEL_NULL(entry)
 	data_entries = list()
 	return TRUE
 
@@ -359,7 +359,7 @@ proc/string_repeat(string, count)
 
 	for(var/removed in to_remove)
 		data_entries -= removed
-		qdel(removed)
+		QDEL_NULL(removed)
 
 // ---------------------------------------------------------------------------
 // Get active data entries (non-expired)
@@ -658,7 +658,7 @@ proc/string_repeat(string, count)
 		if(removed.overlay && host_mob?.client)
 			host_mob.client.images -= removed.overlay
 		image_data_entries -= removed
-		qdel(removed)
+		QDEL_NULL(removed)
 
 // ---------------------------------------------------------------------------
 // Get active image data entries (non-expired)
