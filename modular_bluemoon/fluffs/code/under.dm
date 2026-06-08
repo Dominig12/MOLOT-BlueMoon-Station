@@ -354,7 +354,7 @@
 
 	filter_on_user = new(src)
 	particle_effect_holder = new(src)
-	net  = LoadComponent(/datum/component/ntnet_interface)
+	net = LoadComponent(/datum/component/ntnet_interface)
 
 	LAZYADD(vis_contents, filter_on_user)
 	LAZYADD(vis_contents, particle_effect_holder)
@@ -405,14 +405,12 @@
 	echo.render_source = user.render_target
 	neural_interface = user.LoadComponent(/datum/component/neural_interface)
 
-	if(HAS_TRAIT(user, TRAIT_SELF_AWARE))
-		neural_interface.write_data("HOST_TYPE", "SELF_AWARE", 5 SECONDS)
-		neural_interface.write_log("Self-Aware host detected - auto monitor active", "SYNC")
-	else
-		neural_interface.write_data("HOST_TYPE", "STANDARD", 5 SECONDS)
-		neural_interface.write_log("Standard host detected", "INFO")
+	neural_interface.add_monitor_by_type(/datum/neural_monitor/shock)
+	neural_interface.add_monitor(new /datum/neural_monitor/nt_net(neural_interface, src))
 
-	neural_interface.write_data("SYNC_STATUS", "ACTIVE", 5 SECONDS)
+	if(HAS_TRAIT(user, TRAIT_SELF_AWARE))
+		neural_interface.add_monitor_by_type(/datum/neural_monitor/health)
+		neural_interface.add_monitor_by_type(/datum/neural_monitor/wound)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/dropped(mob/user)
 
@@ -460,9 +458,6 @@
 
 	if(active_echo)
 		echo_animation()
-
-/obj/item/clothing/under/donator/bm/inlaid_data_dress/ntnet_receive(datum/netdata/packet)
-	neural_interface.write_data("NTPACKET", "[packet.data["data"]]", 15 SECONDS)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/toggle_open_body(open)
 	if(!can_adjust)

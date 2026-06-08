@@ -68,7 +68,7 @@ proc/string_repeat(string, count)
 	var/char_reveal_speed = 10
 
 	// Display configuration
-	var/screen_loc = "CENTER-6,CENTER-4"
+	var/screen_loc = "LEFT+1.5,CENTER-1.5"
 	var/maptext_width = 450
 	var/maptext_height = 250
 
@@ -79,9 +79,6 @@ proc/string_repeat(string, count)
 	var/font_size = 12
 	var/visible = TRUE
 
-	// Template system - custom display templates
-	var/datum/neural_interface_template/current_template
-
 	// Update interval (in seconds)
 	var/update_interval = 1 SECONDS
 	var/last_update = 0
@@ -90,22 +87,8 @@ proc/string_repeat(string, count)
 	var/client/attached_client
 	var/is_client_attached = FALSE
 
-	// Auto-monitor settings
-	var/auto_monitor_health = TRUE
-	var/auto_monitor_status = TRUE
-	var/auto_monitor_wounds = TRUE
-	var/auto_monitor_shock = TRUE
-
-	// Damage tracking state
-	var/last_brute_damage = 0
-	var/last_tox_damage = 0
-	var/last_fire_damage = 0
-	var/last_oxy_damage = 0
-	var/last_stat = 0
-
-	// Wound tracking
-	var/list/active_wounds = list()
-	var/total_wound_bonus = 0
+	// Monitor instances - composition pattern
+	var/list/datum/neural_monitor/monitors = list()
 
 	// Signal registration handles
 	var/list/signal_registrations = list()
@@ -124,31 +107,44 @@ proc/string_repeat(string, count)
 		attached_client = host_mob.client
 		is_client_attached = TRUE
 
-	// Register auto-monitor signals
-	if(auto_monitor_health || auto_monitor_status)
-		register_health_signals()
-
-	if(auto_monitor_wounds)
-		register_wound_signals()
-
-	if(auto_monitor_shock)
-		register_shock_signals()
-
 	register_client_signals()
 
 	return ..()
 
 /datum/component/neural_interface/Destroy(force, silent)
 	unregister_all_signals()
+	unregister_all_monitors()
 	delete_user()
 
 	return ..()
 
 /datum/component/neural_interface/UnregisterFromParent()
 	unregister_all_signals()
+	unregister_all_monitors()
 	delete_user()
 
 	return ..()
+
+// ---------------------------------------------------------------------------
+// Monitor Management
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/unregister_all_monitors()
+	for(var/datum/neural_monitor/monitor in monitors)
+		monitor.disable()
+		qdel(monitor)
+
+/datum/component/neural_interface/proc/add_monitor(datum/neural_monitor/monitor)
+	LAZYINITLIST(monitors)
+	monitors += monitor
+	monitor.enable()
+
+/datum/component/neural_interface/proc/add_monitor_by_type(type)
+	LAZYINITLIST(monitors)
+	var/datum/neural_monitor/monitor = new type(src, host_mob)
+	if(!istype(monitor))
+		return FALSE
+	monitors += monitor
+	monitor.enable()
 
 // ---------------------------------------------------------------------------
 // User Management
@@ -169,54 +165,6 @@ proc/string_repeat(string, count)
 	host_mob = null
 
 // ---------------------------------------------------------------------------
-// Client Tracking - Signal Registration
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/register_health_signals()
-	if(!host_mob)
-		return
-
-	// Register health change signals
-	if(ishuman(host_mob))
-		RegisterSignal(host_mob, COMSIG_CARBON_UPDATEHEALTH, PROC_REF(on_carbon_health_update))
-		signal_registrations += list(
-			COMSIG_CARBON_UPDATEHEALTH
-		)
-
-	// Register living status signals
-	RegisterSignal(host_mob, COMSIG_LIVING_STATUS_STUN, PROC_REF(on_living_stunned))
-	RegisterSignal(host_mob, COMSIG_LIVING_STATUS_KNOCKDOWN, PROC_REF(on_living_knockdown))
-	RegisterSignal(host_mob, COMSIG_LIVING_STATUS_PARALYZE, PROC_REF(on_living_paralyzed))
-	RegisterSignal(host_mob, COMSIG_LIVING_STATUS_UNCONSCIOUS, PROC_REF(on_living_unconscious))
-	RegisterSignal(host_mob, COMSIG_LIVING_STATUS_SLEEP, PROC_REF(on_living_sleeping))
-	RegisterSignal(host_mob, COMSIG_LIVING_STATUS_DAZE, PROC_REF(on_living_dazed))
-	RegisterSignal(host_mob, COMSIG_LIVING_STATUS_STAGGER, PROC_REF(on_living_staggered))
-
-	// Register death/revive signals
-	RegisterSignal(host_mob, COMSIG_MOB_DEATH, PROC_REF(on_mob_death))
-	RegisterSignal(host_mob, COMSIG_LIVING_REVIVE, PROC_REF(on_living_revive))
-	RegisterSignal(host_mob, COMSIG_LIVING_DEATH, PROC_REF(on_living_death))
-	RegisterSignal(host_mob, COMSIG_LIVING_PREDEATH, PROC_REF(on_living_predeath))
-	RegisterSignal(host_mob, COMSIG_MOB_APPLY_DAMAGE, PROC_REF(on_mob_apply_damage))
-
-	// Register ghostize signal
-	RegisterSignal(host_mob, COMSIG_MOB_GHOSTIZE, PROC_REF(on_mob_ghostize))
-
-	signal_registrations += list(
-		COMSIG_LIVING_STATUS_STUN,
-		COMSIG_LIVING_STATUS_KNOCKDOWN,
-		COMSIG_LIVING_STATUS_PARALYZE,
-		COMSIG_LIVING_STATUS_UNCONSCIOUS,
-		COMSIG_LIVING_STATUS_SLEEP,
-		COMSIG_LIVING_STATUS_DAZE,
-		COMSIG_LIVING_STATUS_STAGGER,
-		COMSIG_MOB_DEATH,
-		COMSIG_LIVING_REVIVE,
-		COMSIG_LIVING_DEATH,
-		COMSIG_LIVING_PREDEATH,
-		COMSIG_MOB_APPLY_DAMAGE,
-		COMSIG_MOB_GHOSTIZE)
-
-// ---------------------------------------------------------------------------
 // Client Tracking - Client attach/detach signals
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/register_client_signals()
@@ -227,45 +175,19 @@ proc/string_repeat(string, count)
 		attached_client = host_mob?.client
 
 	if(attached_client)
+		RegisterSignal(host_mob, COMSIG_MOB_GHOSTIZE, PROC_REF(on_mob_ghostize))
 		RegisterSignal(attached_client, COMSIG_PARENT_QDELETING, PROC_REF(on_client_deleted))
 		RegisterSignal(host_mob, COMSIG_MOB_KEY_CHANGE, PROC_REF(on_mob_key_change))
 		RegisterSignal(host_mob, COMSIG_MOB_PRE_PLAYER_CHANGE, PROC_REF(on_mob_key_change))
 		RegisterSignal(host_mob, COMSIG_CLIENT_MOB_LOGIN, PROC_REF(on_client_reconnect))
 		signal_registrations += list(
+			COMSIG_MOB_GHOSTIZE,
 			COMSIG_PARENT_QDELETING,
 			COMSIG_MOB_KEY_CHANGE,
 			COMSIG_MOB_PRE_PLAYER_CHANGE,
 			COMSIG_CLIENT_MOB_LOGIN
 		)
 		is_client_attached = TRUE
-
-// ---------------------------------------------------------------------------
-// Wound tracking signals
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/register_wound_signals()
-	if(!host_mob || !ishuman(host_mob))
-		return
-
-	RegisterSignal(host_mob, COMSIG_CARBON_GAIN_WOUND, PROC_REF(on_carbon_gain_wound))
-	RegisterSignal(host_mob, COMSIG_CARBON_LOSE_WOUND, PROC_REF(on_carbon_lose_wound))
-	signal_registrations += list(
-		COMSIG_CARBON_GAIN_WOUND,
-		COMSIG_CARBON_LOSE_WOUND
-	)
-
-// ---------------------------------------------------------------------------
-// Shock signals
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/register_shock_signals()
-	if(!host_mob)
-		return
-
-	RegisterSignal(host_mob, COMSIG_LIVING_ELECTROCUTE_ACT, PROC_REF(on_living_electrocuted))
-	RegisterSignal(host_mob, COMSIG_LIVING_MINOR_SHOCK, PROC_REF(on_living_minor_shock))
-	signal_registrations += list(
-		COMSIG_LIVING_ELECTROCUTE_ACT,
-		COMSIG_LIVING_MINOR_SHOCK
-	)
 
 // ---------------------------------------------------------------------------
 // Signal unregistration
@@ -310,215 +232,6 @@ proc/string_repeat(string, count)
 				compile_display()
 
 // ---------------------------------------------------------------------------
-// Health Callback - Carbon health update
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_carbon_health_update(mob/living/carbon/C)
-	if(!auto_monitor_health)
-		return
-
-	update_health_data()
-
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/update_health_data()
-	if(!host_mob || !isliving(host_mob) || !iscarbon(host_mob))
-		return
-
-	var/mob/living/carbon/user = host_mob
-
-	var/oxy_loss = user.getOxyLoss()
-	var/tox_loss = user.getToxLoss()
-	var/fire_loss = user.getFireLoss()
-	var/brute_loss = user.getBruteLoss()
-
-	// Detect new damage
-	var/new_brute = brute_loss > last_brute_damage
-	var/new_tox = tox_loss > last_tox_damage
-	var/new_fire = fire_loss > last_fire_damage
-	var/new_oxy = oxy_loss > last_oxy_damage
-
-	if(new_brute && (brute_loss - last_brute_damage) > 5)
-		write_log("Brute damage: [brute_loss]", "HEALTH")
-	if(new_tox && (tox_loss - last_tox_damage) > 5)
-		write_log("Toxin damage: [tox_loss]", "HEALTH")
-	if(new_fire && (fire_loss - last_fire_damage) > 5)
-		write_log("Burn damage: [fire_loss]", "HEALTH")
-	if(new_oxy && (oxy_loss - last_oxy_damage) > 5)
-		write_log("Oxygen loss: [oxy_loss]", "HEALTH")
-
-	// Update status display
-	var/health_percent = user.health / user.maxHealth * 100
-	var/status_text = "<b>[round(health_percent, 0.1)]</b>"
-
-	if(user.stat == DEAD)
-		status_text = "<span class='alert'><b>DESTROYED</b></span>"
-	else if(health_percent < 25)
-		status_text = "<span class='alert'><b>CRITICAL</b></span>"
-	else if(health_percent < 50)
-		status_text = "<span class='userdanger'><b>DANGER</b></span>"
-	else if(health_percent < 75)
-		status_text = "<span class='notice'><b>MINOR</b></span>"
-
-	write_data("STATUS", status_text)
-	write_data("BRUTE", "[brute_loss]")
-	write_data("TOKSIN", "[tox_loss]")
-	write_data("BURN", "[fire_loss]")
-	write_data("OXYGEN", "[oxy_loss]")
-
-	// Store last values
-	last_brute_damage = brute_loss
-	last_tox_damage = tox_loss
-	last_fire_damage = fire_loss
-	last_oxy_damage = oxy_loss
-
-// ---------------------------------------------------------------------------
-// Wound Callback
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_carbon_gain_wound(mob/living/carbon/C, datum/wound/W, obj/item/bodypart/L)
-	if(!auto_monitor_wounds)
-		return
-
-	var/wound_info = "Wound: [W.name] on [L.name]"
-	active_wounds += wound_info
-
-	write_log(wound_info, "HEALTH")
-
-	if(W.name)
-		write_data("ACTIVE_WOUND", W.name)
-
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_carbon_lose_wound(mob/living/carbon/C, datum/wound/W, obj/item/bodypart/L)
-	if(!auto_monitor_wounds)
-		return
-
-	var/wound_info = "Healed: [W.name] on [L.name]"
-	active_wound_remove(W.name)
-	write_log(wound_info, "HEALTH")
-
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/active_wound_remove(wound_name)
-	for(var/i in 1 to active_wounds.len)
-		if(active_wounds[i] && findtext(active_wounds[i], wound_name))
-			active_wounds[i] = null
-			return
-
-// ---------------------------------------------------------------------------
-// Status Callback - Living status effects
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_living_stunned(mob/living/L, amount, update, ignore)
-	write_log("Stunned: [round(amount/10, 0.1)]s", "HEALTH")
-	write_data("STUN_REMAINING", "[round(amount/10, 0.1)]s")
-
-/datum/component/neural_interface/proc/on_living_knockdown(mob/living/L, amount, update, ignore)
-	write_log("Knocked down: [round(amount/10, 0.1)]s", "HEALTH")
-	write_data("KNOCKDOWN_REMAINING", "[round(amount/10, 0.1)]s")
-
-/datum/component/neural_interface/proc/on_living_paralyzed(mob/living/L, amount, update, ignore)
-	write_log("Paralyzed: [round(amount/10, 0.1)]s", "HEALTH")
-	write_data("PARALYZE_REMAINING", "[round(amount/10, 0.1)]s")
-
-/datum/component/neural_interface/proc/on_living_unconscious(mob/living/L, amount, update, ignore)
-	write_log("Unconscious: [round(amount/10, 0.1)]s", "HEALTH")
-	write_data("UNCONSCIOUS_REMAINING", "[round(amount/10, 0.1)]s")
-
-/datum/component/neural_interface/proc/on_living_sleeping(mob/living/L, amount, update, ignore)
-	write_log("Asleep: [round(amount/10, 0.1)]s", "HEALTH")
-	write_data("SLEEP_REMAINING", "[round(amount/10, 0.1)]s")
-
-/datum/component/neural_interface/proc/on_living_dazed(mob/living/L, amount, update, ignore)
-	write_log("Dazed: [round(amount/10, 0.1)]s", "HEALTH")
-	write_data("DAZE_REMAINING", "[round(amount/10, 0.1)]s")
-
-/datum/component/neural_interface/proc/on_living_staggered(mob/living/L, amount, update, ignore)
-	write_log("Staggered: [round(amount/10, 0.1)]s", "HEALTH")
-	write_data("STAGGER_REMAINING", "[round(amount/10, 0.1)]s")
-
-// ---------------------------------------------------------------------------
-// Death/Revive Callback
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_mob_death(mob/M, gibbed)
-	if(M != host_mob)
-		return
-
-	error_log("Mob death signal received")
-
-/datum/component/neural_interface/proc/on_living_death(mob/living/L, gibbed)
-	if(L != host_mob)
-		return
-
-	error_log("Living death signal received [gibbed ? "(gibbed)" : ""]")
-	write_data("DEATH_STATE", "DIED")
-	write_log("Vital signals TERMINATED", "ALERT")
-
-/datum/component/neural_interface/proc/on_living_predeath(mob/living/L, gibbed)
-	if(L != host_mob)
-		return
-
-	warn_log("Pre-death state [gibbed == TRUE ? "(gibbed)" : ""]")
-	write_data("PREDEATH_STATE", "TRUE")
-
-/datum/component/neural_interface/proc/on_living_revive(mob/living/L, full_heal, admin_revive)
-	if(L != host_mob)
-		return
-
-	info_log("Revived [full_heal == TRUE ? "(full heal)" : ""]")
-	write_data("DEATH_STATE", "ALIVE")
-	write_data("PREDEATH_STATE", "FALSE")
-	write_log("Vital signals RESTORED", "SYNC")
-
-// ---------------------------------------------------------------------------
-// Ghost Callback
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_mob_ghostize(mob/M, can_reenter, special, penalize)
-	if(M != host_mob)
-		return
-
-	attached_client = null
-	is_client_attached = FALSE
-
-	warn_log("Host ghostized [can_reenter == TRUE ? "(can re-enter)" : ""]")
-	write_data("GHOST_STATE", "TRUE")
-
-// ---------------------------------------------------------------------------
-// Shock Callback
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_living_electrocuted(mob/living/L, shock_damage, source, siemens_coeff, flags)
-	if(L != host_mob)
-		return
-
-	write_log("Electrocuted: [shock_damage] damage [siemens_coeff ? "(siemens: [siemens_coeff])" : ""]", "HEALTH")
-	write_data("SHOCK_DAMAGE", "[shock_damage]")
-	write_log("Electrical damage applied", "ALERT")
-
-/datum/component/neural_interface/proc/on_living_minor_shock(mob/living/L)
-	if(L != host_mob)
-		return
-
-	warn_log("Minor shock received")
-	write_data("MINOR_SHOCK", "TRUE")
-
-// ---------------------------------------------------------------------------
-// Damage Apply Callback
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_mob_apply_damage(mob/living/L, damage, damagetype, def_zone, wound_bonus, bare_wound_bonus, sharpness)
-	if(L != host_mob)
-		return
-
-	if(!auto_monitor_health)
-		return
-
-	var/damage_log = "Damage: [damage] [damagetype] on [def_zone]"
-	write_log(damage_log, "HEALTH")
-	write_data("LAST_DAMAGE", "[damage]")
-	write_data("LAST_DAMAGE_TYPE", "[damagetype]")
-	write_data("LAST_DAMAGE_ZONE", "[def_zone]")
-
-	// Log critical damage thresholds
-	if(damage > 30)
-		write_log("Significant damage applied!", "ALERT")
-	else if(damage > 15)
-		warn_log("Moderate damage applied")
-
-// ---------------------------------------------------------------------------
 // Client Reconnect - Re-attach display
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/on_client_reconnect(client/C)
@@ -529,13 +242,24 @@ proc/string_repeat(string, count)
 	is_client_attached = TRUE
 
 	if(logs_view)
-		if(host_mob?.client)
-			host_mob.client.screen += logs_view
 		write_log("Client reconnected - display restored", "SYNC")
 
 		if(visible)
 			logs_view.maptext = ""
 			compile_display()
+
+// ---------------------------------------------------------------------------
+// Client Ghost - De-attach display
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/on_mob_ghostize(mob/M, can_reenter, special, penalize)
+	if(M != host_mob)
+		return
+
+	attached_client = null
+	is_client_attached = FALSE
+
+	warn_log("Host ghostized [can_reenter == TRUE ? "(can re-enter)" : ""]")
+	write_data("GHOST_STATE", "TRUE")
 
 // ============================================================================
 // DATA ENTRY MANAGEMENT - Objects with expiration timers
