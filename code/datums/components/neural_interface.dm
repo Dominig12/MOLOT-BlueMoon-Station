@@ -229,6 +229,7 @@ proc/string_repeat(string, count)
 	if(attached_client)
 		RegisterSignal(attached_client, COMSIG_PARENT_QDELETING, PROC_REF(on_client_deleted))
 		RegisterSignal(host_mob, COMSIG_MOB_KEY_CHANGE, PROC_REF(on_mob_key_change))
+		RegisterSignal(host_mob, COMSIG_MOB_PRE_PLAYER_CHANGE, PROC_REF(on_mob_key_change))
 		RegisterSignal(host_mob, COMSIG_CLIENT_MOB_LOGIN, PROC_REF(on_client_reconnect))
 		signal_registrations += list(
 			COMSIG_PARENT_QDELETING,
