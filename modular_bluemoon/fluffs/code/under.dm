@@ -336,12 +336,19 @@
 	)
 	max_integrity = 380
 	limb_integrity = 60
+	has_sensor = NO_SENSORS
 	var/equipped_slot = FALSE
 	var/obj/effect/distortion_effect/filter_on_user
 	var/obj/effect/dress_particle_holder/particle_effect_holder
 	var/obj/echo
 	var/active_echo = TRUE
 	var/skin = "default"
+	var/list/logs = list()
+	var/list/data = list()
+	var/max_logs = 3
+	var/atom/movable/screen/text/logs_view
+	var/datum/component/ntnet_interface/net
+	var/char_reveal_speed = 10
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/New()
 	. = ..()
@@ -351,12 +358,17 @@
 
 	filter_on_user = new(src)
 	particle_effect_holder = new(src)
+	logs_view = ScreenText(null, "Initialize", "CENTER-6,CENTER-4", 450, 250)
+	net  = LoadComponent(/datum/component/ntnet_interface)
 
 	LAZYADD(vis_contents, filter_on_user)
 	LAZYADD(vis_contents, particle_effect_holder)
 
 	START_PROCESSING(SSfastprocess, src)
 	ADD_TRAIT(src, TRAIT_NODROP, CLOTHING_TRAIT)
+
+	write_log("MODULE INITIALIZED - Inlaid Data Dress v1.0", "SYSTEM")
+	write_data("NTNET_STATUS", "CONNECTED")
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/Destroy()
 	. = ..()
@@ -369,12 +381,19 @@
 	QDEL_NULL(echo)
 	QDEL_NULL(filter_on_user)
 	QDEL_NULL(particle_effect_holder)
+	QDEL_NULL(logs_view)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/on_mob_death(mob/living/L, gibbed)
 	. = ..()
 	if(gibbed)
+		write_log("HOST GIBBED - Molecular fragmentation detected", "HEALTH")
+		write_data("HOST_STATE", "GIBBED")
+		write_log("Dress will self-destruct with host", "WARNING")
 		qdel(src)
 		return TRUE
+
+	write_log("HOST DEAD signals terminated", "HEALTH")
+	write_data("HOST_STATE", "DECEASED")
 
 	toggle_open_body(TRUE)
 	var/mob/living/carbon/human/H = L
@@ -394,6 +413,16 @@
 	LAZYADD(user.vis_contents, echo)
 
 	echo.render_source = user.render_target
+	user.client.screen += logs_view
+	if(HAS_TRAIT(user, TRAIT_SELF_AWARE))
+		RegisterSignal(user, COMSIG_CARBON_UPDATEHEALTH, PROC_REF(host_update_health))
+		write_log("Self-Aware host detected - registering signal monitor", "SYNC")
+		write_data("HOST_TYPE", "SELF_AWARE")
+	else
+		write_log("Standard host detected - monitor inactive", "INFO")
+		write_data("HOST_TYPE", "STANDARD")
+
+	write_data("SYNC_STATUS", "ACTIVE")
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/dropped(mob/user)
 
@@ -406,6 +435,9 @@
 	LAZYREMOVE(user.vis_contents, echo)
 
 	echo.render_source = null
+	user.client.screen -= logs_view
+	if(HAS_TRAIT(user, TRAIT_SELF_AWARE))
+		UnregisterSignal(user, COMSIG_CARBON_UPDATEHEALTH)
 	. = ..()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/toggle_jumpsuit_adjust()
@@ -429,8 +461,130 @@
 		particle_effect_holder.remove_atom_colour(coloration, colour_priority)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/process(delta_time)
-	if(active_echo && equipped_slot)
+	if(!equipped_slot)
+		return
+
+	compile_log()
+
+	distortion_transform()
+
+	if(active_echo)
 		echo_animation()
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/ntnet_receive(datum/netdata/packet)
+	write_data("LAST NTNET DATA", "[packet.data["data"]]")
+	write_data("LAST NTNET SEC DATA", "[packet.data["data_secondary"]]")
+	write_data("LAST NTNET SENDER", "[packet.sender_id]")
+	write_log("NTNet packet received: [packet.data["data"]], [packet.data["data_secondary"]], [packet.sender_id]", "DATA")
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/write_data(key, value)
+	LAZYINITLIST(data)
+
+	data[key] = value
+	return TRUE
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/write_log(text, key="LOG", color="#4ad1fa86", size=12)
+	LAZYINITLIST(logs)
+
+	var/list/log_categories = list(
+		"SYSTEM" = "#4ad1fa86",
+		"WARNING" = "#f59e0bff",
+		"ERROR" = "#ef4444ff",
+		"INFO" = "#10b981ff",
+		"DATA" = "#8b5cf6ff",
+		"SYNC" = "#06b6d4ff",
+		"HEALTH" = "#f472b6ff",
+		"MODULE" = "#a78bffff",
+		"ALERT" = "#ff0000ff"
+	)
+
+	var/list/log_speed = list(
+		"SYSTEM" = 15,
+		"WARNING" = 15,
+		"ERROR" = 30,
+		"INFO" = 15,
+		"DATA" = 15,
+		"SYNC" = 15,
+		"HEALTH" = 30,
+		"MODULE" = 15,
+		"ALERT" = 30
+	)
+
+	if(log_categories[key])
+		color = log_categories[key]
+
+	var/plain_text = "\[[key]\] - [text]"
+
+	if(logs.len >= max_logs)
+		logs.Splice(1, 2)
+
+	var/datum/log_entry/log = new()
+
+	log.plain = plain_text
+	log.color = color
+	log.char_index = 1
+	log.char_speed = char_reveal_speed
+	log.size = size
+
+	if(log_speed[key])
+		log.char_speed = log_speed[key]
+
+	logs += log
+
+	return TRUE
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/check_integrity()
+	if(!istype(src))
+		return FALSE
+
+	var/integrity_pct = round(max_integrity ? (limb_integrity / max_integrity) * 100 : 0, 1)
+
+	write_data("CURRENT_INTEGRITY", "[limb_integrity]/[max_integrity]")
+	write_data("INTEGRITY_PERCENT", "[integrity_pct]%")
+
+	if(integrity_pct <= 10)
+		write_log("CRITICAL: Dress integrity at [integrity_pct]% - imminent module failure", "ERROR")
+	else if(integrity_pct <= 25)
+		write_log("WARNING: Dress integrity low - [integrity_pct]%", "WARNING")
+	else if(integrity_pct <= 50)
+		write_log("Dress integrity at [integrity_pct]% - structural wear detected", "INFO")
+	else
+		write_log("Integrity check passed - [integrity_pct]% structural integrity", "INFO")
+
+	return TRUE
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/compile_log()
+
+	var/write = {"<span style='font-family: \"TinyUnicode\"; font-size: 12pt; color: #4ad1fa86; line-height: 0.8; -dm-text-outline: 1px black;'>── SYSTEM MODULE ──</span><br>"}
+	write += {"<span style='font-family: \"TinyUnicode\"; font-size: 12pt; color: #6b7280; line-height: 0.8;-dm-text-outline: 1px black;'>─────────────────────────</span><br>"}
+
+	if(logs.len > 0)
+		write += {"<span style='font-family: \"TinyUnicode\"; font-size: 12pt; color: #6b7280; line-height: 0.8;-dm-text-outline: 1px black;'>├─ LOG STREAM</span><br>"}
+		for(var/datum/log_entry/log_entry in logs)
+			write += "└ [log_entry.get_line()]<br>"
+
+	if(data.len > 0)
+		write += {"<span style='font-family: \"TinyUnicode\"; font-size: 12pt; color: #6b7280; line-height: 0.8;-dm-text-outline: 1px black;'>├─ DATA</span><br>"}
+		for(var/key in data)
+			write += "[MAPTEXT_TINY_UNICODE("└ [key]: [data[key]]")]<br>"
+
+	logs_view.maptext = write
+
+/datum/log_entry
+	var/plain
+	var/color
+	var/char_index
+	var/char_speed
+	var/size
+
+/datum/log_entry/proc/get_line()
+	if(char_index < length(plain))
+		char_index = min(char_index + char_speed, length(plain)+1)
+
+	var/revealed_text = copytext(plain, 1, char_index)
+
+	return {"<span style='font-family: \"TinyUnicode\"; color: [color]; font-size: [size]pt; line-height: 0.8;-dm-text-outline: 1px black;'>[revealed_text]</span>"}
+
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/toggle_open_body(open)
 	if(!can_adjust)
@@ -439,10 +593,14 @@
 		icon_state = "InlaidDataDress_[skin]_open"
 		item_state = "InlaidDataDress_[skin]_open"
 		body_parts_covered = NONE
+		write_log("Body coverage removed - dress opened", "MODULE")
+		write_data("COVERAGE", "OPEN")
 	else
 		icon_state = "InlaidDataDress_[skin]"
 		item_state = "InlaidDataDress_[skin]"
 		body_parts_covered = CHEST|GROIN|LEGS|ARMS
+		write_log("Full body coverage restored - dress closed", "MODULE")
+		write_data("COVERAGE", "CLOSED")
 	return TRUE
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/echo_animation()
@@ -451,6 +609,41 @@
 
 	animate(echo, transform = m, alpha = 48, time = 2, loop=0, flags=ANIMATION_END_NOW)
 	animate(transform = m.Invert(), alpha = 0, time = 2)
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/distortion_transform()
+	var/matrix/m = matrix()
+	m.Turn(rand(1, 360))
+	var/x = rand(1,200)/100
+	var/y = rand(1,200)/100
+	m.Scale(x, y)
+	m.Translate(rand(-10, 10), rand(-10,10))
+
+	filter_on_user.transform = m
+
+/obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/host_update_health(mob/living/carbon/user)
+	var/oxy_loss = user.getOxyLoss()
+	var/tox_loss = user.getToxLoss()
+	var/fire_loss = user.getFireLoss()
+	var/brute_loss = user.getBruteLoss()
+	var/mob_status = (user.stat == DEAD ? "<span class='alert'><b>DESTROYED</b></span>" : "<b>[round(user.health/user.maxHealth,0.01)*100]</b>")
+
+	write_data("BRUTE", "[brute_loss]")
+	write_data("CORROSION", "[tox_loss]")
+	write_data("BURN", "[fire_loss]")
+	write_data("CONNECTION", "[oxy_loss]")
+	write_data("STATUS", "[mob_status]")
+
+	var/total_damage = brute_loss + tox_loss + fire_loss + oxy_loss
+	var/critical_threshold = user.maxHealth * 0.25
+
+	if(user.stat == DEAD)
+		write_log("CRITICAL: Host signals TERMINATED", "ERROR")
+	else if(total_damage > critical_threshold)
+		write_log("WARNING: Host in CRITICAL condition", "ALERT")
+	else if(user.health < user.maxHealth * 0.5)
+		write_log("Host health at [round(user.health/user.maxHealth,0.01)*100]% - below 50% threshold", "ALERT")
+	else
+		write_log("STATUS BODY UPDATED", "INFO")
 
 /obj/effect/distortion_effect
 	icon = 'modular_bluemoon/fluffs/icons/effects/32x32.dmi'
