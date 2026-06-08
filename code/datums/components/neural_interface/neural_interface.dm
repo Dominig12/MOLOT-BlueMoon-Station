@@ -33,7 +33,7 @@
 	var/expiry_time // world.time when entry expires
 	var/priority = 0 // higher priority = less likely to be removed when at capacity
 
-/datum/neural_data_entry/New(duration=30 SECONDS)
+/datum/neural_data_entry/New(duration=10 SECONDS)
 	decay_duration = duration
 	expiry_time = world.time + decay_duration
 	return ..()
@@ -49,7 +49,7 @@
 	var/expire_time
 	var/priority = 0
 
-/datum/image_holder_data/New(key_target, image/overlay_target, text_target = "", duration=20 SECONDS)
+/datum/image_holder_data/New(key_target, image/overlay_target, text_target = "", duration=5 SECONDS)
 	key = key_target
 	decay_duration = duration
 	expire_time = world.time + decay_duration
@@ -675,7 +675,7 @@ proc/string_repeat(string, count)
 
 	for(var/datum/image_holder_data/removed in to_remove)
 		if(removed.overlay && host_mob?.client)
-			host_mob.client.images -= removed
+			host_mob.client.images -= removed.overlay
 		image_data_entries -= removed
 		qdel(removed)
 

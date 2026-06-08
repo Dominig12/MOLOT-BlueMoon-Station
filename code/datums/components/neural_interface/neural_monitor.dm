@@ -224,7 +224,6 @@
 	owner.write_data("LAST_DAMAGE", "[damage]")
 	owner.write_data("LAST_DAMAGE_TYPE", "[damagetype]")
 	owner.write_data("LAST_DAMAGE_ZONE", "[def_zone]")
-	owner.write_image_data("MOB TARGET", image(icon='icons/effects/effects.dmi', icon_state="launchpad_target", loc=monitor_atom), damage)
 
 	if(damage > 30)
 		owner.write_log("Significant damage applied!", "ALERT")
