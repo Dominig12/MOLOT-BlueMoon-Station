@@ -118,13 +118,6 @@ proc/string_repeat(string, count)
 
 	return ..()
 
-/datum/component/neural_interface/UnregisterFromParent()
-	unregister_all_signals()
-	unregister_all_monitors()
-	delete_user()
-
-	return ..()
-
 // ---------------------------------------------------------------------------
 // Monitor Management
 // ---------------------------------------------------------------------------
@@ -182,7 +175,6 @@ proc/string_repeat(string, count)
 		RegisterSignal(host_mob, COMSIG_CLIENT_MOB_LOGIN, PROC_REF(on_client_reconnect))
 		signal_registrations += list(
 			COMSIG_MOB_GHOSTIZE,
-			COMSIG_PARENT_QDELETING,
 			COMSIG_MOB_KEY_CHANGE,
 			COMSIG_MOB_PRE_PLAYER_CHANGE,
 			COMSIG_CLIENT_MOB_LOGIN
@@ -193,6 +185,7 @@ proc/string_repeat(string, count)
 // Signal unregistration
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/unregister_all_signals()
+	UnregisterSignal(attached_client, COMSIG_PARENT_QDELETING)
 	for(var/signal_handle in signal_registrations)
 		UnregisterSignal(host_mob, signal_handle)
 	signal_registrations = list()

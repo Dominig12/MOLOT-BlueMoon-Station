@@ -49,7 +49,49 @@
 	var/last_oxy_damage = 0
 	var/last_stat = 0
 
-/datum/neural_monitor/health/proc/update_health_data()
+/datum/neural_monitor/health/register_signals()
+	if(!monitor_atom)
+		return
+
+	if(ishuman(monitor_atom))
+		RegisterSignal(monitor_atom, COMSIG_CARBON_UPDATEHEALTH, PROC_REF(on_carbon_health_update))
+
+	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_STUN, PROC_REF(on_living_stunned))
+	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_KNOCKDOWN, PROC_REF(on_living_knockdown))
+	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_PARALYZE, PROC_REF(on_living_paralyzed))
+	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_UNCONSCIOUS, PROC_REF(on_living_unconscious))
+	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_SLEEP, PROC_REF(on_living_sleeping))
+	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_DAZE, PROC_REF(on_living_dazed))
+	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_STAGGER, PROC_REF(on_living_staggered))
+
+	RegisterSignal(monitor_atom, COMSIG_MOB_DEATH, PROC_REF(on_mob_death))
+	RegisterSignal(monitor_atom, COMSIG_LIVING_REVIVE, PROC_REF(on_living_revive))
+	RegisterSignal(monitor_atom, COMSIG_LIVING_DEATH, PROC_REF(on_living_death))
+	RegisterSignal(monitor_atom, COMSIG_LIVING_PREDEATH, PROC_REF(on_living_predeath))
+	RegisterSignal(monitor_atom, COMSIG_MOB_APPLY_DAMAGE, PROC_REF(on_mob_apply_damage))
+
+	RegisterSignal(monitor_atom, COMSIG_MOB_GHOSTIZE, PROC_REF(on_mob_ghostize))
+
+/datum/neural_monitor/health/unregister_signals()
+	if(!monitor_atom)
+		return
+
+	UnregisterSignal(monitor_atom, COMSIG_CARBON_UPDATEHEALTH)
+	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_STUN)
+	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_KNOCKDOWN)
+	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_PARALYZE)
+	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_UNCONSCIOUS)
+	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_SLEEP)
+	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_DAZE)
+	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_STAGGER)
+	UnregisterSignal(monitor_atom, COMSIG_MOB_DEATH)
+	UnregisterSignal(monitor_atom, COMSIG_LIVING_REVIVE)
+	UnregisterSignal(monitor_atom, COMSIG_LIVING_DEATH)
+	UnregisterSignal(monitor_atom, COMSIG_LIVING_PREDEATH)
+	UnregisterSignal(monitor_atom, COMSIG_MOB_APPLY_DAMAGE)
+	UnregisterSignal(monitor_atom, COMSIG_MOB_GHOSTIZE)
+
+/datum/neural_monitor/health/proc/on_carbon_health_update(mob/living/carbon/C)
 	if(!monitor_atom || !isliving(monitor_atom) || !iscarbon(monitor_atom))
 		return
 
@@ -100,115 +142,68 @@
 	last_fire_damage = fire_loss
 	last_oxy_damage = oxy_loss
 
-/datum/neural_monitor/health/register_signals()
-	if(!monitor_atom)
-		return
-
-	if(ishuman(monitor_atom))
-		RegisterSignal(monitor_atom, COMSIG_CARBON_UPDATEHEALTH, PROC_REF(on_carbon_health_update))
-
-	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_STUN, PROC_REF(on_living_stunned))
-	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_KNOCKDOWN, PROC_REF(on_living_knockdown))
-	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_PARALYZE, PROC_REF(on_living_paralyzed))
-	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_UNCONSCIOUS, PROC_REF(on_living_unconscious))
-	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_SLEEP, PROC_REF(on_living_sleeping))
-	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_DAZE, PROC_REF(on_living_dazed))
-	RegisterSignal(monitor_atom, COMSIG_LIVING_STATUS_STAGGER, PROC_REF(on_living_staggered))
-
-	RegisterSignal(monitor_atom, COMSIG_MOB_DEATH, PROC_REF(on_mob_death))
-	RegisterSignal(monitor_atom, COMSIG_LIVING_REVIVE, PROC_REF(on_living_revive))
-	RegisterSignal(monitor_atom, COMSIG_LIVING_DEATH, PROC_REF(on_living_death))
-	RegisterSignal(monitor_atom, COMSIG_LIVING_PREDEATH, PROC_REF(on_living_predeath))
-	RegisterSignal(monitor_atom, COMSIG_MOB_APPLY_DAMAGE, PROC_REF(on_mob_apply_damage))
-
-	RegisterSignal(monitor_atom, COMSIG_MOB_GHOSTIZE, PROC_REF(on_mob_ghostize))
-
-/datum/neural_monitor/health/unregister_signals()
-	if(!monitor_atom)
-		return
-
-	UnregisterSignal(monitor_atom, COMSIG_CARBON_UPDATEHEALTH)
-	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_STUN)
-	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_KNOCKDOWN)
-	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_PARALYZE)
-	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_UNCONSCIOUS)
-	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_SLEEP)
-	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_DAZE)
-	UnregisterSignal(monitor_atom, COMSIG_LIVING_STATUS_STAGGER)
-	UnregisterSignal(monitor_atom, COMSIG_MOB_DEATH)
-	UnregisterSignal(monitor_atom, COMSIG_LIVING_REVIVE)
-	UnregisterSignal(monitor_atom, COMSIG_LIVING_DEATH)
-	UnregisterSignal(monitor_atom, COMSIG_LIVING_PREDEATH)
-	UnregisterSignal(monitor_atom, COMSIG_MOB_APPLY_DAMAGE)
-	UnregisterSignal(monitor_atom, COMSIG_MOB_GHOSTIZE)
-
-/datum/neural_monitor/health/proc/on_carbon_health_update(mob/living/carbon/C)
-	if(!enabled)
-		return
-	update_health_data()
-
 /datum/neural_monitor/health/proc/on_living_stunned(mob/living/L, amount, update, ignore)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.write_log("Stunned: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("STUN_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_knockdown(mob/living/L, amount, update, ignore)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.write_log("Knocked down: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("KNOCKDOWN_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_paralyzed(mob/living/L, amount, update, ignore)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.write_log("Paralyzed: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("PARALYZE_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_unconscious(mob/living/L, amount, update, ignore)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.write_log("Unconscious: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("UNCONSCIOUS_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_sleeping(mob/living/L, amount, update, ignore)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.write_log("Asleep: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("SLEEP_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_dazed(mob/living/L, amount, update, ignore)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.write_log("Dazed: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("DAZE_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_staggered(mob/living/L, amount, update, ignore)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.write_log("Staggered: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("STAGGER_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_mob_death(mob/M, gibbed)
-	if(!enabled || M != monitor_atom)
+	if(M != monitor_atom)
 		return
 	owner.error_log("Mob death signal received")
 
 /datum/neural_monitor/health/proc/on_living_death(mob/living/L, gibbed)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.error_log("Living death signal received [gibbed ? "(gibbed)" : ""]")
 	owner.write_data("DEATH_STATE", "DIED")
 	owner.write_log("Vital signals TERMINATED", "ALERT")
 
 /datum/neural_monitor/health/proc/on_living_predeath(mob/living/L, gibbed)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.warn_log("Pre-death state [gibbed == TRUE ? "(gibbed)" : ""]")
 	owner.write_data("PREDEATH_STATE", "TRUE")
 
 /datum/neural_monitor/health/proc/on_living_revive(mob/living/L, full_heal, admin_revive)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.info_log("Revived [full_heal == TRUE ? "(full heal)" : ""]")
 	owner.write_data("DEATH_STATE", "ALIVE")
@@ -216,13 +211,13 @@
 	owner.write_log("Vital signals RESTORED", "SYNC")
 
 /datum/neural_monitor/health/proc/on_mob_ghostize(mob/M, can_reenter, special, penalize)
-	if(!enabled || M != monitor_atom)
+	if(M != monitor_atom)
 		return
 	owner.warn_log("Host ghostized [can_reenter == TRUE ? "(can re-enter)" : ""]")
 	owner.write_data("GHOST_STATE", "TRUE")
 
 /datum/neural_monitor/health/proc/on_mob_apply_damage(mob/living/L, damage, damagetype, def_zone, wound_bonus, bare_wound_bonus, sharpness)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	var/damage_log = "Damage: [damage] [damagetype] on [def_zone]"
 	owner.write_log(damage_log, "HEALTH")
@@ -254,16 +249,12 @@
 	UnregisterSignal(monitor_atom, COMSIG_CARBON_LOSE_WOUND)
 
 /datum/neural_monitor/wound/proc/on_carbon_gain_wound(mob/living/carbon/C, datum/wound/W, obj/item/bodypart/L)
-	if(!enabled)
-		return
 	var/wound_info = "Wound: [W.name] on [L.name]"
 	owner.write_log(wound_info, "HEALTH")
 	if(W.name)
 		owner.write_data("ACTIVE_WOUND", W.name)
 
 /datum/neural_monitor/wound/proc/on_carbon_lose_wound(mob/living/carbon/C, datum/wound/W, obj/item/bodypart/L)
-	if(!enabled)
-		return
 	var/wound_info = "Healed: [W.name] on [L.name]"
 	owner.write_log(wound_info, "HEALTH")
 
@@ -286,14 +277,14 @@
 	UnregisterSignal(monitor_atom, COMSIG_LIVING_MINOR_SHOCK)
 
 /datum/neural_monitor/shock/proc/on_living_electrocuted(mob/living/L, shock_damage, source, siemens_coeff, flags)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.write_log("Electrocuted: [shock_damage] damage [siemens_coeff ? "(siemens: [siemens_coeff])" : ""]", "HEALTH")
 	owner.write_data("SHOCK_DAMAGE", "[shock_damage]")
 	owner.write_log("Electrical damage applied", "ALERT")
 
 /datum/neural_monitor/shock/proc/on_living_minor_shock(mob/living/L)
-	if(!enabled || L != monitor_atom)
+	if(L != monitor_atom)
 		return
 	owner.warn_log("Minor shock received")
 	owner.write_data("MINOR_SHOCK", "TRUE")
