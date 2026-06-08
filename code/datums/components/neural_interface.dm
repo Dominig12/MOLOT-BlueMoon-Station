@@ -234,6 +234,7 @@ proc/string_repeat(string, count)
 		signal_registrations += list(
 			COMSIG_PARENT_QDELETING,
 			COMSIG_MOB_KEY_CHANGE,
+			COMSIG_MOB_PRE_PLAYER_CHANGE,
 			COMSIG_CLIENT_MOB_LOGIN
 		)
 		is_client_attached = TRUE
@@ -289,6 +290,7 @@ proc/string_repeat(string, count)
 	if(logs_view && host_mob?.client)
 		// Client reattached (new client object)
 		attached_client = host_mob.client
+		host_mob.client.screen += logs_view
 		is_client_attached = TRUE
 		logs_view.maptext = ""
 		compile_display()
@@ -345,7 +347,7 @@ proc/string_repeat(string, count)
 
 	// Update status display
 	var/health_percent = user.health / user.maxHealth * 100
-	var/status_text = "<b>[round(health_percent, 0.1)]%</b>"
+	var/status_text = "<b>[round(health_percent, 0.1)]</b>"
 
 	if(user.stat == DEAD)
 		status_text = "<span class='alert'><b>DESTROYED</b></span>"
@@ -469,6 +471,9 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/on_mob_ghostize(mob/M, can_reenter, special, penalize)
 	if(M != host_mob)
 		return
+
+	attached_client = null
+	is_client_attached = FALSE
 
 	warn_log("Host ghostized [can_reenter == TRUE ? "(can re-enter)" : ""]")
 	write_data("GHOST_STATE", "TRUE")
@@ -727,6 +732,12 @@ proc/string_repeat(string, count)
 // Display Compilation - Generate HTML for screen rendering
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/compile_display()
+	if(!is_client_attached || attached_client == null)
+		if(host_mob.client)
+			is_client_attached = TRUE
+			attached_client = host_mob.client
+			host_mob.client.screen += logs_view
+
 	// Throttle updates
 	if(world.time - last_update < update_interval / 10)
 		return
