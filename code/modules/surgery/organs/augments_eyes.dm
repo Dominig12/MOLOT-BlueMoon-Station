@@ -9,6 +9,8 @@
 	slot = ORGAN_SLOT_HUD
 	var/HUD_type = 0
 	var/active = FALSE
+	var/datum/component/neural_interface/interface
+	var/list/monitors = list()
 
 /obj/item/organ/cyberimp/eyes/hud/Insert(mob/living/carbon/organ_mob, special, drop_if_replaced)
 	. = ..()
@@ -26,9 +28,12 @@
 	if(active)
 		var/datum/atom_hud/H = GLOB.huds[HUD_type]
 		H.remove_hud_from(owner)
+		interface.RemoveSource("IMPLANT HUD[HUD_type]")
 	else
 		var/datum/atom_hud/H = GLOB.huds[HUD_type]
 		H.add_hud_to(owner)
+		interface = owner.LoadComponent(/datum/component/neural_interface)
+		interface.add_monitors_by_types("IMPLANT HUD[HUD_type]", monitors)
 
 	active = !active
 
@@ -46,6 +51,11 @@
 	name = "Medical HUD implant"
 	desc = "These cybernetic eye implants will display a medical HUD over everything you see."
 	HUD_type = DATA_HUD_MEDICAL_ADVANCED
+	monitors = list(
+		/datum/neural_monitor/health_scan,
+		/datum/neural_monitor/health,
+		/datum/neural_monitor/wound
+	)
 
 /obj/item/organ/cyberimp/eyes/hud/diagnostic
 	name = "Diagnostic HUD implant"
