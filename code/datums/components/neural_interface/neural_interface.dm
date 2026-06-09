@@ -211,17 +211,14 @@ proc/string_repeat(string, count)
 	// Create screen display
 	logs_view = ScreenText(null, "Initialize", screen_loc, maptext_height, maptext_width)
 
+	toggle_button = new
+
 	if(host_mob?.client)
 		attach_client()
 
 	register_client_signals()
 
 	START_PROCESSING(SSfastprocess, src)
-
-	toggle_button = new
-	toggle_button.name = "Выключить нейронный интерфейс"
-	toggle_button.button_icon_state = "hide"
-	toggle_button.UpdateButtons()
 
 	return ..()
 
