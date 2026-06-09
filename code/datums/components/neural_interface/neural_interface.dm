@@ -16,7 +16,7 @@
 	var/size
 
 /datum/log_entry/proc/format(text)
-	return return {"<span style='font-family: \"TinyUnicode\"; color: [color]; font-size: [size]pt; line-height: 0.8;-dm-text-outline: 1px black;'>[text]</span>"}
+	return {"<span style='font-family: \"TinyUnicode\"; color: [color]; font-size: [size]pt; line-height: 0.8;-dm-text-outline: 1px black;'>[text]</span>"}
 
 /datum/log_entry/proc/get_full_line()
 	return format(plain)
