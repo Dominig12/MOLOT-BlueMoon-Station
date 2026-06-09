@@ -26,7 +26,7 @@
 	..()
 	if(hud_type && slot == ITEM_SLOT_EYES)
 		interface = user.LoadComponent(/datum/component/neural_interface)
-		interface.add_monitors_by_types("HUD", monitors)
+		interface.add_monitors_by_types("HUD GLASSES", monitors)
 		var/datum/atom_hud/H = GLOB.huds[hud_type]
 		H.add_hud_to(user)
 		hud_granted = TRUE
@@ -34,7 +34,7 @@
 /obj/item/clothing/glasses/hud/dropped(mob/living/carbon/human/user)
 	..()
 	if(hud_type && istype(user) && hud_granted)
-		interface.RemoveSource("HUD")
+		interface.RemoveSource("HUD GLASSES")
 		interface = null
 		hud_granted = FALSE
 		var/datum/atom_hud/H = GLOB.huds[hud_type]
