@@ -161,11 +161,11 @@
 	else if(health_percent < 75)
 		status_text = "<span class='notice'><b>MINOR</b></span>"
 
-	owner.write_data("STATUS", status_text)
-	owner.write_data("BRUTE", "[brute_loss]")
-	owner.write_data("TOKSIN", "[tox_loss]")
-	owner.write_data("BURN", "[fire_loss]")
-	owner.write_data("OXYGEN", "[oxy_loss]")
+	owner.write_data("STATUS", status_text, 30 SECONDS)
+	owner.write_data("BRUTE", "[brute_loss]", 30 SECONDS)
+	owner.write_data("TOX", "[tox_loss]", 30 SECONDS)
+	owner.write_data("BURN", "[fire_loss]", 30 SECONDS)
+	owner.write_data("OXYGEN", "[oxy_loss]", 30 SECONDS)
 
 	// Store last values
 	last_brute_damage = brute_loss

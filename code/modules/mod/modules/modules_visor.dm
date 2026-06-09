@@ -24,8 +24,9 @@
 	if(hud_type)
 		var/datum/atom_hud/hud = GLOB.huds[hud_type]
 		hud.add_hud_to(mod.wearer)
-		interface = mod.wearer.LoadComponent(/datum/component/neural_interface)
-		interface.add_monitors_by_types("MOD HUD[hud_type]", monitors)
+		if(monitors?.len)
+			interface = mod.wearer.LoadComponent(/datum/component/neural_interface)
+			interface.add_monitors_by_types("MOD HUD[hud_type]", monitors)
 	for(var/trait in visor_traits)
 		ADD_TRAIT(mod.wearer, trait, MOD_TRAIT)
 	mod.wearer.update_sight()

@@ -372,8 +372,9 @@
 	QDEL_NULL(echo)
 	QDEL_NULL(filter_on_user)
 	QDEL_NULL(particle_effect_holder)
-	QDEL_NULL(neural_interface)
 	QDEL_NULL(net)
+	neural_interface?.RemoveSource("ROSELIA_DRESS")
+	neural_interface = null
 
 	. = ..()
 
@@ -432,7 +433,7 @@
 	LAZYREMOVE(user.vis_contents, particle_effect_holder)
 	LAZYREMOVE(user.vis_contents, echo)
 
-	echo.render_source = null
+	echo?.render_source = null
 
 	neural_interface?.RemoveSource("ROSELIA_DRESS")
 	. = ..()

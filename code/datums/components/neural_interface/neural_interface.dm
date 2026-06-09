@@ -14,6 +14,7 @@
 	var/char_index
 	var/char_speed
 	var/size
+	var/expiry_time
 
 /datum/log_entry/proc/format(text)
 	return {"<span style='font-family: \"TinyUnicode\"; color: [color]; font-size: [size]pt; line-height: 0.8;-dm-text-outline: 1px black;'>[text]</span>"}
@@ -93,6 +94,28 @@ proc/string_repeat(string, count)
 
 	return result
 
+/datum/action/toggle_interface
+	name = "Выключить нейронный интерфейс"
+	button_icon_state = "hide"
+	var/toggled = TRUE
+
+/datum/action/report/IsAvailable()
+	return TRUE
+
+/datum/action/toggle_interface/Trigger()
+	var/datum/component/neural_interface/interface = owner.GetComponent(/datum/component/neural_interface)
+	if(interface)
+		if(toggled)
+			interface.hide()
+			button_icon_state = "show"
+			name = "Включить нейронный интерфейс"
+		else
+			interface.show()
+			button_icon_state = "hide"
+			name = "Выключить нейронный интерфейс"
+	toggled = !toggled
+	UpdateButtons()
+
 // ---------------------------------------------------------------------------
 // Neural Interface Component - Main component for visual display
 // ---------------------------------------------------------------------------
@@ -121,7 +144,7 @@ proc/string_repeat(string, count)
 
 	// Display configuration
 	var/screen_loc = "LEFT+1.5,CENTER-1.5"
-	var/maptext_width = 450
+	var/maptext_width = 150
 	var/maptext_height = 250
 
 	// UI customization
@@ -130,10 +153,6 @@ proc/string_repeat(string, count)
 	var/separator_color = "#6b7280"
 	var/font_size = 12
 	var/visible = TRUE
-
-	// Update interval (in seconds)
-	var/update_interval = 1 SECONDS
-	var/last_update = 0
 
 	// Client tracking
 	var/client/attached_client
@@ -144,6 +163,8 @@ proc/string_repeat(string, count)
 
 	// Signal registration handles
 	var/list/signal_registrations = list()
+
+	var/datum/action/toggle_interface/toggle_button
 
 	// Log category configuration
 	var/list/log_categories = list(
@@ -199,10 +220,10 @@ proc/string_repeat(string, count)
 	// Create screen display
 	logs_view = ScreenText(null, "Initialize", screen_loc, maptext_height, maptext_width)
 
+	toggle_button = new
+
 	if(host_mob?.client)
-		host_mob.client.screen += logs_view
-		attached_client = host_mob.client
-		is_client_attached = TRUE
+		attach_client()
 
 	register_client_signals()
 
@@ -222,6 +243,98 @@ proc/string_repeat(string, count)
 	delete_user()
 
 	return ..()
+
+// ---------------------------------------------------------------------------
+// User Management
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/attach_client()
+	host_mob.client.screen += logs_view
+	attached_client = host_mob.client
+	is_client_attached = TRUE
+	toggle_button.Grant(host_mob)
+
+/datum/component/neural_interface/proc/delete_user()
+	if(!host_mob)
+		return
+
+	toggle_button.Remove(host_mob)
+
+	// Remove from screen
+	if(host_mob?.client)
+		if(logs_view)
+			host_mob.client.screen -= logs_view
+
+	QDEL_NULL(logs_view)
+	logs_view = null
+
+	attached_client = null
+	is_client_attached = FALSE
+	host_mob = null
+	QDEL_NULL(toggle_button)
+
+// ---------------------------------------------------------------------------
+// Client Tracking - Client attach/detach signals
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/register_client_signals()
+	if(!host_mob)
+		return
+
+	if(!attached_client)
+		attached_client = host_mob?.client
+
+	if(attached_client)
+		RegisterSignal(host_mob, COMSIG_MOB_GHOSTIZE, PROC_REF(on_mob_ghostize))
+		RegisterSignal(host_mob, COMSIG_MOB_KEY_CHANGE, PROC_REF(on_mob_key_change))
+		RegisterSignal(host_mob, COMSIG_MOB_PRE_PLAYER_CHANGE, PROC_REF(on_mob_key_change))
+		RegisterSignal(host_mob, COMSIG_CLIENT_MOB_LOGIN, PROC_REF(on_client_reconnect))
+		signal_registrations += list(
+			COMSIG_MOB_GHOSTIZE,
+			COMSIG_MOB_KEY_CHANGE,
+			COMSIG_MOB_PRE_PLAYER_CHANGE,
+			COMSIG_CLIENT_MOB_LOGIN
+		)
+		is_client_attached = TRUE
+
+// ---------------------------------------------------------------------------
+// Signal unregistration
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/unregister_all_signals()
+	for(var/signal_handle in signal_registrations)
+		UnregisterSignal(host_mob, signal_handle)
+	signal_registrations = list()
+
+
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/on_mob_key_change(mob/M, mob/new_mob, old_mob)
+	SIGNAL_HANDLER
+
+	if(!host_mob)
+		return
+
+	attach_client()
+
+// ---------------------------------------------------------------------------
+// Client Reconnect - Re-attach display
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/on_client_reconnect(client/C)
+	SIGNAL_HANDLER
+
+	if(!host_mob)
+		return
+
+	attach_client()
+
+// ---------------------------------------------------------------------------
+// Client Ghost - De-attach display
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/on_mob_ghostize(mob/M, can_reenter, special, penalize)
+	SIGNAL_HANDLER
+
+	if(!host_mob)
+		return
+
+	attached_client = null
+	is_client_attached = FALSE
 
 // ---------------------------------------------------------------------------
 // Monitor Management
@@ -273,6 +386,8 @@ proc/string_repeat(string, count)
 	monitors += monitor
 	if(!get_enabled_monitor_by_type(type))
 		return
+	if(!visible)
+		return
 	monitor.enable()
 
 /datum/component/neural_interface/proc/add_monitors_by_types(source, list/types)
@@ -301,6 +416,8 @@ proc/string_repeat(string, count)
 			break
 
 /datum/component/neural_interface/proc/enable_monitor_by_type(type)
+	if(!visible)
+		return
 	for(var/datum/neural_monitor/monitor in monitors)
 		if(!istype(monitor, type))
 			continue
@@ -316,105 +433,23 @@ proc/string_repeat(string, count)
 
 	return FALSE
 
-// ---------------------------------------------------------------------------
-// User Management
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/delete_user()
-	if(!host_mob)
+/datum/component/neural_interface/proc/enable_monitors()
+	if(!visible)
 		return
+	var/list/types = list()
+	for(var/datum/neural_monitor/monitor in monitors)
+		if(monitor.type in types)
+			continue
+		types += monitor.type
+		if(monitor.enabled)
+			continue
+		monitor.enable()
 
-	// Remove from screen
-	if(logs_view)
-		if(host_mob?.client)
-			host_mob.client.screen -= logs_view
-		QDEL_NULL(logs_view)
-		logs_view = null
-
-	attached_client = null
-	is_client_attached = FALSE
-	host_mob = null
-
-// ---------------------------------------------------------------------------
-// Client Tracking - Client attach/detach signals
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/register_client_signals()
-	if(!host_mob)
-		return
-
-	if(!attached_client)
-		attached_client = host_mob?.client
-
-	if(attached_client)
-		RegisterSignal(host_mob, COMSIG_MOB_GHOSTIZE, PROC_REF(on_mob_ghostize))
-		RegisterSignal(host_mob, COMSIG_MOB_KEY_CHANGE, PROC_REF(on_mob_key_change))
-		RegisterSignal(host_mob, COMSIG_MOB_PRE_PLAYER_CHANGE, PROC_REF(on_mob_key_change))
-		RegisterSignal(host_mob, COMSIG_CLIENT_MOB_LOGIN, PROC_REF(on_client_reconnect))
-		signal_registrations += list(
-			COMSIG_MOB_GHOSTIZE,
-			COMSIG_MOB_KEY_CHANGE,
-			COMSIG_MOB_PRE_PLAYER_CHANGE,
-			COMSIG_CLIENT_MOB_LOGIN
-		)
-		is_client_attached = TRUE
-
-// ---------------------------------------------------------------------------
-// Signal unregistration
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/unregister_all_signals()
-	for(var/signal_handle in signal_registrations)
-		UnregisterSignal(host_mob, signal_handle)
-	signal_registrations = list()
-
-
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_mob_key_change(mob/M, mob/new_mob, old_mob)
-	SIGNAL_HANDLER
-
-	if(M == host_mob)
-		write_log("Player transferred control to another mob", "SYNC")
-		write_data("PLAYER_TRANSFER", "TRUE")
-
-		if(host_mob?.client)
-			attached_client = host_mob.client
-			is_client_attached = TRUE
-
-			if(logs_view)
-				logs_view.maptext = ""
-				compile_display()
-
-// ---------------------------------------------------------------------------
-// Client Reconnect - Re-attach display
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_client_reconnect(client/C)
-	SIGNAL_HANDLER
-
-	if(!host_mob)
-		return
-
-	attached_client = C
-	is_client_attached = TRUE
-
-	if(logs_view)
-		write_log("Client reconnected - display restored", "SYNC")
-
-		if(visible)
-			logs_view.maptext = ""
-			compile_display()
-
-// ---------------------------------------------------------------------------
-// Client Ghost - De-attach display
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/on_mob_ghostize(mob/M, can_reenter, special, penalize)
-	SIGNAL_HANDLER
-
-	if(M != host_mob)
-		return
-
-	attached_client = null
-	is_client_attached = FALSE
-
-	warn_log("Host ghostized [can_reenter == TRUE ? "(can re-enter)" : ""]")
-	write_data("GHOST_STATE", "TRUE")
+/datum/component/neural_interface/proc/disable_monitors()
+	for(var/datum/neural_monitor/monitor in monitors)
+		if(!monitor.enabled)
+			continue
+		monitor.disable()
 
 // ============================================================================
 // DATA ENTRY MANAGEMENT - Objects with expiration timers
@@ -448,7 +483,6 @@ proc/string_repeat(string, count)
 
 	data_entries += new_entry
 
-	compile_display()
 	return TRUE
 
 // ---------------------------------------------------------------------------
@@ -562,6 +596,7 @@ proc/string_repeat(string, count)
 	log.char_index = 1
 	log.char_speed = speed > 0 ? speed : char_reveal_speed
 	log.size = size
+	log.expiry_time = world.time + 3 SECONDS
 
 	// Override speed if category has specific speed
 	if(log_speeds[key] && speed == 0)
@@ -569,7 +604,6 @@ proc/string_repeat(string, count)
 
 	logs += log
 
-	compile_display()
 	return TRUE
 
 /datum/component/neural_interface/proc/clear_logs()
@@ -584,6 +618,17 @@ proc/string_repeat(string, count)
 		QDEL_NULL(removed)
 		return TRUE
 	return FALSE
+
+/datum/component/neural_interface/proc/cleanup_expired_logs()
+	var/list/to_remove = list()
+
+	for(var/datum/log_entry/entry in logs)
+		if(world.time >= entry.expiry_time)
+			to_remove += entry
+
+	for(var/removed in to_remove)
+		logs -= removed
+		QDEL_NULL(removed)
 
 // ============================================================================
 // IMAGE DATA ENTRY MANAGEMENT - Images with expiration timers
@@ -620,7 +665,6 @@ proc/string_repeat(string, count)
 
 	image_data_entries += new_entry
 
-	compile_display()
 	return TRUE
 
 // ---------------------------------------------------------------------------
@@ -718,24 +762,22 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/compile_display()
 	if(!is_client_attached || attached_client == null)
 		if(host_mob.client)
-			is_client_attached = TRUE
-			attached_client = host_mob.client
-			host_mob.client.screen += logs_view
-
-	// Throttle updates
-	if(world.time - last_update < update_interval)
-		return
-
-	last_update = world.time
-
-	if(!logs_view || !visible)
-		return
+			attach_client()
 
 	// Cleanup expired data entries
 	cleanup_expired_data()
 
 	// Cleanup expired image data entries
 	cleanup_expired_image_data()
+
+	cleanup_expired_logs()
+
+	if(!logs_view || !visible)
+		return
+
+	if(!logs.len && !data_entries.len)
+		logs_view.maptext = ""
+		return
 
 	var/write = get_display_header()
 
@@ -784,12 +826,14 @@ proc/string_repeat(string, count)
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/show()
 	visible = TRUE
+	enable_monitors()
 	if(logs_view)
 		logs_view.maptext = ""
 	compile_display()
 
 /datum/component/neural_interface/proc/hide()
 	visible = FALSE
+	disable_monitors()
 	if(logs_view)
 		logs_view.maptext = ""
 

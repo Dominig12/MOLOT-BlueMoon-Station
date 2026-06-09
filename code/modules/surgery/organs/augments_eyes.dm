@@ -32,8 +32,9 @@
 	else
 		var/datum/atom_hud/H = GLOB.huds[HUD_type]
 		H.add_hud_to(owner)
-		interface = owner.LoadComponent(/datum/component/neural_interface)
-		interface.add_monitors_by_types("IMPLANT HUD[HUD_type]", monitors)
+		if(monitors?.len)
+			interface = owner.LoadComponent(/datum/component/neural_interface)
+			interface.add_monitors_by_types("IMPLANT HUD[HUD_type]", monitors)
 
 	active = !active
 
