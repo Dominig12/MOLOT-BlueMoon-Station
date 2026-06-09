@@ -217,6 +217,10 @@ proc/string_repeat(string, count)
 
 	return ..()
 
+// ---------------------------------------------------------------------------
+// Monitor Management
+// ---------------------------------------------------------------------------
+
 /datum/component/neural_interface/proc/AddSource(id)
 	LAZYINITLIST(sources)
 	LAZYADD(sources, id)
@@ -242,9 +246,6 @@ proc/string_repeat(string, count)
 	for(var/type in types)
 		enable_monitor_by_type(type)
 
-// ---------------------------------------------------------------------------
-// Monitor Management
-// ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/unregister_all_monitors()
 	LAZYINITLIST(monitors)
 	for(var/datum/neural_monitor/monitor in monitors)
@@ -575,106 +576,6 @@ proc/string_repeat(string, count)
 		return TRUE
 	return FALSE
 
-// ---------------------------------------------------------------------------
-// Display Compilation - Generate HTML for screen rendering
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/compile_display()
-	if(!is_client_attached || attached_client == null)
-		if(host_mob.client)
-			is_client_attached = TRUE
-			attached_client = host_mob.client
-			host_mob.client.screen += logs_view
-
-	// Throttle updates
-	if(world.time - last_update < update_interval)
-		return
-
-	last_update = world.time
-
-	if(!logs_view || !visible)
-		return
-
-	// Cleanup expired data entries
-	cleanup_expired_data()
-
-	// Cleanup expired image data entries
-	cleanup_expired_image_data()
-
-	var/write = get_display_header()
-
-	// Add log stream section
-	if(logs.len > 0)
-		write += get_log_section()
-
-	// Add data section (only active entries)
-	if(data_entries.len > 0)
-		write += get_data_section()
-
-	// Apply compiled display
-	logs_view.maptext = write
-
-/datum/component/neural_interface/proc/compile_log()
-	// Alias for compile_display for backward compatibility
-	compile_display()
-
-// ---------------------------------------------------------------------------
-// Display Sections - Build individual display parts
-// ---------------------------------------------------------------------------
-
-/datum/component/neural_interface/proc/get_display_header()
-	var/write = {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [header_color]; line-height: 0.8; -dm-text-outline: 1px black;'>── [display_title] ──</span><br>"}
-	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>[string_repeat("─", length(display_title) + 6)]</span><br>"}
-
-	return write
-
-/datum/component/neural_interface/proc/get_log_section()
-	var/write = ""
-	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>├─ LOG STREAM</span><br>"}
-
-	for(var/datum/log_entry/log_entry in logs)
-		write += "[MAPTEXT_TINY_UNICODE("└ [log_entry.get_line()]")]<br>"
-
-	return write
-
-/datum/component/neural_interface/proc/get_data_section()
-	var/write = ""
-	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>├─ DATA</span><br>"}
-
-	for(var/datum/neural_data_entry/entry in data_entries)
-		if(world.time < entry.expiry_time)
-			write += "[MAPTEXT_TINY_UNICODE("└ [entry.key]: [entry.value]")]<br>"
-
-	return write
-
-// ---------------------------------------------------------------------------
-// Visibility Control
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/show()
-	visible = TRUE
-	if(logs_view)
-		logs_view.maptext = ""
-	compile_display()
-
-/datum/component/neural_interface/proc/hide()
-	visible = FALSE
-	if(logs_view)
-		logs_view.maptext = ""
-
-// ---------------------------------------------------------------------------
-// Quick Access - Common operations
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/system_log(text)
-	return write_log(text, "SYSTEM")
-
-/datum/component/neural_interface/proc/warn_log(text)
-	return write_log(text, "WARNING")
-
-/datum/component/neural_interface/proc/error_log(text)
-	return write_log(text, "ERROR")
-
-/datum/component/neural_interface/proc/info_log(text)
-	return write_log(text, "INFO")
-
 // ============================================================================
 // IMAGE DATA ENTRY MANAGEMENT - Images with expiration timers
 // ============================================================================
@@ -799,3 +700,99 @@ proc/string_repeat(string, count)
 		if(entry.key == key && world.time < entry.expire_time)
 			return entry.overlay
 	return null
+
+// ---------------------------------------------------------------------------
+// Display Compilation - Generate HTML for screen rendering
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/compile_display()
+	if(!is_client_attached || attached_client == null)
+		if(host_mob.client)
+			is_client_attached = TRUE
+			attached_client = host_mob.client
+			host_mob.client.screen += logs_view
+
+	// Throttle updates
+	if(world.time - last_update < update_interval)
+		return
+
+	last_update = world.time
+
+	if(!logs_view || !visible)
+		return
+
+	// Cleanup expired data entries
+	cleanup_expired_data()
+
+	// Cleanup expired image data entries
+	cleanup_expired_image_data()
+
+	var/write = get_display_header()
+
+	// Add log stream section
+	if(logs.len > 0)
+		write += get_log_section()
+
+	// Add data section (only active entries)
+	if(data_entries.len > 0)
+		write += get_data_section()
+
+	// Apply compiled display
+	logs_view.maptext = write
+
+// ---------------------------------------------------------------------------
+// Display Sections - Build individual display parts
+// ---------------------------------------------------------------------------
+
+/datum/component/neural_interface/proc/get_display_header()
+	var/write = {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [header_color]; line-height: 0.8; -dm-text-outline: 1px black;'>── [display_title] ──</span><br>"}
+	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>[string_repeat("─", length(display_title) + 6)]</span><br>"}
+
+	return write
+
+/datum/component/neural_interface/proc/get_log_section()
+	var/write = ""
+	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>├─ LOG STREAM</span><br>"}
+
+	for(var/datum/log_entry/log_entry in logs)
+		write += "[MAPTEXT_TINY_UNICODE("└ [log_entry.get_line()]")]<br>"
+
+	return write
+
+/datum/component/neural_interface/proc/get_data_section()
+	var/write = ""
+	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>├─ DATA</span><br>"}
+
+	for(var/datum/neural_data_entry/entry in data_entries)
+		if(world.time < entry.expiry_time)
+			write += "[MAPTEXT_TINY_UNICODE("└ [entry.key]: [entry.value]")]<br>"
+
+	return write
+
+// ---------------------------------------------------------------------------
+// Visibility Control
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/show()
+	visible = TRUE
+	if(logs_view)
+		logs_view.maptext = ""
+	compile_display()
+
+/datum/component/neural_interface/proc/hide()
+	visible = FALSE
+	if(logs_view)
+		logs_view.maptext = ""
+
+// ---------------------------------------------------------------------------
+// Quick Access - Common operations
+// ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/system_log(text)
+	return write_log(text, "SYSTEM")
+
+/datum/component/neural_interface/proc/warn_log(text)
+	return write_log(text, "WARNING")
+
+/datum/component/neural_interface/proc/error_log(text)
+	return write_log(text, "ERROR")
+
+/datum/component/neural_interface/proc/info_log(text)
+	return write_log(text, "INFO")
