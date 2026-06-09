@@ -115,6 +115,7 @@
 								COMSIG_NANITE_UI_DATA,
 								COMSIG_NANITE_GET_PROGRAMS,
 								COMSIG_NANITE_SET_VOLUME,
+								COMSIG_NANITE_GET_VOLUME,
 								COMSIG_NANITE_ADJUST_VOLUME,
 								COMSIG_NANITE_SET_MAX_VOLUME,
 								COMSIG_NANITE_SET_CLOUD,
@@ -406,6 +407,8 @@
 	nanite_volume = clamp(amount, 0, max_nanites)
 
 /datum/component/nanites/proc/get_volume(datum/source)
+	SIGNAL_HANDLER
+
 	return nanite_volume
 
 /datum/component/nanites/proc/set_max_volume(datum/source, amount)

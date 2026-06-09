@@ -172,24 +172,24 @@ proc/string_repeat(string, count)
 
 /datum/component/neural_interface/Initialize(
 		mob/user,
-		display_title = "NEURAL INTERFACE",
-		max_logs = 3,
-		max_data_entries = 10,
-		max_image_data_entries = 10,
-		char_reveal_speed = 10,
-		screen_loc = "LEFT+1.5,CENTER-1.5"
+		display_title_p = "NEURAL INTERFACE",
+		max_logs_p = 3,
+		max_data_entries_p = 10,
+		max_image_data_entries_p = 10,
+		char_reveal_speed_p = 10,
+		screen_loc_p = "LEFT+1.5,CENTER-1.5"
 	)
 
 	if(!isliving(parent))
 		return COMPONENT_INCOMPATIBLE
 
 	host_mob = parent
-	display_title = display_title
-	max_logs = max_logs
-	max_data_entries = max_data_entries
-	max_image_data_entries = max_image_data_entries
-	char_reveal_speed = char_reveal_speed
-	screen_loc = screen_loc
+	display_title = display_title_p
+	max_logs = max_logs_p
+	max_data_entries = max_data_entries_p
+	max_image_data_entries = max_image_data_entries_p
+	char_reveal_speed = char_reveal_speed_p
+	screen_loc = screen_loc_p
 
 	// Create screen display
 	logs_view = ScreenText(null, "Initialize", screen_loc, maptext_height, maptext_width)
@@ -209,6 +209,7 @@ proc/string_repeat(string, count)
 	compile_display()
 
 /datum/component/neural_interface/Destroy(force, silent)
+	STOP_PROCESSING(SSfastprocess, src)
 	unregister_all_signals()
 	unregister_all_monitors()
 	clear_image_data_entries()
@@ -235,9 +236,10 @@ proc/string_repeat(string, count)
 	LAZYINITLIST(monitors)
 	LAZYINITLIST(monitors_types)
 	for(var/datum/neural_monitor/monitor in monitors)
-		LAZYCLEARLIST(monitors_types)
 		monitor.disable()
-		QDEL_NULL(monitor)
+
+	QDEL_LIST(monitors_types)
+	QDEL_LIST(monitors)
 
 /datum/component/neural_interface/proc/add_monitor_by_type(type, atom/monitor_atom)
 	LAZYINITLIST(monitors)
@@ -505,7 +507,9 @@ proc/string_repeat(string, count)
 
 	// Remove oldest logs if at capacity
 	if(logs.len >= max_logs)
+		var/datum/log_entry/old = logs[1]
 		logs.Splice(1, 2)
+		QDEL_NULL(old)
 
 	// Create log entry
 	var/datum/log_entry/log = new()
@@ -525,12 +529,15 @@ proc/string_repeat(string, count)
 	return TRUE
 
 /datum/component/neural_interface/proc/clear_logs()
+	QDEL_LIST(logs)
 	logs = list()
 	return TRUE
 
 /datum/component/neural_interface/proc/remove_log(index)
 	if(index >= 1 && index <= logs.len)
+		var/datum/log_entry/removed = logs[index]
 		logs.Cut(index, index + 1)
+		QDEL_NULL(removed)
 		return TRUE
 	return FALSE
 
@@ -675,8 +682,8 @@ proc/string_repeat(string, count)
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/remove_oldest_image_data_entry()
 	var/datum/image_holder_data/target
-	var/lowest_priority = 999999
-	var/earliest_expiry = world.time + 999999999
+	var/lowest_priority = INFINITY
+	var/earliest_expiry = INFINITY
 
 	// Find entry with lowest priority (lower number = less important) and earliest expiry
 	for(var/datum/image_holder_data/entry in image_data_entries)

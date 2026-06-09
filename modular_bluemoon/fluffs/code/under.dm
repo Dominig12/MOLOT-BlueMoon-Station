@@ -363,7 +363,6 @@
 	ADD_TRAIT(src, TRAIT_NODROP, CLOTHING_TRAIT)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/Destroy()
-	. = ..()
 
 	STOP_PROCESSING(SSfastprocess, src)
 
@@ -375,6 +374,8 @@
 	QDEL_NULL(particle_effect_holder)
 	QDEL_NULL(neural_interface)
 	QDEL_NULL(net)
+
+	. = ..()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/on_mob_death(mob/living/L, gibbed)
 	. = ..()

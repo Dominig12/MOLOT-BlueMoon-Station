@@ -37,6 +37,8 @@
 		return FALSE
 
 	next_activate = world.time + periodic
+	if(!enabled)
+		return FALSE
 	return TRUE
 
 /datum/neural_monitor/proc/register_signals()
@@ -55,7 +57,7 @@
 	enabled = FALSE
 	owner.system_log("[name]: DISABLED")
 	if(processing)
-		STOP_PROCESSING(SSobj, src)
+		STOP_PROCESSING(SSfastprocess, src)
 	if(monitor_atom)
 		unregister_signals()
 
@@ -113,6 +115,8 @@
 	UnregisterSignal(monitor_atom, COMSIG_MOB_GHOSTIZE)
 
 /datum/neural_monitor/health/proc/on_carbon_health_update(mob/living/carbon/C)
+	SIGNAL_HANDLER
+
 	if(!monitor_atom || !isliving(monitor_atom) || !iscarbon(monitor_atom))
 		return
 
@@ -164,53 +168,71 @@
 	last_oxy_damage = oxy_loss
 
 /datum/neural_monitor/health/proc/on_living_stunned(mob/living/L, amount, update, ignore)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.write_log("Stunned: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("STUN_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_knockdown(mob/living/L, amount, update, ignore)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.write_log("Knocked down: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("KNOCKDOWN_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_paralyzed(mob/living/L, amount, update, ignore)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.write_log("Paralyzed: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("PARALYZE_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_unconscious(mob/living/L, amount, update, ignore)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.write_log("Unconscious: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("UNCONSCIOUS_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_sleeping(mob/living/L, amount, update, ignore)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.write_log("Asleep: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("SLEEP_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_dazed(mob/living/L, amount, update, ignore)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.write_log("Dazed: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("DAZE_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_living_staggered(mob/living/L, amount, update, ignore)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.write_log("Staggered: [round(amount/10, 0.1)]s", "HEALTH")
 	owner.write_data("STAGGER_REMAINING", "[round(amount/10, 0.1)]s")
 
 /datum/neural_monitor/health/proc/on_mob_death(mob/M, gibbed)
+	SIGNAL_HANDLER
+
 	if(M != monitor_atom)
 		return
 	owner.error_log("Mob death signal received")
 
 /datum/neural_monitor/health/proc/on_living_death(mob/living/L, gibbed)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.error_log("Living death signal received [gibbed ? "(gibbed)" : ""]")
@@ -218,12 +240,16 @@
 	owner.write_log("Vital signals TERMINATED", "ALERT")
 
 /datum/neural_monitor/health/proc/on_living_predeath(mob/living/L, gibbed)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.warn_log("Pre-death state [gibbed == TRUE ? "(gibbed)" : ""]")
 	owner.write_data("PREDEATH_STATE", "TRUE")
 
 /datum/neural_monitor/health/proc/on_living_revive(mob/living/L, full_heal, admin_revive)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.info_log("Revived [full_heal == TRUE ? "(full heal)" : ""]")
@@ -232,12 +258,16 @@
 	owner.write_log("Vital signals RESTORED", "SYNC")
 
 /datum/neural_monitor/health/proc/on_mob_ghostize(mob/M, can_reenter, special, penalize)
+	SIGNAL_HANDLER
+
 	if(M != monitor_atom)
 		return
 	owner.warn_log("Host ghostized [can_reenter == TRUE ? "(can re-enter)" : ""]")
 	owner.write_data("GHOST_STATE", "TRUE")
 
 /datum/neural_monitor/health/proc/on_mob_apply_damage(mob/living/L, damage, damagetype, def_zone, wound_bonus, bare_wound_bonus, sharpness)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	var/damage_log = "Damage: [damage] [damagetype] on [def_zone]"
@@ -270,12 +300,16 @@
 	UnregisterSignal(monitor_atom, COMSIG_CARBON_LOSE_WOUND)
 
 /datum/neural_monitor/wound/proc/on_carbon_gain_wound(mob/living/carbon/C, datum/wound/W, obj/item/bodypart/L)
+	SIGNAL_HANDLER
+
 	var/wound_info = "Wound: [W.name] on [L.name]"
 	owner.write_log(wound_info, "HEALTH")
 	if(W.name)
 		owner.write_data("ACTIVE_WOUND", W.name)
 
 /datum/neural_monitor/wound/proc/on_carbon_lose_wound(mob/living/carbon/C, datum/wound/W, obj/item/bodypart/L)
+	SIGNAL_HANDLER
+
 	var/wound_info = "Healed: [W.name] on [L.name]"
 	owner.write_log(wound_info, "HEALTH")
 
@@ -298,6 +332,8 @@
 	UnregisterSignal(monitor_atom, COMSIG_LIVING_MINOR_SHOCK)
 
 /datum/neural_monitor/shock/proc/on_living_electrocuted(mob/living/L, shock_damage, source, siemens_coeff, flags)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.write_log("Electrocuted: [shock_damage] damage [siemens_coeff ? "(siemens: [siemens_coeff])" : ""]", "HEALTH")
@@ -305,6 +341,8 @@
 	owner.write_log("Electrical damage applied", "ALERT")
 
 /datum/neural_monitor/shock/proc/on_living_minor_shock(mob/living/L)
+	SIGNAL_HANDLER
+
 	if(L != monitor_atom)
 		return
 	owner.warn_log("Minor shock received")
@@ -327,6 +365,8 @@
 	UnregisterSignal(monitor_atom, COMSIG_COMPONENT_NTNET_RECEIVE)
 
 /datum/neural_monitor/nt_net/proc/on_packet_received(datum/source, datum/netdata/packet)
+	SIGNAL_HANDLER
+
 	if(!enabled || !packet || !islist(packet.data) || isnull(packet.data["data"]))
 		return
 	owner.write_data("NTPACKET", "[packet.data["data"]]", 5 SECONDS)
@@ -361,7 +401,7 @@
 	overlay_observer = new(icon='icons/effects/effects.dmi', icon_state="emark2")
 
 /datum/neural_monitor/observers/Destroy(force, ...)
-	QDEL_NULL(overlay_observer)
+	overlay_observer = null
 	. = ..()
 
 /datum/neural_monitor/observers/register_signals()
@@ -375,6 +415,8 @@
 	UnregisterSignal(monitor_atom, COMSIG_PARENT_EXAMINE)
 
 /datum/neural_monitor/observers/proc/on_examine(datum/source, mob/user)
+	SIGNAL_HANDLER
+
 	var/image/overlay = image(icon = overlay_observer, loc = user)
 	overlay.alpha = 60
 	owner.write_image_data("\ref[user];OBSERVER", overlay, "", 3 SECONDS)
@@ -392,6 +434,10 @@
 	. = ..()
 	overlay_observer = icon(icon='icons/effects/effects.dmi', icon_state="medi_holo")
 
+/datum/neural_monitor/health_scan/Destroy(force, ...)
+	overlay_observer = null
+	. = ..()
+
 /datum/neural_monitor/health_scan/register_signals()
 	if(!monitor_atom)
 		return
@@ -406,7 +452,8 @@
 	if(!..())
 		return FALSE
 
-	if(target == null)
+	if(QDELETED(target))
+		target = null
 		return FALSE
 
 	var/health_percent = target.health / target.maxHealth * 100
@@ -424,7 +471,9 @@
 	return TRUE
 
 /datum/neural_monitor/health_scan/proc/on_examine_target(datum/source, mob/user)
-	if(!istype(user) || !isliving(user) || !iscarbon(user))
+	SIGNAL_HANDLER
+
+	if(!iscarbon(user))
 		return
 
 	if(user == target)
@@ -435,4 +484,4 @@
 
 	var/image/overlay = image(icon = overlay_observer, loc = user)
 	overlay.alpha = 200
-	owner.write_image_data("\ref[user];HEALTH_SCAN", overlay, "", 1 SECONDS, , 32, -2)
+	owner.write_image_data("\ref[user];HEALTH_SCAN", overlay, "", 1 SECONDS, 32, -2)
