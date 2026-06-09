@@ -96,7 +96,10 @@ proc/string_repeat(string, count)
 
 /datum/action/toggle_interface
 	name = "Выключить нейронный интерфейс"
-	button_icon_state = "hide"
+	button_icon_state = "choose_module"
+	background_icon_state = "bg_tech_blue"
+	button_icon = 'icons/mob/actions/actions.dmi'
+	icon_icon = 'icons/mob/actions/actions.dmi'
 
 /datum/action/report/IsAvailable()
 	return TRUE
@@ -219,6 +222,9 @@ proc/string_repeat(string, count)
 	register_client_signals()
 
 	START_PROCESSING(SSfastprocess, src)
+
+	if(!host_mob.client.prefs.neural_interface_visibility)
+		hide()
 
 	return ..()
 
@@ -816,6 +822,10 @@ proc/string_repeat(string, count)
 // Visibility Control
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/toggle()
+	if(!isliving(host_mob))
+		return
+	if(host_mob.client?.prefs)
+		host_mob.client.prefs.neural_interface_visibility = !visible
 	if(visible)
 		hide()
 	else
@@ -824,7 +834,7 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/show()
 	visible = TRUE
 	toggle_button.name = "Выключить нейронный интерфейс"
-	toggle_button.button_icon_state = "hide"
+	toggle_button.button_icon_state = "choose_module"
 	toggle_button.UpdateButtons()
 	enable_monitors()
 	if(logs_view)
@@ -834,7 +844,7 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/hide()
 	visible = FALSE
 	toggle_button.name = "Включить нейронный интерфейс"
-	toggle_button.button_icon_state = "show"
+	toggle_button.button_icon_state = "shadow_demon_bg"
 	toggle_button.UpdateButtons()
 	disable_monitors()
 	if(logs_view)
