@@ -27,6 +27,8 @@
 
 /datum/neural_monitor/Destroy(force, ...)
 	disable()
+	owner = null
+	monitor_atom = null
 	. = ..()
 
 /datum/neural_monitor/process(delta_time)
