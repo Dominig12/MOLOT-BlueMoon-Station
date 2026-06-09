@@ -24,10 +24,6 @@
 
 	owner.system_log("INITIALIZE: [name]")
 
-	if(processing)
-		START_PROCESSING(SSfastprocess, src)
-		next_activate = world.time + periodic
-
 /datum/neural_monitor/Destroy(force, ...)
 	disable()
 	. = ..()
@@ -50,6 +46,9 @@
 /datum/neural_monitor/proc/enable()
 	enabled = TRUE
 	owner.system_log("[name]: ENABLED")
+	if(processing)
+		START_PROCESSING(SSfastprocess, src)
+		next_activate = world.time + periodic
 	if(monitor_atom)
 		register_signals()
 
