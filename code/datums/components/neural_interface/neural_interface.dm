@@ -441,6 +441,8 @@ proc/string_repeat(string, count)
 		remove_oldest_data_entry()
 
 	data_entries += new_entry
+
+	compile_display()
 	return TRUE
 
 // ---------------------------------------------------------------------------
@@ -561,6 +563,7 @@ proc/string_repeat(string, count)
 
 	logs += log
 
+	compile_display()
 	return TRUE
 
 /datum/component/neural_interface/proc/clear_logs()
@@ -610,6 +613,8 @@ proc/string_repeat(string, count)
 		remove_oldest_image_data_entry()
 
 	image_data_entries += new_entry
+
+	compile_display()
 	return TRUE
 
 // ---------------------------------------------------------------------------
