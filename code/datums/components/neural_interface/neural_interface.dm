@@ -15,13 +15,19 @@
 	var/char_speed
 	var/size
 
+/datum/log_entry/proc/format(text)
+	return return {"<span style='font-family: \"TinyUnicode\"; color: [color]; font-size: [size]pt; line-height: 0.8;-dm-text-outline: 1px black;'>[text]</span>"}
+
+/datum/log_entry/proc/get_full_line()
+	return format(plain)
+
 /datum/log_entry/proc/get_line()
 	if(char_index < length(plain))
 		char_index = min(char_index + char_speed, length(plain)+1)
 
 	var/revealed_text = copytext(plain, 1, char_index)
 
-	return {"<span style='font-family: \"TinyUnicode\"; color: [color]; font-size: [size]pt; line-height: 0.8;-dm-text-outline: 1px black;'>[revealed_text]</span>"}
+	return format(revealed_text)
 
 // ---------------------------------------------------------------------------
 // Neural Data Entry - Temporary data with expiration timer
@@ -759,7 +765,7 @@ proc/string_repeat(string, count)
 	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>├─ LOG STREAM</span><br>"}
 
 	for(var/datum/log_entry/log_entry in logs)
-		write += "[MAPTEXT_TINY_UNICODE("└ [log_entry.get_line()]")]<br>"
+		write += "[MAPTEXT_TINY_UNICODE("└ [log_entry.get_full_line()]")]<br>"
 
 	return write
 
