@@ -405,25 +405,22 @@
 	LAZYADD(user.vis_contents, echo)
 
 	echo.render_source = user.render_target
-	neural_interface = user.LoadComponent(/datum/component/neural_interface)
-	neural_interface.AddSource("ROSELIA_DRESS")
-
-	neural_interface.add_monitor_by_type(/datum/neural_monitor/nt_net, src)
-	neural_interface.add_monitors_by_types(
-		list(
+	var/list/monitors = list(
+			/datum/neural_monitor/nt_net = list(src),
 			/datum/neural_monitor/shock,
 			/datum/neural_monitor/observers
 		)
-	)
 
 	if(HAS_TRAIT(user, TRAIT_SELF_AWARE))
-		neural_interface.add_monitors_by_types(
-			list(
-				/datum/neural_monitor/health,
-				/datum/neural_monitor/wound,
-				/datum/neural_monitor/nanite
-			)
+		monitors += list(
+			/datum/neural_monitor/health,
+			/datum/neural_monitor/wound,
+			/datum/neural_monitor/nanite
 		)
+
+	var/interface_source = "ROSELIA_DRESS"
+	neural_interface = user.LoadComponent(/datum/component/neural_interface)
+	neural_interface.add_monitors_by_types(interface_source, monitors)
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/dropped(mob/user)
 

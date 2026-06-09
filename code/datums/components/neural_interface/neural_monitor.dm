@@ -16,13 +16,14 @@
 	var/processing = FALSE
 	var/next_activate
 	var/periodic = 1 SECONDS
+	var/source
 
-/datum/neural_monitor/New(datum/component/neural_interface/owner_comp, ...)
-	var/list/arguments = args.Copy()
+/datum/neural_monitor/New(datum/component/neural_interface/owner_comp, atom/monitor_atom_p, source_p, ...)
 	owner = owner_comp
-	monitor_atom = arguments[2]
+	monitor_atom = monitor_atom_p
+	source = source_p
 
-	owner.system_log("INITIALIZE: [name]")
+	owner.system_log("INITIALIZE: [source]/[name]")
 
 /datum/neural_monitor/Destroy(force, ...)
 	disable()
@@ -44,8 +45,10 @@
 	// Override in child classes
 
 /datum/neural_monitor/proc/enable()
+	if(enabled)
+		return
 	enabled = TRUE
-	owner.system_log("[name]: ENABLED")
+	owner.system_log("[source]/[name]: ENABLED")
 	if(processing)
 		START_PROCESSING(SSfastprocess, src)
 		next_activate = world.time + periodic
@@ -53,8 +56,10 @@
 		register_signals()
 
 /datum/neural_monitor/proc/disable()
+	if(!enabled)
+		return
 	enabled = FALSE
-	owner.system_log("[name]: DISABLED")
+	owner.system_log("[source]/[name]: DISABLED")
 	if(processing)
 		STOP_PROCESSING(SSfastprocess, src)
 	if(monitor_atom)
@@ -465,7 +470,7 @@
 
 	var/image/overlay = image(icon = overlay_observer, loc = target)
 	overlay.alpha = 200
-	owner.write_image_data("\ref[target];HEALTH_SCAN", overlay, write, 1 SECONDS, 32, -2)
+	owner.write_image_data("\ref[target];HEALTH_SCAN", overlay, write, 1 SECONDS, 32, -5)
 
 	return TRUE
 
@@ -483,4 +488,69 @@
 
 	var/image/overlay = image(icon = overlay_observer, loc = user)
 	overlay.alpha = 200
-	owner.write_image_data("\ref[user];HEALTH_SCAN", overlay, "", 1 SECONDS, 32, -2)
+	owner.write_image_data("\ref[user];HEALTH_SCAN", overlay, "", 1 SECONDS, 32, -5)
+
+// ---------------------------------------------------------------------------
+// Diagnostic Scan Monitor - Scan diagnostic marked with you
+// ---------------------------------------------------------------------------
+/datum/neural_monitor/diagnostic_scan
+	name = "HEALTH SCAN MONITOR"
+	processing = TRUE
+	var/icon/overlay_observer
+	var/mob/living/carbon/target
+
+/datum/neural_monitor/diagnostic_scan/New(...)
+	. = ..()
+	overlay_observer = icon(icon='icons/effects/effects.dmi', icon_state="scanline")
+
+/datum/neural_monitor/diagnostic_scan/Destroy(force, ...)
+	overlay_observer = null
+	. = ..()
+
+/datum/neural_monitor/diagnostic_scan/register_signals()
+	if(!monitor_atom)
+		return
+	RegisterSignal(monitor_atom, COMSIG_MOB_EXAMINATE, PROC_REF(on_examine_target))
+
+/datum/neural_monitor/diagnostic_scan/unregister_signals()
+	if(!monitor_atom)
+		return
+	UnregisterSignal(monitor_atom, COMSIG_MOB_EXAMINATE)
+
+/datum/neural_monitor/diagnostic_scan/process(delta_time)
+	if(!..())
+		return FALSE
+
+	if(QDELETED(target))
+		target = null
+		return FALSE
+
+	var/health_percent = target.health / target.maxHealth * 100
+	var/oxy_loss = target.getOxyLoss()
+	var/tox_loss = target.getToxLoss()
+	var/fire_loss = target.getFireLoss()
+	var/brute_loss = target.getBruteLoss()
+
+	var/write = "HEALTH:[health_percent]\nOXY:[oxy_loss]\nTOX:[tox_loss]\nBURN:[fire_loss]\nBRUTE:[brute_loss]"
+
+	var/image/overlay = image(icon = overlay_observer, loc = target)
+	overlay.alpha = 200
+	owner.write_image_data("\ref[target];HEALTH_SCAN", overlay, write, 1 SECONDS, 32, -5)
+
+	return TRUE
+
+/datum/neural_monitor/health_scan/proc/on_examine_target(datum/source, mob/user)
+	SIGNAL_HANDLER
+
+	if(!iscarbon(user))
+		return
+
+	if(user == target)
+		target = null
+		return
+
+	target = user
+
+	var/image/overlay = image(icon = overlay_observer, loc = user)
+	overlay.alpha = 200
+	owner.write_image_data("\ref[user];HEALTH_SCAN", overlay, "", 1 SECONDS, 32, -5)

@@ -135,7 +135,6 @@ proc/string_repeat(string, count)
 
 	// Monitor instances - composition pattern
 	var/list/datum/neural_monitor/monitors = list()
-	var/list/monitors_types = list()
 
 	// Signal registration handles
 	var/list/signal_registrations = list()
@@ -220,66 +219,95 @@ proc/string_repeat(string, count)
 
 /datum/component/neural_interface/proc/AddSource(id)
 	LAZYINITLIST(sources)
-	sources[id] = list()
+	LAZYADD(sources, id)
 
 /datum/component/neural_interface/proc/RemoveSource(id)
 	LAZYINITLIST(sources)
 	LAZYREMOVE(sources, id)
+	var/list/types = list()
+
+	for(var/datum/neural_monitor/monitor in monitors)
+		if(monitor.source != id)
+			continue
+
+		monitor.disable()
+		monitors -= monitor
+		types += monitor.type
+		QDEL_NULL(monitor)
 
 	if(!sources)
 		qdel(src)
+		return
+
+	for(var/type in types)
+		enable_monitor_by_type(type)
 
 // ---------------------------------------------------------------------------
 // Monitor Management
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/unregister_all_monitors()
 	LAZYINITLIST(monitors)
-	LAZYINITLIST(monitors_types)
 	for(var/datum/neural_monitor/monitor in monitors)
 		monitor.disable()
-
-	QDEL_LIST(monitors_types)
 	QDEL_LIST(monitors)
 
-/datum/component/neural_interface/proc/add_monitor_by_type(type, atom/monitor_atom)
+/datum/component/neural_interface/proc/add_monitor_by_type(source, type, atom/monitor_atom, ...)
+	LAZYINITLIST(sources)
+	if(!LAZYFIND(sources, source))
+		AddSource(source)
 	LAZYINITLIST(monitors)
-	LAZYINITLIST(monitors_types)
-	if(type in monitors_types)
-		return FALSE
 	var/list/arguments = args.Copy()
-	arguments.Splice(1, 3)
+	arguments.Splice(1, 4)
 	if(!monitor_atom)
 		monitor_atom = host_mob
-	var/datum/neural_monitor/monitor = new type(arglist(list(src, monitor_atom) + arguments))
+	var/datum/neural_monitor/monitor = new type(arglist(list(src, monitor_atom, source) + arguments))
 	if(!istype(monitor))
 		return FALSE
 	monitors += monitor
-	monitors_types += type
+	if(!get_enabled_monitor_by_type(type))
+		return
 	monitor.enable()
 
-/datum/component/neural_interface/proc/add_monitors_by_types(list/types)
+/datum/component/neural_interface/proc/add_monitors_by_types(source, list/types)
 	LAZYINITLIST(monitors)
-	LAZYINITLIST(monitors_types)
+	LAZYINITLIST(types)
 	for(var/type in types)
-		if(type in monitors_types)
-			continue
-		var/datum/neural_monitor/monitor = new type(src, host_mob)
-		if(!istype(monitor))
-			continue
-		monitors += monitor
-		monitors_types += type
-		monitor.enable()
+		var/list/arguments = list(host_mob)
+		if(types[type])
+			arguments = types[type]
+		add_monitor_by_type(arglist(list(source, type) + arguments))
 
-/datum/component/neural_interface/proc/remove_monitor_by_type(type)
+
+/datum/component/neural_interface/proc/remove_monitors_by_types(source, list/types)
+	LAZYINITLIST(types)
+	for(var/type in types)
+		remove_monitor_by_type(source, type)
+
+/datum/component/neural_interface/proc/remove_monitor_by_type(source, type)
 	LAZYINITLIST(monitors)
-	LAZYINITLIST(monitors_types)
 	for(var/datum/neural_monitor/monitor in monitors)
-		if(istype(monitor, type))
+		if(istype(monitor, type) && monitor.source == source)
 			monitor.disable()
 			monitors -= monitor
 			QDEL_NULL(monitor)
-			monitors_types -= type
+			enable_monitor_by_type(type)
 			break
+
+/datum/component/neural_interface/proc/enable_monitor_by_type(type)
+	for(var/datum/neural_monitor/monitor in monitors)
+		if(!istype(monitor, type))
+			continue
+
+		monitor.enable()
+		break
+
+/datum/component/neural_interface/proc/get_enabled_monitor_by_type(type)
+	for(var/datum/neural_monitor/monitor in monitors)
+		if(!istype(monitor, type) && !monitor.enabled)
+			continue
+		return monitor
+
+	return FALSE
 
 // ---------------------------------------------------------------------------
 // User Management
@@ -333,6 +361,8 @@ proc/string_repeat(string, count)
 
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/on_mob_key_change(mob/M, mob/new_mob, old_mob)
+	SIGNAL_HANDLER
+
 	if(M == host_mob)
 		write_log("Player transferred control to another mob", "SYNC")
 		write_data("PLAYER_TRANSFER", "TRUE")
@@ -349,6 +379,8 @@ proc/string_repeat(string, count)
 // Client Reconnect - Re-attach display
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/on_client_reconnect(client/C)
+	SIGNAL_HANDLER
+
 	if(!host_mob)
 		return
 
@@ -366,6 +398,8 @@ proc/string_repeat(string, count)
 // Client Ghost - De-attach display
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/on_mob_ghostize(mob/M, can_reenter, special, penalize)
+	SIGNAL_HANDLER
+
 	if(M != host_mob)
 		return
 
