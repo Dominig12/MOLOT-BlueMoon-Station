@@ -144,6 +144,8 @@
 	parent.last_drift_time = world.time
 	parent.setDir(old_dir)
 	parent.inertia_moving = FALSE
+	if(!drifting_loop)
+		return
 	if(parent.Process_Spacemove(angle2dir(drifting_loop.angle), continuous_move = TRUE))
 		glide_to_halt(visual_delay)
 		return

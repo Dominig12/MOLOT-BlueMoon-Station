@@ -88,6 +88,9 @@
 	var/obj/item/paicard/inserted_pai
 	/// Whether this device has extended signal range
 	var/long_ranged = FALSE
+	/// Allow people with chunky fingers to use?
+	var/allow_chunky = FALSE
+
 	/// Amount of paper stored in the device
 	var/stored_paper = 10
 	/// Remaining honk virus ticks

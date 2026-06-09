@@ -37,6 +37,7 @@
 	comp_light_color = "#FFCC66"
 	looping_sound = FALSE
 	long_ranged = TRUE
+	allow_chunky = TRUE
 
 	///The item currently inserted into the PDA, starts with a pen.
 	var/obj/item/inserted_item = /obj/item/pen

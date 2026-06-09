@@ -1236,9 +1236,9 @@
 
 /datum/dynamic_ruleset/midround/raiders/execute()
 	var/datum/round_event_control/event = locate(/datum/round_event_control/raiders) in SSevents.control
-	if(event)
+	if(event && event.occurrences < event.max_occurrences)
 		SSevents.TriggerEvent(event)
-	return ..()
+	return TRUE
 
 // BLUEMOON ADD START
 

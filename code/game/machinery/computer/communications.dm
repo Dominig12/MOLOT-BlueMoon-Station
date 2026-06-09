@@ -271,7 +271,12 @@
 			SSshuttle.shuttle_purchased = SHUTTLEPURCHASE_PURCHASED
 			SSshuttle.unload_preview()
 			SSshuttle.existing_shuttle = SSshuttle.emergency
-			SSshuttle.action_load(shuttle, replace = TRUE)
+			var/obj/docking_port/mobile/purchased_shuttle = SSshuttle.action_load(shuttle, replace = TRUE)
+			if(!purchased_shuttle)
+				SSshuttle.shuttle_purchased = SHUTTLEPURCHASE_PURCHASABLE
+				SSshuttle.existing_shuttle = null
+				to_chat(usr, span_alert("Не удалось загрузить шаттл. Попробуйте позже."))
+				return
 			bank_account.adjust_money(-shuttle.credit_cost)
 			minor_announce("[usr.real_name] купил шаттл [shuttle.name] за [shuttle.credit_cost] кредитов.[shuttle.extra_desc ? " [shuttle.extra_desc]" : ""]" , "Shuttle Purchase")
 			message_admins("[ADMIN_LOOKUPFLW(usr)] purchased [shuttle.name].")

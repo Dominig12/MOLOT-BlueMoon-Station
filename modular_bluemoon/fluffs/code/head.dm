@@ -342,7 +342,7 @@
 
 /obj/item/clothing/head/bee_cap/ComponentInitialize()
 	. = ..()
-	AddElement(/datum/element/polychromic, list("#2A2A2A", "#A52F29"), 2)
+	AddElement(/datum/element/polychromic, poly_colors, 2)
 
 /obj/item/clothing/head/bee_cap/AltClick(mob/user)
 	. = ..()
@@ -369,7 +369,7 @@
 
 /obj/item/clothing/head/empire_head/ComponentInitialize()
 	. = ..()
-	AddElement(/datum/element/polychromic, list("#2A2A2A", "#A52F29"), 2)
+	AddElement(/datum/element/polychromic, poly_colors, 2)
 
 /obj/item/clothing/head/empire_head/AltClick(mob/user)
 	. = ..()
@@ -395,11 +395,11 @@
 	var/adjusted = FALSE
 	var/list/poly_colors = list("#2A2A2A","#A52F29")
 
-/obj/item/clothing/head/empire_head/ComponentInitialize()
+/obj/item/clothing/head/helmet/sec/empire_head/ComponentInitialize()
 	. = ..()
-	AddElement(/datum/element/polychromic, list("#2A2A2A", "#A52F29"), 2)
+	AddElement(/datum/element/polychromic, poly_colors, 2)
 
-/obj/item/clothing/head/empire_head/AltClick(mob/user)
+/obj/item/clothing/head/helmet/sec/empire_head/AltClick(mob/user)
 	. = ..()
 	adjusted = !adjusted
 	flags_inv = adjusted ? (HIDEHAIR) : (HIDEHAIR|HIDEEARS)
@@ -538,4 +538,4 @@
 	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/head.dmi'
 	icon_state = "renory_helmet"
 	item_state = "ygloves"
-	flags_inv = HIDEFACIALHAIR|HIDEFACE|HIDEEYES|HIDEEARS|HIDEHAIR
+	flags_inv = HIDEFACIALHAIR|HIDEEARS|HIDEHAIR
