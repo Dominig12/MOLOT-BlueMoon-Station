@@ -35,7 +35,7 @@
 /obj/item/clothing/glasses/hud/dropped(mob/living/carbon/human/user)
 	..()
 	if(hud_type && istype(user) && hud_granted)
-		interface.RemoveSource("HUD GLASSES")
+		interface?.RemoveSource("HUD GLASSES")
 		interface = null
 		hud_granted = FALSE
 		var/datum/atom_hud/H = GLOB.huds[hud_type]

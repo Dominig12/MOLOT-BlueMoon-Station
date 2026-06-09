@@ -28,7 +28,7 @@
 	if(active)
 		var/datum/atom_hud/H = GLOB.huds[HUD_type]
 		H.remove_hud_from(owner)
-		interface.RemoveSource("IMPLANT HUD[HUD_type]")
+		interface?.RemoveSource("IMPLANT HUD[HUD_type]")
 	else
 		var/datum/atom_hud/H = GLOB.huds[HUD_type]
 		H.add_hud_to(owner)

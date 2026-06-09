@@ -39,7 +39,7 @@
 	if(hud_type)
 		var/datum/atom_hud/hud = GLOB.huds[hud_type]
 		hud.remove_hud_from(mod.wearer)
-		interface.RemoveSource("MOD HUD[hud_type]")
+		interface?.RemoveSource("MOD HUD[hud_type]")
 	for(var/trait in visor_traits)
 		REMOVE_TRAIT(mod.wearer, trait, MOD_TRAIT)
 	mod.wearer.update_sight()
