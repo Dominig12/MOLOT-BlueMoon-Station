@@ -97,7 +97,6 @@ proc/string_repeat(string, count)
 /datum/action/toggle_interface
 	name = "Выключить нейронный интерфейс"
 	button_icon_state = "hide"
-	var/toggled = TRUE
 
 /datum/action/report/IsAvailable()
 	return TRUE
@@ -105,15 +104,7 @@ proc/string_repeat(string, count)
 /datum/action/toggle_interface/Trigger()
 	var/datum/component/neural_interface/interface = owner.GetComponent(/datum/component/neural_interface)
 	if(interface)
-		if(toggled)
-			interface.hide()
-			button_icon_state = "show"
-			name = "Включить нейронный интерфейс"
-		else
-			interface.show()
-			button_icon_state = "hide"
-			name = "Выключить нейронный интерфейс"
-	toggled = !toggled
+		interface.toggle()
 	UpdateButtons()
 
 // ---------------------------------------------------------------------------
@@ -220,14 +211,17 @@ proc/string_repeat(string, count)
 	// Create screen display
 	logs_view = ScreenText(null, "Initialize", screen_loc, maptext_height, maptext_width)
 
-	toggle_button = new
-
 	if(host_mob?.client)
 		attach_client()
 
 	register_client_signals()
 
 	START_PROCESSING(SSfastprocess, src)
+
+	toggle_button = new
+	toggle_button.name = "Выключить нейронный интерфейс"
+	toggle_button.button_icon_state = "hide"
+	toggle_button.UpdateButtons()
 
 	return ..()
 
@@ -824,8 +818,17 @@ proc/string_repeat(string, count)
 // ---------------------------------------------------------------------------
 // Visibility Control
 // ---------------------------------------------------------------------------
+/datum/component/neural_interface/proc/toggle()
+	if(visible)
+		hide()
+	else
+		show()
+
 /datum/component/neural_interface/proc/show()
 	visible = TRUE
+	toggle_button.name = "Выключить нейронный интерфейс"
+	toggle_button.button_icon_state = "hide"
+	toggle_button.UpdateButtons()
 	enable_monitors()
 	if(logs_view)
 		logs_view.maptext = ""
@@ -833,6 +836,9 @@ proc/string_repeat(string, count)
 
 /datum/component/neural_interface/proc/hide()
 	visible = FALSE
+	toggle_button.name = "Включить нейронный интерфейс"
+	toggle_button.button_icon_state = "show"
+	toggle_button.UpdateButtons()
 	disable_monitors()
 	if(logs_view)
 		logs_view.maptext = ""
