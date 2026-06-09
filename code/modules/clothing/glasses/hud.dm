@@ -9,14 +9,7 @@
 	var/hud_granted = FALSE
 
 	var/datum/component/neural_interface/interface
-	var/list/datum/neural_monitor/monitors = list(
-		"[DATA_HUD_MEDICAL_ADVANCED]" = list(
-			/datum/neural_monitor/health_scan,
-			/datum/neural_monitor/health
-		),
-		"[DATA_HUD_DIAGNOSTIC_ADVANCED]" = list(),
-		"[DATA_HUD_SECURITY_ADVANCED]" = list(),
-	)
+	var/list/monitors
 
 /obj/item/clothing/glasses/hud/CheckParts(list/parts_list)
 	. = ..()
@@ -33,7 +26,7 @@
 	..()
 	if(hud_type && slot == ITEM_SLOT_EYES)
 		interface = user.LoadComponent(/datum/component/neural_interface)
-		interface.add_monitors_by_types("HUD", monitors["[hud_type]"])
+		interface.add_monitors_by_types("HUD", monitors)
 		var/datum/atom_hud/H = GLOB.huds[hud_type]
 		H.add_hud_to(user)
 		hud_granted = TRUE
@@ -330,16 +323,12 @@
 
 	if (hud_type == DATA_HUD_MEDICAL_ADVANCED)
 		hud_type = null
-		interface.remove_monitors_by_types("HUD", monitors["[DATA_HUD_MEDICAL_ADVANCED]"])
 	else if (hud_type == DATA_HUD_SECURITY_ADVANCED)
 		hud_type = DATA_HUD_MEDICAL_ADVANCED
-		interface.remove_monitors_by_types("HUD", monitors["[DATA_HUD_SECURITY_ADVANCED]"])
 	else
 		hud_type = DATA_HUD_SECURITY_ADVANCED
-		interface.remove_monitors_by_types("HUD", monitors["[DATA_HUD_DIAGNOSTIC_ADVANCED]"])
 
 	if (hud_type)
-		interface.add_monitors_by_types("HUD", monitors["[hud_type]"])
 		var/datum/atom_hud/H = GLOB.huds[hud_type]
 		H.add_hud_to(user)
 
