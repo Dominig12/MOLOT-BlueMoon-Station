@@ -450,7 +450,7 @@ proc/string_repeat(string, count)
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/remove_oldest_data_entry()
 	var/datum/neural_data_entry/target
-	var/lowest_priority = 999999
+	var/lowest_priority = INFINITY
 	var/latest_expiry = INFINITY
 
 	for(var/datum/neural_data_entry/entry in data_entries)
