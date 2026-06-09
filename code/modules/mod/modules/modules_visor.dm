@@ -14,6 +14,8 @@
 	/// The traits given by the visor.
 	var/list/visor_traits = list()
 	mod_module_flags = MOD_MODULE_VISOR // BLUEMOON ADD
+	var/datum/component/neural_interface/interface
+	var/list/monitors = list()
 
 /obj/item/mod/module/visor/on_activation()
 	. = ..()
@@ -22,9 +24,12 @@
 	if(hud_type)
 		var/datum/atom_hud/hud = GLOB.huds[hud_type]
 		hud.add_hud_to(mod.wearer)
+		interface = user.LoadComponent(/datum/component/neural_interface)
+		interface.add_monitors_by_types("MOD HUD[hud_type]", monitors)
 	for(var/trait in visor_traits)
 		ADD_TRAIT(mod.wearer, trait, MOD_TRAIT)
 	mod.wearer.update_sight()
+
 
 /obj/item/mod/module/visor/on_deactivation(display_message = TRUE, deleting = FALSE)
 	. = ..()
@@ -33,6 +38,7 @@
 	if(hud_type)
 		var/datum/atom_hud/hud = GLOB.huds[hud_type]
 		hud.remove_hud_from(mod.wearer)
+		interface.RemoveSource("MOD HUD[hud_type]")
 	for(var/trait in visor_traits)
 		REMOVE_TRAIT(mod.wearer, trait, MOD_TRAIT)
 	mod.wearer.update_sight()
@@ -45,6 +51,11 @@
 		access data such as patient files in a convenient readout. They say these also let you see behind you."
 	icon_state = "medhud_visor"
 	hud_type = DATA_HUD_MEDICAL_ADVANCED
+	monitors = list(
+		/datum/neural_monitor/health_scan,
+		/datum/neural_monitor/health,
+		/datum/neural_monitor/wound
+	)
 
 //Diagnostic Visor - Gives you a diagnostic HUD.
 /obj/item/mod/module/visor/diaghud
