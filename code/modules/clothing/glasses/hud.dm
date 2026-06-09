@@ -70,7 +70,8 @@
 	glasses_type = "med"
 	monitors = list(
 		/datum/neural_monitor/health_scan,
-		/datum/neural_monitor/health
+		/datum/neural_monitor/health,
+		/datum/neural_monitor/wound
 	)
 
 /obj/item/clothing/glasses/hud/health/prescription/Initialize(mapload)
