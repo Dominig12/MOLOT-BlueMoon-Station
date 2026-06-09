@@ -434,7 +434,7 @@
 
 	echo.render_source = null
 
-	neural_interface.RemoveSource("ROSELIA_DRESS")
+	neural_interface?.RemoveSource("ROSELIA_DRESS")
 	. = ..()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/toggle_jumpsuit_adjust()
@@ -473,12 +473,12 @@
 		icon_state = "InlaidDataDress_[skin]_open"
 		item_state = "InlaidDataDress_[skin]_open"
 		body_parts_covered = NONE
-		neural_interface.write_data("COVERAGE", "OPEN", 10 SECONDS)
+		neural_interface?.write_data("COVERAGE", "OPEN", 10 SECONDS)
 	else
 		icon_state = "InlaidDataDress_[skin]"
 		item_state = "InlaidDataDress_[skin]"
 		body_parts_covered = CHEST|GROIN|LEGS|ARMS
-		neural_interface.write_data("COVERAGE", "CLOSED", 10 SECONDS)
+		neural_interface?.write_data("COVERAGE", "CLOSED", 10 SECONDS)
 	return TRUE
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/echo_animation()
