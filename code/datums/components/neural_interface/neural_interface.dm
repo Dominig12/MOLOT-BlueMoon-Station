@@ -66,8 +66,8 @@
 	if(text_target)
 		screen_text = new /atom/movable/screen/text()
 		screen_text.maptext = MAPTEXT_TINY_UNICODE(text_target)
-		screen_text.maptext_height = 250
-		screen_text.maptext_width = 250
+		screen_text.maptext_height = 64
+		screen_text.maptext_width = 96
 		screen_text.pixel_x = pixel_x_text
 		screen_text.pixel_y = pixel_y_text
 		overlay.add_overlay(screen_text)

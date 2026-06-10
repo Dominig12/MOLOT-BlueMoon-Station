@@ -458,21 +458,9 @@
 	if(!..())
 		return FALSE
 
-	if(QDELETED(target))
-		target = null
-		return FALSE
-
-	var/health_percent = target.health / target.maxHealth * 100
-	var/oxy_loss = target.getOxyLoss()
-	var/tox_loss = target.getToxLoss()
-	var/fire_loss = target.getFireLoss()
-	var/brute_loss = target.getBruteLoss()
-
-	var/write = "HEALTH:[health_percent]\nOXY:[oxy_loss]\nTOX:[tox_loss]\nBURN:[fire_loss]\nBRUTE:[brute_loss]"
-
 	var/image/overlay = image(icon = overlay_observer, loc = target)
 	overlay.alpha = 200
-	owner.write_image_data("\ref[target];HEALTH_SCAN", overlay, write, 1 SECONDS, 32, -5)
+	owner.write_image_data("\ref[target];HEALTH_SCAN", overlay, get_data(), 1 SECONDS, 32, -5)
 
 	return TRUE
 
@@ -490,4 +478,209 @@
 
 	var/image/overlay = image(icon = overlay_observer, loc = user)
 	overlay.alpha = 200
-	owner.write_image_data("\ref[user];HEALTH_SCAN", overlay, "", 1 SECONDS, 32, -5)
+	owner.write_image_data("\ref[user];HEALTH_SCAN", overlay, get_data(), 1 SECONDS, 32, -5)
+
+/datum/neural_monitor/health_scan/proc/get_data()
+	if(QDELETED(target))
+		target = null
+		return FALSE
+
+	var/health_percent = target.health / target.maxHealth * 100
+	var/oxy_loss = target.getOxyLoss()
+	var/tox_loss = target.getToxLoss()
+	var/fire_loss = target.getFireLoss()
+	var/brute_loss = target.getBruteLoss()
+
+	return "HEALTH:[health_percent]\nOXY:[oxy_loss]\nTOX:[tox_loss]\nBURN:[fire_loss]\nBRUTE:[brute_loss]"
+
+// ---------------------------------------------------------------------------
+// Cyborg Monitor - Tracks cyborg status when examined
+// ---------------------------------------------------------------------------
+/datum/neural_monitor/cyborg_scan
+	name = "CYBORG MONITOR"
+	processing = TRUE
+	var/icon/overlay_borg
+	var/mob/living/silicon/robot/borg_target
+
+/datum/neural_monitor/cyborg_scan/New(...)
+	. = ..()
+	overlay_borg = new(icon = 'icons/effects/effects.dmi', icon_state = "scanline")
+
+/datum/neural_monitor/cyborg_scan/Destroy(force, ...)
+	overlay_borg = null
+	borg_target = null
+	. = ..()
+
+/datum/neural_monitor/cyborg_scan/register_signals()
+	if(!monitor_atom)
+		return
+	RegisterSignal(monitor_atom, COMSIG_MOB_EXAMINATE, PROC_REF(on_examine_target))
+
+/datum/neural_monitor/cyborg_scan/unregister_signals()
+	if(!monitor_atom)
+		return
+	UnregisterSignal(monitor_atom, COMSIG_MOB_EXAMINATE)
+
+/datum/neural_monitor/cyborg_scan/process(delta_time)
+	if(!..())
+		return FALSE
+
+	var/image/overlay = image(icon = overlay_borg, loc = borg_target)
+	overlay.alpha = 150
+	owner.write_image_data("\ref[borg_target]:CYBORG_SCAN", overlay, get_data(), 1 SECONDS, -32, -5)
+
+	return TRUE
+
+/datum/neural_monitor/cyborg_scan/proc/on_examine_target(datum/source, mob/user)
+	SIGNAL_HANDLER
+
+	if(user == borg_target)
+		borg_target = null
+		return
+
+	if(!ismob(user))
+		return
+
+	if(!istype(user, /mob/living/silicon/robot))
+		return
+
+	borg_target = user
+
+	var/image/overlay = image(icon = overlay_borg, loc = user)
+	overlay.alpha = 150
+	owner.write_image_data("\ref[borg_target]:CYBORG_SCAN", overlay, get_data(), 1 SECONDS, 32, -5)
+
+/datum/neural_monitor/cyborg_scan/proc/get_data()
+	if(QDELETED(borg_target))
+		borg_target = null
+		return FALSE
+
+	if(!ismob(borg_target))
+		borg_target = null
+		return FALSE
+
+	var/mob/living/silicon/robot/R = borg_target
+	var/health_percent = R.health / R.maxHealth * 100
+
+	var/damage_text = ""
+	if(R.getBruteLoss() > 0)
+		damage_text += "BR:[round(R.getBruteLoss())] "
+	if(R.getFireLoss() > 0 || R.getToxLoss() > 0)
+		damage_text += "BRN:[round(R.getFireLoss() + R.getToxLoss())] "
+
+	var/stat_text = ""
+	switch(R.stat)
+		if(CONSCIOUS)
+			stat_text = "ONLINE"
+		if(UNCONSCIOUS)
+			stat_text = "OFFLINE"
+		if(DEAD)
+			stat_text = "OFFLINE"
+
+	var/cell_text = ""
+	if(R.cell)
+		cell_text = "[R.cell.charge]/[R.cell.maxcharge]"
+	else
+		cell_text = "NONE"
+
+	var/module_type = "UNKNOWN"
+	if(R.module)
+		module_type = R.module.name
+
+	return "MODULE:[module_type]\nHEALTH:[round(health_percent, 0.1)]%\nCELL:[cell_text]\nSTAT:[stat_text]\n[length(damage_text) > 0 ? "DAMAGE:[damage_text]" : ""]"
+
+// ---------------------------------------------------------------------------
+// Crime Monitor - Tracks criminal status and arrest articles
+// ---------------------------------------------------------------------------
+/datum/neural_monitor/crime
+	name = "CRIME MONITOR"
+	processing = TRUE
+	var/mob/living/carbon/human/crime_target
+	var/datum/data/record/crime_record
+	var/list/crime_articles
+	var/icon/overlay_sec
+
+/datum/neural_monitor/crime/New(datum/component/neural_interface/owner_comp, atom/monitor_atom_p, source_p, ...)
+	. = ..()
+	overlay_sec = new(icon = 'icons/effects/effects.dmi', icon_state = "emark1")
+
+/datum/neural_monitor/crime/register_signals()
+	if(!monitor_atom)
+		return
+	RegisterSignal(monitor_atom, COMSIG_MOB_EXAMINATE, PROC_REF(on_examine_crime))
+
+/datum/neural_monitor/crime/unregister_signals()
+	if(!monitor_atom)
+		return
+	UnregisterSignal(monitor_atom, COMSIG_MOB_EXAMINATE)
+
+/datum/neural_monitor/crime/process(delta_time)
+	if(!..())
+		return FALSE
+
+	var/image/overlay = image(icon = overlay_sec, loc = crime_target)
+	overlay.alpha = 150
+	owner.write_image_data("\ref[crime_target]:CRIME_MONITOR", overlay, get_data(), 1 SECONDS, 32, -5)
+
+	return TRUE
+
+/datum/neural_monitor/crime/proc/on_examine_crime(datum/source, mob/user)
+	SIGNAL_HANDLER
+
+	if(crime_target == user)
+		crime_target = null
+		return
+
+	if(!ismob(user) || !ishuman(user))
+		return
+
+	crime_target = user
+
+	var/image/overlay = image(icon = overlay_sec, loc = crime_target)
+	overlay.alpha = 150
+	owner.write_image_data("\ref[crime_target]:CRIME_MONITOR", overlay, get_data(), 1 SECONDS, 32, -5)
+
+/datum/neural_monitor/crime/proc/get_data()
+	if(QDELETED(crime_target))
+		crime_target = null
+		crime_record = null
+		crime_articles = null
+		return FALSE
+
+	if(!ismob(crime_target) || !ishuman(crime_target))
+		crime_target = null
+		crime_record = null
+		crime_articles = null
+		return FALSE
+
+	var/mob/living/carbon/human/H = crime_target
+
+	var/datum/data/record/R = GLOB.data_core.security_by_name[H.real_name]
+	if(R)
+		crime_record = R
+		crime_articles = R.fields["mi_crim"]
+		crime_articles += R.fields["ma_crim"]
+	else
+		crime_record = null
+		crime_articles = null
+
+	var/status = "НЕТ ЗАПИСИ"
+	if(crime_record)
+		status = crime_record.fields["criminal"]
+
+	var/articles_text = "НЕТ СТАТЕЙ"
+	if(crime_articles && length(crime_articles) > 0)
+		var/list/articles = list()
+		for(var/datum/data/crime/C in crime_articles)
+			articles += "[C.crimeName]: [C.crimeDetails] (CENTCOMM: [C.centcom_enforced]) - [C.penalties_incurred ? "Понес наказание" : "Не понес наказание"]"
+		if(articles.len > 0)
+			var/max_articles = min(articles.len, 5)
+			for(var/i in 1 to max_articles)
+				if(i == 1)
+					articles_text = articles[i]
+				else
+					articles_text += "\n[articles[i]]"
+			if(max_articles < articles.len)
+				articles_text += "\n...и ещё [articles.len - max_articles]"
+
+	return "STATUS:[status]\nARTICLES:[articles_text]"
