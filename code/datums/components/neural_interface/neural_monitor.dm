@@ -560,7 +560,7 @@
 	if(R.module)
 		module_type = R.module.name
 
-	var/write = "MODULE:[module_type]\nHEALTH:[round(health_percent, 0.1)]%\n[length(damage_text) > 0 ? "DAMAGE:[damage_text]\n" : ""]CELL:[cell_text]\nSTAT:[stat_text]"
+	var/write = "MODULE:[module_type]\nHEALTH:[round(health_percent, 0.1)]%\nCELL:[cell_text]\nSTAT:[stat_text]\n[length(damage_text) > 0 ? "DAMAGE:[damage_text]" : ""]"
 
 	var/image/overlay = image(icon = overlay_borg, loc = R)
 	overlay.alpha = 150
