@@ -119,6 +119,10 @@
 	hud_type = DATA_HUD_DIAGNOSTIC_BASIC
 	glass_colour_type = /datum/client_colour/glass_colour/lightorange
 	glasses_type = "robo"
+	monitors = list(
+		/datum/neural_monitor/cyborg_scan,
+		/datum/neural_monitor/nanite
+	)
 
 /obj/item/clothing/glasses/hud/diagnostic/sunglasses
 	name = "diagnostic HUDSunglasses"

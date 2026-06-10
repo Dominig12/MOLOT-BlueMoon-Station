@@ -491,3 +491,94 @@
 	var/image/overlay = image(icon = overlay_observer, loc = user)
 	overlay.alpha = 200
 	owner.write_image_data("\ref[user];HEALTH_SCAN", overlay, "", 1 SECONDS, 32, -5)
+
+// ---------------------------------------------------------------------------
+// Cyborg Monitor - Tracks cyborg status when examined
+// ---------------------------------------------------------------------------
+/datum/neural_monitor/cyborg_scan
+	name = "CYBORG MONITOR"
+	processing = TRUE
+	var/icon/overlay_borg
+	var/mob/living/silicon/robot/borg_target
+
+/datum/neural_monitor/cyborg_scan/New(...)
+	. = ..()
+	overlay_borg = new(icon = 'icons/effects/effects.dmi', icon_state = "scanline")
+
+/datum/neural_monitor/cyborg_scan/Destroy(force, ...)
+	overlay_borg = null
+	borg_target = null
+	. = ..()
+
+/datum/neural_monitor/cyborg_scan/register_signals()
+	if(!monitor_atom)
+		return
+	RegisterSignal(monitor_atom, COMSIG_MOB_EXAMINATE, PROC_REF(on_examine_target))
+
+/datum/neural_monitor/cyborg_scan/unregister_signals()
+	if(!monitor_atom)
+		return
+	UnregisterSignal(monitor_atom, COMSIG_MOB_EXAMINATE)
+
+/datum/neural_monitor/cyborg_scan/process(delta_time)
+	if(!..())
+		return FALSE
+
+	if(QDELETED(borg_target))
+		borg_target = null
+		return FALSE
+
+	if(!ismob(borg_target))
+		borg_target = null
+		return FALSE
+
+	var/mob/living/silicon/robot/R = borg_target
+	var/health_percent = R.health / R.maxHealth * 100
+
+	var/damage_text = ""
+	if(R.getBruteLoss() > 0)
+		damage_text += "BR:[round(R.getBruteLoss())] "
+	if(R.getFireLoss() > 0 || R.getToxLoss() > 0)
+		damage_text += "BRN:[round(R.getFireLoss() + R.getToxLoss())] "
+
+	var/stat_text = ""
+	switch(R.stat)
+		if(CONSCIOUS)
+			stat_text = "ONLINE"
+		if(UNCONSCIOUS)
+			stat_text = "OFFLINE"
+		if(DEAD)
+			stat_text = "OFFLINE"
+
+	var/cell_text = ""
+	if(R.cell)
+		cell_text = "[R.cell.charge]/[R.cell.maxcharge]"
+	else
+		cell_text = "NONE"
+
+	var/module_type = "UNKNOWN"
+	if(R.module)
+		module_type = R.module.name
+
+	var/write = "MODULE:[module_type]\nHEALTH:[round(health_percent, 0.1)]%\n[length(damage_text) > 0 ? "DAMAGE:[damage_text]\n" : ""]CELL:[cell_text]\nSTAT:[stat_text]"
+
+	var/image/overlay = image(icon = overlay_borg, loc = R)
+	overlay.alpha = 150
+	owner.write_image_data("\ref[borg_target]:CYBORG_SCAN", overlay, write, 1 SECONDS, 32, -5)
+
+	return TRUE
+
+/datum/neural_monitor/cyborg_scan/proc/on_examine_target(datum/source, mob/user)
+	SIGNAL_HANDLER
+
+	if(!ismob(user))
+		return
+
+	if(!istype(user, /mob/living/silicon/robot))
+		return
+
+	borg_target = user
+
+	var/image/overlay = image(icon = overlay_borg, loc = user)
+	overlay.alpha = 150
+	owner.write_image_data("\ref[borg_target]:CYBORG_SCAN", overlay, "", 1 SECONDS, 32, -5)
