@@ -564,12 +564,16 @@
 
 	var/image/overlay = image(icon = overlay_borg, loc = R)
 	overlay.alpha = 150
-	owner.write_image_data("\ref[borg_target]:CYBORG_SCAN", overlay, write, 1 SECONDS, 32, -5)
+	owner.write_image_data("\ref[borg_target]:CYBORG_SCAN", overlay, write, 1 SECONDS, -32, -5)
 
 	return TRUE
 
 /datum/neural_monitor/cyborg_scan/proc/on_examine_target(datum/source, mob/user)
 	SIGNAL_HANDLER
+
+	if(user == borg_target)
+		borg_target = null
+		return
 
 	if(!ismob(user))
 		return
@@ -581,4 +585,4 @@
 
 	var/image/overlay = image(icon = overlay_borg, loc = user)
 	overlay.alpha = 150
-	owner.write_image_data("\ref[borg_target]:CYBORG_SCAN", overlay, "", 1 SECONDS, 32, -5)
+	owner.write_image_data("\ref[borg_target]:CYBORG_SCAN", overlay, "", 1 SECONDS, -32, -5)
