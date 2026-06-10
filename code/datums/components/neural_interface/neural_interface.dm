@@ -223,7 +223,7 @@ proc/string_repeat(string, count)
 
 	START_PROCESSING(SSfastprocess, src)
 
-	if(!host_mob.client.prefs.neural_interface_visibility)
+	if(!host_mob.client?.prefs?.neural_interface_visibility)
 		hide()
 
 	return ..()
