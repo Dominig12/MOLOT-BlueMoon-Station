@@ -452,6 +452,10 @@
 		activate_pin(3)
 		return
 
+	if(get_dist(get_turf(src),get_turf(relay_interface)) > 8)
+		activate_pin(3)
+		return
+
 	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, text, key)
 	if(!result)
 		activate_pin(3)
@@ -485,6 +489,10 @@
 	var/list/decay_durations = get_pin_data(IC_INPUT, 3)
 
 	if(!relay_interface || !keys.len || !values.len || keys.len != values.len)
+		activate_pin(3)
+		return
+
+	if(get_dist(get_turf(src),get_turf(relay_interface)) > 8)
 		activate_pin(3)
 		return
 
