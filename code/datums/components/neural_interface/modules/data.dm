@@ -20,16 +20,16 @@
 	name = "DATA MODULE"
 
 	// Display configuration
-	var/screen_loc = "LEFT+1.5,CENTER-1.5"
-	var/maptext_width = 150
-	var/maptext_height = 250
+	var/screen_loc = "LEFT+1.5,CENTER-2.5"
+	var/maptext_width = 160
+	var/maptext_height = 128
 	var/separator_color = "#6b7280"
 	var/font_size = 12
 
 	// Data entries - list of datum/neural_data_entry with expiration
 	var/list/datum/neural_data_entry/data_entries = list()
 	var/max_data_entries = 10
-	var/atom/movable/screen/data_view
+	var/atom/movable/screen/text/data_view
 
 /datum/neural_interface_module/data/New()
 	. = ..()
@@ -43,6 +43,9 @@
 
 	user.client.screen -= data_view
 
+	if(!visible)
+		return
+
 	var/write = ""
 	if(data_entries.len)
 		write += get_data_section()
@@ -50,6 +53,9 @@
 	data_view.maptext = write
 	user.client.screen += data_view
 
+/datum/neural_interface_module/data/Destroy(force, ...)
+	QDEL_NULL(data_view)
+	. = ..()
 
 /datum/neural_interface_module/data/proc/get_data_section()
 	var/write = ""
@@ -59,7 +65,7 @@
 		if(world.time < entry.expiry_time)
 			write += "[MAPTEXT_TINY_UNICODE("└ [entry.key]: [entry.value]")]<br>"
 
-	return write
+	return {"<table width='100%' height='100%' cellpadding='0' cellspacing='0'><tr><td valign='top' align='left'><div style='height:[maptext_height]px; overflow:hidden; text-align:left;'>[write]</div></td></tr></table>"}
 
 // ---------------------------------------------------------------------------
 // Write Data Entry - Creates or updates with decay timer

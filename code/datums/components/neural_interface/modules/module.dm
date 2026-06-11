@@ -8,4 +8,22 @@
 	owner = owner
 
 /datum/neural_interface_module/proc/UpdateVision(mob/user)
+	if(!visible)
+		return FALSE
 	return TRUE
+
+/datum/neural_interface_module/proc/hide_module(mob/user)
+	if(!visible)
+		return FALSE
+	visible = FALSE
+	return TRUE
+
+/datum/neural_interface_module/proc/view_module(mob/user)
+	if(visible)
+		return FALSE
+	visible = TRUE
+	return TRUE
+
+/datum/neural_interface_module/Destroy(force, ...)
+	owner = null
+	. = ..()

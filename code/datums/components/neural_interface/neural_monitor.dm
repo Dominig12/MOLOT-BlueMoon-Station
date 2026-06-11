@@ -424,7 +424,7 @@
 	SIGNAL_HANDLER
 
 	var/image/overlay = image(icon = overlay_observer)
-	owner.write_image_data("\ref[user];OBSERVER", user, overlay, "", 3 SECONDS)
+	owner.write_image_data("\ref[user];OBSERVER", overlay, user, "", 3 SECONDS)
 
 // ---------------------------------------------------------------------------
 // Health Scan Monitor - Scan Health marked with you
@@ -458,7 +458,7 @@
 		return FALSE
 
 	var/image/overlay = image(icon = overlay_observer)
-	owner.write_image_data("\ref[target];HEALTH_SCAN", overlay, target, get_data(), 1 SECONDS, 32, -5)
+	owner.write_image_data("HEALTH_SCAN", overlay, target, get_data(), 1 SECONDS, 32, -5)
 
 	return TRUE
 
@@ -475,7 +475,7 @@
 	target = user
 
 	var/image/overlay = image(icon = overlay_observer)
-	owner.write_image_data("\ref[user];HEALTH_SCAN", overlay, user, get_data(), 1 SECONDS, 32, -5)
+	owner.write_image_data("HEALTH_SCAN", overlay, user, get_data(), 1 SECONDS, 32, -5)
 
 /datum/neural_monitor/health_scan/proc/get_data()
 	if(QDELETED(target))
@@ -523,7 +523,7 @@
 		return FALSE
 
 	var/image/overlay = image(icon = overlay_borg)
-	owner.write_image_data("\ref[borg_target]:CYBORG_SCAN", overlay, borg_target, get_data(), 1 SECONDS, -32, -5)
+	owner.write_image_data("CYBORG_SCAN", overlay, borg_target, get_data(), 1 SECONDS, -32, -5)
 
 	return TRUE
 
@@ -543,7 +543,7 @@
 	borg_target = user
 
 	var/image/overlay = image(icon = overlay_borg)
-	owner.write_image_data("\ref[borg_target]:CYBORG_SCAN", overlay, user, get_data(), 1 SECONDS, 32, -5)
+	owner.write_image_data("CYBORG_SCAN", overlay, user, get_data(), 1 SECONDS, 32, -5)
 
 /datum/neural_monitor/cyborg_scan/proc/get_data()
 	if(QDELETED(borg_target))

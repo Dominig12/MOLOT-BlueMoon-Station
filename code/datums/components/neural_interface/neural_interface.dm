@@ -218,11 +218,8 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/on_remove_source(datum/source, id)
 	return RemoveSource(id)
 
-/datum/component/neural_interface/proc/on_write_log(datum/source, text, key="LOG", color="#4ad1fa86", size=12, speed=0)
-	var/datum/neural_interface_module/logs/module = modules["log"]
-	return module.write_log(text, key, color, size, speed)
 
-/datum/component/neural_interface/proc/write_log(text, key="LOG", color="#4ad1fa86", size=12, speed=0)
+/datum/component/neural_interface/proc/on_write_log(datum/source, text, key="LOG", color="#4ad1fa86", size=12, speed=0)
 	var/datum/neural_interface_module/logs/module = modules["log"]
 	return module.write_log(text, key, color, size, speed)
 
@@ -230,13 +227,18 @@ proc/string_repeat(string, count)
 	var/datum/neural_interface_module/data/module = modules["data"]
 	return module.write_data(key, value, decay_duration, priority)
 
-/datum/component/neural_interface/proc/write_data(key, value, decay_duration=3 SECONDS, priority=0)
-	var/datum/neural_interface_module/data/module = modules["data"]
-	return module.write_data(key, value, decay_duration, priority)
-
 /datum/component/neural_interface/proc/on_write_image_data(datum/source, key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
 	var/datum/neural_interface_module/image_highlight/module = modules["image"]
 	return module.write_image_data(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text, priority)
+
+
+/datum/component/neural_interface/proc/write_log(text, key="LOG", color="#4ad1fa86", size=12, speed=0)
+	var/datum/neural_interface_module/logs/module = modules["log"]
+	return module.write_log(text, key, color, size, speed)
+
+/datum/component/neural_interface/proc/write_data(key, value, decay_duration=3 SECONDS, priority=0)
+	var/datum/neural_interface_module/data/module = modules["data"]
+	return module.write_data(key, value, decay_duration, priority)
 
 /datum/component/neural_interface/proc/write_image_data(key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
 	var/datum/neural_interface_module/image_highlight/module = modules["image"]
@@ -404,6 +406,7 @@ proc/string_repeat(string, count)
 	toggle_button.button_icon_state = "choose_module"
 	toggle_button.UpdateButtons()
 	enable_monitors()
+	view_modules()
 	compile_display()
 
 /datum/component/neural_interface/proc/hide()
@@ -412,6 +415,29 @@ proc/string_repeat(string, count)
 	toggle_button.button_icon_state = "shadow_demon_bg"
 	toggle_button.UpdateButtons()
 	disable_monitors()
+	hide_modules()
+	update_vision_modules()
+
+/datum/component/neural_interface/proc/update_vision_modules()
+	for(var/key in modules)
+		var/datum/neural_interface_module/module = modules[key]
+		module.UpdateVision(host_mob)
+
+/datum/component/neural_interface/proc/hide_modules()
+	for(var/key in modules)
+		hide_module(key)
+
+/datum/component/neural_interface/proc/view_modules()
+	for(var/key in modules)
+		view_module(key)
+
+/datum/component/neural_interface/proc/hide_module(key)
+	var/datum/neural_interface_module/module = modules[key]
+	module.hide_module(host_mob)
+
+/datum/component/neural_interface/proc/view_module(key)
+	var/datum/neural_interface_module/module = modules[key]
+	module.view_module(host_mob)
 
 // ---------------------------------------------------------------------------
 // Quick Access - Common operations

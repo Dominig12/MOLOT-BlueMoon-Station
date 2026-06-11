@@ -65,13 +65,24 @@
 	var/image_next_switch_time = 0
 	var/image_next_switch_periodic = 2 SECONDS
 
+/datum/neural_interface_module/image_highlight/Destroy(force, ...)
+	clean_entries(owner.host_mob)
+	for(var/datum/image_holder_data/entry in image_data_entries)
+		if(entry.overlay && owner?.host_mob?.client)
+			owner?.host_mob?.client.images -= entry.overlay
+	. = ..()
+
+
 /datum/neural_interface_module/image_highlight/UpdateVision(mob/user)
 	cleanup_expired_image_data()
 	clean_entries(user)
 	next_vision_images_data()
 	for(var/datum/image_holder_data/entry in image_data_entries)
 		if(entry.overlay && user?.client)
-			user.client.images += entry.overlay
+			if(visible)
+				user.client.images += entry.overlay
+			else
+				user.client.images -= entry.overlay
 
 // ---------------------------------------------------------------------------
 // Write Image Data Entry - Creates or replaces image with decay timer
@@ -80,15 +91,15 @@
 
 	// Check if entry with same key already exists
 	var/datum/image_holder_data/removed = get_image_data_entry_by_key(key)
-	var/visible = TRUE
+	var/visible_image = TRUE
 	if(removed)
-		visible = removed.enabled
+		visible_image = removed.enabled
 		remove_image_data_entry(removed)
 
 	// Create new entry
 	var/datum/image_holder_data/new_entry = new(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text)
 
-	if(!visible)
+	if(!visible_image)
 		new_entry.toggle()
 
 	// Remove oldest/expires-next entry if at capacity

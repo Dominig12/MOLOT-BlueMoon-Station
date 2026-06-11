@@ -31,13 +31,13 @@
 	name = "LOGS MODULE"
 
 	// Display configuration
-	var/screen_loc = "LEFT+1.5,CENTER-1.5"
-	var/maptext_width = 150
-	var/maptext_height = 250
+	var/screen_loc = "LEFT+1.5,CENTER+1.5"
+	var/maptext_width = 160
+	var/maptext_height = 96
 
 	var/list/datum/log_entry/logs = list()
-	var/max_logs = 3
-	var/atom/movable/screen/logs_view
+	var/max_logs = 4
+	var/atom/movable/screen/text/logs_view
 
 	// UI customization
 	var/display_title = "NEURAL INTERFACE"
@@ -86,6 +86,9 @@
 		return
 
 	user.client.screen -= logs_view
+
+	if(!visible)
+		return
 
 	var/write = ""
 	if(logs.len)
