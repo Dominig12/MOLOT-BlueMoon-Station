@@ -557,6 +557,14 @@
 		activate_pin(3)
 		return
 
+	if(get_dist(get_turf(src),get_turf(relay_interface)) > 8)
+		activate_pin(3)
+		return
+
+	if(get_dist(get_turf(src),get_turf(target)) > 8)
+		activate_pin(3)
+		return
+
 	if(!decay_duration)
 		decay_duration = 1 SECONDS
 
