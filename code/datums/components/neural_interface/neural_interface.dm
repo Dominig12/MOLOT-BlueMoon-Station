@@ -6,102 +6,6 @@
 // ============================================================================
 
 // ---------------------------------------------------------------------------
-// Log Entry - Individual log message with text reveal animation
-// ---------------------------------------------------------------------------
-/datum/log_entry
-	var/plain
-	var/color
-	var/char_index
-	var/char_speed
-	var/size
-	var/expiry_time
-
-/datum/log_entry/proc/format(text)
-	return {"<span style='font-family: \"TinyUnicode\"; color: [color]; font-size: [size]pt; line-height: 0.8;-dm-text-outline: 1px black;'>[text]</span>"}
-
-/datum/log_entry/proc/get_full_line()
-	return format(plain)
-
-/datum/log_entry/proc/get_line()
-	if(char_index < length(plain))
-		char_index = min(char_index + char_speed, length(plain)+1)
-
-	var/revealed_text = copytext(plain, 1, char_index)
-
-	return format(revealed_text)
-
-// ---------------------------------------------------------------------------
-// Neural Data Entry - Temporary data with expiration timer
-// ---------------------------------------------------------------------------
-/datum/neural_data_entry
-	var/key
-	var/value
-	var/decay_duration // seconds before entry expires
-	var/expiry_time // world.time when entry expires
-	var/priority = 0 // higher priority = less likely to be removed when at capacity
-
-/datum/neural_data_entry/New(duration=10 SECONDS)
-	decay_duration = duration
-	expiry_time = world.time + decay_duration
-	return ..()
-
-
-// ---------------------------------------------------------------------------
-// Image Holder - Highlight objects
-// ---------------------------------------------------------------------------
-/datum/image_holder_data
-	var/key
-	var/target_loc
-	var/image/overlay
-	var/atom/movable/screen/text/screen_text
-	var/decay_duration
-	var/expire_time
-	var/enabled = TRUE
-
-/datum/image_holder_data/New(key_target, image/overlay_target, atom/target_loc_ref, text_target = "", duration=5 SECONDS, pixel_x_text=0, pixel_y_text=0)
-	key = key_target
-	target_loc = REF(target_loc_ref)
-	decay_duration = duration
-	expire_time = world.time + decay_duration
-
-	overlay = overlay_target
-	overlay.loc = target_loc_ref
-	overlay.plane = BYOND_LIGHTING_PLANE
-	overlay.alpha = 150
-
-	screen_text = new /atom/movable/screen/text()
-	screen_text.maptext = MAPTEXT_TINY_UNICODE(text_target)
-	screen_text.maptext_height = 64
-	screen_text.maptext_width = 96
-	screen_text.pixel_x = pixel_x_text
-	screen_text.pixel_y = pixel_y_text
-
-	overlay.add_overlay(screen_text)
-
-/datum/image_holder_data/proc/change_text(text)
-	if(screen_text)
-		screen_text.maptext = text
-
-/datum/image_holder_data/proc/toggle()
-	if(!overlay)
-		return
-
-	if(!enabled)
-		overlay?.alpha = 150
-		enabled = TRUE
-	else
-		overlay?.alpha = 0
-		enabled = FALSE
-
-/datum/image_holder_data/Destroy()
-	if(screen_text)
-		overlay.cut_overlay(screen_text)
-		QDEL_NULL(screen_text)
-	QDEL_NULL(overlay)
-	target_loc = null
-	return ..()
-
-// ---------------------------------------------------------------------------
 // Utility Procs
 // ---------------------------------------------------------------------------
 proc/string_repeat(string, count)
@@ -135,31 +39,6 @@ proc/string_repeat(string, count)
 	var/mob/living/host_mob
 	var/list/sources = list()
 
-	// Screen display object
-	var/atom/movable/screen/logs_view
-
-	// Log storage - list of datum/log_entry
-	var/list/datum/log_entry/logs = list()
-	var/max_logs = 3
-
-	// Data entries - list of datum/neural_data_entry with expiration
-	var/list/datum/neural_data_entry/data_entries = list()
-	var/max_data_entries = 10
-
-	// Data image entries - list of datum/image_holder_data with expiration
-	var/list/datum/image_holder_data/image_data_entries = list()
-	var/max_image_data_entries = 10
-	var/image_next_switch_time = 0
-	var/image_next_switch_periodic = 2 SECONDS
-
-	// Text animation settings
-	var/char_reveal_speed = 10
-
-	// Display configuration
-	var/screen_loc = "LEFT+1.5,CENTER-1.5"
-	var/maptext_width = 150
-	var/maptext_height = 250
-
 	// UI customization
 	var/display_title = "NEURAL INTERFACE"
 	var/header_color = "#4ad1fa86"
@@ -174,66 +53,20 @@ proc/string_repeat(string, count)
 	// Monitor instances - composition pattern
 	var/list/datum/neural_monitor/monitors = list()
 
+	var/list/datum/neural_interface_module/modules = list()
+
 	// Signal registration handles
 	var/list/signal_registrations = list()
 
 	var/datum/action/toggle_interface/toggle_button
 
-	// Log category configuration
-	var/list/log_categories = list(
-		"SYSTEM" = "#4ad1fa86",
-		"WARNING" = "#f59e0bff",
-		"ERROR" = "#ef4444ff",
-		"INFO" = "#10b981ff",
-		"DATA" = "#8b5cf6ff",
-		"SYNC" = "#06b6d4ff",
-		"HEALTH" = "#f472b6ff",
-		"MODULE" = "#a78bffff",
-		"ALERT" = "#ff0000ff",
-		"STATUS" = "#6b7280ff",
-		"DEBUG" = "#94a3b8ff"
-	)
-
-	// Category-specific speeds (0 = use default)
-	var/list/log_speeds = list(
-		"SYSTEM" = 15,
-		"WARNING" = 15,
-		"ERROR" = 30,
-		"INFO" = 15,
-		"DATA" = 15,
-		"SYNC" = 15,
-		"HEALTH" = 30,
-		"MODULE" = 15,
-		"ALERT" = 30,
-		"STATUS" = 10,
-		"DEBUG" = 20
-	)
-
-/datum/component/neural_interface/Initialize(
-		mob/user,
-		display_title_p = "NEURAL INTERFACE",
-		max_logs_p = 3,
-		max_data_entries_p = 10,
-		max_image_data_entries_p = 10,
-		char_reveal_speed_p = 10,
-		screen_loc_p = "LEFT+1.5,CENTER-1.5"
-	)
+/datum/component/neural_interface/Initialize(mob/user, display_title_p = "NEURAL INTERFACE")
 
 	if(!isliving(parent))
 		return COMPONENT_INCOMPATIBLE
 
 	host_mob = parent
 	display_title = display_title_p
-	max_logs = max_logs_p
-	max_data_entries = max_data_entries_p
-	max_image_data_entries = max_image_data_entries_p
-	char_reveal_speed = char_reveal_speed_p
-	screen_loc = screen_loc_p
-
-	image_next_switch_time = world.time
-
-	// Create screen display
-	logs_view = ScreenText(null, "Initialize", screen_loc, maptext_height, maptext_width)
 
 	toggle_button = new
 
@@ -247,6 +80,15 @@ proc/string_repeat(string, count)
 	if(!host_mob.client?.prefs?.neural_interface_visibility)
 		hide()
 
+	var/datum/neural_interface_module/logs/log_module = new(src)
+	var/datum/neural_interface_module/data/data_module = new(src)
+	var/datum/neural_interface_module/image_highlight/image_module = new(src)
+
+	modules = list(
+		"log" = log_module,
+		"data" = data_module,
+		"image" = image_module)
+
 	return ..()
 
 /datum/component/neural_interface/process(delta_time)
@@ -256,8 +98,6 @@ proc/string_repeat(string, count)
 	STOP_PROCESSING(SSfastprocess, src)
 	unregister_all_signals()
 	unregister_all_monitors()
-	clear_image_data_entries()
-	clear_data_entries()
 	delete_user()
 
 	return ..()
@@ -266,7 +106,6 @@ proc/string_repeat(string, count)
 // User Management
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/attach_client()
-	host_mob.client.screen += logs_view
 	attached_client = host_mob.client
 	is_client_attached = TRUE
 	toggle_button.Grant(host_mob)
@@ -276,14 +115,6 @@ proc/string_repeat(string, count)
 		return
 
 	toggle_button.Remove(host_mob)
-
-	// Remove from screen
-	if(host_mob?.client)
-		if(logs_view)
-			host_mob.client.screen -= logs_view
-
-	QDEL_NULL(logs_view)
-	logs_view = null
 
 	attached_client = null
 	is_client_attached = FALSE
@@ -388,13 +219,28 @@ proc/string_repeat(string, count)
 	return RemoveSource(id)
 
 /datum/component/neural_interface/proc/on_write_log(datum/source, text, key="LOG", color="#4ad1fa86", size=12, speed=0)
-	return write_log(text, key, color, size, speed)
+	var/datum/neural_interface_module/logs/module = modules["log"]
+	return module.write_log(text, key, color, size, speed)
+
+/datum/component/neural_interface/proc/write_log(text, key="LOG", color="#4ad1fa86", size=12, speed=0)
+	var/datum/neural_interface_module/logs/module = modules["log"]
+	return module.write_log(text, key, color, size, speed)
 
 /datum/component/neural_interface/proc/on_write_data(datum/source, key, value, decay_duration=3 SECONDS, priority=0)
-	return write_data(key, value, decay_duration, priority)
+	var/datum/neural_interface_module/data/module = modules["data"]
+	return module.write_data(key, value, decay_duration, priority)
+
+/datum/component/neural_interface/proc/write_data(key, value, decay_duration=3 SECONDS, priority=0)
+	var/datum/neural_interface_module/data/module = modules["data"]
+	return module.write_data(key, value, decay_duration, priority)
 
 /datum/component/neural_interface/proc/on_write_image_data(datum/source, key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
-	return write_image_data(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text, priority)
+	var/datum/neural_interface_module/image_highlight/module = modules["image"]
+	return module.write_image_data(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text, priority)
+
+/datum/component/neural_interface/proc/write_image_data(key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
+	var/datum/neural_interface_module/image_highlight/module = modules["image"]
+	return module.write_image_data(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text, priority)
 
 // ---------------------------------------------------------------------------
 // Monitor Management
@@ -514,323 +360,6 @@ proc/string_repeat(string, count)
 			continue
 		monitor.disable()
 
-// ============================================================================
-// DATA ENTRY MANAGEMENT - Objects with expiration timers
-// ============================================================================
-
-// ---------------------------------------------------------------------------
-// Write Data Entry - Creates or updates with decay timer
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/write_data(key, value, decay_duration=3 SECONDS, priority=0)
-	// Check if entry with same key already exists
-	for(var/datum/neural_data_entry/entry in data_entries)
-		if(entry.key == key)
-			// Update existing entry - reset timer
-			entry.value = value
-			entry.decay_duration = decay_duration
-			entry.expiry_time = world.time + decay_duration
-			entry.priority = priority
-			return TRUE
-
-	// Create new entry
-	var/datum/neural_data_entry/new_entry = new()
-	new_entry.key = key
-	new_entry.value = value
-	new_entry.decay_duration = decay_duration
-	new_entry.expiry_time = world.time + decay_duration
-	new_entry.priority = priority
-
-	// Remove oldest/expires-next entry if at capacity
-	if(data_entries.len >= max_data_entries)
-		remove_oldest_data_entry()
-
-	data_entries += new_entry
-
-	return TRUE
-
-// ---------------------------------------------------------------------------
-// Remove oldest data entry - lowest priority first, then earliest expiry
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/remove_oldest_data_entry()
-	var/datum/neural_data_entry/target
-	var/lowest_priority = INFINITY
-	var/latest_expiry = INFINITY
-
-	for(var/datum/neural_data_entry/entry in data_entries)
-		if(entry.priority < lowest_priority)
-			lowest_priority = entry.priority
-			target = entry
-			latest_expiry = entry.expiry_time
-		else if(entry.priority == lowest_priority && entry.expiry_time < latest_expiry)
-			// Same priority, remove the one expiring sooner
-			target = entry
-			latest_expiry = entry.expiry_time
-
-	if(target)
-		data_entries -= target
-		QDEL_NULL(target)
-
-// ---------------------------------------------------------------------------
-// Remove specific data entry by key
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/remove_data_entry(key)
-	for(var/datum/neural_data_entry/entry in data_entries)
-		if(entry.key == key)
-			data_entries -= entry
-			QDEL_NULL(entry)
-			return TRUE
-	return FALSE
-
-// ---------------------------------------------------------------------------
-// Clear all data entries
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/clear_data_entries()
-	for(var/datum/neural_data_entry/entry in data_entries)
-		QDEL_NULL(entry)
-	data_entries = list()
-	return TRUE
-
-// ---------------------------------------------------------------------------
-// Cleanup expired data entries
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/cleanup_expired_data()
-	var/list/to_remove = list()
-
-	for(var/datum/neural_data_entry/entry in data_entries)
-		if(world.time >= entry.expiry_time)
-			to_remove += entry
-
-	for(var/removed in to_remove)
-		data_entries -= removed
-		QDEL_NULL(removed)
-
-// ---------------------------------------------------------------------------
-// Get active data entries (non-expired)
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/get_active_data_entries()
-	var/list/active = list()
-	for(var/datum/neural_data_entry/entry in data_entries)
-		if(world.time < entry.expiry_time)
-			active[entry.key] = entry.value
-	return active
-
-// ---------------------------------------------------------------------------
-// Check if data entry exists and is not expired
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/data_entry_exists(key)
-	for(var/datum/neural_data_entry/entry in data_entries)
-		if(entry.key == key && world.time < entry.expiry_time)
-			return TRUE
-	return FALSE
-
-// ---------------------------------------------------------------------------
-// Get data entry value by key (returns null if not found or expired)
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/get_data_entry_value(key)
-	for(var/datum/neural_data_entry/entry in data_entries)
-		if(entry.key == key && world.time < entry.expiry_time)
-			return entry.value
-	return null
-
-// ---------------------------------------------------------------------------
-// Log Management - Write messages with categories and formatting
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/write_log(text, key="LOG", color="#4ad1fa86", size=12, speed=0)
-	LAZYINITLIST(logs)
-
-	// Apply category color if defined
-	if(log_categories[key])
-		color = log_categories[key]
-
-	// Format log message
-	var/plain_text = "\[[key]\] - [text]"
-
-	// Remove oldest logs if at capacity
-	if(logs.len >= max_logs)
-		var/datum/log_entry/old = logs[1]
-		logs.Splice(1, 2)
-		QDEL_NULL(old)
-
-	// Create log entry
-	var/datum/log_entry/log = new()
-
-	log.plain = plain_text
-	log.color = color
-	log.char_index = 1
-	log.char_speed = speed > 0 ? speed : char_reveal_speed
-	log.size = size
-	log.expiry_time = world.time + 3 SECONDS
-
-	// Override speed if category has specific speed
-	if(log_speeds[key] && speed == 0)
-		log.char_speed = log_speeds[key]
-
-	logs += log
-
-	return TRUE
-
-/datum/component/neural_interface/proc/clear_logs()
-	QDEL_LIST(logs)
-	logs = list()
-	return TRUE
-
-/datum/component/neural_interface/proc/remove_log(index)
-	if(index >= 1 && index <= logs.len)
-		var/datum/log_entry/removed = logs[index]
-		logs.Cut(index, index + 1)
-		QDEL_NULL(removed)
-		return TRUE
-	return FALSE
-
-/datum/component/neural_interface/proc/cleanup_expired_logs()
-	var/list/to_remove = list()
-
-	for(var/datum/log_entry/entry in logs)
-		if(world.time >= entry.expiry_time)
-			to_remove += entry
-
-	for(var/removed in to_remove)
-		logs -= removed
-		QDEL_NULL(removed)
-
-// ============================================================================
-// IMAGE DATA ENTRY MANAGEMENT - Images with expiration timers
-// ============================================================================
-
-// ---------------------------------------------------------------------------
-// Write Image Data Entry - Creates or replaces image with decay timer
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/write_image_data(key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
-	if(!host_mob?.client)
-		return FALSE
-
-	// Check if entry with same key already exists
-	var/datum/image_holder_data/removed = get_image_data_entry_by_key(key)
-	var/visible = TRUE
-	if(removed)
-		visible = removed.enabled
-		remove_image_data_entry(removed)
-
-	// Create new entry
-	var/datum/image_holder_data/new_entry = new(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text)
-
-	if(!visible)
-		new_entry.toggle()
-
-	// Add overlay to host client images
-	if(new_entry.overlay)
-		host_mob.client.images += new_entry.overlay
-
-	// Remove oldest/expires-next entry if at capacity
-	if(image_data_entries.len >= max_image_data_entries)
-		remove_oldest_image_data_entry()
-
-	image_data_entries += new_entry
-
-	return TRUE
-
-/datum/component/neural_interface/proc/get_image_data_entry_by_key(key)
-	for(var/datum/image_holder_data/entry in image_data_entries)
-		if(entry.key == key)
-			return entry
-
-	return FALSE
-
-// ---------------------------------------------------------------------------
-// Remove oldest image data entry - lowest priority first, then earliest expiry
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/remove_oldest_image_data_entry()
-	var/datum/image_holder_data/target
-	var/earliest_expiry = INFINITY
-
-	// Find entry with lowest priority (lower number = less important) and earliest expiry
-	for(var/datum/image_holder_data/entry in image_data_entries)
-		if(entry.expire_time < earliest_expiry)
-			earliest_expiry = entry.expire_time
-			target = entry
-
-	remove_image_data_entry(target)
-
-// ---------------------------------------------------------------------------
-// Remove specific image data entry by key
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/remove_image_data_entry_by_key(key)
-	for(var/datum/image_holder_data/entry in image_data_entries)
-		if(entry.key == key)
-			if(entry.overlay && host_mob?.client)
-				host_mob.client.images -= entry.overlay
-			image_data_entries -= entry
-			QDEL_NULL(entry)
-			return TRUE
-	return FALSE
-
-/datum/component/neural_interface/proc/remove_image_data_entry(datum/image_holder_data/entry)
-	if(entry.overlay && host_mob?.client)
-		host_mob.client.images -= entry.overlay
-	image_data_entries -= entry
-	QDEL_NULL(entry)
-	return TRUE
-
-// ---------------------------------------------------------------------------
-// Clear all image data entries
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/clear_image_data_entries()
-	for(var/datum/image_holder_data/entry in image_data_entries)
-		remove_image_data_entry(entry)
-	image_data_entries = list()
-	return TRUE
-
-// ---------------------------------------------------------------------------
-// Cleanup expired image data entries
-// ---------------------------------------------------------------------------
-/datum/component/neural_interface/proc/cleanup_expired_image_data()
-	for(var/datum/image_holder_data/entry in image_data_entries)
-		if(world.time >= entry.expire_time)
-			remove_image_data_entry(entry)
-
-/datum/component/neural_interface/proc/next_vision_images_data()
-	if(image_next_switch_time > world.time)
-		return
-	image_next_switch_time = world.time + image_next_switch_periodic
-
-	var/list/map = list()
-	for(var/datum/image_holder_data/entry in image_data_entries)
-		LAZYINITLIST(map[entry.target_loc])
-		map[entry.target_loc] += entry
-
-	for(var/loc in map)
-		var/list/datum/image_holder_data/map_entries = map[loc]
-		var/lenght = map_entries.len
-		if(lenght < 2)
-			if(lenght == 1)
-				var/list/datum/image_holder_data/entry = map_entries[1]
-				if(!entry.enabled)
-					entry.toggle()
-			continue
-
-		var/datum/image_holder_data/current_enabled
-		for(var/datum/image_holder_data/entry in map_entries)
-			if(entry.enabled)
-				current_enabled = entry
-				break
-		if(!current_enabled)
-			current_enabled = map_entries[1]
-			current_enabled.toggle()
-			continue
-
-		var/index = map_entries.Find(current_enabled)
-		if(index == lenght)
-			index = 1
-		else
-			index += 1
-
-		var/datum/image_holder_data/next_enabled = map_entries[index]
-
-		if(!next_enabled.enabled)
-			next_enabled.toggle()
-
-		current_enabled.toggle()
-
 // ---------------------------------------------------------------------------
 // Display Compilation - Generate HTML for screen rendering
 // ---------------------------------------------------------------------------
@@ -839,38 +368,12 @@ proc/string_repeat(string, count)
 		if(host_mob.client)
 			attach_client()
 
-	// Cleanup expired data entries
-	cleanup_expired_data()
-
-	// Cleanup expired image data entries
-	cleanup_expired_image_data()
-
-	cleanup_expired_logs()
-
 	if(!visible)
 		return
 
-	next_vision_images_data()
-
-	if(!logs_view)
-		return
-
-	if(!logs.len && !data_entries.len)
-		logs_view.maptext = ""
-		return
-
-	var/write = get_display_header()
-
-	// Add log stream section
-	if(logs.len > 0)
-		write += get_log_section()
-
-	// Add data section (only active entries)
-	if(data_entries.len > 0)
-		write += get_data_section()
-
-	// Apply compiled display
-	logs_view.maptext = write
+	for(var/key in modules)
+		var/datum/neural_interface_module/module = modules[key]
+		module.UpdateVision(host_mob)
 
 // ---------------------------------------------------------------------------
 // Display Sections - Build individual display parts
@@ -879,25 +382,6 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/get_display_header()
 	var/write = {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [header_color]; line-height: 0.8; -dm-text-outline: 1px black;'>── [display_title] ──</span><br>"}
 	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>[string_repeat("─", length(display_title) + 6)]</span><br>"}
-
-	return write
-
-/datum/component/neural_interface/proc/get_log_section()
-	var/write = ""
-	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>├─ LOG STREAM</span><br>"}
-
-	for(var/datum/log_entry/log_entry in logs)
-		write += "[MAPTEXT_TINY_UNICODE("└ [log_entry.get_full_line()]")]<br>"
-
-	return write
-
-/datum/component/neural_interface/proc/get_data_section()
-	var/write = ""
-	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>├─ DATA</span><br>"}
-
-	for(var/datum/neural_data_entry/entry in data_entries)
-		if(world.time < entry.expiry_time)
-			write += "[MAPTEXT_TINY_UNICODE("└ [entry.key]: [entry.value]")]<br>"
 
 	return write
 
@@ -920,8 +404,6 @@ proc/string_repeat(string, count)
 	toggle_button.button_icon_state = "choose_module"
 	toggle_button.UpdateButtons()
 	enable_monitors()
-	if(logs_view)
-		logs_view.maptext = ""
 	compile_display()
 
 /datum/component/neural_interface/proc/hide()
@@ -930,8 +412,6 @@ proc/string_repeat(string, count)
 	toggle_button.button_icon_state = "shadow_demon_bg"
 	toggle_button.UpdateButtons()
 	disable_monitors()
-	if(logs_view)
-		logs_view.maptext = ""
 
 // ---------------------------------------------------------------------------
 // Quick Access - Common operations
