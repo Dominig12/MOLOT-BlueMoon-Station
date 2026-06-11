@@ -374,9 +374,7 @@ proc/string_repeat(string, count)
 	if(!visible)
 		return
 
-	for(var/key in modules)
-		var/datum/neural_interface_module/module = modules[key]
-		module.UpdateVision(host_mob)
+	update_vision_modules()
 
 // ---------------------------------------------------------------------------
 // Display Sections - Build individual display parts
