@@ -803,6 +803,8 @@
 #include "code\datums\components\jukebox\jukebox_prefs.dm"
 #include "code\datums\components\neural_interface\neural_interface.dm"
 #include "code\datums\components\neural_interface\neural_monitor.dm"
+#include "code\datums\components\neural_interface\modules\logs.dm"
+#include "code\datums\components\neural_interface\modules\module.dm"
 #include "code\datums\components\plumbing\_plumbing.dm"
 #include "code\datums\components\plumbing\chemical_acclimator.dm"
 #include "code\datums\components\plumbing\filter.dm"
