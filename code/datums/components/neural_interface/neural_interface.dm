@@ -369,6 +369,7 @@ proc/string_repeat(string, count)
 	if(!is_client_attached || attached_client == null)
 		if(host_mob.client)
 			attach_client()
+		return
 
 	if(!visible)
 		return
