@@ -381,12 +381,10 @@
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/on_mob_death(mob/living/L, gibbed)
 	. = ..()
 	if(gibbed)
-		neural_interface.write_data("HOST_STATUS", "HOST GIBBED", 10 SECONDS)
-		neural_interface.write_data("DESTROY_DRESS", "TRUE", 10 SECONDS)
 		qdel(src)
 		return TRUE
 
-	neural_interface.write_data("HOST_STATUS", "HOST DEAD", 10 SECONDS)
+	SEND_SIGNAL(L, COMSIG_NEURAL_INTERFACE_WRITE_DATA, "HOST_STATUS", "HOST DEAD", 10 SECONDS)
 
 	toggle_open_body(TRUE)
 	var/mob/living/carbon/human/H = L
@@ -435,7 +433,8 @@
 
 	echo?.render_source = null
 
-	neural_interface?.RemoveSource("ROSELIA_DRESS")
+	if(neural_interface)
+		SEND_SIGNAL(neural_interface, COMSIG_NEURAL_INTERFACE_REMOVE_SOURCE, "ROSELIA_DRESS")
 	. = ..()
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/toggle_jumpsuit_adjust()
@@ -470,16 +469,17 @@
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/toggle_open_body(open)
 	if(!can_adjust)
 		return TRUE
+
+	if(neural_interface)
+		SEND_SIGNAL(neural_interface, COMSIG_NEURAL_INTERFACE_WRITE_DATA, "COVERAGE", open ? "OPEN" : "CLOSED", 10 SECONDS)
 	if(open)
 		icon_state = "InlaidDataDress_[skin]_open"
 		item_state = "InlaidDataDress_[skin]_open"
 		body_parts_covered = NONE
-		neural_interface?.write_data("COVERAGE", "OPEN", 10 SECONDS)
 	else
 		icon_state = "InlaidDataDress_[skin]"
 		item_state = "InlaidDataDress_[skin]"
 		body_parts_covered = CHEST|GROIN|LEGS|ARMS
-		neural_interface?.write_data("COVERAGE", "CLOSED", 10 SECONDS)
 	return TRUE
 
 /obj/item/clothing/under/donator/bm/inlaid_data_dress/proc/echo_animation()

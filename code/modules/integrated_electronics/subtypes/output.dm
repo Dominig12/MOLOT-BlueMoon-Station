@@ -425,6 +425,149 @@
 		//update the diagnostic hud
 		assembly.diag_hud_set_circuitstat()
 
+/obj/item/integrated_circuit/output/neural_interface_log_write
+	name = "Neural interface write log"
+	complexity = 3
+	icon_state = "video_camera"
+	inputs = list(
+		"target_interface" = IC_PINTYPE_REF,
+		"text" = IC_PINTYPE_STRING,
+		"key"  = IC_PINTYPE_STRING,
+	)
+	activators = list(
+		"pulse in" = IC_PINTYPE_PULSE_IN,
+		"on success" = IC_PINTYPE_PULSE_OUT,
+		"on failure" = IC_PINTYPE_PULSE_OUT
+	)
+	outputs = list()
+	spawn_flags = IC_SPAWN_RESEARCH
+	power_draw_per_use = 2
+
+/obj/item/integrated_circuit/output/neural_interface_log_write/do_work(ord)
+	var/atom/relay_interface = get_pin_data(IC_INPUT, 1)
+	var/text = get_pin_data(IC_INPUT, 2)
+	var/key = get_pin_data(IC_INPUT, 3)
+
+	if(!relay_interface || !text || !key)
+		activate_pin(3)
+		return
+
+	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, text, key)
+	if(!result)
+		activate_pin(3)
+		return
+
+	activate_pin(2)
+
+/obj/item/integrated_circuit/output/neural_interface_data_write
+	name = "Neural interface write data"
+	complexity = 4
+	icon_state = "video_camera"
+	inputs = list(
+		"target_interface" = IC_PINTYPE_REF,
+		"keys" = IC_PINTYPE_LIST,
+		"values"  = IC_PINTYPE_LIST,
+		"decay durations"  = IC_PINTYPE_LIST,
+	)
+	activators = list(
+		"pulse in" = IC_PINTYPE_PULSE_IN,
+		"on success" = IC_PINTYPE_PULSE_OUT,
+		"on failure" = IC_PINTYPE_PULSE_OUT
+	)
+	outputs = list()
+	spawn_flags = IC_SPAWN_RESEARCH
+	power_draw_per_use = 2
+
+/obj/item/integrated_circuit/output/neural_interface_data_write/do_work(ord)
+	var/atom/relay_interface = get_pin_data(IC_INPUT, 1)
+	var/list/keys = get_pin_data(IC_INPUT, 2)
+	var/list/values = get_pin_data(IC_INPUT, 3)
+	var/list/decay_durations = get_pin_data(IC_INPUT, 3)
+
+	if(!relay_interface || !keys.len || !values.len || keys.len != values.len)
+		activate_pin(3)
+		return
+
+	var/result = FALSE
+	for(var/i = 1; i <= keys.len; i++)
+		var/key = keys[i]
+		var/value = values[i]
+		var/decay_duration = 2 SECONDS
+		if(decay_durations[i])
+			decay_duration = decay_durations[i]
+
+		result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_DATA, key, value, decay_duration)
+
+	if(!result)
+		activate_pin(3)
+		return
+
+	activate_pin(2)
+
+/obj/item/integrated_circuit/output/neural_interface_image_data_write
+	name = "Neural interface write image data"
+	complexity = 5
+	icon_state = "video_camera"
+	inputs = list(
+		"target_interface" = IC_PINTYPE_REF,
+		"target" = IC_PINTYPE_REF,
+		"key" = IC_PINTYPE_STRING,
+		"text"  = IC_PINTYPE_STRING,
+		"decay duration"  = IC_PINTYPE_NUMBER,
+		"shift text" = IC_PINTYPE_LIST
+	)
+	activators = list(
+		"pulse in" = IC_PINTYPE_PULSE_IN,
+		"on success" = IC_PINTYPE_PULSE_OUT,
+		"on failure" = IC_PINTYPE_PULSE_OUT
+	)
+	outputs = list()
+	spawn_flags = IC_SPAWN_RESEARCH
+	power_draw_per_use = 5
+	var/icon/overlay
+
+/obj/item/integrated_circuit/output/neural_interface_image_data_write/Initialize(mapload)
+	. = ..()
+	overlay = new(icon='icons/effects/effects.dmi', icon_state="medi_holo_no_anim")
+
+/obj/item/integrated_circuit/output/neural_interface_image_data_write/Destroy()
+	overlay = null
+	. = ..()
+
+/obj/item/integrated_circuit/output/neural_interface_image_data_write/do_work(ord)
+	var/atom/relay_interface = get_pin_data(IC_INPUT, 1)
+	var/atom/target = get_pin_data(IC_INPUT, 2)
+	var/key = get_pin_data(IC_INPUT, 3)
+	var/text = get_pin_data(IC_INPUT, 4)
+	var/decay_duration = get_pin_data(IC_INPUT, 5)
+	var/list/shift = get_pin_data(IC_INPUT, 6)
+
+	if(!shift?.len)
+		shift = list(0,0)
+
+	if(shift.len != 2)
+		activate_pin(3)
+		return
+
+	if(!isnum(shift[1]) || !isnum(shift[2]))
+		activate_pin(3)
+		return
+
+	if(!relay_interface || !target || !key)
+		activate_pin(3)
+		return
+
+	if(!decay_duration)
+		decay_duration = 1 SECONDS
+
+	var/image/overlay_image = image(icon = overlay, loc = target)
+	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, key, overlay_image, text, decay_duration, shift[1], shift[2])
+
+	if(!result)
+		activate_pin(3)
+		return
+
+	activate_pin(2)
 
 //Hippie Ported Code--------------------------------------------------------------------------------------------------------
 

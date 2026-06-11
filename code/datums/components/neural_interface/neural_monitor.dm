@@ -684,3 +684,39 @@
 				articles_text += "\n...и ещё [articles.len - max_articles]"
 
 	return "STATUS:[status]\nARTICLES:[articles_text]"
+
+
+// ---------------------------------------------------------------------------
+// Integral Monitor - usage from visual integral signals
+// ---------------------------------------------------------------------------
+/datum/neural_monitor/integral_visual
+	name = "INTEGRAL MONITOR"
+
+/datum/neural_monitor/integral_visual/register_signals()
+	if(!monitor_atom)
+		return
+	RegisterSignal(monitor_atom, COMSIG_NEURAL_INTERFACE_WRITE_LOG, PROC_REF(write_log))
+	RegisterSignal(monitor_atom, COMSIG_NEURAL_INTERFACE_WRITE_DATA, PROC_REF(write_data))
+	RegisterSignal(monitor_atom, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, PROC_REF(write_image_data))
+
+/datum/neural_monitor/integral_visual/unregister_signals()
+	if(!monitor_atom)
+		return
+	UnregisterSignal(monitor_atom, COMSIG_NEURAL_INTERFACE_WRITE_LOG)
+	UnregisterSignal(monitor_atom, COMSIG_NEURAL_INTERFACE_WRITE_DATA)
+	UnregisterSignal(monitor_atom, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA)
+
+/datum/neural_monitor/integral_visual/proc/write_log(datum/source, text, key="LOG", color="#4ad1fa86", size=12, speed=0)
+	var/list/arguments = args.Copy()
+	arguments.Cut(1, 2)
+	return owner.write_log(arglist(arguments))
+
+/datum/neural_monitor/integral_visual/proc/write_data(datum/source, key, value, decay_duration=3 SECONDS, priority=0)
+	var/list/arguments = args.Copy()
+	arguments.Cut(1, 2)
+	return owner.write_data(arglist(arguments))
+
+/datum/neural_monitor/integral_visual/proc/write_image_data(datum/source, key, image/overlay, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
+	var/list/arguments = args.Copy()
+	arguments.Cut(1, 2)
+	return owner.write_image_data(arglist(arguments))

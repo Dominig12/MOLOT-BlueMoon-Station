@@ -284,11 +284,29 @@ proc/string_repeat(string, count)
 		RegisterSignal(host_mob, COMSIG_MOB_KEY_CHANGE, PROC_REF(on_mob_key_change))
 		RegisterSignal(host_mob, COMSIG_MOB_PRE_PLAYER_CHANGE, PROC_REF(on_mob_key_change))
 		RegisterSignal(host_mob, COMSIG_CLIENT_MOB_LOGIN, PROC_REF(on_client_reconnect))
+
+		RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_ADD_SOURCE, PROC_REF(on_add_source))
+		RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_REMOVE_SOURCE, PROC_REF(on_remove_source))
+		RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_WRITE_LOG, PROC_REF(on_write_log))
+		RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_WRITE_DATA, PROC_REF(on_write_data))
+		RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, PROC_REF(on_write_image_data))
+
+		RegisterSignal(src, COMSIG_NEURAL_INTERFACE_ADD_SOURCE, PROC_REF(on_add_source))
+		RegisterSignal(src, COMSIG_NEURAL_INTERFACE_REMOVE_SOURCE, PROC_REF(on_remove_source))
+		RegisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_LOG, PROC_REF(on_write_log))
+		RegisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_DATA, PROC_REF(on_write_data))
+		RegisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, PROC_REF(on_write_image_data))
+
 		signal_registrations += list(
 			COMSIG_MOB_GHOSTIZE,
 			COMSIG_MOB_KEY_CHANGE,
 			COMSIG_MOB_PRE_PLAYER_CHANGE,
-			COMSIG_CLIENT_MOB_LOGIN
+			COMSIG_CLIENT_MOB_LOGIN,
+			COMSIG_NEURAL_INTERFACE_ADD_SOURCE,
+			COMSIG_NEURAL_INTERFACE_REMOVE_SOURCE,
+			COMSIG_NEURAL_INTERFACE_WRITE_LOG,
+			COMSIG_NEURAL_INTERFACE_WRITE_DATA,
+			COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA
 		)
 		is_client_attached = TRUE
 
@@ -298,6 +316,11 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/unregister_all_signals()
 	for(var/signal_handle in signal_registrations)
 		UnregisterSignal(host_mob, signal_handle)
+	UnregisterSignal(src, COMSIG_NEURAL_INTERFACE_ADD_SOURCE)
+	UnregisterSignal(src, COMSIG_NEURAL_INTERFACE_REMOVE_SOURCE)
+	UnregisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_LOG)
+	UnregisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_DATA)
+	UnregisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA)
 	signal_registrations = list()
 
 
@@ -334,12 +357,32 @@ proc/string_repeat(string, count)
 	is_client_attached = FALSE
 
 // ---------------------------------------------------------------------------
+// Signals
+// ---------------------------------------------------------------------------
+
+/datum/component/neural_interface/proc/on_add_source(datum/source, id)
+	return AddSource(id)
+
+/datum/component/neural_interface/proc/on_remove_source(datum/source, id)
+	return RemoveSource(id)
+
+/datum/component/neural_interface/proc/on_write_log(datum/source, text, key="LOG", color="#4ad1fa86", size=12, speed=0)
+	return write_log(text, key, color, size, speed)
+
+/datum/component/neural_interface/proc/on_write_data(datum/source, key, value, decay_duration=3 SECONDS, priority=0)
+	return write_data(key, value, decay_duration, priority)
+
+/datum/component/neural_interface/proc/on_write_image_data(datum/source, key, image/overlay, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
+	return write_image_data(key, overlay, text, decay_duration, pixel_x_text, pixel_y_text, priority)
+
+// ---------------------------------------------------------------------------
 // Monitor Management
 // ---------------------------------------------------------------------------
 
 /datum/component/neural_interface/proc/AddSource(id)
 	LAZYINITLIST(sources)
 	LAZYADD(sources, id)
+	return TRUE
 
 /datum/component/neural_interface/proc/RemoveSource(id)
 	LAZYINITLIST(sources)
@@ -361,6 +404,8 @@ proc/string_repeat(string, count)
 
 	for(var/type in types)
 		enable_monitor_by_type(type)
+
+	return TRUE
 
 /datum/component/neural_interface/proc/unregister_all_monitors()
 	LAZYINITLIST(monitors)
