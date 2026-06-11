@@ -576,8 +576,8 @@
 	if(!decay_duration)
 		decay_duration = 1 SECONDS
 
-	var/image/overlay_image = image(icon = overlay, loc = target)
-	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, key, overlay_image, text, decay_duration, shift[1], shift[2])
+	var/image/overlay_image = image(icon = overlay)
+	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, key, overlay_image, target, text, decay_duration, shift[1], shift[2])
 
 	if(!result)
 		activate_pin(3)

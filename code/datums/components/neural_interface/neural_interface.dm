@@ -51,22 +51,23 @@
 // ---------------------------------------------------------------------------
 /datum/image_holder_data
 	var/key
-	var/atom/target_loc
+	var/target_loc
 	var/image/overlay
 	var/atom/movable/screen/text/screen_text
 	var/decay_duration
 	var/expire_time
-	var/enabled = FALSE
+	var/enabled = TRUE
 
-/datum/image_holder_data/New(key_target, image/overlay_target, atom/target_loc, text_target = "", duration=5 SECONDS, pixel_x_text=0, pixel_y_text=0)
+/datum/image_holder_data/New(key_target, image/overlay_target, atom/target_loc_ref, text_target = "", duration=5 SECONDS, pixel_x_text=0, pixel_y_text=0)
 	key = key_target
-	target_loc = target_loc
+	target_loc = REF(target_loc_ref)
 	decay_duration = duration
 	expire_time = world.time + decay_duration
 
 	overlay = overlay_target
-	overlay.loc = target_loc
+	overlay.loc = target_loc_ref
 	overlay.plane = BYOND_LIGHTING_PLANE
+	overlay.alpha = 150
 
 	screen_text = new /atom/movable/screen/text()
 	screen_text.maptext = MAPTEXT_TINY_UNICODE(text_target)
@@ -86,10 +87,10 @@
 		return
 
 	if(!enabled)
-		overlay.alpha = 150
+		overlay?.alpha = 150
 		enabled = TRUE
 	else
-		overlay.alpha = 0
+		overlay?.alpha = 0
 		enabled = FALSE
 
 /datum/image_holder_data/Destroy()
@@ -138,7 +139,7 @@ proc/string_repeat(string, count)
 	var/atom/movable/screen/logs_view
 
 	// Log storage - list of datum/log_entry
-	var/list/logs = list()
+	var/list/datum/log_entry/logs = list()
 	var/max_logs = 3
 
 	// Data entries - list of datum/neural_data_entry with expiration
@@ -148,7 +149,7 @@ proc/string_repeat(string, count)
 	// Data image entries - list of datum/image_holder_data with expiration
 	var/list/datum/image_holder_data/image_data_entries = list()
 	var/max_image_data_entries = 10
-	var/image_next_switch_time
+	var/image_next_switch_time = 0
 	var/image_next_switch_periodic = 2 SECONDS
 
 	// Text animation settings
@@ -392,8 +393,8 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/on_write_data(datum/source, key, value, decay_duration=3 SECONDS, priority=0)
 	return write_data(key, value, decay_duration, priority)
 
-/datum/component/neural_interface/proc/on_write_image_data(datum/source, key, image/overlay, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
-	return write_image_data(key, overlay, text, decay_duration, pixel_x_text, pixel_y_text, priority)
+/datum/component/neural_interface/proc/on_write_image_data(datum/source, key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
+	return write_image_data(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text, priority)
 
 // ---------------------------------------------------------------------------
 // Monitor Management
@@ -704,10 +705,17 @@ proc/string_repeat(string, count)
 		return FALSE
 
 	// Check if entry with same key already exists
-	remove_image_data_entry_by_key(key)
+	var/datum/image_holder_data/removed = get_image_data_entry_by_key(key)
+	var/visible = TRUE
+	if(removed)
+		visible = removed.enabled
+		remove_image_data_entry(removed)
 
 	// Create new entry
 	var/datum/image_holder_data/new_entry = new(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text)
+
+	if(!visible)
+		new_entry.toggle()
 
 	// Add overlay to host client images
 	if(new_entry.overlay)
@@ -720,6 +728,13 @@ proc/string_repeat(string, count)
 	image_data_entries += new_entry
 
 	return TRUE
+
+/datum/component/neural_interface/proc/get_image_data_entry_by_key(key)
+	for(var/datum/image_holder_data/entry in image_data_entries)
+		if(entry.key == key)
+			return entry
+
+	return FALSE
 
 // ---------------------------------------------------------------------------
 // Remove oldest image data entry - lowest priority first, then earliest expiry
@@ -774,7 +789,7 @@ proc/string_repeat(string, count)
 			remove_image_data_entry(entry)
 
 /datum/component/neural_interface/proc/next_vision_images_data()
-	if(image_next_switch_time < world.time)
+	if(image_next_switch_time > world.time)
 		return
 	image_next_switch_time = world.time + image_next_switch_periodic
 
@@ -787,6 +802,10 @@ proc/string_repeat(string, count)
 		var/list/datum/image_holder_data/map_entries = map[loc]
 		var/lenght = map_entries.len
 		if(lenght < 2)
+			if(lenght == 1)
+				var/list/datum/image_holder_data/entry = map_entries[1]
+				if(!entry.enabled)
+					entry.toggle()
 			continue
 
 		var/datum/image_holder_data/current_enabled
@@ -800,14 +819,17 @@ proc/string_repeat(string, count)
 			continue
 
 		var/index = map_entries.Find(current_enabled)
-		if(index == lenght + 1)
+		if(index == lenght)
 			index = 1
 		else
 			index += 1
 
 		var/datum/image_holder_data/next_enabled = map_entries[index]
+
+		if(!next_enabled.enabled)
+			next_enabled.toggle()
+
 		current_enabled.toggle()
-		next_enabled.toggle()
 
 // ---------------------------------------------------------------------------
 // Display Compilation - Generate HTML for screen rendering
