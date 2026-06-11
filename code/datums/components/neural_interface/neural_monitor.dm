@@ -424,7 +424,7 @@
 	SIGNAL_HANDLER
 
 	var/image/overlay = image(icon = overlay_observer)
-	owner.write_image_data("\ref[user];OBSERVER", user, overlay, "", 3 SECONDS)
+	owner.write_image_data("\ref[user];OBSERVER", overlay, user, "", 3 SECONDS)
 
 // ---------------------------------------------------------------------------
 // Health Scan Monitor - Scan Health marked with you
