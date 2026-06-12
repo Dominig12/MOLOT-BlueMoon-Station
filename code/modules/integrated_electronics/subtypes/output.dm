@@ -469,9 +469,9 @@
 	icon_state = "video_camera"
 	inputs = list(
 		"target_interface" = IC_PINTYPE_REF,
-		"keys" = IC_PINTYPE_LIST,
-		"values"  = IC_PINTYPE_LIST,
-		"decay durations"  = IC_PINTYPE_LIST,
+		"key" = IC_PINTYPE_STRING,
+		"value"  = IC_PINTYPE_STRING,
+		"decay duration"  = IC_PINTYPE_NUMBER,
 	)
 	activators = list(
 		"pulse in" = IC_PINTYPE_PULSE_IN,
@@ -484,11 +484,11 @@
 
 /obj/item/integrated_circuit/output/neural_interface_data_write/do_work(ord)
 	var/atom/relay_interface = get_pin_data(IC_INPUT, 1)
-	var/list/keys = get_pin_data(IC_INPUT, 2)
-	var/list/values = get_pin_data(IC_INPUT, 3)
-	var/list/decay_durations = get_pin_data(IC_INPUT, 3)
+	var/key = get_pin_data(IC_INPUT, 2)
+	var/value = get_pin_data(IC_INPUT, 3)
+	var/decay_duration = get_pin_data(IC_INPUT, 4)
 
-	if(!relay_interface || !keys.len || !values.len || keys.len != values.len)
+	if(!relay_interface || !key || !value)
 		activate_pin(3)
 		return
 
@@ -496,15 +496,10 @@
 		activate_pin(3)
 		return
 
-	var/result = FALSE
-	for(var/i = 1; i <= keys.len; i++)
-		var/key = keys[i]
-		var/value = values[i]
-		var/decay_duration = 2 SECONDS
-		if(decay_durations[i])
-			decay_duration = decay_durations[i]
+	if(!decay_duration)
+		decay_duration = 1 SECONDS
 
-		result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_DATA, key, value, decay_duration)
+	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_DATA, key, value, decay_duration)
 
 	if(!result)
 		activate_pin(3)
