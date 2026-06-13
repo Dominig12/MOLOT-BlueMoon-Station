@@ -96,6 +96,8 @@ proc/string_repeat(string, count)
 
 /datum/component/neural_interface/Destroy(force, silent)
 	STOP_PROCESSING(SSfastprocess, src)
+	hide()
+	unregister_all_modules()
 	unregister_all_signals()
 	unregister_all_monitors()
 	delete_user()
@@ -275,6 +277,13 @@ proc/string_repeat(string, count)
 		enable_monitor_by_type(type)
 
 	return TRUE
+
+/datum/component/neural_interface/proc/unregister_all_modules()
+	for(var/datum/neural_interface_module/module in modules)
+		module.hide_module(host_mob)
+		module.UpdateVision(host_mob)
+		QDEL_NULL(module)
+	QDEL_LIST(modules)
 
 /datum/component/neural_interface/proc/unregister_all_monitors()
 	LAZYINITLIST(monitors)
