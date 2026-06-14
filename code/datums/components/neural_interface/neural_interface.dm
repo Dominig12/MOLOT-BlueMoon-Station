@@ -279,11 +279,12 @@ proc/string_repeat(string, count)
 	return TRUE
 
 /datum/component/neural_interface/proc/unregister_all_modules()
-	for(var/datum/neural_interface_module/module in modules)
+	for(var/key in modules)
+		var/datum/neural_interface_module/module = modules[key]
 		module.hide_module(host_mob)
 		module.UpdateVision(host_mob)
 		QDEL_NULL(module)
-	QDEL_LIST(modules)
+	modules = list()
 
 /datum/component/neural_interface/proc/unregister_all_monitors()
 	LAZYINITLIST(monitors)

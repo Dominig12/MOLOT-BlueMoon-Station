@@ -66,7 +66,8 @@
 	var/image_next_switch_periodic = 2 SECONDS
 
 /datum/neural_interface_module/image_highlight/Destroy(force, ...)
-	clean_entries(owner.host_mob)
+	if(owner?.host_mob)
+		clean_entries(owner.host_mob)
 	for(var/datum/image_holder_data/entry in image_data_entries)
 		if(entry.overlay && owner?.host_mob?.client)
 			owner?.host_mob?.client.images -= entry.overlay

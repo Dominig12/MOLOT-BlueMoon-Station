@@ -25,5 +25,8 @@
 	return TRUE
 
 /datum/neural_interface_module/Destroy(force, ...)
+	if(owner?.host_mob)
+		hide_module(owner.host_mob)
+		UpdateVision(owner.host_mob)
 	owner = null
 	. = ..()
