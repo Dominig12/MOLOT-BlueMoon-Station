@@ -528,7 +528,8 @@
 		"decay duration"  = IC_PINTYPE_NUMBER,
 		"shift_x" = IC_PINTYPE_NUMBER,
 		"shift_y" = IC_PINTYPE_NUMBER,
-		"icon" = IC_PINTYPE_STRING
+		"icon" = IC_PINTYPE_STRING,
+		"color" = IC_PINTYPE_COLOR,
 	)
 	activators = list(
 		"pulse in" = IC_PINTYPE_PULSE_IN,
@@ -554,6 +555,7 @@
 /obj/item/integrated_circuit/output/neural_interface_image_data_write/Initialize(mapload)
 	. = ..()
 	overlay = new(icon='icons/effects/neural_interface_overlays.dmi')
+	overlay.GrayScale()
 
 /obj/item/integrated_circuit/output/neural_interface_image_data_write/Destroy()
 	overlay = null
@@ -568,12 +570,16 @@
 	var/shift_x = get_pin_data(IC_INPUT, 6)
 	var/shift_y = get_pin_data(IC_INPUT, 7)
 	var/icon_state_overlay = get_pin_data(IC_INPUT, 8)
+	var/color_overlay = get_pin_data(IC_INPUT, 9)
 
 	if(!shift_x)
 		shift_x = 0
 
 	if(!shift_y)
 		shift_y = 0
+
+	if(!color_overlay)
+		color_overlay = "#00fff2"
 
 	if(!icon_state_overlay)
 		icon_state_overlay = "circle"
@@ -598,6 +604,7 @@
 		decay_duration = 1 SECONDS
 
 	var/image/overlay_image = image(icon = overlay, icon_state=icon_state_overlay)
+	overlay_image.color = color_overlay
 	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, key, overlay_image, target, text, decay_duration, shift_x, shift_y)
 
 	if(!result)
