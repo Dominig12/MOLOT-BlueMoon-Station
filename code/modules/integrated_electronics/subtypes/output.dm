@@ -427,6 +427,8 @@
 
 /obj/item/integrated_circuit/output/neural_interface_log_write
 	name = "Neural interface write log"
+	desc = "A component responsible for outputting logs to the user's neural interface (if available)"
+	extended_desc = "The component is responsible for outputting logs to the user's neural interface (if present). The interface target can be a reference to an entity with the interface, or a reference to the interface itself. The log type is sent as a key, from the available colored options: SYSTEM, WARNING, ERROR, INFO, DATA, SYNC, HEALTH, MODULE, ALERT, STATUS, DEBUG"
 	complexity = 3
 	icon_state = "video_camera"
 	inputs = list(
@@ -465,6 +467,8 @@
 
 /obj/item/integrated_circuit/output/neural_interface_data_write
 	name = "Neural interface write data"
+	desc = "A component responsible for displaying key and value information in the user's neural interface (if present)."
+	extended_desc = "A component responsible for displaying key and value information in the user's neural interface (if present). The interface target can be either a reference to an entity with an interface or a reference to the interface itself. Unlike logs, when entering information for the same key, the information will be updated rather than appended."
 	complexity = 4
 	icon_state = "video_camera"
 	inputs = list(
@@ -509,6 +513,8 @@
 
 /obj/item/integrated_circuit/output/neural_interface_image_data_write
 	name = "Neural interface write image data"
+	desc = "A component responsible for displaying visual information with a caption on a target in the user's neural interface (if present)."
+	extended_desc = "A component responsible for displaying visual information with a caption on a target in the user's neural interface (if present). The interface target can be a reference to an entity with the interface, or a reference to the interface itself. The target for displaying visual information is a reference to an existing object in the world. A key is required to display specific information; if overlays with the same key are placed on two targets, the first will be removed and the second will be overlaid. An offset is required for the displayed text. Available overlays for output: target, circle, aiming, cross, warning, noise, scan, eye, target_conf"
 	complexity = 5
 	icon_state = "video_camera"
 	inputs = list(
@@ -517,7 +523,9 @@
 		"key" = IC_PINTYPE_STRING,
 		"text"  = IC_PINTYPE_STRING,
 		"decay duration"  = IC_PINTYPE_NUMBER,
-		"shift text" = IC_PINTYPE_LIST
+		"shift_x" = IC_PINTYPE_NUMBER,
+		"shift_y" = IC_PINTYPE_NUMBER,
+		"icon" = IC_PINTYPE_STRING
 	)
 	activators = list(
 		"pulse in" = IC_PINTYPE_PULSE_IN,
@@ -527,11 +535,22 @@
 	outputs = list()
 	spawn_flags = IC_SPAWN_RESEARCH
 	power_draw_per_use = 5
+	var/list/icons = list(
+		"target",
+		"circle",
+		"aiming",
+		"cross",
+		"warning",
+		"noise",
+		"scan",
+		"eye",
+		"target_conf"
+	)
 	var/icon/overlay
 
 /obj/item/integrated_circuit/output/neural_interface_image_data_write/Initialize(mapload)
 	. = ..()
-	overlay = new(icon='icons/effects/effects.dmi', icon_state="medi_holo_no_anim")
+	overlay = new(icon='icons/effects/neural_interface_overlays.dmi')
 
 /obj/item/integrated_circuit/output/neural_interface_image_data_write/Destroy()
 	overlay = null
@@ -543,16 +562,20 @@
 	var/key = get_pin_data(IC_INPUT, 3)
 	var/text = get_pin_data(IC_INPUT, 4)
 	var/decay_duration = get_pin_data(IC_INPUT, 5)
-	var/list/shift = get_pin_data(IC_INPUT, 6)
+	var/shift_x = get_pin_data(IC_INPUT, 6)
+	var/shift_y = get_pin_data(IC_INPUT, 7)
+	var/icon_state_overlay = get_pin_data(IC_INPUT, 8)
 
-	if(!shift?.len)
-		shift = list(0,0)
+	if(!shift_x)
+		shift_x = 0
 
-	if(shift.len != 2)
-		activate_pin(3)
-		return
+	if(!shift_y)
+		shift_y = 0
 
-	if(!isnum(shift[1]) || !isnum(shift[2]))
+	if(!icon_state_overlay)
+		icon_state_overlay = "circle"
+
+	if(!icons.Find(icon_state_overlay))
 		activate_pin(3)
 		return
 
@@ -571,8 +594,8 @@
 	if(!decay_duration)
 		decay_duration = 1 SECONDS
 
-	var/image/overlay_image = image(icon = overlay)
-	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, key, overlay_image, target, text, decay_duration, shift[1], shift[2])
+	var/image/overlay_image = image(icon = overlay, icon_state=icon_state_overlay)
+	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, key, overlay_image, target, text, decay_duration, shift_x, shift_y)
 
 	if(!result)
 		activate_pin(3)

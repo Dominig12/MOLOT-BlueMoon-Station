@@ -404,7 +404,7 @@
 
 /datum/neural_monitor/observers/New(...)
 	. = ..()
-	overlay_observer = new(icon='icons/effects/effects.dmi', icon_state="emark2")
+	overlay_observer = new(icon='icons/effects/neural_interface_overlays.dmi', icon_state="eye")
 
 /datum/neural_monitor/observers/Destroy(force, ...)
 	overlay_observer = null
@@ -437,7 +437,7 @@
 
 /datum/neural_monitor/health_scan/New(...)
 	. = ..()
-	overlay_observer = icon(icon='icons/effects/effects.dmi', icon_state="medi_holo")
+	overlay_observer = icon(icon='icons/effects/neural_interface_overlays.dmi', icon_state="circle")
 
 /datum/neural_monitor/health_scan/Destroy(force, ...)
 	overlay_observer = null
@@ -501,7 +501,7 @@
 
 /datum/neural_monitor/cyborg_scan/New(...)
 	. = ..()
-	overlay_borg = new(icon = 'icons/effects/effects.dmi', icon_state = "scanline")
+	overlay_borg = new(icon = 'icons/effects/neural_interface_overlays.dmi', icon_state = "target")
 
 /datum/neural_monitor/cyborg_scan/Destroy(force, ...)
 	overlay_borg = null
@@ -597,7 +597,7 @@
 
 /datum/neural_monitor/crime/New(datum/component/neural_interface/owner_comp, atom/monitor_atom_p, source_p, ...)
 	. = ..()
-	overlay_sec = new(icon = 'icons/effects/effects.dmi', icon_state = "emark1")
+	overlay_sec = new(icon = 'icons/effects/neural_interface_overlays.dmi', icon_state = "circle")
 
 /datum/neural_monitor/crime/register_signals()
 	if(!monitor_atom)
