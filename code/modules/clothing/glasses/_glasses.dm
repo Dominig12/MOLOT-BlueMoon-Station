@@ -629,6 +629,12 @@
 
 /obj/item/clothing/glasses/ar_interface
 	name = "AR glasses"
+	icon = 'modular_bluemoon/icons/obj/clothing/glasses.dmi'
+	mob_overlay_icon = 'modular_bluemoon/icons/mob/clothing/eyes.dmi'
+	icon_state = "geist_gazers"
+	item_state = "geist_gazers"
+	glass_colour_type = /datum/client_colour/glass_colour/green
+	flags_cover = GLASSESCOVERSEYES
 	var/datum/component/ntnet_interface/net
 	var/datum/component/neural_interface/neural_interface
 	var/list/adresses = list()
@@ -650,11 +656,11 @@
 	neural_interface?.RemoveSource("AR glasses")
 	UnregisterSignal(user, COMSIG_MOB_EXAMINATE)
 
-/obj/item/clothing/glasses/ar_interface/attacked_by(obj/item/I, mob/living/user)
+/obj/item/clothing/glasses/ar_interface/attackby(obj/item/I, mob/living/user)
 	. = ..()
 	var/datum/component/ntnet_interface/net_item
 	var/list/processing_list = list(I)
-	while(processing_list.len && !net)
+	while(processing_list.len && !net_item)
 		var/atom/A = processing_list[1]
 		processing_list.Cut(1, 2)
 		//Byond does not allow things to be in multiple contents, or double parent-child hierarchies, so only += is needed
@@ -662,12 +668,15 @@
 		processing_list += A.contents
 		net_item = A.GetComponent(/datum/component/ntnet_interface)
 
-	if(net_item)
+
+	if(net_item && !adresses.Find(net_item.hardware_id))
 		adresses += net_item.hardware_id
+		to_chat(user, "Вы привязали к очкам интерфейс NTnet: [net_item.hardware_id]")
 
 /obj/item/clothing/glasses/ar_interface/attack_self(mob/user)
 	. = ..()
 	adresses = list()
+	to_chat(user, "Вы отвязали от очков все интерфейсы NTnet")
 
 /obj/item/clothing/glasses/ar_interface/Destroy()
 	adresses = null
@@ -681,5 +690,5 @@
 /obj/item/clothing/glasses/ar_interface/proc/on_examine_target(datum/source, atom/target)
 	var/datum/netdata/data = new
 	data.recipient_ids = adresses
-	data.data = list(target)
+	data.data = list(source, target)
 	ntnet_send(data)
