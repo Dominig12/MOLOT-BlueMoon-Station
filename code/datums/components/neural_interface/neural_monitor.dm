@@ -665,7 +665,7 @@
 	if(crime_articles && length(crime_articles) > 0)
 		var/list/articles = list()
 		for(var/datum/data/crime/C in crime_articles)
-			articles += "[C.crimeName]: [C.crimeDetails] (CENTCOMM: [C.centcom_enforced]) - [C.penalties_incurred ? "Понес наказание" : "Не понес наказание"]"
+			articles += "[C.crimeName]: [C.crimeDetails] (CENTCOM: [C.centcom_enforced]) - [C.penalties_incurred ? "Понес наказание" : "Не понес наказание"]"
 		if(articles.len > 0)
 			var/max_articles = min(articles.len, 5)
 			for(var/i in 1 to max_articles)
