@@ -21,10 +21,11 @@
 
 	// Display configuration
 	var/screen_loc = "LEFT+1.5,CENTER-2.5"
-	var/maptext_width = 160
+	var/maptext_width = 225
 	var/maptext_height = 128
 	var/separator_color = "#6b7280"
 	var/font_size = 12
+	var/font_family = "TinyUnicode"
 
 	// Data entries - list of datum/neural_data_entry with expiration
 	var/list/datum/neural_data_entry/data_entries = list()
@@ -58,12 +59,11 @@
 	. = ..()
 
 /datum/neural_interface_module/data/proc/get_data_section()
-	var/write = ""
-	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>├─ DATA</span><br>"}
+	var/write = {"<span style='font-family: \"[font_family]\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>├─ DATA</span><br>"}
 
 	for(var/datum/neural_data_entry/entry in data_entries)
 		if(world.time < entry.expiry_time)
-			write += "[MAPTEXT_TINY_UNICODE("└ [entry.key]: [entry.value]")]<br>"
+			write += {"<span style='font-family: \"[font_family]\"; font-size: [font_size]pt; line-height: 0.8; -dm-text-outline: 1px black;'>└ [entry.key]: [entry.value]</span><br>"}
 
 	return {"<table width='100%' height='100%' cellpadding='0' cellspacing='0'><tr><td valign='top' align='left'><div style='height:[maptext_height]px; overflow:hidden; text-align:left;'>[write]</div></td></tr></table>"}
 

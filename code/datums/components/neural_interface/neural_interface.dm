@@ -229,9 +229,9 @@ proc/string_repeat(string, count)
 	var/datum/neural_interface_module/data/module = modules["data"]
 	return module.write_data(key, value, decay_duration, priority)
 
-/datum/component/neural_interface/proc/on_write_image_data(datum/source, key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
+/datum/component/neural_interface/proc/on_write_image_data(datum/source, key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, text_size=12)
 	var/datum/neural_interface_module/image_highlight/module = modules["image"]
-	return module.write_image_data(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text, priority)
+	return module.write_image_data(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text, text_size)
 
 
 /datum/component/neural_interface/proc/write_log(text, key="LOG", color="#4ad1fa86", size=12, speed=0)
@@ -242,9 +242,9 @@ proc/string_repeat(string, count)
 	var/datum/neural_interface_module/data/module = modules["data"]
 	return module.write_data(key, value, decay_duration, priority)
 
-/datum/component/neural_interface/proc/write_image_data(key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
+/datum/component/neural_interface/proc/write_image_data(key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, text_size=12)
 	var/datum/neural_interface_module/image_highlight/module = modules["image"]
-	return module.write_image_data(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text, priority)
+	return module.write_image_data(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text, text_size)
 
 // ---------------------------------------------------------------------------
 // Monitor Management

@@ -8,9 +8,10 @@
 	var/char_speed
 	var/size
 	var/expiry_time
+	var/font_family
 
 /datum/log_entry/proc/format(text)
-	return {"<span style='font-family: \"TinyUnicode\"; color: [color]; font-size: [size]pt; line-height: 0.8;-dm-text-outline: 1px black;'>[text]</span>"}
+	return {"<span style='font-family: \"[font_family]\"; color: [color]; font-size: [size]pt; line-height: 0.8;-dm-text-outline: 1px black;'>[text]</span>"}
 
 /datum/log_entry/proc/get_full_line()
 	return format(plain)
@@ -32,7 +33,7 @@
 
 	// Display configuration
 	var/screen_loc = "LEFT+1.5,CENTER+1.5"
-	var/maptext_width = 160
+	var/maptext_width = 225
 	var/maptext_height = 96
 
 	var/list/datum/log_entry/logs = list()
@@ -40,10 +41,10 @@
 	var/atom/movable/screen/text/logs_view
 
 	// UI customization
-	var/display_title = "NEURAL INTERFACE"
 	var/header_color = "#4ad1fa86"
 	var/separator_color = "#6b7280"
 	var/font_size = 12
+	var/font_family = "TinyUnicode"
 
 	// Log category configuration
 	var/list/log_categories = list(
@@ -125,6 +126,7 @@
 	log.char_index = 1
 	log.size = size
 	log.expiry_time = world.time + 3 SECONDS
+	log.font_family = font_family
 
 	// Override speed if category has specific speed
 	if(log_speeds[key] && speed == 0)
@@ -160,9 +162,9 @@
 
 /datum/neural_interface_module/logs/proc/get_log_section()
 	var/write = ""
-	write += {"<span style='font-family: \"TinyUnicode\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>├─ LOG STREAM</span><br>"}
+	write += {"<span style='font-family: \"[font_family]\"; font-size: [font_size]pt; color: [separator_color]; line-height: 0.8; -dm-text-outline: 1px black;'>├─ LOG STREAM</span><br>"}
 
 	for(var/datum/log_entry/log_entry in logs)
-		write += "[MAPTEXT_TINY_UNICODE("└ [log_entry.get_full_line()]")]<br>"
+		write += {"<span style='font-family: \"[font_family]\"; font-size: [font_size]pt; line-height: 0.8; -dm-text-outline: 1px black;'>└ [log_entry.get_full_line()]</span><br>"}
 
 	return write

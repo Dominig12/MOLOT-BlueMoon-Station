@@ -9,12 +9,15 @@
 	var/decay_duration
 	var/expire_time
 	var/enabled = TRUE
+	var/font_size = 12
+	var/font_family = "TinyUnicode"
 
-/datum/image_holder_data/New(key_target, image/overlay_target, atom/target_loc_ref, text_target = "", duration=5 SECONDS, pixel_x_text=0, pixel_y_text=0)
+/datum/image_holder_data/New(key_target, image/overlay_target, atom/target_loc_ref, text_target = "", duration=5 SECONDS, pixel_x_text=0, pixel_y_text=0, text_size=12)
 	key = key_target
 	target_loc = REF(target_loc_ref)
 	decay_duration = duration
 	expire_time = world.time + decay_duration
+	font_size = text_size
 
 	overlay = overlay_target
 	overlay.loc = target_loc_ref
@@ -22,7 +25,7 @@
 	overlay.alpha = 150
 
 	screen_text = new /atom/movable/screen/text()
-	screen_text.maptext = MAPTEXT_TINY_UNICODE(text_target)
+	screen_text.maptext = {"<span style='font-family: \"[font_family]\"; font-size: [font_size]pt; line-height: 0.8; -dm-text-outline: 1px black;'>[text_target]</span>"}
 	screen_text.maptext_height = 64
 	screen_text.maptext_width = 96
 	screen_text.pixel_x = pixel_x_text
@@ -88,7 +91,7 @@
 // ---------------------------------------------------------------------------
 // Write Image Data Entry - Creates or replaces image with decay timer
 // ---------------------------------------------------------------------------
-/datum/neural_interface_module/image_highlight/proc/write_image_data(key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
+/datum/neural_interface_module/image_highlight/proc/write_image_data(key, image/overlay, atom/target, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, text_size = 12)
 
 	// Check if entry with same key already exists
 	var/datum/image_holder_data/removed = get_image_data_entry_by_key(key)
@@ -98,7 +101,7 @@
 		remove_image_data_entry(removed)
 
 	// Create new entry
-	var/datum/image_holder_data/new_entry = new(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text)
+	var/datum/image_holder_data/new_entry = new(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text, text_size)
 
 	if(!visible_image)
 		new_entry.toggle()

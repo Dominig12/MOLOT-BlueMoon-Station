@@ -436,6 +436,8 @@
 		"target_interface" = IC_PINTYPE_REF,
 		"text" = IC_PINTYPE_STRING,
 		"key"  = IC_PINTYPE_STRING,
+		"color" = IC_PINTYPE_COLOR,
+		"size" = IC_PINTYPE_NUMBER
 	)
 	activators = list(
 		"pulse in" = IC_PINTYPE_PULSE_IN,
@@ -450,6 +452,8 @@
 	var/atom/relay_interface = get_pin_data(IC_INPUT, 1)
 	var/text = get_pin_data(IC_INPUT, 2)
 	var/key = get_pin_data(IC_INPUT, 3)
+	var/color = get_pin_data(IC_INPUT, 4)
+	var/size = get_pin_data(IC_INPUT, 5)
 
 	if(!relay_interface || !text || !key)
 		activate_pin(3)
@@ -459,7 +463,7 @@
 		activate_pin(3)
 		return
 
-	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, text, key)
+	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, text, key, color, size)
 	if(!result)
 		activate_pin(3)
 		return
@@ -516,7 +520,7 @@
 /obj/item/integrated_circuit/output/neural_interface_image_data_write
 	name = "Neural interface write image data"
 	desc = "A component responsible for displaying visual information with a caption on a target in the user's neural interface (if present)."
-	extended_desc = "A component responsible for displaying visual information with a caption on a target in the user's neural interface (if present). The interface target can be a reference to an entity with the interface, or a reference to the interface itself. The target for displaying visual information is a reference to an existing object in the world. A key is required to display specific information; if overlays with the same key are placed on two targets, the first will be removed and the second will be overlaid. An offset is required for the displayed text. Available overlays for output: target, circle, aiming, cross, warning, noise, scan, eye, target_conf"
+	extended_desc = "A component responsible for displaying visual information with a caption on a target in the user's neural interface (if present). The interface target can be a reference to an entity with the interface, or a reference to the interface itself. The target for displaying visual information is a reference to an existing object in the world. A key is required to display specific information; if overlays with the same key are placed on two targets, the first will be removed and the second will be overlaid. An offset is required for the displayed text. Available overlays for output: target, circle, aiming, cross, warning, noise, scan, eye, target_conf, none"
 	complexity = 1
 	size = 0.1
 	icon_state = "video_camera"
@@ -530,6 +534,7 @@
 		"shift_y" = IC_PINTYPE_NUMBER,
 		"icon" = IC_PINTYPE_STRING,
 		"color" = IC_PINTYPE_COLOR,
+		"text_size" = IC_PINTYPE_NUMBER,
 	)
 	activators = list(
 		"pulse in" = IC_PINTYPE_PULSE_IN,
@@ -548,7 +553,8 @@
 		"noise",
 		"scan",
 		"eye",
-		"target_conf"
+		"target_conf",
+		"none"
 	)
 	var/icon/overlay
 
@@ -571,12 +577,16 @@
 	var/shift_y = get_pin_data(IC_INPUT, 7)
 	var/icon_state_overlay = get_pin_data(IC_INPUT, 8)
 	var/color_overlay = get_pin_data(IC_INPUT, 9)
+	var/text_size = get_pin_data(IC_INPUT, 10)
 
 	if(!shift_x)
 		shift_x = 0
 
 	if(!shift_y)
 		shift_y = 0
+
+	if(!text_size)
+		text_size = 12
 
 	if(!color_overlay)
 		color_overlay = "#00fff2"
@@ -605,7 +615,7 @@
 
 	var/image/overlay_image = image(icon = overlay, icon_state=icon_state_overlay)
 	overlay_image.color = color_overlay
-	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, key, overlay_image, target, text, decay_duration, shift_x, shift_y)
+	var/result = SEND_SIGNAL(relay_interface, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, key, overlay_image, target, text, decay_duration, shift_x, shift_y, text_size)
 
 	if(!result)
 		activate_pin(3)

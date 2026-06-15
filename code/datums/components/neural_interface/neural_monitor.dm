@@ -709,7 +709,7 @@
 	arguments.Cut(1, 2)
 	return owner.write_data(arglist(arguments))
 
-/datum/neural_monitor/integral_visual/proc/write_image_data(datum/source, key, image/overlay, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, priority=0)
+/datum/neural_monitor/integral_visual/proc/write_image_data(datum/source, key, image/overlay, text, decay_duration=30 SECONDS, pixel_x_text = 0, pixel_y_text = 0, text_size=12)
 	var/list/arguments = args.Copy()
 	arguments.Cut(1, 2)
 	return owner.write_image_data(arglist(arguments))
