@@ -629,6 +629,7 @@
 
 /obj/item/clothing/glasses/ar_interface
 	name = "AR glasses"
+	desc = "Очки дополненной реальности, имеют в себе встроенный передатчик NTNet пакетов. К очкам можно привязать устройство, имеющее NTnet приемник, для передачи данных об осматриваемых объектах (используется низкоуровневый протокол передачи)"
 	icon = 'modular_bluemoon/icons/obj/clothing/glasses.dmi'
 	mob_overlay_icon = 'modular_bluemoon/icons/mob/clothing/eyes.dmi'
 	icon_state = "geist_gazers"
