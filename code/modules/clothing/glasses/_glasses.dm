@@ -689,6 +689,9 @@
 	. = ..()
 
 /obj/item/clothing/glasses/ar_interface/proc/on_examine_target(datum/source, atom/target)
+	if(get_dist(get_turf(source), get_turf(target)) > 8)
+		return
+
 	var/datum/netdata/data = new
 	data.recipient_ids = adresses
 	data.data = list(source, target)
