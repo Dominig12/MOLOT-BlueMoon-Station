@@ -192,7 +192,7 @@
 		var/lenght = map_entries.len
 		if(lenght < 2)
 			if(lenght == 1)
-				var/list/datum/image_holder_data/entry = map_entries[1]
+				var/datum/image_holder_data/entry = map_entries[1]
 				if(!entry.enabled)
 					entry.toggle()
 			continue
