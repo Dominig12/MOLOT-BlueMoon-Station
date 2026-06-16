@@ -84,7 +84,7 @@
 	for(var/datum/image_holder_data/entry in image_data_entries)
 		if(entry.overlay && user?.client)
 			if(visible)
-				user.client.images += entry.overlay
+				user.client.images |= entry.overlay
 			else
 				user.client.images -= entry.overlay
 
