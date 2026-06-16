@@ -64,7 +64,7 @@
 	name = "IMAGE MODULE"
 	var/list/datum/image_holder_data/image_data_entries = list()
 	var/list/datum/image_holder_data/removed = list()
-	var/max_image_data_entries = 10
+	var/max_image_data_entries = 20
 	var/image_next_switch_time = 0
 	var/image_next_switch_periodic = 2 SECONDS
 
