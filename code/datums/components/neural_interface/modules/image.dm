@@ -107,7 +107,7 @@
 		new_entry.toggle()
 
 	// Remove oldest/expires-next entry if at capacity
-	if(image_data_entries.len >= max_image_data_entries)
+	if(image_data_entries.len > max_image_data_entries)
 		remove_oldest_image_data_entry()
 
 	image_data_entries += new_entry
