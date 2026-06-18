@@ -514,7 +514,7 @@
 	if(new_alert)
 		new_alert = FALSE
 		update_appearance()
-	if(user.client)
+	if(user.client && !equipped)
 		update_pda_prefs(user.client)
 	. = ..()
 	if(HAS_TRAIT(src, TRAIT_PDA_MESSAGE_MENU_RIGGED))
@@ -604,7 +604,7 @@
 			to_chat(user, "<span class='warning'>[src] отвергает ID-карту!</span>")
 			playsound(src, 'sound/machines/terminal_error.ogg', 15, TRUE)
 			return
-		if(user.canUseTopic(src, BE_CLOSE))
+		if(user.canUseTopic(src, BE_CLOSE, no_tk = TRUE, check_resting = FALSE))
 			if(!stored_id)
 				if(!owner && !saved_identification)
 					owner = idcard.registered_name
@@ -898,6 +898,9 @@
 		/datum/computer_file/program/secureye,
 	)
 
+/obj/item/modular_computer/pda/ui_state(mob/user)
+	return GLOB.human_adjacent_state_no_view
+
 /**
  * Silicon PDA — built-in to Silicons.
  */
@@ -951,7 +954,7 @@
 
 /obj/item/modular_computer/pda/silicon/turn_on(mob/user, open_ui = FALSE)
 	if(silicon_owner?.stat != DEAD)
-		return ..()
+		return ..(user, open_ui)
 	return FALSE
 
 // pAI PDA

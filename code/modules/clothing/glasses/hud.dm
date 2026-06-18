@@ -89,7 +89,12 @@
 	darkness_view = 8
 	flash_protect = -2
 	lighting_alpha = LIGHTING_PLANE_ALPHA_MOSTLY_VISIBLE
+	color_cutoffs = list(20, 20, 45)
 	glass_colour_type = /datum/client_colour/glass_colour/green
+	actions_types = list(/datum/action/item_action/toggle_nv)
+
+/obj/item/clothing/glasses/hud/health/night/update_icon_state()
+	. = ..()
 
 /obj/item/clothing/glasses/hud/health/night/syndicate
 	name = "combat night vision health scanner HUD"
@@ -151,7 +156,12 @@
 	darkness_view = 8
 	flash_protect = -2
 	lighting_alpha = LIGHTING_PLANE_ALPHA_MOSTLY_VISIBLE
+	color_cutoffs = list(25, 15, 5)
 	glass_colour_type = /datum/client_colour/glass_colour/green
+	actions_types = list(/datum/action/item_action/toggle_nv)
+
+/obj/item/clothing/glasses/hud/diagnostic/night/update_icon_state()
+	. = ..()
 
 ////////////
 //Sec Huds//
@@ -282,7 +292,15 @@
 	darkness_view = 8
 	flash_protect = -2 //You either are flashproof or you can see in the dark, pick one.
 	lighting_alpha = LIGHTING_PLANE_ALPHA_MOSTLY_VISIBLE
+	color_cutoffs = list(40, 15, 10)
 	glass_colour_type = /datum/client_colour/glass_colour/green
+	actions_types = list(/datum/action/item_action/toggle_nv)
+
+/obj/item/clothing/glasses/hud/security/night/update_icon_state()
+	. = ..()
+
+/obj/item/clothing/glasses/night/syndicate/red // this lives here due to icon_state reference
+	icon_state = "securityhudnight"
 
 /obj/item/clothing/glasses/hud/security/night/combat
 	name = "combat night vision security  HUD"
@@ -349,6 +367,7 @@
 	hud_type = DATA_HUD_SECURITY_ADVANCED
 	vision_flags = SEE_MOBS
 	lighting_alpha = LIGHTING_PLANE_ALPHA_MOSTLY_VISIBLE
+	color_cutoffs = list(25, 8, 5)
 	glass_colour_type = /datum/client_colour/glass_colour/red
 
 /obj/item/clothing/glasses/hud/toggle/thermal/attack_self(mob/user)

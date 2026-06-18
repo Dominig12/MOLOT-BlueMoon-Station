@@ -182,6 +182,7 @@
 		"arachnid_mandibles"	= pick(GLOB.arachnid_mandibles_list),
 		"taur"				= "None",
 		"mam_body_markings" = list(),
+		"emissive_eyes" = FALSE,
 		"mam_ears" 			= snowflake_ears_list ? pick(snowflake_ears_list) : "None",
 		"mam_snouts"		= snowflake_mam_snouts_list ? pick(snowflake_mam_snouts_list) : "None",
 		"mam_tail"			= snowflake_mam_tails_list ? pick(snowflake_mam_tails_list) : "None",
@@ -271,12 +272,8 @@
 		"naked_flavor_text" = "", //SPLURT edit
 		"custom_deathgasp" = "застывает и падает без сил, глаза мертвы и безжизненны...", // BLUEMOON ADD - пользовательский эмоут смерти
 		"custom_species_lore" = "",
-		"headshot_link"		= "", //SPLURT edit
-		"headshot_link1"		= "", //BLUEMOON edit
-		"headshot_link2"		= "", //BLUEMOON edit
-		"headshot_naked_link"		= "", //BLUEMOON ADD
-		"headshot_naked_link1"		= "", //BLUEMOON ADD
-		"headshot_naked_link2"		= "", //BLUEMOON ADD
+		"headshot_links" = list(),
+		"headshot_naked_links" = list(),
 		"meat_type"			= "Mammalian",
 		"body_model"		= body_model,
 		"body_size"			= RESIZE_DEFAULT_SIZE,
