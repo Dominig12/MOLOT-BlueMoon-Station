@@ -426,9 +426,9 @@
 		assembly.diag_hud_set_circuitstat()
 
 /obj/item/integrated_circuit/output/neural_interface_log_write
-	name = "Neural interface write log"
-	desc = "A component responsible for outputting logs to the user's neural interface (if available)"
-	extended_desc = "The component is responsible for outputting logs to the user's neural interface (if present). The interface target can be a reference to an entity with the interface, or a reference to the interface itself. The log type is sent as a key, from the available colored options: SYSTEM, WARNING, ERROR, INFO, DATA, SYNC, HEALTH, MODULE, ALERT, STATUS, DEBUG"
+	name = "HUD interface write log"
+	desc = "A component responsible for outputting logs to the user's HUD interface (if available)"
+	extended_desc = "The component is responsible for outputting logs to the user's HUD interface (if present). The interface target can be a reference to an entity with the interface, or a reference to the interface itself. The log type is sent as a key, from the available colored options: SYSTEM, WARNING, ERROR, INFO, DATA, SYNC, HEALTH, MODULE, ALERT, STATUS, DEBUG"
 	complexity = 1
 	size = 0.1
 	icon_state = "video_camera"
@@ -471,9 +471,9 @@
 	activate_pin(2)
 
 /obj/item/integrated_circuit/output/neural_interface_data_write
-	name = "Neural interface write data"
-	desc = "A component responsible for displaying key and value information in the user's neural interface (if present)."
-	extended_desc = "A component responsible for displaying key and value information in the user's neural interface (if present). The interface target can be either a reference to an entity with an interface or a reference to the interface itself. Unlike logs, when entering information for the same key, the information will be updated rather than appended."
+	name = "HUD interface write data"
+	desc = "A component responsible for displaying key and value information in the user's HUD interface (if present)."
+	extended_desc = "A component responsible for displaying key and value information in the user's HUD interface (if present). The interface target can be either a reference to an entity with an interface or a reference to the interface itself. Unlike logs, when entering information for the same key, the information will be updated rather than appended."
 	complexity = 1
 	size = 0.1
 	icon_state = "video_camera"
@@ -518,9 +518,9 @@
 	activate_pin(2)
 
 /obj/item/integrated_circuit/output/neural_interface_image_data_write
-	name = "Neural interface write image data"
-	desc = "A component responsible for displaying visual information with a caption on a target in the user's neural interface (if present)."
-	extended_desc = "A component responsible for displaying visual information with a caption on a target in the user's neural interface (if present). The interface target can be a reference to an entity with the interface, or a reference to the interface itself. The target for displaying visual information is a reference to an existing object in the world. A key is required to display specific information; if overlays with the same key are placed on two targets, the first will be removed and the second will be overlaid. An offset is required for the displayed text. Available overlays for output: target, circle, aiming, cross, warning, noise, scan, eye, target_conf, none"
+	name = "HUD interface write image data"
+	desc = "A component responsible for displaying visual information with a caption on a target in the user's HUD interface (if present)."
+	extended_desc = "A component responsible for displaying visual information with a caption on a target in the user's HUD interface (if present). The interface target can be a reference to an entity with the interface, or a reference to the interface itself. The target for displaying visual information is a reference to an existing object in the world. A key is required to display specific information; if overlays with the same key are placed on two targets, the first will be removed and the second will be overlaid. An offset is required for the displayed text. Available overlays for output: target, circle, aiming, cross, warning, noise, scan, eye, target_conf, none"
 	complexity = 1
 	size = 0.1
 	icon_state = "video_camera"

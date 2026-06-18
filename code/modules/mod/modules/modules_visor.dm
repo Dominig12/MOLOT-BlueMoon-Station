@@ -16,6 +16,7 @@
 	mod_module_flags = MOD_MODULE_VISOR // BLUEMOON ADD
 	var/datum/component/neural_interface/interface
 	var/list/monitors = list()
+	var/interface_source
 
 /obj/item/mod/module/visor/on_activation()
 	. = ..()
@@ -24,9 +25,11 @@
 	if(hud_type)
 		var/datum/atom_hud/hud = GLOB.huds[hud_type]
 		hud.add_hud_to(mod.wearer)
+		interface = mod.wearer.LoadComponent(/datum/component/neural_interface)
+		interface_source = "MOD HUD[hud_type]"
+		interface.AddSource(interface_source)
 		if(monitors?.len)
-			interface = mod.wearer.LoadComponent(/datum/component/neural_interface)
-			interface.add_monitors_by_types("MOD HUD[hud_type]", monitors)
+			interface.add_monitors_by_types(interface_source, monitors)
 	for(var/trait in visor_traits)
 		ADD_TRAIT(mod.wearer, trait, MOD_TRAIT)
 	mod.wearer.update_sight()
@@ -39,7 +42,7 @@
 	if(hud_type)
 		var/datum/atom_hud/hud = GLOB.huds[hud_type]
 		hud.remove_hud_from(mod.wearer)
-		interface?.RemoveSource("MOD HUD[hud_type]")
+		interface?.RemoveSource(interface_source)
 	for(var/trait in visor_traits)
 		REMOVE_TRAIT(mod.wearer, trait, MOD_TRAIT)
 	mod.wearer.update_sight()

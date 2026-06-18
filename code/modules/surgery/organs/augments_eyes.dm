@@ -11,6 +11,7 @@
 	var/active = FALSE
 	var/datum/component/neural_interface/interface
 	var/list/monitors = list()
+	var/interface_source
 
 /obj/item/organ/cyberimp/eyes/hud/Insert(mob/living/carbon/organ_mob, special, drop_if_replaced)
 	. = ..()
@@ -25,16 +26,18 @@
 	if(!HUD_type || QDELETED(owner))
 		return
 
+	interface_source = "IMPLANT HUD[HUD_type]"
 	if(active)
 		var/datum/atom_hud/H = GLOB.huds[HUD_type]
 		H.remove_hud_from(owner)
-		interface?.RemoveSource("IMPLANT HUD[HUD_type]")
+		interface?.RemoveSource(interface_source)
 	else
 		var/datum/atom_hud/H = GLOB.huds[HUD_type]
 		H.add_hud_to(owner)
+		interface = owner.LoadComponent(/datum/component/neural_interface)
+		interface.AddSource(interface_source)
 		if(monitors?.len)
-			interface = owner.LoadComponent(/datum/component/neural_interface)
-			interface.add_monitors_by_types("IMPLANT HUD[HUD_type]", monitors)
+			interface.add_monitors_by_types(interface_source, monitors)
 
 	active = !active
 

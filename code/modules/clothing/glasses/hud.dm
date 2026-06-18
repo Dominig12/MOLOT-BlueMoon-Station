@@ -10,6 +10,7 @@
 
 	var/datum/component/neural_interface/interface
 	var/list/monitors = list()
+	var/interface_source = "HUD GLASSES"
 
 /obj/item/clothing/glasses/hud/CheckParts(list/parts_list)
 	. = ..()
@@ -25,9 +26,10 @@
 /obj/item/clothing/glasses/hud/equipped(mob/living/carbon/human/user, slot)
 	..()
 	if(hud_type && slot == ITEM_SLOT_EYES)
+		interface = user.LoadComponent(/datum/component/neural_interface)
+		interface.AddSource(interface_source)
 		if(monitors?.len)
-			interface = user.LoadComponent(/datum/component/neural_interface)
-			interface.add_monitors_by_types("HUD GLASSES", monitors)
+			interface.add_monitors_by_types(interface_source, monitors)
 		var/datum/atom_hud/H = GLOB.huds[hud_type]
 		H.add_hud_to(user)
 		hud_granted = TRUE
@@ -35,7 +37,7 @@
 /obj/item/clothing/glasses/hud/dropped(mob/living/carbon/human/user)
 	..()
 	if(hud_type && istype(user) && hud_granted)
-		interface?.RemoveSource("HUD GLASSES")
+		interface?.RemoveSource(interface_source)
 		interface = null
 		hud_granted = FALSE
 		var/datum/atom_hud/H = GLOB.huds[hud_type]
