@@ -425,7 +425,6 @@ proc/string_repeat(string, count)
 	toggle_button.UpdateButtons()
 	disable_monitors()
 	hide_modules()
-	update_vision_modules()
 
 /datum/component/neural_interface/proc/update_vision_modules()
 	for(var/key in modules)
@@ -435,10 +434,12 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/hide_modules()
 	for(var/key in modules)
 		hide_module(key)
+	update_vision_modules()
 
 /datum/component/neural_interface/proc/view_modules()
 	for(var/key in modules)
 		view_module(key)
+	update_vision_modules()
 
 /datum/component/neural_interface/proc/hide_module(key)
 	var/datum/neural_interface_module/module = modules[key]
