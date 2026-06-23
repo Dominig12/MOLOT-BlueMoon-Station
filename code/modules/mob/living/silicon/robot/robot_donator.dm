@@ -208,9 +208,9 @@
 // /obj/item/robot_module/saboteur/spider - Spider Saboteur
 
 
-/datum/borg_donator_skin/syndicate/mekafl
+/datum/borg_donator_skin/syndicate/inteq/mekafl
 	name = "ANI-Meka"
-	module_type = /obj/item/robot_module/syndicatejack
+	module_type = /obj/item/robot_module/syndicate/inteq
 	preview_icon = 'modular_splurt/icons/mob/robots_32x64.dmi'
 	preview_icon_state = "mekafl"
 	ckey_whitelist = list("foxrtotlimda")
@@ -219,7 +219,91 @@
 	hat_offset = TALL_HAT_OFFSET
 	hasrest = TRUE
 
+/datum/borg_donator_skin/syndicate_medical/inteq/mekafl
+	name = "ANI-Meka"
+	module_type = /obj/item/robot_module/syndicate_medical/inteq
+	preview_icon = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	preview_icon_state = "mekafl"
+	ckey_whitelist = list("foxrtotlimda")
+	cyborg_base_icon = "mekafl"
+	cyborg_icon_override = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	hat_offset = TALL_HAT_OFFSET
+	hasrest = TRUE
+
+/datum/borg_donator_skin/saboteur/inteq/mekafl
+	name = "ANI-Meka"
+	module_type = /obj/item/robot_module/saboteur/inteq
+	preview_icon = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	preview_icon_state = "mekafl"
+	ckey_whitelist = list("foxrtotlimda")
+	cyborg_base_icon = "mekafl"
+	cyborg_icon_override = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	hat_offset = TALL_HAT_OFFSET
+	hasrest = TRUE
+
+/datum/borg_donator_skin/inteq_builder/mekafl
+	name = "ANI-Meka"
+	module_type = /obj/item/robot_module/inteq_builder
+	preview_icon = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	preview_icon_state = "mekafl"
+	ckey_whitelist = list("foxrtotlimda")
+	cyborg_base_icon = "mekafl"
+	cyborg_icon_override = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	hat_offset = TALL_HAT_OFFSET
+	hasrest = TRUE
+
+/datum/borg_donator_skin/security/swatmeka
+	name = "S.W.A.T. Meka"
+	module_type = /obj/item/robot_module/security
+	preview_icon = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	preview_icon_state = "swatmeka"
+	ckey_whitelist = list("foxrtotlimda")
+	cyborg_base_icon = "swatmeka"
+	cyborg_icon_override = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	hat_offset = TALL_HAT_OFFSET
+	hasrest = TRUE
+
+/datum/borg_donator_skin/medical/epmeka
+	name = "Heretic Meka"
+	module_type = /obj/item/robot_module/medical
+	preview_icon = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	preview_icon_state = "epmeka"
+	ckey_whitelist = list("foxrtotlimda")
+	cyborg_base_icon = "epmeka"
+	cyborg_icon_override = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	hat_offset = TALL_HAT_OFFSET
+	hasrest = TRUE
+
+/datum/borg_donator_skin/engineering/ratvarmeka
+	name = "Ratvar Meka"
+	module_type = /obj/item/robot_module/engineering
+	preview_icon = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	preview_icon_state = "ratvarmeka"
+	ckey_whitelist = list("foxrtotlimda")
+	cyborg_base_icon = "ratvrarmeka"
+	cyborg_icon_override = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	hat_offset = TALL_HAT_OFFSET
+	hasrest = TRUE
+
+/datum/borg_donator_skin/syndicatejack/ratvarmeka
+	name = "Ratvar Meka"
+	module_type = /obj/item/robot_module/syndicatejack
+	preview_icon = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	preview_icon_state = "ratvrarmeka"
+	ckey_whitelist = list("foxrtotlimda")
+	cyborg_base_icon = "ratvarmeka"
+	cyborg_icon_override = 'modular_splurt/icons/mob/robots_32x64.dmi'
+	hat_offset = TALL_HAT_OFFSET
+	hasrest = TRUE
+
 GLOBAL_LIST_INIT_TYPED(borg_donator_skins, /datum/borg_donator_skin, list(
 	// new /datum/borg_donator_skin/example/pe4henika
-	new /datum/borg_donator_skin/syndicate/mekafl
+	new /datum/borg_donator_skin/syndicate/inteq/mekafl,
+	new /datum/borg_donator_skin/syndicate_medical/inteq/mekafl,
+	new /datum/borg_donator_skin/saboteur/inteq/mekafl,
+	new /datum/borg_donator_skin/inteq_builder/mekafl,
+	new /datum/borg_donator_skin/security/swatmeka,
+	new /datum/borg_donator_skin/medical/epmeka,
+	new /datum/borg_donator_skin/engineering/ratvarmeka,
+	new /datum/borg_donator_skin/syndicatejack/ratvarmeka
 ))
