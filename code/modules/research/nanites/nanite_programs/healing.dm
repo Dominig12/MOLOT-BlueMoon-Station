@@ -312,11 +312,16 @@
 
 /datum/nanite_program/heal_wounds/check_conditions()
 	. = ..()
-	if(!. || !host_mob.all_wounds.len)
+	if(!. || !iscarbon(host_mob))
+		return FALSE
+
+	var/mob/living/carbon/host_carbon = host_mob
+	if(!host_carbon.all_wounds.len)
 		return FALSE
 
 	return TRUE
 
 /datum/nanite_program/heal_wounds/active_effect()
-	var/datum/wound/heal_wound = pick(host_mob.all_wounds)
+	var/mob/living/carbon/host_carbon = host_mob
+	var/datum/wound/heal_wound = pick(host_carbon.all_wounds)
 	heal_wound.on_xadone(5)
