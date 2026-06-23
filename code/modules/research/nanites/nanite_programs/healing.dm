@@ -316,7 +316,7 @@
 		return FALSE
 
 	var/mob/living/carbon/host_carbon = host_mob
-	if(!host_carbon.all_wounds.len)
+	if(!host_carbon.all_wounds?.len)
 		return FALSE
 
 	return TRUE
@@ -324,4 +324,6 @@
 /datum/nanite_program/heal_wounds/active_effect()
 	var/mob/living/carbon/host_carbon = host_mob
 	var/datum/wound/heal_wound = pick(host_carbon.all_wounds)
+	if(!heal_wound)
+		return FALSE
 	heal_wound.on_xadone(5)
