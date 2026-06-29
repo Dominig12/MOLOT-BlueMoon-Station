@@ -1,0 +1,32 @@
+﻿//MAP CONVERTED BY dmm2tgm.py THIS HEADER COMMENT PREVENTS RECONVERSION, DO NOT REMOVE
+"ar" = (
+/turf/open/floor/engine{
+	icon_state = "empty_abandoned"
+	},
+/area/chaosdimension/empty)
+"aC" = (
+/obj/structure/decay_aura{
+	icon_state = "empty_abandoned"
+	},
+/turf/open/floor/engine{
+	icon_state = "empty_abandoned"
+	},
+/area/chaosdimension/empty)
+"b" = (
+/turf/open/floor/engine{
+	icon_state = "empty_abandoned"
+	},
+/area/chaosdimension/empty)
+"c" = (
+/obj/structure/empty_symbol{
+	icon_state = "empty_abandoned"
+	},
+/turf/open/floor/engine{
+	icon_state = "empty_abandoned"
+	},
+/area/chaosdimension/empty)
+"d" = (
+/turf/open/floor/engine{
+	icon_state = "empty_abandoned"
+	},
+/area/chaosdimension/empty)

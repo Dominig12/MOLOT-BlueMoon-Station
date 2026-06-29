@@ -1,0 +1,35 @@
+﻿//MAP CONVERTED BY dmm2tgm.py THIS HEADER COMMENT PREVENTS RECONVERSION, DO NOT REMOVE
+"ar" = (
+/turf/open/floor/engine{
+	icon_state = "boss_awakening"
+	},
+/area/chaosdimension/boss)
+"aC" = (
+/obj/structure/boss_throne{
+	icon_state = "boss_awakening"
+	},
+/turf/open/floor/engine{
+	icon_state = "boss_awakening"
+	},
+/area/chaosdimension/boss)
+"b" = (
+/obj/structure/boss_pedestal{
+	icon_state = "boss_awakening"
+	},
+/turf/open/floor/engine{
+	icon_state = "boss_awakening"
+	},
+/area/chaosdimension/boss)
+"c" = (
+/obj/structure/boss_altar{
+	icon_state = "boss_awakening"
+	},
+/turf/open/floor/engine{
+	icon_state = "boss_awakening"
+	},
+/area/chaosdimension/boss)
+"d" = (
+/turf/open/floor/engine{
+	icon_state = "boss_awakening"
+	},
+/area/chaosdimension/boss)

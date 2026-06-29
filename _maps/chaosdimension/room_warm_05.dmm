@@ -1,0 +1,32 @@
+﻿//MAP CONVERTED BY dmm2tgm.py THIS HEADER COMMENT PREVENTS RECONVERSION, DO NOT REMOVE
+"ar" = (
+/turf/open/floor/engine{
+	icon_state = "warm_ember"
+	},
+/area/chaosdimension/warm)
+"aC" = (
+/obj/structure/warmth_aura{
+	icon_state = "warm_ember"
+	},
+/turf/open/floor/engine{
+	icon_state = "warm_ember"
+	},
+/area/chaosdimension/warm)
+"b" = (
+/turf/open/floor/engine{
+	icon_state = "warm_ember"
+	},
+/area/chaosdimension/warm)
+"c" = (
+/obj/structure/warm_symbol{
+	icon_state = "warm_ember"
+	},
+/turf/open/floor/engine{
+	icon_state = "warm_ember"
+	},
+/area/chaosdimension/warm)
+"d" = (
+/turf/open/floor/engine{
+	icon_state = "warm_ember"
+	},
+/area/chaosdimension/warm)

@@ -183,3 +183,7 @@ GLOBAL_LIST_INIT(spider_cyborg_modules, list(
 	/obj/item/robot_module/syndicate_medical/spider,
 	/obj/item/robot_module/saboteur/spider
 ))
+
+// Chaos Dimension
+GLOBAL_LIST_EMPTY(chaos_instances)			//all active chaos dimension instances
+GLOBAL_VAR_INIT(chaos_dimension_initialized, FALSE)

@@ -1,0 +1,32 @@
+﻿//MAP CONVERTED BY dmm2tgm.py THIS HEADER COMMENT PREVENTS RECONVERSION, DO NOT REMOVE
+"ar" = (
+/turf/open/floor/engine{
+	icon_state = "cold_hypothermia"
+	},
+/area/chaosdimension/cold)
+"aC" = (
+/obj/structure/chill_aura{
+	icon_state = "cold_hypothermia"
+	},
+/turf/open/floor/engine{
+	icon_state = "cold_hypothermia"
+	},
+/area/chaosdimension/cold)
+"b" = (
+/turf/open/floor/engine{
+	icon_state = "cold_hypothermia"
+	},
+/area/chaosdimension/cold)
+"c" = (
+/obj/structure/frost_symbol{
+	icon_state = "cold_hypothermia"
+	},
+/turf/open/floor/engine{
+	icon_state = "cold_hypothermia"
+	},
+/area/chaosdimension/cold)
+"d" = (
+/turf/open/floor/engine{
+	icon_state = "cold_hypothermia"
+	},
+/area/chaosdimension/cold)
