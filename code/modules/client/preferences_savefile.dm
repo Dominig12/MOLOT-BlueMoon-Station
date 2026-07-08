@@ -5,7 +5,7 @@
 //	You do not need to raise this if you are adding new values that have sane defaults.
 //	Only raise this value when changing the meaning/format/name/layout of an existing value
 //	where you would want the updater procs below to run
-#define SAVEFILE_VERSION_MAX	72
+#define SAVEFILE_VERSION_MAX	73
 
 /// Upper bound for character slot indices during savefile migration (loop over S.dir).
 /// Prevents corrupted or garbage directory names (e.g. huge slot numbers) from inflating max_save_slots
@@ -81,12 +81,6 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 					break
 			if(!has_pixel_tilt)
 				LAZYADD(key_bindings["N"], "pixel_tilt")
-
-	// BLUEMOON ADD - перевод Character Setup UI на Modern
-	if(current_version < 63)
-		new_character_creator = TRUE
-		if(!istext(charcreation_theme) || !findtext(charcreation_theme, "modern"))
-			charcreation_theme = "modern"
 
 	// BLUEMOON ADD - принудительный FPS 120 для фикса лага движения в BYOND 516
 	if(current_version < 64)
@@ -504,6 +498,7 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 
 	//general preferences
 	S["ooccolor"] 				>> ooccolor
+	S["aooccolor"] 				>> aooccolor
 	S["lastchangelog"] 			>> lastchangelog
 	S["UI_style"] 				>> UI_style
 	S["outline_color"] 			>> outline_color
@@ -527,6 +522,7 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 	S["ui_zoom_preferences"]	>> ui_zoom_preferences
 	S["windowflash"] 			>> windowflashing
 	S["windownoise"] 			>> windownoise
+	S["mood_vignette"] 			>> mood_vignette
 	S["action_buttons_hide_on_spawn"] 			>> action_buttons_hide_on_spawn
 	S["be_special"] 			>> be_special
 
@@ -560,6 +556,15 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 	S["color_presets_hsv"]>> color_presets_hsv // BLUEMOON ADD
 	S["color_presets_matrix"]>> color_presets_matrix // BLUEMOON ADD
 	S["clientfps"] >> clientfps
+	S["sound_volume_midi"] >> sound_volume_midi
+	S["sound_volume_ambience"] >> sound_volume_ambience
+	S["sound_volume_ship_ambience"] >> sound_volume_ship_ambience
+	S["sound_volume_announcements"] >> sound_volume_announcements
+	S["sound_volume_bark"] >> sound_volume_bark
+	S["sound_volume_prayers"] >> sound_volume_prayers
+	S["sound_volume_adminhelp"] >> sound_volume_adminhelp
+	S["sound_volume_instruments"] >> sound_volume_instruments
+	S["sound_volume_jukeboxes"] >> sound_volume_jukeboxes
 	S["parallax"] >> parallax
 	S["ambientocclusion"] >> ambientocclusion
 	S["lighting_blur"] >> lighting_blur
@@ -596,7 +601,8 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 	S["disable_combat_cursor"]	>> disable_combat_cursor
 	S["disable_combat_mouse_lock"]	>> disable_combat_mouse_lock
 	S["gfluid_blacklist"]		>> gfluid_blacklist
-	S["new_character_creator"]	>> new_character_creator
+
+	S["collapse_empty_character_slots"] >> collapse_empty_character_slots
 	S["charcreation_theme"]		>> charcreation_theme
 	S["modern_button_shape"]	>> modern_button_shape
 	S["modern_custom_enabled"]	>> modern_custom_enabled
@@ -611,8 +617,10 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 	S["modern_custom_border_color"]	>> modern_custom_border_color
 	S["modern_custom_accent_color"]	>> modern_custom_accent_color
 	S["modern_custom_bg_pattern"]	>> modern_custom_bg_pattern
+	S["ui_decoration_level"]	>> ui_decoration_level
 	S["modern_ui_language"]		>> modern_ui_language
-	S["collapse_empty_character_slots"] >> collapse_empty_character_slots
+	S["use_modern_translations"]	>> use_modern_translations
+	S["new_character_creator"]	>> new_character_creator
 	S["view_pixelshift"]		>> view_pixelshift
 
 	//favorite outfits
@@ -635,6 +643,9 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 
 	//Sanitize
 	ooccolor = sanitize_ooccolor(sanitize_hexcolor(ooccolor, 6, 1, initial(ooccolor)))
+	aooccolor = sanitize_ooccolor(sanitize_hexcolor(aooccolor, 6, 1, initial(aooccolor)))
+	outline_color = sanitize_hexcolor(outline_color, 6, 1, initial(outline_color))
+	outline_enabled = sanitize_integer(outline_enabled, 0, 1, initial(outline_enabled))
 	lastchangelog = sanitize_text(lastchangelog, initial(lastchangelog))
 	UI_style = sanitize_inlist(UI_style, GLOB.available_ui_styles, GLOB.available_ui_styles[1])
 	hotkeys = sanitize_integer(hotkeys, 0, 1, initial(hotkeys))
@@ -673,12 +684,22 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 		ui_zoom_preferences = sanitized_ui_zoom_preferences
 	windowflashing = sanitize_integer(windowflashing, 0, 1, initial(windowflashing))
 	windownoise = sanitize_integer(windownoise, 0, 1, initial(windownoise))
+	mood_vignette = sanitize_integer(mood_vignette, 0, 1, initial(mood_vignette))
 	action_buttons_hide_on_spawn = sanitize_integer(action_buttons_hide_on_spawn, 0, 1, initial(action_buttons_hide_on_spawn))
 	default_slot = sanitize_integer(default_slot, 1, max_save_slots, initial(default_slot))
 	toggles = sanitize_integer(toggles, 0, 16777215, initial(toggles))
 	custom_colors = sanitize_integer(custom_colors, 0, 16777215, initial(custom_colors))
 	deadmin = sanitize_integer(deadmin, 0, 16777215, initial(deadmin))
 	clientfps = sanitize_clientfps(clientfps)
+	sound_volume_midi = sanitize_integer(sound_volume_midi, 0, 100, initial(sound_volume_midi))
+	sound_volume_ambience = sanitize_integer(sound_volume_ambience, 0, 100, initial(sound_volume_ambience))
+	sound_volume_ship_ambience = sanitize_integer(sound_volume_ship_ambience, 0, 100, initial(sound_volume_ship_ambience))
+	sound_volume_announcements = sanitize_integer(sound_volume_announcements, 0, 100, initial(sound_volume_announcements))
+	sound_volume_bark = sanitize_integer(sound_volume_bark, 0, 100, initial(sound_volume_bark))
+	sound_volume_prayers = sanitize_integer(sound_volume_prayers, 0, 100, initial(sound_volume_prayers))
+	sound_volume_adminhelp = sanitize_integer(sound_volume_adminhelp, 0, 100, initial(sound_volume_adminhelp))
+	sound_volume_instruments = sanitize_integer(sound_volume_instruments, 0, 100, initial(sound_volume_instruments))
+	sound_volume_jukeboxes = sanitize_integer(sound_volume_jukeboxes, 0, 100, initial(sound_volume_jukeboxes))
 	preferred_chaos_level = sanitize_integer(preferred_chaos_level, 0, 3, 2)
 	parallax = sanitize_integer(parallax, PARALLAX_DISABLE, PARALLAX_INSANE, null)
 	ambientocclusion = sanitize_integer(ambientocclusion, 0, 1, initial(ambientocclusion))
@@ -715,26 +736,31 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 
 	//SKYRAT CHANGES BEGIN
 	see_chat_emotes	= sanitize_integer(see_chat_emotes, 0, 1, initial(see_chat_emotes))
+	auto_capitalize_enabled = sanitize_integer(auto_capitalize_enabled, 0, 1, initial(auto_capitalize_enabled))
 	//SKYRAT CHANGES END
 
 	//SPLURT CHANGES BEGIN
 	gfluid_blacklist = sanitize_islist(gfluid_blacklist, list())
-	charcreation_theme = sanitize_inlist(charcreation_theme, list("classic", "modern", "modern_classic", "modern_purple", "modern_green", "modern_neutral", "modern_custom"), "classic")
+
+	collapse_empty_character_slots = sanitize_integer(collapse_empty_character_slots, 0, 1, initial(collapse_empty_character_slots))
+	charcreation_theme = sanitize_inlist(charcreation_theme, list("classic", "modern", "modern_classic", "modern_purple", "modern_green", "modern_neutral", "modern_custom"), initial(charcreation_theme))
 	modern_button_shape = sanitize_inlist(modern_button_shape, list("rect", "soft", "round"), initial(modern_button_shape))
 	modern_custom_enabled = sanitize_integer(modern_custom_enabled, 0, 1, initial(modern_custom_enabled))
-	modern_custom_bg_primary = sanitize_hexcolor(modern_custom_bg_primary, 6, FALSE, initial(modern_custom_bg_primary))
-	modern_custom_bg_secondary = sanitize_hexcolor(modern_custom_bg_secondary, 6, FALSE, initial(modern_custom_bg_secondary))
-	modern_custom_text_primary = sanitize_hexcolor(modern_custom_text_primary, 6, FALSE, initial(modern_custom_text_primary))
-	modern_custom_text_secondary = sanitize_hexcolor(modern_custom_text_secondary, 6, FALSE, initial(modern_custom_text_secondary))
-	modern_custom_button_bg = sanitize_hexcolor(modern_custom_button_bg, 6, FALSE, initial(modern_custom_button_bg))
-	modern_custom_button_hover = sanitize_hexcolor(modern_custom_button_hover, 6, FALSE, initial(modern_custom_button_hover))
-	modern_custom_button_active = sanitize_hexcolor(modern_custom_button_active, 6, FALSE, initial(modern_custom_button_active))
-	modern_custom_button_text = sanitize_hexcolor(modern_custom_button_text, 6, FALSE, initial(modern_custom_button_text))
-	modern_custom_border_color = sanitize_hexcolor(modern_custom_border_color, 6, FALSE, initial(modern_custom_border_color))
-	modern_custom_accent_color = sanitize_hexcolor(modern_custom_accent_color, 6, FALSE, initial(modern_custom_accent_color))
+	modern_custom_bg_primary = sanitize_hexcolor(modern_custom_bg_primary, 6, 0, initial(modern_custom_bg_primary))
+	modern_custom_bg_secondary = sanitize_hexcolor(modern_custom_bg_secondary, 6, 0, initial(modern_custom_bg_secondary))
+	modern_custom_text_primary = sanitize_hexcolor(modern_custom_text_primary, 6, 0, initial(modern_custom_text_primary))
+	modern_custom_text_secondary = sanitize_hexcolor(modern_custom_text_secondary, 6, 0, initial(modern_custom_text_secondary))
+	modern_custom_button_bg = sanitize_hexcolor(modern_custom_button_bg, 6, 0, initial(modern_custom_button_bg))
+	modern_custom_button_hover = sanitize_hexcolor(modern_custom_button_hover, 6, 0, initial(modern_custom_button_hover))
+	modern_custom_button_active = sanitize_hexcolor(modern_custom_button_active, 6, 0, initial(modern_custom_button_active))
+	modern_custom_button_text = sanitize_hexcolor(modern_custom_button_text, 6, 0, initial(modern_custom_button_text))
+	modern_custom_border_color = sanitize_hexcolor(modern_custom_border_color, 6, 0, initial(modern_custom_border_color))
+	modern_custom_accent_color = sanitize_hexcolor(modern_custom_accent_color, 6, 0, initial(modern_custom_accent_color))
 	modern_custom_bg_pattern = sanitize_integer(modern_custom_bg_pattern, 0, 1, initial(modern_custom_bg_pattern))
+	ui_decoration_level = sanitize_inlist(ui_decoration_level, list("minimal", "standard", "enhanced"), initial(ui_decoration_level))
 	modern_ui_language = sanitize_integer(modern_ui_language, 0, 1, initial(modern_ui_language))
-	collapse_empty_character_slots = sanitize_integer(collapse_empty_character_slots, 0, 1, initial(collapse_empty_character_slots))
+	use_modern_translations = sanitize_integer(use_modern_translations, 0, 1, initial(use_modern_translations))
+	new_character_creator = sanitize_integer(new_character_creator, 0, 1, initial(new_character_creator))
 	//SPLURT CHANGES END
 
 	verify_keybindings_valid()		// one of these days this will runtime and you'll be glad that i put it in a different proc so no one gets their saves wiped
@@ -842,6 +868,7 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 
 	//general preferences
 	WRITE_FILE(S["ooccolor"], ooccolor)
+	WRITE_FILE(S["aooccolor"], aooccolor)
 	WRITE_FILE(S["lastchangelog"], lastchangelog)
 	WRITE_FILE(S["UI_style"], UI_style)
 	WRITE_FILE(S["outline_enabled"], outline_enabled)
@@ -865,6 +892,7 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 	WRITE_FILE(S["ui_zoom_preferences"], ui_zoom_preferences)
 	WRITE_FILE(S["windowflash"], windowflashing)
 	WRITE_FILE(S["windownoise"], windownoise)
+	WRITE_FILE(S["mood_vignette"], mood_vignette)
 	WRITE_FILE(S["action_buttons_hide_on_spawn"], action_buttons_hide_on_spawn)
 	WRITE_FILE(S["be_special"], be_special)
 	WRITE_FILE(S["default_slot"], default_slot)
@@ -893,6 +921,15 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 	WRITE_FILE(S["color_presets_hsv"], color_presets_hsv) // BLUEMOON ADD
 	WRITE_FILE(S["color_presets_matrix"], color_presets_matrix) // BLUEMOON ADD
 	WRITE_FILE(S["clientfps"], clientfps)
+	WRITE_FILE(S["sound_volume_midi"], sound_volume_midi)
+	WRITE_FILE(S["sound_volume_ambience"], sound_volume_ambience)
+	WRITE_FILE(S["sound_volume_ship_ambience"], sound_volume_ship_ambience)
+	WRITE_FILE(S["sound_volume_announcements"], sound_volume_announcements)
+	WRITE_FILE(S["sound_volume_bark"], sound_volume_bark)
+	WRITE_FILE(S["sound_volume_prayers"], sound_volume_prayers)
+	WRITE_FILE(S["sound_volume_adminhelp"], sound_volume_adminhelp)
+	WRITE_FILE(S["sound_volume_instruments"], sound_volume_instruments)
+	WRITE_FILE(S["sound_volume_jukeboxes"], sound_volume_jukeboxes)
 	WRITE_FILE(S["parallax"], parallax)
 	WRITE_FILE(S["ambientocclusion"], ambientocclusion)
 	WRITE_FILE(S["lighting_blur"], lighting_blur)
@@ -927,7 +964,8 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 	WRITE_FILE(S["disable_combat_cursor"], disable_combat_cursor)
 	WRITE_FILE(S["disable_combat_mouse_lock"], disable_combat_mouse_lock)
 	WRITE_FILE(S["gfluid_blacklist"], gfluid_blacklist)
-	WRITE_FILE(S["new_character_creator"], new_character_creator)
+
+	WRITE_FILE(S["collapse_empty_character_slots"], collapse_empty_character_slots)
 	WRITE_FILE(S["charcreation_theme"], charcreation_theme)
 	WRITE_FILE(S["modern_button_shape"], modern_button_shape)
 	WRITE_FILE(S["modern_custom_enabled"], modern_custom_enabled)
@@ -942,8 +980,10 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 	WRITE_FILE(S["modern_custom_border_color"], modern_custom_border_color)
 	WRITE_FILE(S["modern_custom_accent_color"], modern_custom_accent_color)
 	WRITE_FILE(S["modern_custom_bg_pattern"], modern_custom_bg_pattern)
+	WRITE_FILE(S["ui_decoration_level"], ui_decoration_level)
 	WRITE_FILE(S["modern_ui_language"], modern_ui_language)
-	WRITE_FILE(S["collapse_empty_character_slots"], collapse_empty_character_slots)
+	WRITE_FILE(S["use_modern_translations"], use_modern_translations)
+	WRITE_FILE(S["new_character_creator"], new_character_creator)
 	WRITE_FILE(S["view_pixelshift"], view_pixelshift)
 	WRITE_FILE(S["eorg_enabled"], eorg_enabled)
 
@@ -1113,8 +1153,9 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 "fuzzy" = FALSE,
 "color_scheme" = OLD_CHARACTER_COLORING,
 "neckfire" = FALSE,
-"neckfire_color" = "ffffff"
-)
+"neckfire_color" = "ffffff",
+	"puddle_slime_fea" = FALSE
+	)
 
 	//Species
 	var/species_id
@@ -1345,6 +1386,7 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 	//death emote
 	S["feature_custom_deathgasp"] >> features["custom_deathgasp"] // BLUEMOON ADD - пользовательский эмоут смерти
 	S["feature_custom_deathsound"] >> features["custom_deathsound"] // BLUEMOON ADD - пользовательский эмоут смерти
+	S["feature_puddle_slime_fea"] >> features["puddle_slime_fea"]
 	// Barks
 	S["bark_id"] >> bark_id
 	S["bark_speed"] >> bark_speed
@@ -1418,7 +1460,53 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 									else
 										for(var/i in 1 to colors.len)
 											var/polychromic = colors[i]
-											if(istext(polychromic) && !findtext(polychromic, GLOB.is_color))
+											if(!istext(polychromic))
+												if(islist(polychromic))
+													var/list/matrix = polychromic
+													var/list/default_color
+													var/loadout_item_type = entry[LOADOUT_ITEM]
+													if(ispath(loadout_item_type) && islist(GLOB.loadout_items))
+														for(var/cat in GLOB.loadout_items)
+															var/list/subcategories = GLOB.loadout_items[cat]
+															if(!islist(subcategories))
+																continue
+															for(var/subcat in subcategories)
+																var/list/items = subcategories[subcat]
+																if(!islist(items))
+																	continue
+																for(var/item_name in items)
+																	var/datum/gear/G = items[item_name]
+																	if(G?.type == loadout_item_type && length(G.loadout_initial_colors))
+																		default_color = G.loadout_initial_colors
+																		break
+																if(default_color)
+																	break
+														if(default_color)
+															break
+													var/source_color = "#FFFFFF"
+													if(default_color && i <= length(default_color))
+														source_color = default_color[i]
+													var/mode = entry[LOADOUT_COLOR_MODE]
+													if(mode == COLORMATE_HSV || mode == COLORMATE_MATRIX)
+														if(!(length(matrix) >= 9 && length(matrix) <= 12) || !isnum(matrix[1]))
+															colors[i] = "#FFFFFF"
+													else
+														if(length(matrix) >= 9 && length(matrix) <= 12)
+															if(!isnum(matrix[1]) || !isnum(matrix[2]) || !isnum(matrix[3]) || !isnum(matrix[4]) || !isnum(matrix[5]) || !isnum(matrix[6]) || !isnum(matrix[7]) || !isnum(matrix[8]) || !isnum(matrix[9]))
+																colors[i] = "#FFFFFF"
+															else
+																var/r_part = hex2num(copytext(source_color, 2, 4)) / 255
+																var/g_part = hex2num(copytext(source_color, 4, 6)) / 255
+																var/b_part = hex2num(copytext(source_color, 6, 8)) / 255
+																var/new_r = round(clamp((r_part * matrix[1] + g_part * matrix[2] + b_part * matrix[3]) * 255, 0, 255))
+																var/new_g = round(clamp((r_part * matrix[4] + g_part * matrix[5] + b_part * matrix[6]) * 255, 0, 255))
+																var/new_b = round(clamp((r_part * matrix[7] + g_part * matrix[8] + b_part * matrix[9]) * 255, 0, 255))
+																colors[i] = rgb(new_r, new_g, new_b)
+														else
+															colors[i] = "#FFFFFF"
+												else
+													colors[i] = "#FFFFFF"
+											else if(!findtext(polychromic, regex(@"^#[0-9a-fA-F]{6}$")))
 												colors[i] = "#FFFFFF"
 								else
 									entry -= setting
@@ -1944,6 +2032,7 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 
 	WRITE_FILE(S["feature_neckfire"], features["neckfire"])
 	WRITE_FILE(S["feature_neckfire_color"], features["neckfire_color"])
+	WRITE_FILE(S["feature_puddle_slime_fea"], features["puddle_slime_fea"])
 
 	WRITE_FILE(S["alt_titles_preferences"], alt_titles_preferences)
 

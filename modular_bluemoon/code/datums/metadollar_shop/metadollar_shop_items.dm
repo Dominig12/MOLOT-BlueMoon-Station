@@ -84,7 +84,7 @@
 /datum/metadollar_shop_item/item/freak_command_case
 	name = "Командный кейс с сюрпризами"
 	desc = "Большой офицерский кейс: случайная еда, алкогольные напитки и шприцы с контрабандой."
-	cost = 25
+	cost = 50
 	catalog = METADOLLAR_CATALOG_SMUGGLE
 	spawn_type = /obj/item/storage/backpack/case/command/freak
 
@@ -97,11 +97,25 @@
 
 /datum/metadollar_shop_item/item/traitor_token
 	name = "Жетон «Предатель»"
-	desc = "Пластиковая монета. ALT+ЛКМ по жетону, чтобы получить роль предателя."
+	desc = "Пластиковая монета. Alt+ЛКМ — роль предателя; Ctrl+ЛКМ — вернуть 250 М$. На всю станцию — не более 3 штук за раунд."
 	cost = 250
 	catalog = METADOLLAR_CATALOG_SMUGGLE
 	minimum_players = 50
 	spawn_type = /obj/item/coin/antagtoken/metashop/traitor
+
+/datum/metadollar_shop_item/item/traitor_token/try_purchase(client/C)
+	if(!C?.ckey)
+		return FALSE
+	if(!SSmetadollars.can_purchase_traitor_token())
+		to_chat(C.mob, span_warning("В этом раунде все жетоны «Предатель» уже раскуплены (лимит [METASHOP_TRAITOR_TOKEN_ROUND_LIMIT] на станцию)."))
+		return TRUE
+	return ..()
+
+/datum/metadollar_shop_item/item/traitor_token/queue_delivery(client/C)
+	. = ..()
+	if(.)
+		SSmetadollars.register_traitor_token_purchase()
+	return .
 
 /datum/metadollar_shop_item/item/metadollar_total_burn
 	name = "Протокол «Пепелище»"
@@ -229,6 +243,69 @@
 	cost = 10
 	catalog = METADOLLAR_CATALOG_SMUGGLE
 	spawn_type = /obj/item/ammo_box/magazine/toy/m762/riot
+
+/datum/metadollar_shop_item/item/syndie_dufflebag
+	name = "Подозрительная сумка"
+	desc = "Большая вещевая сумка для хранения дополнительных тактических принадлежностей."
+	cost = 35
+	catalog = METADOLLAR_CATALOG_SMUGGLE
+	spawn_type = /obj/item/storage/backpack/duffelbag/syndie
+
+/datum/metadollar_shop_item/item/potion_intelligence
+	name = "Зелье интеллекта"
+	desc = "Чудесная химическая смесь, наделяющая живые существа человеческим интеллектом."
+	cost = 20
+	catalog = METADOLLAR_CATALOG_LEGIT
+	spawn_type = /obj/item/slimepotion/slime/sentience
+
+/datum/metadollar_shop_item/item/jukebox
+	name = "Jukebox"
+	desc = "Переносная колонка для крутых."
+	cost = 25
+	catalog = METADOLLAR_CATALOG_LEGIT
+	spawn_type = /obj/item/jukebox
+
+/datum/metadollar_shop_item/item/jukebox_sponsor
+	name = "Personal music box"
+	desc = "A portable music box. You can load your own .ogg tracks from your computer and play them nearby."
+	cost = 50
+	catalog = METADOLLAR_CATALOG_SMUGGLE
+	spawn_type = /obj/item/personal_music_box
+
+/datum/metadollar_shop_item/item/smokespell_lesser
+	name = "Книга с заклинанием призыва дыма"
+	desc = "Книжка, что при изучении даёт вам возможность использовать заклинание маленького дыма."
+	cost = 80
+	catalog = METADOLLAR_CATALOG_SMUGGLE
+	spawn_type = /obj/item/book/granter/spell/smoke/lesser
+
+/datum/metadollar_shop_item/item/smokespell_crocin
+	name = "Книга с заклинанием призыва кроцинового дыма"
+	desc = "Книжка, что при изучении даёт вам возможность использовать заклинание кроцинового дыма."
+	cost = 100
+	catalog = METADOLLAR_CATALOG_LEGIT
+	spawn_type = /obj/item/book/granter/spell/smoke/crocin
+
+/datum/metadollar_shop_item/item/chameleon_stamp
+	name = "Хамелеон-штамп"
+	desc = "Маскируется под любой штамп должности - удобен для подделки бумаг."
+	cost = 25
+	catalog = METADOLLAR_CATALOG_SMUGGLE
+	spawn_type = /obj/item/stamp/chameleon
+
+/datum/metadollar_shop_item/item/holoparasite_injector
+	name = "Инжектор голопаразита"
+	desc = "Одноразовый нанороечный инжектор: выберите тип голопаразита и привяжите его к себе."
+	cost = 100
+	catalog = METADOLLAR_CATALOG_SMUGGLE
+	spawn_type = /obj/item/guardiancreator/tech/choose/traitor
+
+/datum/metadollar_shop_item/item/traitor_announcer
+	name = "odd device"
+	desc = "Странный пульт. Одноразовая подделка приоритетного объявления по вашему сценарию."
+	cost = 50
+	catalog = METADOLLAR_CATALOG_SMUGGLE
+	spawn_type = /obj/item/device/traitor_announcer
 
 #undef METADOLLAR_CATALOG_LEGIT
 #undef METADOLLAR_CATALOG_SMUGGLE

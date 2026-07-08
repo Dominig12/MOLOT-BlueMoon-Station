@@ -141,6 +141,11 @@
 	.["selfAttributes"] = self.list_interaction_attributes(self)
 	.["lust"] = self.get_lust()
 	.["maxLust"] = self.get_climax_threshold() // BLUEMOON EDIT
+	if(ishuman(self))
+		var/mob/living/carbon/human/H = self
+		.["force_naked_flavor"] = H.force_naked_flavor
+	else
+		.["force_naked_flavor"] = null
 
 	.["max_distance"] = 0
 	.["user_is_blacklisted"] = SSinteractions.is_blacklisted(self)
@@ -525,6 +530,8 @@
 		.["extreme_pref"] = 			pref_to_num(prefs.extremepref)
 		.["extreme_harm"] = 			pref_to_num(prefs.extremeharm)
 		.["unholy_pref"] =				pref_to_num(prefs.unholypref)
+		.["tattoo_pref"] =				pref_to_num(prefs.tattoopref)
+		.["be_victim"] =				pref_to_num(prefs.be_victim)
 
 	//Getting preferences
 		.["verb_consent"] = 			!!CHECK_BITFIELD(prefs.toggles, VERB_CONSENT)
@@ -765,6 +772,16 @@
 						return FALSE
 					else
 						prefs.extremeharm = value
+				if("tattoo_pref")
+					if(prefs.tattoopref == value)
+						return FALSE
+					else
+						prefs.tattoopref = value
+				if("be_victim")
+					if(prefs.be_victim == value)
+						return FALSE
+					else
+						prefs.be_victim = value
 				else
 					return FALSE
 			prefs.save_character()
@@ -863,5 +880,15 @@
 					else
 						to_chat(parent_mob, span_warning("Unavailable for this mob."))
 						return FALSE
+		if("force_naked_flavor")
+			if(ishuman(parent_mob))
+				var/mob/living/carbon/human/H = parent_mob
+				H.force_naked_flavor = !H.force_naked_flavor
+				if(H.force_naked_flavor)
+					H.balloon_alert_to_viewers("Доступно описание голого тела")
+				return TRUE
+			else
+				to_chat(parent_mob, span_warning("Unavailable for non-humanoid mob."))
+				return FALSE
 
 #undef INTERACTION_UNHOLY //SPLURT Edit

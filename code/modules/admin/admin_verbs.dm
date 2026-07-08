@@ -212,6 +212,9 @@ GLOBAL_PROTECT(admin_verbs_debug)
 	/client/proc/view_runtimes,
 	/client/proc/view_gc_failures,
 	/client/proc/pump_random_event,
+	/client/proc/tick_spikes_report,
+	/client/proc/tick_spikes_capture,
+	/client/proc/tick_spikes_simulate,
 	/client/proc/cmd_display_init_log,
 	/client/proc/cmd_display_overlay_log,
 	/client/proc/reload_configuration,
@@ -227,6 +230,7 @@ GLOBAL_PROTECT(admin_verbs_debug)
 	#endif
 	/datum/admins/proc/create_or_modify_area,
 	/datum/admins/proc/fixcorruption,
+	/datum/admins/proc/atmos_active_report,
 	// /client/proc/check_timer_sources,
 	/client/proc/toggle_cdn,
 	/client/proc/discordnulls,
