@@ -93,6 +93,7 @@
 	RegisterSignal(parent, COMSIG_NANITE_SET_MAX_VOLUME, PROC_REF(set_max_volume))
 	RegisterSignal(parent, COMSIG_NANITE_SET_CLOUD, PROC_REF(set_cloud))
 	RegisterSignal(parent, COMSIG_NANITE_SET_CLOUD_SYNC, PROC_REF(set_cloud_sync))
+	RegisterSignal(parent, COMSIG_NANITE_GET_CLOUD, PROC_REF(get_cloud))
 	RegisterSignal(parent, COMSIG_NANITE_SET_SAFETY, PROC_REF(set_safety))
 	RegisterSignal(parent, COMSIG_NANITE_SET_REGEN, PROC_REF(set_regen))
 	RegisterSignal(parent, COMSIG_NANITE_ADD_PROGRAM, PROC_REF(add_program))
@@ -124,6 +125,7 @@
 								COMSIG_NANITE_SET_MAX_VOLUME,
 								COMSIG_NANITE_SET_CLOUD,
 								COMSIG_NANITE_SET_CLOUD_SYNC,
+								COMSIG_NANITE_GET_CLOUD,
 								COMSIG_NANITE_SET_SAFETY,
 								COMSIG_NANITE_SET_REGEN,
 								COMSIG_NANITE_ADD_PROGRAM,
@@ -434,6 +436,11 @@
 
 /datum/component/nanites/proc/set_cloud(datum/source, amount)
 	cloud_id = clamp(amount, 0, 100)
+
+/datum/component/nanites/proc/get_cloud(datum/source)
+	SIGNAL_HANDLER
+
+	return cloud_id
 
 /datum/component/nanites/proc/set_cloud_sync(datum/source, method)
 	switch(method)

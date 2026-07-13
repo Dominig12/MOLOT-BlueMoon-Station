@@ -213,7 +213,7 @@
 				var/datum/nanite_program/P = nanites.programs[program_id]
 				investigate_log("[key_name(usr)] deleted program [P.name] from cloud #[current_view]", INVESTIGATE_NANITES)
 				qdel(P)
-				nanites.set_need_sync(TRUE)
+				SSnanites.sync_hosts(current_view)
 			. = TRUE
 		if("add_rule")
 			if(disk && disk.program && istype(disk.program, /datum/nanite_program/sensor))
@@ -229,7 +229,7 @@
 					playsound(src, 'sound/machines/terminal_prompt.ogg', 50, 0)
 					var/datum/nanite_program/P = nanites.programs[program_id]
 					var/datum/nanite_rule/rule = rule_template.make_rule(P)
-					nanites.set_need_sync(TRUE)
+					SSnanites.sync_hosts(current_view)
 					investigate_log("[key_name(usr)] added rule [rule.display()] to program [P.name] in cloud #[current_view]", INVESTIGATE_NANITES)
 			. = TRUE
 		if("remove_rule")
@@ -246,7 +246,7 @@
 				playsound(src, 'sound/machines/terminal_prompt.ogg', 50, 0)
 				var/datum/nanite_rule/rule = P.rules[rule_id]
 				rule.remove()
-				nanites.set_need_sync(TRUE)
+				SSnanites.sync_hosts(current_view)
 
 				investigate_log("[key_name(usr)] removed rule [rule.display()] from program [P.name] in cloud #[current_view]", INVESTIGATE_NANITES)
 			. = TRUE
@@ -260,7 +260,7 @@
 				playsound(src, 'sound/machines/terminal_prompt.ogg', 50, FALSE)
 				var/datum/nanite_program/P = nanites.programs[program_id]
 				P.all_rules_required = !P.all_rules_required
-				nanites.set_need_sync(TRUE)
+				SSnanites.sync_hosts(current_view)
 				investigate_log("[key_name(usr)] edited rule logic for program [P.name] into [P.all_rules_required ? "All" : "Any"] in cloud #[current_view]", INVESTIGATE_NANITES)
 				. = TRUE
 
