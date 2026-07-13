@@ -22,10 +22,7 @@ PROCESSING_SUBSYSTEM_DEF(nanites)
 			return backup
 
 /datum/controller/subsystem/processing/nanites/proc/sync_hosts(cloud_id)
-	var/datum/nanite_cloud_backup/backup = get_cloud_backup(cloud_id)
-	if(!backup)
-		return
 	for(var/mob/living/host in nanite_monitored_mobs)
 		var/cloud = SEND_SIGNAL(host, COMSIG_NANITE_GET_CLOUD)
 		if(cloud && cloud == cloud_id)
-			SEND_SIGNAL(host, COMSIG_NANITE_SYNC, backup.nanites)
+			SEND_SIGNAL(host, COMSIG_NANITE_SET_NEED_SYNC, cloud_id)

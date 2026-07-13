@@ -99,6 +99,7 @@
 	RegisterSignal(parent, COMSIG_NANITE_ADD_PROGRAM, PROC_REF(add_program))
 	RegisterSignal(parent, COMSIG_NANITE_SCAN, PROC_REF(nanite_scan))
 	RegisterSignal(parent, COMSIG_NANITE_SYNC, PROC_REF(sync))
+	RegisterSignal(parent, COMSIG_NANITE_SET_NEED_SYNC, PROC_REF(set_need_sync))
 	RegisterSignal(parent, COMSIG_NANITE_CHECK_CONSOLE_LOCK, PROC_REF(check_console_locking))
 	RegisterSignal(parent, COMSIG_NANITE_CHECK_HOST_LOCK, PROC_REF(check_host_lockout))
 	RegisterSignal(parent, COMSIG_NANITE_CHECK_VIRAL_PREVENTION, PROC_REF(check_viral_prevention))
@@ -131,6 +132,7 @@
 								COMSIG_NANITE_ADD_PROGRAM,
 								COMSIG_NANITE_SCAN,
 								COMSIG_NANITE_SYNC,
+								COMSIG_NANITE_SET_NEED_SYNC,
 								COMSIG_ATOM_EMP_ACT,
 								COMSIG_MOB_DEATH,
 								COMSIG_MOB_ALLOWED,
@@ -258,7 +260,9 @@
 		var/datum/nanite_program/NP = pick(programs)
 		NP.software_error()
 
-/datum/component/nanites/proc/set_need_sync(_need_sync = TRUE)
+/datum/component/nanites/proc/set_need_sync(datum/source, _need_sync = TRUE)
+	SIGNAL_HANDLER
+
 	need_sync = _need_sync
 
 ///Adds a nanite program, replacing existing unique programs of the same type. A source program can be specified to copy its programming onto the new one.
