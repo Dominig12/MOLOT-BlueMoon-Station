@@ -75,6 +75,7 @@
 
 		start_time = world.time
 
+		SSnanites.nanite_host_mobs |= host_mob
 		host_mob.hud_set_nanite_indicator()
 		START_PROCESSING(SSnanites, src)
 
@@ -147,6 +148,7 @@
 	STOP_PROCESSING(SSnanites, src)
 	QDEL_LIST(programs)
 	if(host_mob)
+		SSnanites.nanite_host_mobs -= host_mob
 		set_nanite_bar(TRUE)
 		host_mob.hud_set_nanite_indicator()
 	host_mob = null
