@@ -56,6 +56,9 @@
 	/// minor shock deletion upper
 	var/minor_shock_deletion_upper = 15
 
+	// cache icon
+	var/last_nanite_percent_bar = 0
+
 /datum/component/nanites/Initialize(amount = 100, cloud = 0)
 	if(!isliving(parent) && !istype(parent, /datum/nanite_cloud_backup))
 		return COMPONENT_INCOMPATIBLE
