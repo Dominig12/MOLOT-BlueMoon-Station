@@ -77,7 +77,7 @@
 	if(nanites)
 		nanites.programs -= src
 		nanites.permanent_programs -= src
-		nanites.set_need_sync(TRUE)
+		nanites.set_need_sync(null, TRUE)
 	for(var/datum/nanite_rule/rule as anything in rules)
 		rule.remove()
 	rules.Cut()
@@ -302,7 +302,7 @@
 				deactivation_code = 0
 				kill_code = 0
 				trigger_code = 0
-				nanites.set_need_sync(TRUE)
+				nanites.set_need_sync(null, TRUE)
 		if(3)
 			if(error_flicking)
 				toggle() //enable/disable

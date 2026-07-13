@@ -246,7 +246,7 @@
 		var/datum/nanite_program/SNP = X
 		add_program(null, SNP.copy())
 
-	set_need_sync(FALSE)
+	set_need_sync(null, FALSE)
 
 ///Syncs the nanites to their assigned cloud copy, if it is available. If it is not, there is a small chance of a software error instead.
 /datum/component/nanites/proc/cloud_sync()
@@ -283,7 +283,7 @@
 		source_program.copy_programming(new_program)
 	programs += new_program
 	new_program.on_add(src)
-	set_need_sync(TRUE)
+	set_need_sync(null, TRUE)
 	return COMPONENT_PROGRAM_INSTALLED
 
 /datum/component/nanites/proc/consume_nanites(amount, force = FALSE)
