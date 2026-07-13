@@ -77,6 +77,7 @@
 	if(nanites)
 		nanites.programs -= src
 		nanites.permanent_programs -= src
+		nanites.set_need_sync(TRUE)
 	for(var/datum/nanite_rule/rule as anything in rules)
 		rule.remove()
 	rules.Cut()
@@ -293,6 +294,7 @@
 		if(1)
 			host_mob.investigate_log("[src] nanite program was deleted by software error.", INVESTIGATE_NANITES)
 			self_destruct() //kill switch
+			nanites.set_need_sync(TRUE)
 			return
 		if(2) //deprogram codes
 			if(corruptable)
@@ -301,6 +303,7 @@
 				deactivation_code = 0
 				kill_code = 0
 				trigger_code = 0
+				nanites.set_need_sync(TRUE)
 		if(3)
 			if(error_flicking)
 				toggle() //enable/disable
@@ -316,6 +319,7 @@
 				host_mob.investigate_log("[src] nanite program was converted into [rogue.name] by software error.", INVESTIGATE_NANITES)
 				nanites.add_program(null, rogue, src)
 				self_destruct()
+				nanites.set_need_sync(TRUE)
 
 /datum/nanite_program/proc/receive_signal(code, source)
 	if(activation_code && code == activation_code && !activated)
@@ -337,7 +341,9 @@
 /datum/nanite_program/proc/self_destruct()
 	if(is_permanent())
 		return
+	nanites.set_need_sync(TRUE)
 	qdel(src)
+
 ///A nanite program containing a behaviour protocol. Only one protocol of each class can be active at once.
 /datum/nanite_program/protocol
 	name = "Nanite Protocol"

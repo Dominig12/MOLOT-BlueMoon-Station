@@ -9,6 +9,7 @@
 	var/cloud_id = 0 			//0 if not connected to the cloud, 1-100 to set a determined cloud backup to draw from
 	var/cloud_active = TRUE		//if false, won't sync to the cloud
 	var/next_sync = 0
+	var/need_sync = TRUE
 	var/list/datum/nanite_program/programs = list()
 	var/max_programs = NANITE_PROGRAM_LIMIT
 
@@ -236,19 +237,25 @@
 		var/datum/nanite_program/SNP = X
 		add_program(null, SNP.copy())
 
+	set_need_sync(FALSE)
+
 ///Syncs the nanites to their assigned cloud copy, if it is available. If it is not, there is a small chance of a software error instead.
 /datum/component/nanites/proc/cloud_sync()
 	if(cloud_id)
 		var/datum/nanite_cloud_backup/backup = SSnanites.get_cloud_backup(cloud_id)
 		if(backup)
 			var/datum/component/nanites/cloud_copy = backup.nanites
-			if(cloud_copy)
+			if(cloud_copy?.need_sync || need_sync)
 				sync(null, cloud_copy)
+				cloud_copy.set_need_sync(FALSE)
 				return
 	//Without cloud syncing nanites can accumulate errors and/or defects
 	if(prob(8) && programs.len && requires_cloud_sync)
 		var/datum/nanite_program/NP = pick(programs)
 		NP.software_error()
+
+/datum/component/nanites/proc/set_need_sync(_need_sync = TRUE)
+	need_sync = _need_sync
 
 ///Adds a nanite program, replacing existing unique programs of the same type. A source program can be specified to copy its programming onto the new one.
 /datum/component/nanites/proc/add_program(datum/source, datum/nanite_program/new_program, datum/nanite_program/source_program)
@@ -265,6 +272,7 @@
 		source_program.copy_programming(new_program)
 	programs += new_program
 	new_program.on_add(src)
+	set_need_sync(TRUE)
 	return COMPONENT_PROGRAM_INSTALLED
 
 /datum/component/nanites/proc/consume_nanites(amount, force = FALSE)
@@ -335,14 +343,20 @@
 
 ///Updates the nanite volume bar visible in diagnostic HUDs
 /datum/component/nanites/proc/set_nanite_bar(remove = FALSE)
+	if(!host_mob)
+		return
 	var/image/holder = host_mob.hud_list[DIAG_NANITE_FULL_HUD]
+	if(remove || stealth)
+		holder.icon_state = null
+		return
+	var/nanite_percent = (nanite_volume / max_nanites) * 100
+	nanite_percent = clamp(CEILING(nanite_percent, 10), 10, 100)
+	if(nanite_percent == last_nanite_percent_bar)
+		return
+	last_nanite_percent_bar = nanite_percent
 	var/icon/I = icon(host_mob.icon, host_mob.icon_state, host_mob.dir)
 	holder.pixel_y = I.Height() - world.icon_size
 	holder.icon_state = null
-	if(remove || stealth)
-		return //bye icon
-	var/nanite_percent = (nanite_volume / max_nanites) * 100
-	nanite_percent = clamp(CEILING(nanite_percent, 10), 10, 100)
 	holder.icon_state = "nanites[nanite_percent]"
 
 /datum/component/nanites/proc/on_emp(datum/source, severity)
