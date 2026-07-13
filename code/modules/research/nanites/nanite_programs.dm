@@ -294,7 +294,6 @@
 		if(1)
 			host_mob.investigate_log("[src] nanite program was deleted by software error.", INVESTIGATE_NANITES)
 			self_destruct() //kill switch
-			nanites.set_need_sync(TRUE)
 			return
 		if(2) //deprogram codes
 			if(corruptable)
@@ -319,7 +318,6 @@
 				host_mob.investigate_log("[src] nanite program was converted into [rogue.name] by software error.", INVESTIGATE_NANITES)
 				nanites.add_program(null, rogue, src)
 				self_destruct()
-				nanites.set_need_sync(TRUE)
 
 /datum/nanite_program/proc/receive_signal(code, source)
 	if(activation_code && code == activation_code && !activated)
@@ -341,7 +339,6 @@
 /datum/nanite_program/proc/self_destruct()
 	if(is_permanent())
 		return
-	nanites.set_need_sync(TRUE)
 	qdel(src)
 
 ///A nanite program containing a behaviour protocol. Only one protocol of each class can be active at once.
