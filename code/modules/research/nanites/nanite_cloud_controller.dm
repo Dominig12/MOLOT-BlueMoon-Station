@@ -59,6 +59,7 @@
 	var/datum/component/nanites/cloud_copy = backup.AddComponent(/datum/component/nanites)
 	backup.cloud_id = cloud_id
 	backup.nanites = cloud_copy
+	SSnanites.sync_hosts(cloud_id)
 	investigate_log("[key_name(user)] created a new nanite cloud backup with id #[cloud_id]", INVESTIGATE_NANITES)
 
 /obj/machinery/computer/nanite_cloud_controller/ui_interact(mob/user, datum/tgui/ui)
@@ -191,6 +192,7 @@
 			if(backup)
 				playsound(src, 'sound/machines/terminal_prompt.ogg', 50, FALSE)
 				qdel(backup)
+				SSnanites.sync_hosts(current_view)
 				investigate_log("[key_name(usr)] deleted the nanite cloud backup #[current_view]", INVESTIGATE_NANITES)
 			. = TRUE
 		if("upload_program")
@@ -200,6 +202,7 @@
 					playsound(src, 'sound/machines/terminal_prompt.ogg', 50, FALSE)
 					var/datum/component/nanites/nanites = backup.nanites
 					nanites.add_program(null, disk.program.copy())
+					SSnanites.sync_hosts(current_view)
 					investigate_log("[key_name(usr)] uploaded program [disk.program.name] to cloud #[current_view]", INVESTIGATE_NANITES)
 			. = TRUE
 		if("remove_program")
