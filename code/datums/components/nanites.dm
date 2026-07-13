@@ -248,9 +248,8 @@
 		var/datum/nanite_cloud_backup/backup = SSnanites.get_cloud_backup(cloud_id)
 		if(backup)
 			var/datum/component/nanites/cloud_copy = backup.nanites
-			if(cloud_copy?.need_sync || need_sync)
+			if(cloud_copy && need_sync)
 				sync(null, cloud_copy)
-				cloud_copy.set_need_sync(FALSE)
 				return
 	//Without cloud syncing nanites can accumulate errors and/or defects
 	if(prob(8) && programs.len && requires_cloud_sync)
