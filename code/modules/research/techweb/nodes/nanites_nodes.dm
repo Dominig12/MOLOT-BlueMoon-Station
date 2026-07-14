@@ -81,5 +81,5 @@
 	description = "Extremely advanced Nanite programs with the potential of being extremely dangerous."
 	informing_radio_channels = list(RADIO_CHANNEL_SCIENCE)
 	prereq_ids = list("nanite_harmonic", "alientech")
-	design_ids = list("spreading_nanites","mindcontrol_nanites","mitosis_nanites")
+	design_ids = list("spreading_nanites","mindcontrol_nanites","mitosis_nanites","nanite_sting_nanites")
 	research_costs = list(TECHWEB_POINT_TYPE_GENERIC = 10000)
