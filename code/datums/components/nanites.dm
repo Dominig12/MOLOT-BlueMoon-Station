@@ -391,7 +391,7 @@
 		for(var/X in programs)
 			var/datum/nanite_program/NP = X
 			NP.on_shock(shock_damage)
-	set_need_sync(TRUE)
+		set_need_sync(TRUE)
 
 /datum/component/nanites/proc/on_minor_shock(datum/source)
 	adjust_nanites(null, -(rand(minor_shock_deletion_lower, minor_shock_deletion_upper)))			//Lose 5-15 flat nanite volume
@@ -456,6 +456,8 @@
 	return cloud_id
 
 /datum/component/nanites/proc/set_cloud_sync(datum/source, method)
+	SIGNAL_HANDLER
+
 	switch(method)
 		if(NANITE_CLOUD_TOGGLE)
 			cloud_active = !cloud_active
