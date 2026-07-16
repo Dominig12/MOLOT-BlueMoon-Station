@@ -30,7 +30,9 @@
 		volume = SEND_SIGNAL(target, COMSIG_NANITE_GET_VOLUME)
 		SEND_SIGNAL(target, COMSIG_NANITE_DELETE)
 
-	target.AddComponent(/datum/component/nanites/nanite_pump, volume)
+	if(target.AddComponent(/datum/component/nanites/nanite_pump, volume) == COMPONENT_INCOMPATIBLE)
+		return
+
 	START_PROCESSING(SSobj, src)
 	next_sync = world.time + periodic_sync
 

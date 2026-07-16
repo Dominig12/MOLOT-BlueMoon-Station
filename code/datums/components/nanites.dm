@@ -60,7 +60,7 @@
 	var/last_nanite_percent_bar = 0
 
 /datum/component/nanites/Initialize(amount = 100, cloud = 0)
-	if(!isliving(parent) && !istype(parent, /datum/nanite_cloud_backup))
+	if(!isliving(parent) && !istype(parent, /datum/nanite_cloud_backup) && !istype(parent, /obj/item/implant/nanite_pump))
 		return COMPONENT_INCOMPATIBLE
 
 	nanite_volume = amount
