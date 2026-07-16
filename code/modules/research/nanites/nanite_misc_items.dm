@@ -25,7 +25,7 @@
 /obj/item/implant/nanite_pump/implant(mob/living/target, mob/user, silent, force)
 	. = ..()
 	if(!.)
-		return
+		return FALSE
 
 	var/volume = 0
 	if(SEND_SIGNAL(target, COMSIG_HAS_NANITES))
@@ -33,10 +33,11 @@
 		SEND_SIGNAL(target, COMSIG_NANITE_DELETE)
 
 	if(target.AddComponent(/datum/component/nanites/nanite_pump, volume) == COMPONENT_INCOMPATIBLE)
-		return
+		return FALSE
 
 	START_PROCESSING(SSobj, src)
 	next_sync = world.time + periodic_sync
+	return TRUE
 
 /obj/item/implant/nanite_pump/removed(mob/living/source, silent, special)
 	. = ..()
