@@ -586,3 +586,10 @@
 /datum/component/nanites/permanent
 	qdel_self_on_depletion = FALSE
 	can_be_deleted = FALSE
+
+/datum/component/nanites/nanite_pump
+	qdel_self_on_depletion = FALSE
+	cloud_active = FALSE
+	requires_cloud_sync = FALSE
+	regen_rate = 2
+	safety_threshold = 0
