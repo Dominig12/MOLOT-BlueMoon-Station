@@ -112,6 +112,8 @@
 /obj/item/implantcase/nanite_pump/attack_self(mob/user)
 	. = ..()
 
+	if(!imp)
+		return
 	var/obj/item/implant/nanite_pump/pump = imp
 	if(pump.set_program_cloud)
 		to_chat(user, "<span class='warning'>Невозможно установить новое программное обеспечение</span>")
