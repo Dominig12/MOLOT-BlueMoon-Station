@@ -48,20 +48,8 @@
 		to_chat(imp_in, "<span class='warning'>Невозможно установить новое программное обеспечение</span>")
 		return
 	var/cloud_id = input("Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака") as num|null
-	if(cloud_id)
-		var/datum/nanite_cloud_backup/backup = SSnanites.get_cloud_backup(cloud_id)
-		if(!backup)
-			to_chat(imp_in, "<span class='warning'>Сервер не отвечает на запрос, попробуйте позже</span>")
-			return
-		set_program_cloud = cloud_id
-		SEND_SIGNAL(pump_nanites, COMSIG_NANITE_SYNC, backup)
-
-		for(var/X in actions)
-			var/datum/action/A = X
-			A.Remove(imp_in)
-
-		activated = FALSE
-		sync_nanites()
+	set_programs_pump(cloud_id, imp_in)
+	sync_nanites()
 
 /obj/item/implant/nanite_pump/get_data()
 	var/dat = {"<b>Технические характеристики Импланта:</b><BR>
@@ -88,9 +76,38 @@
 
 /obj/item/implant/nanite_pump/proc/check_nanites()
 	if(!SEND_SIGNAL(imp_in, COMSIG_HAS_NANITES))
-		imp_in.AddComponent(/datum/component/nanites/nanite_pump, 0)
+		imp_in.AddComponent(/datum/component/nanites/nanite_pump, 1)
+
+/obj/item/implant/nanite_pump/proc/set_programs_pump(cloud_id, mob/user)
+	if(cloud_id)
+		var/datum/nanite_cloud_backup/backup = SSnanites.get_cloud_backup(cloud_id)
+		if(!backup)
+			to_chat(user, "<span class='warning'>Сервер не отвечает на запрос, попробуйте позже</span>")
+			return
+		set_program_cloud = cloud_id
+		SEND_SIGNAL(pump_nanites, COMSIG_NANITE_SYNC, backup)
+
+		if(user == imp_in)
+			for(var/X in actions)
+				var/datum/action/A = X
+				A.Remove(imp_in)
+
+		activated = FALSE
 
 /obj/item/implantcase/nanite_pump
 	name = "implant case - 'Nanite Pump'"
 	desc = "A glass case containing an nanite pump implant."
 	imp_type = /obj/item/implant/nanite_pump
+
+/obj/item/implantcase/nanite_pump/attack_self(mob/user)
+	. = ..()
+	if(!.)
+		return
+
+	var/obj/item/implantcase/nanite_pump/pump = imp
+	if(pump.set_program_cloud)
+		to_chat(user, "<span class='warning'>Невозможно установить новое программное обеспечение</span>")
+
+	var/cloud_id = input("Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака") as num|null
+	pump.set_programs_pump(cloud_id, user)
+
