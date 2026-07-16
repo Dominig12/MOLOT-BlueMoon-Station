@@ -65,6 +65,11 @@
 				<b>Целостность:</b> Передатчик уязвим к электромагнитным импульсам разрушая эталонные программы, что соответственно приводит к порче наномашин носителя, стремительно убивая его."}
 	return dat
 
+/obj/item/implant/nanite_pump/can_be_implanted_in(mob/living/target)
+	if(target.mob_biotypes & (MOB_ORGANIC | MOB_UNDEAD) || HAS_TRAIT(target, TRAIT_COMPATIBLE_WITH_NANOMACHINES))
+		return TRUE
+	return FALSE
+
 /obj/item/implant/nanite_pump/process(delta_time)
 	if(world.time < next_sync)
 		return
@@ -110,6 +115,6 @@
 	if(pump.set_program_cloud)
 		to_chat(user, "<span class='warning'>Невозможно установить новое программное обеспечение</span>")
 
-	var/cloud_id = input("Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака") as num|null
+	var/cloud_id = input(user, "Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака") as num|null
 	pump.set_programs_pump(cloud_id, user)
 
