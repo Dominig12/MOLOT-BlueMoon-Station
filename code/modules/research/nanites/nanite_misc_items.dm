@@ -11,6 +11,8 @@
 /obj/item/implant/nanite_pump
 	name = "nanite pump"
 	desc = "This device looks like a pump with an input and output and functions as a small nanomachine factory, a filter for spent nanomachines, and a similar reprogrammer that restores damaged programs. However, without constant updates and reprocessing, these programs are short-lived."
+	icon = 'modular_bluemoon/icons/obj/surgery.dmi'
+	icon_state = "pumpextreme"
 	var/datum/component/nanites/nanite_pump/pump_nanites = null
 	var/set_program_cloud = 0
 	var/periodic_sync = 15 SECONDS
@@ -49,7 +51,7 @@
 	if(set_program_cloud)
 		to_chat(imp_in, "<span class='warning'>Невозможно установить новое программное обеспечение</span>")
 		return
-	var/cloud_id = input("Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака") as num|null
+	var/cloud_id = input(imp_in, "Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака") as num|null
 	set_programs_pump(cloud_id, imp_in)
 	sync_nanites()
 
@@ -71,7 +73,7 @@
 	return FALSE
 
 /obj/item/implant/nanite_pump/process(delta_time)
-	if(world.time < next_sync)
+	if(world.time >= next_sync)
 		return
 
 	next_sync = world.time + periodic_sync
@@ -108,8 +110,6 @@
 
 /obj/item/implantcase/nanite_pump/attack_self(mob/user)
 	. = ..()
-	if(!.)
-		return
 
 	var/obj/item/implant/nanite_pump/pump = imp
 	if(pump.set_program_cloud)
