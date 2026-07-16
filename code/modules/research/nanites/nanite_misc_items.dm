@@ -104,7 +104,7 @@
 	if(!.)
 		return
 
-	var/obj/item/implantcase/nanite_pump/pump = imp
+	var/obj/item/implant/nanite_pump/pump = imp
 	if(pump.set_program_cloud)
 		to_chat(user, "<span class='warning'>Невозможно установить новое программное обеспечение</span>")
 
