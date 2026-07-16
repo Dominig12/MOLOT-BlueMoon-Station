@@ -10,7 +10,7 @@
 
 /obj/item/implant/nanite_pump
 	name = "nanite pump"
-	desk = "This device looks like a pump with an input and output and functions as a small nanomachine factory, a filter for spent nanomachines, and a similar reprogrammer that restores damaged programs. However, without constant updates and reprocessing, these programs are short-lived."
+	desc = "This device looks like a pump with an input and output and functions as a small nanomachine factory, a filter for spent nanomachines, and a similar reprogrammer that restores damaged programs. However, without constant updates and reprocessing, these programs are short-lived."
 	var/datum/component/nanites/nanite_pump/pump_nanites = null
 	var/set_program_cloud = 0
 	var/periodic_sync = 15 SECONDS
