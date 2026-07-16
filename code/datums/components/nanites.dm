@@ -162,6 +162,8 @@
 
 /datum/component/nanites/process()
 	adjust_nanites(null, regen_rate)
+	if(!host_mob)
+		return
 	add_research()
 	for(var/X in programs)
 		var/datum/nanite_program/NP = X
