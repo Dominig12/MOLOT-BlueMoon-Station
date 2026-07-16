@@ -69,7 +69,7 @@
 	return dat
 
 /obj/item/implant/nanite_pump/can_be_implanted_in(mob/living/target)
-	if(target.mob_biotypes & (MOB_ORGANIC | MOB_UNDEAD) || HAS_TRAIT(target, TRAIT_COMPATIBLE_WITH_NANOMACHINES))
+	if(target.mob_biotypes & (MOB_ORGANIC | MOB_UNDEAD) || HAS_TRAIT(target, TRAIT_COMPATIBLE_WITH_NANITES))
 		return TRUE
 	return FALSE
 
