@@ -63,15 +63,32 @@
 		activated = FALSE
 		sync_nanites()
 
+/obj/item/implant/nanite_pump/get_data()
+	var/dat = {"<b>Технические характеристики Импланта:</b><BR>
+				<b>Название:</b> Нанитная помпа<BR>
+				<b>Время Износа:</b> Неизвестно.<BR>
+				<b>Дополнительные Сведения:</b> Загружены программы из облака: [set_program_cloud].<BR>
+				<HR>
+				<b>Дополнительная информация по импланту:</b><BR>
+				<b>Функционал:</b>  Внедряет в тело носителя наномашины и является небольшим заводом по их репликации, фильтрации, синхронизации с эталонными инструкциями. <BR>
+				<b>Дополнительные Функции:</b> Не обнаружено.<BR>
+				<b>Целостность:</b> Передатчик уязвим к электромагнитным импульсам разрушая эталонные программы, что соответственно приводит к порче наномашин носителя, стремительно убивая его."}
+	return dat
+
 /obj/item/implant/nanite_pump/process(delta_time)
 	if(world.time < next_sync)
 		return
 
 	next_sync = world.time + periodic_sync
+	check_nanites()
 	sync_nanites()
 
 /obj/item/implant/nanite_pump/proc/sync_nanites()
 	SEND_SIGNAL(imp_in, COMSIG_NANITE_SYNC, pump_nanites)
+
+/obj/item/implant/nanite_pump/proc/check_nanites()
+	if(!SEND_SIGNAL(imp_in, COMSIG_HAS_NANITES))
+		imp_in.AddComponent(/datum/component/nanites/nanite_pump, 0)
 
 /obj/item/implantcase/nanite_pump
 	name = "implant case - 'Nanite Pump'"
