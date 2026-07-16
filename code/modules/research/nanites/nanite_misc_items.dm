@@ -95,7 +95,7 @@
 			to_chat(user, "<span class='warning'>Сервер не отвечает на запрос, попробуйте позже</span>")
 			return
 		set_program_cloud = cloud_id
-		SEND_SIGNAL(pump_nanites, COMSIG_NANITE_SYNC, backup.nanites)
+		SEND_SIGNAL(src, COMSIG_NANITE_SYNC, backup.nanites)
 
 		if(user == imp_in)
 			for(var/X in actions)
