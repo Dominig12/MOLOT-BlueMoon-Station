@@ -37,7 +37,7 @@
 		return FALSE
 
 	START_PROCESSING(SSobj, src)
-	next_sync = world.time + periodic_sync
+	next_sync = world.time + NANITE_PUMP_SYNC_DELAY
 	return TRUE
 
 /obj/item/implant/nanite_pump/removed(mob/living/source, silent, special)
