@@ -15,7 +15,6 @@
 	icon_state = "pumpextreme"
 	var/datum/component/nanites/nanite_pump/pump_nanites = null
 	var/set_program_cloud = 0
-	var/periodic_sync = 15 SECONDS
 	var/next_sync
 
 /obj/item/implant/nanite_pump/Initialize(mapload)
@@ -93,7 +92,7 @@
 	if(world.time >= next_sync)
 		return
 
-	next_sync = world.time + periodic_sync
+	next_sync = world.time + NANITE_PUMP_SYNC_DELAY
 	if(!check_nanites())
 		to_chat(imp_in, "<span class='warning'>Нанитная помпа внутри вашего тела растворяется из за вашей несовместимости с нанитами</span>")
 		qdel(src)
