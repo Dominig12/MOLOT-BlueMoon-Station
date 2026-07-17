@@ -44,9 +44,9 @@
 	STOP_PROCESSING(SSobj, src)
 	var/volume = SEND_SIGNAL(source, COMSIG_NANITE_GET_VOLUME)
 	SEND_SIGNAL(source, COMSIG_NANITE_DELETE)
-	source.AddComponent(/datum/component/nanites, volume)
-	SEND_SIGNAL(source, COMSIG_NANITE_SYNC, pump_nanites)
-	SEND_SIGNAL(source, COMSIG_NANITE_SET_REGEN, -50)
+	if(source.AddComponent(/datum/component/nanites, volume) != COMPONENT_INCOMPATIBLE)
+		SEND_SIGNAL(source, COMSIG_NANITE_SYNC, pump_nanites)
+		SEND_SIGNAL(source, COMSIG_NANITE_SET_REGEN, -50)
 
 /obj/item/implant/nanite_pump/activate()
 	. = ..()
@@ -94,7 +94,10 @@
 		return
 
 	next_sync = world.time + periodic_sync
-	check_nanites()
+	if(!check_nanites())
+		to_chat(imp_in, "<span class='warning'>Нанитная помпа внутри вашего тела растворяется из за вашей несовместимости с нанитами</span>")
+		qdel(src)
+		return
 	sync_nanites()
 
 /obj/item/implant/nanite_pump/proc/sync_nanites()
@@ -102,8 +105,10 @@
 	SEND_SIGNAL(imp_in, COMSIG_NANITE_SYNC, pump_nanites)
 
 /obj/item/implant/nanite_pump/proc/check_nanites()
-	if(!SEND_SIGNAL(imp_in, COMSIG_HAS_NANITES))
-		imp_in.AddComponent(/datum/component/nanites/nanite_pump, 1)
+	/obj/item/implant/nanite_pump/proc/check_nanites()
+    if(SEND_SIGNAL(imp_in, COMSIG_HAS_NANITES))
+        return TRUE
+    return imp_in.AddComponent(/datum/component/nanites/nanite_pump, 1) != COMPONENT_INCOMPATIBLE
 
 /obj/item/implant/nanite_pump/proc/set_programs_pump(cloud_id, mob/user)
 	if(cloud_id)
