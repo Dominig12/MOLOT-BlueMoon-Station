@@ -45,6 +45,7 @@
 	var/volume = SEND_SIGNAL(source, COMSIG_NANITE_GET_VOLUME)
 	SEND_SIGNAL(source, COMSIG_NANITE_DELETE)
 	source.AddComponent(/datum/component/nanites, volume)
+	SEND_SIGNAL(source, COMSIG_NANITE_SYNC, pump_nanites)
 	SEND_SIGNAL(source, COMSIG_NANITE_SET_REGEN, -50)
 
 /obj/item/implant/nanite_pump/activate()
@@ -57,10 +58,16 @@
 	sync_nanites()
 
 /obj/item/implant/nanite_pump/get_data()
+	var/programs = ""
+	for(var/X in pump_nanites.programs)
+		var/datum/nanite_program/NP = X
+		programs += "<b>[NP.name]</b> | [NP.activated ? "Active" : "Inactive"]<BR>"
+
 	var/dat = {"<b>Технические характеристики Импланта:</b><BR>
 				<b>Название:</b> Нанитная помпа<BR>
 				<b>Время Износа:</b> Неизвестно.<BR>
 				<b>Дополнительные Сведения:</b> Загружены программы из облака: [set_program_cloud].<BR>
+				[programs]
 				<HR>
 				<b>Дополнительная информация по импланту:</b><BR>
 				<b>Функционал:</b>  Внедряет в тело носителя наномашины и является небольшим заводом по их репликации, фильтрации, синхронизации с эталонными инструкциями. <BR>
