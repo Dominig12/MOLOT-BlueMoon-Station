@@ -91,7 +91,7 @@
 	return FALSE
 
 /obj/item/implant/nanite_pump/process(delta_time)
-	if(world.time >= next_sync)
+	if(world.time < next_sync)
 		return
 
 	next_sync = world.time + NANITE_PUMP_SYNC_DELAY
