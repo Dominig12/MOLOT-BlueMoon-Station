@@ -53,7 +53,9 @@
 	if(set_program_cloud)
 		to_chat(imp_in, "<span class='warning'>Невозможно установить новое программное обеспечение</span>")
 		return
-	var/cloud_id = tgui_input_number(imp_in, "Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака", 0, 100, 1) as num|null
+	var/cloud_id = tgui_input_number(imp_in, "Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака", 0, 100, 0)
+	if(!isnum(cloud_id))
+		return
 	set_programs_pump(cloud_id, imp_in)
 	sync_nanites()
 
