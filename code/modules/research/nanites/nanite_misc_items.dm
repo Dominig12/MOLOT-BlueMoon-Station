@@ -57,6 +57,11 @@
 	set_programs_pump(cloud_id, imp_in)
 	sync_nanites()
 
+/obj/item/implant/nanite_pump/examine(mob/user)
+	. = ..()
+	if(set_program_cloud)
+		. += "<BR><b>CLOUD ID:</b> [set_program_cloud]"
+
 /obj/item/implant/nanite_pump/get_data()
 	var/programs = ""
 	for(var/X in pump_nanites.programs)
@@ -111,20 +116,16 @@
 
 		activated = FALSE
 
+// /obj/item/implant/nanite_pump/attack_self(mob/user)
+// 	. = ..()
+// 	if(set_program_cloud)
+// 		to_chat(user, "<span class='warning'>Невозможно установить новое программное обеспечение</span>")
+
+// 	var/cloud_id = input(user, "Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака") as num|null
+// 	set_programs_pump(cloud_id, user)
+
 /obj/item/implantcase/nanite_pump
 	name = "implant case - 'Nanite Pump'"
 	desc = "A glass case containing an nanite pump implant."
 	imp_type = /obj/item/implant/nanite_pump
-
-/obj/item/implantcase/nanite_pump/attack_self(mob/user)
-	. = ..()
-
-	if(!imp)
-		return
-	var/obj/item/implant/nanite_pump/pump = imp
-	if(pump.set_program_cloud)
-		to_chat(user, "<span class='warning'>Невозможно установить новое программное обеспечение</span>")
-
-	var/cloud_id = input(user, "Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака") as num|null
-	pump.set_programs_pump(cloud_id, user)
 
