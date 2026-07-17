@@ -94,6 +94,7 @@
 	sync_nanites()
 
 /obj/item/implant/nanite_pump/proc/sync_nanites()
+	SEND_SIGNAL(imp_in, COMSIG_NANITE_SET_CLOUD, 0)
 	SEND_SIGNAL(imp_in, COMSIG_NANITE_SYNC, pump_nanites)
 
 /obj/item/implant/nanite_pump/proc/check_nanites()
