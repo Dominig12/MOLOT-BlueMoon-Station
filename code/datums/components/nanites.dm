@@ -115,6 +115,9 @@
 		RegisterSignal(parent, COMSIG_NANITE_SIGNAL, PROC_REF(receive_signal))
 		RegisterSignal(parent, COMSIG_NANITE_COMM_SIGNAL, PROC_REF(receive_comm_signal))
 
+	if(istype(parent, /obj/item/implant/nanite_pump))
+		RegisterSignal(parent, COMSIG_ATOM_EMP_ACT, PROC_REF(on_emp))
+
 /datum/component/nanites/UnregisterFromParent()
 	UnregisterSignal(parent, list(COMSIG_HAS_NANITES,
 								COMSIG_NANITE_IS_STEALTHY,
