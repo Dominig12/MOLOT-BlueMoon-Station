@@ -8,6 +8,8 @@
 /obj/item/nanite_injector/attack_self(mob/user)
 	user.AddComponent(/datum/component/nanites, 150)
 
+#define NANITE_PUMP_SYNC_DELAY 15 SECONDS
+
 /obj/item/implant/nanite_pump
 	name = "nanite pump"
 	desc = "This device looks like a pump with an input and output and functions as a small nanomachine factory, a filter for spent nanomachines, and a similar reprogrammer that restores damaged programs. However, without constant updates and reprocessing, these programs are short-lived."
@@ -123,6 +125,8 @@
 				A.Remove(imp_in)
 
 		activated = FALSE
+
+#undef NANITE_PUMP_SYNC_DELAY
 
 // /obj/item/implant/nanite_pump/attack_self(mob/user)
 // 	. = ..()
