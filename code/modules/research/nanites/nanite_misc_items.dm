@@ -105,7 +105,6 @@
 	SEND_SIGNAL(imp_in, COMSIG_NANITE_SYNC, pump_nanites)
 
 /obj/item/implant/nanite_pump/proc/check_nanites()
-	/obj/item/implant/nanite_pump/proc/check_nanites()
     if(SEND_SIGNAL(imp_in, COMSIG_HAS_NANITES))
         return TRUE
     return imp_in.AddComponent(/datum/component/nanites/nanite_pump, 1) != COMPONENT_INCOMPATIBLE
