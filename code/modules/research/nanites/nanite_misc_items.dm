@@ -128,13 +128,13 @@
 
 #undef NANITE_PUMP_SYNC_DELAY
 
-// /obj/item/implant/nanite_pump/attack_self(mob/user)
-// 	. = ..()
-// 	if(set_program_cloud)
-// 		to_chat(user, "<span class='warning'>Невозможно установить новое программное обеспечение</span>")
+/obj/item/implant/nanite_pump/attack_self(mob/user)
+	. = ..()
+	if(set_program_cloud)
+		to_chat(user, "<span class='warning'>Невозможно установить новое программное обеспечение</span>")
 
-// 	var/cloud_id = input(user, "Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака") as num|null
-// 	set_programs_pump(cloud_id, user)
+	var/cloud_id = input(user, "Установите облако с которого будут скачены программы в имплант. Это можно сделать ОДИН РАЗ", "ID облака") as num|null
+	set_programs_pump(cloud_id, user)
 
 /obj/item/implantcase/nanite_pump
 	name = "implant case - 'Nanite Pump'"
