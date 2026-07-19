@@ -29,6 +29,17 @@
 	QDEL_NULL(dna)
 	last_mind = null
 	GLOB.carbon_list -= src
+	//unequip при QDELING(моб) пропускается (см. /obj/item/Destroy), поэтому
+	//слот-вары отпускаем вручную - иначе зависший в GC моб пиннит экипировку
+	back = null
+	wear_mask = null
+	wear_neck = null
+	internal = null
+	head = null
+	handcuffed = null
+	legcuffed = null
+	//фантом items-галлюцинации живёт в nullspace и без qdel утёк бы насовсем
+	QDEL_NULL(halitem)
 
 /mob/living/carbon/proc/get_breath_buffer()
 	if(!breath_buffer)
@@ -258,7 +269,7 @@
 			verb_text = thrown_item.throw_verb
 	visible_message(span_danger("[src] [verb_text][plural_s(verb_text)] [thrown_thing][power_throw ? " really hard!" : "."]"), \
 					span_danger("You [verb_text] [thrown_thing][power_throw ? " really hard!" : "."]"))
-	log_message("has thrown [thrown_thing] [power_throw > 0 ? "really hard" : ""]", LOG_ATTACK)
+	log_message("has thrown [thrown_thing] [power_throw > 0 ? "really hard" : ""]", LOG_ATTACK, target = thrown_thing)
 	do_attack_animation(target, no_effect = 1)
 	var/extra_throw_range = 0 // HAS_TRAIT(src, TRAIT_THROWINGARM) ? 2 : 0
 	playsound(loc, 'sound/weapons/punchmiss.ogg', 50, 1, -1)

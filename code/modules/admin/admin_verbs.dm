@@ -52,6 +52,7 @@ GLOBAL_PROTECT(admin_verbs_admin)
 	/client/proc/toggle_view_range,		/*changes how far we can see*/
 	/client/proc/getserverlogs,		/*for accessing server logs*/
 	/client/proc/getcurrentlogs,		/*for accessing server logs for the current round*/
+	/client/proc/log_viewer,		/*open log viewer*/
 	/client/proc/cmd_admin_subtle_message,	/*send a message to somebody as a 'voice in their head'*/
 	/client/proc/cmd_admin_delete,		/*delete an instance/object/mob/etc*/
 	/client/proc/cmd_admin_check_contents,	/*displays the contents of an instance*/
@@ -219,6 +220,7 @@ GLOBAL_PROTECT(admin_verbs_debug)
 	/client/proc/tick_spikes_report,
 	/client/proc/tick_spikes_capture,
 	/client/proc/tick_spikes_simulate,
+	/client/proc/lag_switch_panel,
 	/client/proc/cmd_display_init_log,
 	/client/proc/cmd_display_overlay_log,
 	/client/proc/reload_configuration,
