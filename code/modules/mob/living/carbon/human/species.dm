@@ -2626,15 +2626,6 @@ GLOBAL_LIST_EMPTY(roundstart_race_names)
 			if(30 to INFINITY)
 				H.throw_alert("tempfeel", /atom/movable/screen/alert/hot, 3)
 
-	var/heat_diff = H.bodytemperature - loc_temp
-	if(abs(heat_diff) > 1) // Only transfer if there's meaningful temperature difference
-		var/mob_heat_capacity = H.physiology.heat_capacity * get_size(H)
-		var/env_heat_capacity = environment.heat_capacity()
-
-		if(env_heat_capacity > 0 && mob_heat_capacity > 0)
-			var/temperature_change = (heat_diff * mob_heat_capacity) / (mob_heat_capacity + env_heat_capacity)
-			environment.set_temperature(loc_temp + temperature_change)
-
 	// +/- 50 degrees from 310K is the 'safe' zone, where no damage is dealt.
 	if(H.bodytemperature > (BODYTEMP_HEAT_DAMAGE_LIMIT + hot_offset) && !HAS_TRAIT(H, TRAIT_RESISTHEAT))
 		//Body temperature is too hot.
@@ -2674,7 +2665,7 @@ GLOBAL_LIST_EMPTY(roundstart_race_names)
 		//Apply cold slowdown
 		H.add_or_update_variable_movespeed_modifier(/datum/movespeed_modifier/cold, multiplicative_slowdown = (((BODYTEMP_COLD_DAMAGE_LIMIT + cold_offset) - H.bodytemperature) / COLD_SLOWDOWN_FACTOR))
 		// For dead mobs, stop cold damage once body is frozen
-		if(H.stat != DEAD || H.bodytemperature > BODYTEMP_DEAD_FROZEN_THRESHOLD)
+		if(H.stat != DEAD || H.bodytemperature > BODYTEMP_FROZEN_THRESHOLD)
 			var/cold_damage = 0
 			var/shiver_level = 0
 			switch(H.bodytemperature)
