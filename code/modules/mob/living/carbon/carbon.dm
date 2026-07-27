@@ -42,7 +42,7 @@
 	QDEL_NULL(halitem)
 
 /mob/living/carbon/LifeEarlyReturn()
-	return client || last_mind
+	return ..() && !last_mind
 
 /mob/living/carbon/execute_mode(obj/item/expected_item, expected_active_hand_index, force = FALSE)
 	. = ..()
