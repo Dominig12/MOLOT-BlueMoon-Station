@@ -10,7 +10,7 @@
 		return
 
 	// BLUEMOON OPTIMIZATION: throttle clientless mobs far from players
-	if(!client)
+	if(!CheckPlayer())
 		var/turf/our_turf = get_turf(src)
 		if(our_turf)
 			var/list/clients_on_z = SSmobs.clients_by_zlevel
@@ -34,7 +34,7 @@
 
 	. = SEND_SIGNAL(src, COMSIG_LIVING_LIFE, seconds, times_fired)
 	// Dead clientless mobs: only need BiologicalLife for rot/disease/organ decay, skip expensive PhysicalLife and status effects
-	if(stat == DEAD && !client)
+	if(stat == DEAD && !CheckPlayer())
 		if(!(. & COMPONENT_INTERRUPT_LIFE_BIOLOGICAL))
 			BiologicalLife(seconds, times_fired)
 		return
@@ -47,7 +47,7 @@
 	// CODE BELOW SHOULD ONLY BE THINGS THAT SHOULD HAPPEN NO MATTER WHAT AND CAN NOT BE SUSPENDED!
 	// Otherwise, it goes into one of the two split Life procs!
 
-	if (client)
+	if (CheckPlayer())
 		var/turf/T = get_turf(src)
 		if(!T)
 			for(var/obj/effect/landmark/error/E in GLOB.landmarks_list)
@@ -69,6 +69,8 @@
 		log_game("Z-TRACKING: [src] of type [src.type] has a Z-registration despite not having a client.")
 		update_z(null)
 
+/mob/living/proc/CheckPlayer()
+	return client
 /**
   * Handles biological life processes like chemical metabolism, breathing, etc
   * Returns TRUE or FALSE based on if we were interrupted. This is used by overridden variants to check if they should stop.
@@ -120,7 +122,7 @@
 		return FALSE
 
 	// Skip expensive environment/gravity processing for clientless mobs on Z-levels with no players
-	if(!client)
+	if(!CheckPlayer())
 		var/turf/T = get_turf(src)
 		if(T)
 			var/list/clients_on_z = SSmobs.clients_by_zlevel

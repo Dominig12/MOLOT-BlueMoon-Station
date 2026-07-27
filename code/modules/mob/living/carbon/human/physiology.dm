@@ -24,6 +24,9 @@
 
 	var/hunger_mod = 1		//% of hunger rate taken per tick.
 
+	/// Approximate thermal mass of the body (kJ/K). Used for heat exchange with environment.
+	var/heat_capacity = 3500
+
 	/// footstep type override for both shoeless and not footstep sounds.
 	var/footstep_type
 
