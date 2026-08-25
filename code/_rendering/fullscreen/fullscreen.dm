@@ -148,11 +148,40 @@
 	layer = UI_DAMAGE_LAYER
 	plane = FULLSCREEN_PLANE
 
+/atom/movable/screen/fullscreen/scaled/synthcorrupt
+	icon_state = "synthcorrupt"
+	layer = UI_DAMAGE_LAYER
+	plane = GRAVITY_PULSE_PLANE
+	severity_max = 6
+	severity_min = 0
+
+/atom/movable/screen/fullscreen/scaled/synthcorrupt/SetSeverity(severity)
+	src.severity = clamp(severity, severity_min, severity_max)
+	src.alpha = clamp(255 - (42.5 * src.severity), 0, 255)
+
+/atom/movable/screen/fullscreen/scaled/synthcorrupt/ShouldShow(mob/M)
+	if(!..())
+		return FALSE
+
+	if(!isrobotic(M))
+		return FALSE
+
+	return TRUE
+
 /atom/movable/screen/fullscreen/scaled/bloodloss
 	icon_state = "passage"
 	layer = UI_DAMAGE_LAYER
 	plane = FULLSCREEN_PLANE
 	severity_max = 10
+
+/atom/movable/screen/fullscreen/scaled/bloodloss/ShouldShow(mob/M)
+	if(!..())
+		return FALSE
+
+	if(isrobotic(M))
+		return FALSE
+
+	return TRUE
 
 /atom/movable/screen/fullscreen/scaled/crit
 	icon_state = "passage"
