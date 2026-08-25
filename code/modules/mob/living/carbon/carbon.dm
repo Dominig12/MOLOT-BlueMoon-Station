@@ -1004,10 +1004,9 @@
 				severity = 5
 			if(85 to INFINITY)
 				severity = 6
-		if(severity)
-			overlay_fullscreen("synthcorrupt", /atom/movable/screen/fullscreen/scaled/synthcorrupt, severity)
-		else
-			clear_fullscreen("synthcorrupt")
+		overlay_fullscreen("synthcorrupt", /atom/movable/screen/fullscreen/scaled/synthcorrupt, severity)
+	else
+		clear_fullscreen("synthcorrupt")
 
 	var/blood_effect_volume = blood_volume + integrating_blood
 	var/blood_threshold_high = BLOOD_VOLUME_OKAY * blood_ratio

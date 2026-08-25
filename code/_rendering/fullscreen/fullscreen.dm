@@ -152,12 +152,42 @@
 	icon_state = "synthcorrupt"
 	layer = UI_DAMAGE_LAYER
 	plane = GRAVITY_PULSE_PLANE
+	vis_flags = VIS_INHERIT_LAYER
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
 	severity_max = 6
 	severity_min = 0
+	var/obj/effect/synthcorrupt_particles_holder/holder
 
 /atom/movable/screen/fullscreen/scaled/synthcorrupt/SetSeverity(severity)
 	src.severity = clamp(severity, severity_min, severity_max)
-	src.alpha = clamp(255 - (42.5 * src.severity), 0, 255)
+	src.alpha = clamp(42 * src.severity, 0, 255)
+
+	holder = new(src, severity)
+	LAZYADD(vis_contents, holder)
+
+/obj/effect/synthcorrupt_particles_holder
+	alpha = 255
+	plane = FIELD_OF_VISION_LAYER
+	appearance_flags = PIXEL_SCALE
+	mouse_opacity = MOUSE_OPACITY_TRANSPARENT
+	vis_flags = VIS_INHERIT_LAYER
+
+/obj/effect/synthcorrupt_particles_holder/New(loc, severity)
+	. = ..()
+	var/particles/synthcorrupt_particles/particle = new
+	particle.spawning = severity * 10
+	particle.count = severity * 50
+	particles = particle
+
+/particles/synthcorrupt_particles
+	icon = 'icons/screen/particle.dmi'
+	icon_state = "synthcorrupt"
+	width = 960
+	height = 960
+	count = 300
+	spawning = 30
+	lifespan = 3
+	position = generator("box", vector(-480,-480), vector(480,480))
 
 /atom/movable/screen/fullscreen/scaled/synthcorrupt/ShouldShow(mob/M)
 	if(!..())
