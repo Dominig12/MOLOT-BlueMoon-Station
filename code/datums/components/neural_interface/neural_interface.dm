@@ -134,36 +134,37 @@ proc/string_repeat(string, count)
 		attached_client = host_mob?.client
 
 	if(attached_client)
-		RegisterSignal(host_mob, COMSIG_MOB_GHOSTIZE, PROC_REF(on_mob_ghostize))
-		RegisterSignal(host_mob, COMSIG_MOB_KEY_CHANGE, PROC_REF(on_mob_key_change))
-		RegisterSignal(host_mob, COMSIG_MOB_PRE_PLAYER_CHANGE, PROC_REF(on_mob_key_change))
-		// Реконнект клиента к телу: мобовый сигнал, клиентский COMSIG_CLIENT_MOB_LOGIN на мобе не приходит
-		RegisterSignal(host_mob, COMSIG_MOB_CLIENT_LOGIN, PROC_REF(on_client_reconnect))
-
-		RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_ADD_SOURCE, PROC_REF(on_add_source))
-		RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_REMOVE_SOURCE, PROC_REF(on_remove_source))
-		RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_WRITE_LOG, PROC_REF(on_write_log))
-		RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_WRITE_DATA, PROC_REF(on_write_data))
-		RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, PROC_REF(on_write_image_data))
-
-		RegisterSignal(src, COMSIG_NEURAL_INTERFACE_ADD_SOURCE, PROC_REF(on_add_source))
-		RegisterSignal(src, COMSIG_NEURAL_INTERFACE_REMOVE_SOURCE, PROC_REF(on_remove_source))
-		RegisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_LOG, PROC_REF(on_write_log))
-		RegisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_DATA, PROC_REF(on_write_data))
-		RegisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, PROC_REF(on_write_image_data))
-
-		signal_registrations += list(
-			COMSIG_MOB_GHOSTIZE,
-			COMSIG_MOB_KEY_CHANGE,
-			COMSIG_MOB_PRE_PLAYER_CHANGE,
-			COMSIG_MOB_CLIENT_LOGIN,
-			COMSIG_NEURAL_INTERFACE_ADD_SOURCE,
-			COMSIG_NEURAL_INTERFACE_REMOVE_SOURCE,
-			COMSIG_NEURAL_INTERFACE_WRITE_LOG,
-			COMSIG_NEURAL_INTERFACE_WRITE_DATA,
-			COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA
-		)
 		is_client_attached = TRUE
+
+	RegisterSignal(host_mob, COMSIG_MOB_GHOSTIZE, PROC_REF(on_mob_ghostize))
+	RegisterSignal(host_mob, COMSIG_MOB_KEY_CHANGE, PROC_REF(on_mob_key_change))
+	RegisterSignal(host_mob, COMSIG_MOB_PRE_PLAYER_CHANGE, PROC_REF(on_mob_key_change))
+	// Реконнект клиента к телу: мобовый сигнал, клиентский COMSIG_CLIENT_MOB_LOGIN на мобе не приходит
+	RegisterSignal(host_mob, COMSIG_MOB_CLIENT_LOGIN, PROC_REF(on_client_reconnect))
+
+	RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_ADD_SOURCE, PROC_REF(on_add_source))
+	RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_REMOVE_SOURCE, PROC_REF(on_remove_source))
+	RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_WRITE_LOG, PROC_REF(on_write_log))
+	RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_WRITE_DATA, PROC_REF(on_write_data))
+	RegisterSignal(host_mob, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, PROC_REF(on_write_image_data))
+
+	RegisterSignal(src, COMSIG_NEURAL_INTERFACE_ADD_SOURCE, PROC_REF(on_add_source))
+	RegisterSignal(src, COMSIG_NEURAL_INTERFACE_REMOVE_SOURCE, PROC_REF(on_remove_source))
+	RegisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_LOG, PROC_REF(on_write_log))
+	RegisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_DATA, PROC_REF(on_write_data))
+	RegisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, PROC_REF(on_write_image_data))
+
+	signal_registrations += list(
+		COMSIG_MOB_GHOSTIZE,
+		COMSIG_MOB_KEY_CHANGE,
+		COMSIG_MOB_PRE_PLAYER_CHANGE,
+		COMSIG_MOB_CLIENT_LOGIN,
+		COMSIG_NEURAL_INTERFACE_ADD_SOURCE,
+		COMSIG_NEURAL_INTERFACE_REMOVE_SOURCE,
+		COMSIG_NEURAL_INTERFACE_WRITE_LOG,
+		COMSIG_NEURAL_INTERFACE_WRITE_DATA,
+		COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA
+	)
 
 // ---------------------------------------------------------------------------
 // Signal unregistration
