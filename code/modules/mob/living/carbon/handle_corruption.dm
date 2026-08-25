@@ -199,8 +199,8 @@
 
 /mob/living/carbon/proc/error_handler(severity)
 	var/size = rand(9, 22)
+	var/memory = rand(11111111, 99999999)
 	switch(severity)
-		var/memory = rand(11111111, 99999999)
 		if(1)
 			SEND_SIGNAL(src, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "EXCEPTION ENCOUNTERED: ERROR 0x[memory]", "ERROR", null, 12)
 			SEND_SIGNAL(src, COMSIG_NEURAL_INTERFACE_WRITE_DATA, "EXCEPTION", "0x[memory]", 10 SECONDS)
