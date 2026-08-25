@@ -165,6 +165,11 @@
 	holder = new(src, severity)
 	LAZYADD(vis_contents, holder)
 
+/atom/movable/screen/fullscreen/scaled/synthcorrupt/Destroy()
+	LAZYREMOVE(vis_contents, holder)
+	qdel(holder)
+	. = ..()
+
 /obj/effect/synthcorrupt_particles_holder
 	alpha = 255
 	plane = FIELD_OF_VISION_LAYER
