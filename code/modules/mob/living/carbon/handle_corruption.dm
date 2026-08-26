@@ -9,6 +9,7 @@
 #define CORRUPTION_THRESHHOLD_MINOR 10 //Above: Annoyances, to remind you you should get your corruption fixed.
 #define CORRUPTION_THRESHHOLD_MAJOR 35 //Above: Very annoying stuff, go get fixed.
 #define CORRUPTION_THRESHHOLD_CRITICAL 65 //Above: Extremely annoying stuff, possibly life-threatening
+#define CORRUPTION_THRESHHOLD_CATASTROPHIC 100 //Above: Extremely annoying stuff, possibly life-threatening
 
 /mob/living/carbon/proc/handle_corruption()
 	if(!HAS_TRAIT(src, TRAIT_ROBOTIC_ORGANISM)) //Only robot-people need to care about this
@@ -21,17 +22,20 @@
 		if(0 to CORRUPTION_THRESHHOLD_MINOR)
 			timer_req = INFINITY //Below minor corruption you are fiiine
 			corruption_state = "<font color='green'>None</font>" //This should never happen, but have it anyways.
-			error_handler(1)
 		if(CORRUPTION_THRESHHOLD_MINOR to CORRUPTION_THRESHHOLD_MAJOR)
 			corruption_state = "<font color='blue'>Minor</font>"
-			error_handler(2)
+			error_handler(1)
 		if(CORRUPTION_THRESHHOLD_MAJOR to CORRUPTION_THRESHHOLD_CRITICAL)
 			timer_req -= 1
 			corruption_state = "<font color='orange'>Major</font>"
-			error_handler(3)
-		if(CORRUPTION_THRESHHOLD_CRITICAL to INFINITY)
+			error_handler(2)
+		if(CORRUPTION_THRESHHOLD_CRITICAL to CORRUPTION_THRESHHOLD_CATASTROPHIC)
 			timer_req -= 2
 			corruption_state = "<font color='red'>Critical</font>"
+			error_handler(3)
+		if(CORRUPTION_THRESHHOLD_CATASTROPHIC to INFINITY)
+			timer_req -= 3
+			corruption_state = "<font color='red'>CATASTROPHIC</font>"
 			error_handler(4)
 	if(corruption_timer < timer_req)
 		return
@@ -220,3 +224,4 @@
 #undef CORRUPTION_THRESHHOLD_MINOR
 #undef CORRUPTION_THRESHHOLD_MAJOR
 #undef CORRUPTION_THRESHHOLD_CRITICAL
+#undef CORRUPTION_THRESHHOLD_CATASTROPHIC
