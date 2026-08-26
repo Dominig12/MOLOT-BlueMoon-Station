@@ -160,7 +160,7 @@
 
 /atom/movable/screen/fullscreen/scaled/synthcorrupt/SetSeverity(severity)
 	src.severity = clamp(severity, severity_min, severity_max)
-	src.alpha = clamp(42 * src.severity, 0, 255)
+	src.alpha = clamp(10 * src.severity**2, 0, 255)
 
 	holder = new(src, severity)
 	LAZYADD(vis_contents, holder)
