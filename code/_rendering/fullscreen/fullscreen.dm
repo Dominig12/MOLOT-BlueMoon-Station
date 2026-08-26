@@ -191,7 +191,8 @@
 	height = 960
 	count = 300
 	spawning = 30
-	lifespan = 3
+	lifespan = 1
+	fade = 1
 	position = generator("box", vector(-480,-480), vector(480,480))
 
 /atom/movable/screen/fullscreen/scaled/synthcorrupt/ShouldShow(mob/M)
