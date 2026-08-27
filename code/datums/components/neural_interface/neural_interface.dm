@@ -154,6 +154,8 @@ proc/string_repeat(string, count)
 	RegisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_DATA, PROC_REF(on_write_data))
 	RegisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, PROC_REF(on_write_image_data))
 
+	RegisterSignal(SSdcs, COMSIG_GLOB_NEURAL_INTERFACE_RELAY, PROC_REF(on_relay_data))
+
 	signal_registrations += list(
 		COMSIG_MOB_GHOSTIZE,
 		COMSIG_MOB_KEY_CHANGE,
@@ -177,8 +179,8 @@ proc/string_repeat(string, count)
 	UnregisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_LOG)
 	UnregisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_DATA)
 	UnregisterSignal(src, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA)
+	UnregisterSignal(SSdcs, COMSIG_GLOB_NEURAL_INTERFACE_RELAY)
 	signal_registrations = list()
-
 
 // ---------------------------------------------------------------------------
 /datum/component/neural_interface/proc/on_mob_key_change(mob/M, mob/new_mob, old_mob)
@@ -235,6 +237,12 @@ proc/string_repeat(string, count)
 	var/datum/neural_interface_module/image_highlight/module = modules["image"]
 	return module.write_image_data(key, overlay, target, text, decay_duration, pixel_x_text, pixel_y_text, text_size)
 
+/datum/component/neural_interface/proc/on_relay_data(datum/source, signal, force, ...)
+	var/list/arguments = args.Copy()
+	arguments.Remove(2, 3)
+	if(!force && isatom(source) && get_dist(get_turf(source), get_turf(host_mob)) > 15)
+		return FALSE
+	return SEND_SIGNAL(src, signal, arglist(arguments))
 
 /datum/component/neural_interface/proc/write_log(text, key="LOG", color="#4ad1fa86", size=12, speed=0)
 	var/datum/neural_interface_module/logs/module = modules["log"]
