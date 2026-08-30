@@ -642,21 +642,13 @@
 
 /obj/item/clothing/head/donator/bm/commando_beret
 	name = "Commando beret"
-	desc = "Just a simple beret, but with fancy old NVG."
+	desc = "In memory of Kovak."
 	icon_state = "commando_beret"
 	item_state = "commando_beret"
 	unique_reskin = list(
 		"Black" = list("icon_state" = "commando_beret", "item_state" = "commando_beret"),
 		"Khaki" = list("icon_state" = "commando_beret_khaki", "item_state" = "commando_beret_khaki"),
-		"Olive" = list("icon_state" = "commando_beret_olive", "item_state" = "commando_beret_olive")
+		"Olive" = list("icon_state" = "commando_beret_olive", "item_state" = "commando_beret_olive"),
+		"red" = list("icon_state" = "commando_beret_red", "item_state" = "commando_beret_red")
 	)
 
-/obj/item/clothing/head/donator/bm/half_mask_skull
-	name = "Skull Gaiter"
-	desc = "Gaiter made from high-quality materials. On the inside, there is a label: Harr."
-	actions_types = list(/datum/action/item_action/adjust)
-	icon_state = "half_mask_skull"
-	item_state = "half_mask_skull"
-	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/mask.dmi'
-	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/mask.dmi'
-	flags_inv = HIDEFACE|HIDEFACIALHAIR

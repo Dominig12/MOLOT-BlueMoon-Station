@@ -1135,9 +1135,12 @@
 
 /// Helper proc that causes the mob to do a jittering animation by jitter_amount.
 /mob/living/proc/do_jitter_animation(jitter_amount = 100)
-	var/amplitude = min(4, (jitter_amount / 100) + 1)
+	// Целая амплитуда: rand() с дробными границами возвращает дробь, а каждое новое
+	// значение pixel_w/pixel_z - это новая запись в таблице аппирансов у каждого, кто
+	// видит моба, и живёт она у клиента до конца сессии. Целые дают девять пар на всех.
+	var/amplitude = round(min(4, (jitter_amount / 100) + 1))
 	var/pixel_w_diff = rand(-amplitude, amplitude)
-	var/pixel_z_diff = rand(-amplitude / 3, amplitude / 3)
+	var/pixel_z_diff = rand(-round(amplitude / 3), round(amplitude / 3))
 	animate(src, pixel_w = pixel_w_diff, pixel_z = pixel_z_diff , time = 0.2 SECONDS, loop = 6, flags = ANIMATION_RELATIVE|ANIMATION_PARALLEL)
 	animate(pixel_w = -pixel_w_diff , pixel_z = -pixel_z_diff , time = 0.2 SECONDS, flags = ANIMATION_RELATIVE)
 
@@ -1201,7 +1204,7 @@
 		if(!silent)
 			to_chat(src, "<span class='warning'>Вы слишком далеко!</span>")
 		return FALSE
-	if(!no_dextery)
+	if(!no_dextery && !IsAdvancedToolUser()) // BLUEMOON EDIT - раньше проверка была инвертирована и отсекала вообще всех без флага NO_DEXTERY
 		if(!silent)
 			to_chat(src, "<span class='warning'>У тебя не хватит ловкости, чтобы сделать это!</span>")
 		return FALSE

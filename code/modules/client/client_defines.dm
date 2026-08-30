@@ -221,7 +221,8 @@
 	var/cached_turf_ref
 	/// cached encoded turf data for statpanel
 	var/cached_turf_encoded
-	/// tracks which icon REFs have been sent to this client's statbrowser (REF -> icon_url)
+	/// tracks which icon REFs have been sent to this client's statbrowser
+	/// (REF -> list(icon_url, weakref владельца); слабая ссылка отсеивает переиспользованные REF)
 	var/list/statpanel_sent_icons = list()
 	/// per-section dirty cache: last-sent encoded payload by channel name (status/spells/voting/tickets/listedturf)
 	/// Suppresses identical re-sends without re-running expensive renderers — DM-side dirty checking.
@@ -274,6 +275,9 @@
 
 	///Are we locking our movement input?
 	var/movement_locked = FALSE
+
+	// null - Not used at this moment
+	var/show_popup_menus_before_disable
 
 	/// The next point in time at which the client is allowed to send a mousemove() or mousedrag()
 	COOLDOWN_DECLARE(next_mousemove)
