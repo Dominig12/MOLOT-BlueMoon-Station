@@ -10,8 +10,12 @@
 
 /datum/mod_theme/mining/anomalous_archeotech
 	name = "anomalous archeotech"
+	extended_desc = "Высокотехнологичный MOD костюм, который встраивается напрямую в тело, невидимое энергетическое поле, защищает владельца от давления извне. \
+	Управление происходит через специальный интерфейс мозг компьютер, который подключается не инвазивно. \
+	Встроенные ядра аномалий, обеспечивают стабильность работы и работу энергетического поля"
 	default_skin = "anom_arch"
 	ui_theme = "hackerman"
+	inbuilt_modules = list(/obj/item/mod/module/dna_lock)
 	skins = list(
 		"anom_arch" = list(
 			HELMET_FLAGS = list(
