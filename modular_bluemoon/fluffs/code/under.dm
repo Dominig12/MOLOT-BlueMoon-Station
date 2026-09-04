@@ -621,6 +621,9 @@
 	name = "Summon Pod"
 
 /datum/action/item_action/dress_summon_pod/Trigger(trigger_flags)
+	if(!..())
+		return FALSE
+
 	var/list/items = list()
 	var/obj/item/clothing/under/donator/bm/inlaid_data_dress/T = target
 
@@ -640,6 +643,9 @@
 			selected_items += index_selected
 			items -= index_selected
 	while(index_selected)
+
+	if(QDELETED(T))
+		return FALSE
 
 	if(LAZYLEN(selected_items) < 1)
 		SEND_SIGNAL(owner, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "DELIVERY: REJECTED", "INFO")
