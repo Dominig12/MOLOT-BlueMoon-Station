@@ -348,10 +348,10 @@
 	var/datum/component/neural_interface/neural_interface
 	var/list/summon_pod_items = list(
 		"AA-MOD plate" = /obj/item/mod/construction/armor/anomalous_archeotech,
-		"AA-MOD PROTOTYPE MODULE" = /obj/item/mod/module/kinesis,
-		"CELL :01" = /obj/item/stock_parts/cell/hyper,
-		"TOOLBELT" = /obj/item/storage/belt,
-		"COOLING UNIT" = /obj/item/device/cooler
+		// "AA-MOD PROTOTYPE MODULE" = /obj/item/mod/module/kinesis,
+		// "CELL :01" = /obj/item/stock_parts/cell/hyper,
+		// "TOOLBELT" = /obj/item/storage/belt,
+		// "COOLING UNIT" = /obj/item/device/cooler
 	)
 	var/processing_summon_pod = FALSE
 
