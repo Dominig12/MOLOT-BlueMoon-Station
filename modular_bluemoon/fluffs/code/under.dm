@@ -683,6 +683,19 @@
 	item_state = "saare"
 	can_adjust = TRUE
 
+// Спрайты принадлежат cnaperdodo
+/obj/item/clothing/under/donator/bm/clf_uniform
+	name = "Перекрашенный комплект ЧВК"
+	desc = "Старый перекрашеный комплект ЧВК. По сути своей это когда то было универсальным нижним комплектов для тактических отрядов. А теперь это любят носить те, кто против закона."
+	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/cnaperdodo_clf_uniform.dmi'
+	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/cnaperdodo_clf_uniform.dmi'
+	icon_state = "clf_uniform"
+	lefthand_file = 'modular_bluemoon/fluffs/icons/mob/inhands/clothing_left.dmi'
+	righthand_file = 'modular_bluemoon/fluffs/icons/mob/inhands/clothing_right.dmi'
+	item_state = "officer_jumpsuit"
+	body_parts_covered = CHEST|GROIN|LEGS|ARMS
+	mutantrace_variation = STYLE_DIGITIGRADE|STYLE_NO_ANTHRO_ICON
+
 /obj/item/clothing/under/donator/bm/kladmen_dress
 	name = "Gothic Dress"
 	desc = " Long gothic dress decorated with lace patterns ."
@@ -934,6 +947,32 @@
 	anthro_mob_worn_overlay = 'modular_bluemoon/fluffs/icons/mob/clothing/under_digi.dmi'
 	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/under.dmi'
 	can_adjust = TRUE
+	fitted = NO_FEMALE_UNIFORM
+
+/obj/item/clothing/under/donator/bm/concord/equipped(mob/user, slot) //оверрайдим этот прок, дабы у нас вызывалась обнова иконки в момент одевания
+	. = ..()
+	if(slot != ITEM_SLOT_ICLOTHING)
+		return
+	update_icon()
+
+/obj/item/clothing/under/donator/bm/concord/update_icon_state()
+	. = ..()
+	icon_state = initial(icon_state)
+	if(!istype(loc, /mob/living/carbon/human))
+		return
+	var/mob/living/carbon/human/wearer = loc
+	if(adjusted || !(DIGITIGRADE in wearer.dna.species.species_traits))
+		return
+	var/obj/item/organ/genital/breasts/breast = wearer.getorganslot(ORGAN_SLOT_BREASTS)
+	var/breast_size = clamp(round(breast?.size || 0)-1, 0, 7)
+	icon_state = "[initial(icon_state)]_[breast_size]"
+	wearer.update_inv_w_uniform()
+	wearer.update_body()
+
+/obj/item/clothing/under/donator/bm/concord/toggle_jumpsuit_adjust()
+	. = ..()
+	if(.)
+		update_icon()
 
 /obj/item/clothing/under/donator/bm/h_pmc_jeans
 	name = "PMC jeans"
@@ -1015,3 +1054,12 @@
 	body_parts_covered = NONE
 	can_adjust = TRUE
 	alternate_worn_layer = GLOVES_LAYER
+
+/obj/item/clothing/under/donator/bm/the_stylish_one_tracksuit
+	name = "The stylish one's tracksuit"
+	desc = "Dear guests have arrived."
+	icon_state = "the_stylish_one_tracksuit"
+	item_state = "the_stylish_one_tracksuit"
+	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/under.dmi'
+	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/under.dmi'
+	can_adjust = FALSE

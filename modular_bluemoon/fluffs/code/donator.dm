@@ -1562,6 +1562,24 @@
 	path = /obj/item/clothing/suit/hooded/bm/donator/cybercoat
 	ckeywhitelist = list("cnaperdodo")
 
+// /datum/gear/donator/bm/hood_armored
+// 	name = "Большой капюшон"
+// 	slot = ITEM_SLOT_HEAD
+// 	path = /obj/item/clothing/head/donator/bm/hood_armored
+// 	ckeywhitelist = list("cnaperdodo")
+
+// /datum/gear/donator/bm/rebel_armor
+// 	name = "Кольчуга контрабандистов"
+// 	slot = ITEM_SLOT_OCLOTHING
+// 	path = /obj/item/clothing/suit/armor/donator/bm/rebel_armor
+// 	ckeywhitelist = list("cnaperdodo")
+
+/datum/gear/donator/bm/clf_uniform
+	name = "Перекрашенный комплект ЧВК"
+	slot = ITEM_SLOT_ICLOTHING
+	path = /obj/item/clothing/under/donator/bm/clf_uniform
+	ckeywhitelist = list("cnaperdodo")
+
 /datum/gear/donator/bm/diamond_ring
 	name = "A diamond ring"
 	path = /obj/item/clothing/accessory/ring/diamond
@@ -2465,7 +2483,7 @@
 	name = "Skull mask"
 	slot = ITEM_SLOT_MASK
 	path = /obj/item/clothing/mask/gas/syndicate/pmc_skull_mask
-	ckeywhitelist = list("hateredsoul")
+	ckeywhitelist = list("hateredsoul", "hartty")
 
 /datum/gear/donator/bm/sc_winter_coat
 	name = "Security winter coat"
@@ -2561,6 +2579,12 @@
 	path = /obj/item/modkit/vp78tactic
 	ckeywhitelist = list("rockymed", "hartty", "leony24", "dragon9090")
 
+/datum/gear/donator/bm/flag_marine
+	name = "UA flag"
+	slot = ITEM_SLOT_BACKPACK
+	path = /obj/item/sign/flag/marine/ua
+	ckeywhitelist = list("rockymed")
+
 /datum/gear/donator/bm/kumikoshouko_case
 	name = "Kumiko Weapon Case"
 	slot = ITEM_SLOT_BACKPACK
@@ -2608,3 +2632,33 @@
 	slot = ITEM_SLOT_MASK
 	path = /obj/item/clothing/mask/gas/syndicate/wypmc_gasmask
 	ckeywhitelist = list("foxrtotlimda")
+
+/datum/gear/donator/bm/atomas_fluted_armor
+	name = "Fluted Plate Armor"
+	slot = ITEM_SLOT_ICLOTHING
+	path = /obj/item/clothing/suit/armor/vest/knight/military
+	ckeywhitelist = list("atomas")
+
+/datum/gear/donator/bm/atomas_hounskull
+	name = "Hounskull With Aventail"
+	slot = ITEM_SLOT_HEAD
+	path = /obj/item/clothing/head/helmet/military
+	ckeywhitelist = list("atomas")
+
+/datum/gear/donator/bm/sawwr_coat
+	name = "Dark Amber"
+	slot = ITEM_SLOT_NECK
+	path = /obj/item/clothing/neck/tie/sawwr_coat
+	ckeywhitelist = list("hartty", "sawwarrr")
+
+/datum/gear/donator/bm/sawwr_ice_axe_kit
+	name = "Ice Axe Kit"
+	slot = ITEM_SLOT_BACKPACK
+	path = /obj/item/modkit/ice_axe_kit
+	ckeywhitelist = list("hartty")
+
+/datum/gear/donator/bm/the_stylish_one_tracksuit
+	name = "The stylish one's tracksuit"
+	slot = ITEM_SLOT_ICLOTHING
+	path = /obj/item/clothing/under/donator/bm/the_stylish_one_tracksuit
+	ckeywhitelist = list("hartty", "meowonty")
