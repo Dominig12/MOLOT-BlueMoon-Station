@@ -364,17 +364,17 @@
 		if(user.grab_state) //only the first upgrade is instantaneous
 			var/old_grab_state = user.grab_state
 			var/grab_upgrade_time = instant ? 0 : 30
-			visible_message("<span class='danger'>[user] starts to tighten [user.ru_ego()] grip on [src]!</span>", \
-				"<span class='userdanger'>[user] starts to tighten [user.ru_ego()] grip on you!</span>", target = user,
-				target_message = "<span class='danger'>You start to tighten your grip on [src]!</span>")
+			visible_message("<span class='danger'>[user] начинает усиливать захват на [src]!</span>", \
+				"<span class='userdanger'>[user] начинает усиливать захват на вас!</span>", target = user,
+				target_message = "<span class='danger'>Вы начинаете усиливать захват на [src]!</span>")
 			switch(user.grab_state)
 				if(GRAB_AGGRESSIVE)
-					log_combat(user, src, "attempted to neck grab", addition="neck grab")
+					log_combat(user, src, "попытался взять в захват за шею", addition="neck grab")
 				if(GRAB_NECK)
-					log_combat(user, src, "attempted to strangle", addition="kill grab")
+					log_combat(user, src, "попытался задушить", addition="kill grab")
 			if(!do_mob(user, src, grab_upgrade_time))
 				return FALSE
-			if(!user.pulling || user.pulling != src || user.grab_state != old_grab_state || user.a_intent != INTENT_GRAB)
+			if(!user.pulling || user.pulling != src || user.grab_state != old_grab_state)
 				return FALSE
 			if(user.voremode && user.grab_state == GRAB_AGGRESSIVE)
 				return FALSE
@@ -383,30 +383,30 @@
 			if(GRAB_AGGRESSIVE)
 				var/add_log = ""
 				if(HAS_TRAIT(user, TRAIT_PACIFISM))
-					visible_message("<span class='danger'>[user] has firmly gripped [src]!</span>",
-						"<span class='danger'>[user] has firmly gripped you!</span>", target = user,
-						target_message = "<span class='danger'>You have firmly gripped [src]!</span>")
-					add_log = " (pacifist)"
+					visible_message("<span class='danger'>[user] крепко держит [src] в захвате!</span>",
+						"<span class='danger'>[user] крепко держит вас в захвате!</span>", target = user,
+						target_message = "<span class='danger'>Вы крепко держите [src] в захвате!</span>")
+					add_log = " (пацифист)"
 				else
-					visible_message("<span class='danger'>[user] has grabbed [src] aggressively!</span>", \
-									"<span class='userdanger'>[user] has grabbed you aggressively!</span>", target = user, \
-									target_message = "<span class='danger'>You have grabbed [src] aggressively!</span>")
+					visible_message("<span class='danger'>[user] берёт [src] в агрессивный захват!</span>", \
+									"<span class='userdanger'>[user] берёт вас в агрессивный захват!</span>", target = user, \
+									target_message = "<span class='danger'>Вы берёте [src] в агрессивный захват!</span>")
 					update_mobility()
 				stop_pulling()
-				log_combat(user, src, "grabbed", addition="aggressive grab[add_log]")
+				log_combat(user, src, "взял в агрессивный захват", addition="aggressive grab[add_log]")
 			if(GRAB_NECK)
-				log_combat(user, src, "grabbed", addition="neck grab")
-				visible_message("<span class='danger'>[user] has grabbed [src] by the neck!</span>",\
-								"<span class='userdanger'>[user] has grabbed you by the neck!</span>", target = user, \
-								target_message = "<span class='danger'>You have grabbed [src] by the neck!</span>")
+				log_combat(user, src, "взял за шею", addition="neck grab")
+				visible_message("<span class='danger'>[user] хватает [src] за шею!</span>",\
+								"<span class='userdanger'>[user] хватает вас за шею!</span>", target = user, \
+								target_message = "<span class='danger'>Вы хватаете [src] за шею!</span>")
 				update_mobility() //we fall down
 				if(!buckled && !density)
 					Move(user.loc)
 			if(GRAB_KILL)
-				log_combat(user, src, "strangled", addition="kill grab")
-				visible_message("<span class='danger'>[user] is strangling [src]!</span>", \
-								"<span class='userdanger'>[user] is strangling you!</span>", target = user, \
-								target_message = "<span class='danger'>You are strangling [src]!</span>")
+				log_combat(user, src, "задушил", addition="kill grab")
+				visible_message("<span class='danger'>[user] душит [src]!</span>", \
+								"<span class='userdanger'>[user] душит вас!</span>", target = user, \
+								target_message = "<span class='danger'>Вы душите [src]!</span>")
 				update_mobility() //we fall down
 				if(!buckled && !density)
 					Move(user.loc)
@@ -681,12 +681,47 @@
 
 
 //called when the mob receives a bright flash
-/mob/living/proc/flash_act(intensity = 1, override_blindness_check = 0, affect_silicon = 0, visual = 0, type = /atom/movable/screen/fullscreen/tiled/flash, override_protection = 0)
+/mob/living/proc/flash_act(intensity = 1, override_blindness_check = 0, affect_silicon = 0, visual = 0, type = /atom/movable/screen/fullscreen/tiled/flash, override_protection = 0, duration = 25)
 	if((override_protection || get_eye_protection() < intensity) && (override_blindness_check || !(HAS_TRAIT(src, TRAIT_BLIND))))
-		overlay_fullscreen("flash", type)
-		addtimer(CALLBACK(src, PROC_REF(clear_fullscreen), "flash", 25), 25, TIMER_DELETE_ME)
+		flash_overlay(type, duration)
 		return TRUE
 	return FALSE
+
+/// Обработчик создания оверлея ослепления и отслеживания. Тут же создаётся таймер для него и отслеживается, был ли такой создан до вызова
+/mob/living/proc/flash_overlay(type = /atom/movable/screen/fullscreen/tiled/flash, duration = 25)
+	var/atom/movable/screen/fullscreen/flash_screen
+	if(fullscreens)
+		flash_screen = fullscreens["flash"]
+	var/remaining = timeleft(flash_overlay_timer_id)
+	var/timer_active = flash_overlay_timer_id && !isnull(remaining) && flash_overlay_screen == flash_screen
+
+	// Скрин эффект flash могут поменять другие вещи вне этого прока. Перепроверим или таймер принадлежит все ещё к нужному flash
+	if(flash_overlay_timer_id && !timer_active)
+		deltimer(flash_overlay_timer_id)
+		flash_overlay_timer_id = null
+		flash_overlay_screen = null
+
+	if(timer_active && remaining >= duration)
+		return flash_screen // Текущий таймер уже дольше новой вспышки? Оставляем эффект и таймер без изменений.
+	if(timer_active)
+		deltimer(flash_overlay_timer_id)
+		flash_overlay_timer_id = null
+		flash_overlay_screen = null
+
+	flash_screen = overlay_fullscreen("flash", type)
+	flash_overlay_screen = flash_screen
+	flash_overlay_timer_id = addtimer(CALLBACK(src, PROC_REF(clear_flash_overlay), flash_screen, duration), duration, TIMER_STOPPABLE | TIMER_DELETE_ME)
+	return flash_screen
+
+/// Очищает оверлей вспышки, если callback итога прока flash_overlay() принадлежит к этому скрин-объекту
+/mob/living/proc/clear_flash_overlay(atom/movable/screen/fullscreen/flash_screen, duration)
+	if(flash_overlay_screen != flash_screen)
+		return
+	flash_overlay_timer_id = null
+	flash_overlay_screen = null
+	if(!fullscreens || fullscreens["flash"] != flash_screen)
+		return
+	clear_fullscreen("flash", duration)
 
 //called when the mob receives a loud bang
 /mob/living/proc/soundbang_act()

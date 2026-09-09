@@ -15,6 +15,10 @@
 // #define MOD_CORE   mod_parts[MOD_PART_CORE]
 #define MOD_CELL mod_parts[MOD_PART_CELL]
 
+#define MOD_EMP_CHARGE_LOOSE_MODIFICATOR 8
+#define MOD_EMP_SEVERITY_MAX 100
+#define MOD_CELL_BLOOW_UP_CHANCE 5
+
 #define MOD_ACTIVE      (1<<0)
 #define MOD_ACTIVATING  (1<<1)
 #define MOD_MALFUNCTION (1<<2)
@@ -33,3 +37,6 @@
 #define MOD_CARGO_COLOR rgb(255, 118, 26, 255)
 #define MOD_SEC_COLOR rgb(255, 26, 26, 255)
 #define MOD_RESEARCH_COLOR rgb(133, 26, 255, 255)
+
+//для трейта QUICK_BUILD, который даётся специальными перчатками, а так же модулем.
+#define QUIICK_BUILD_SPEED 0.5 //там время умножается на это число. Чем меньше - тем меньше. Но лучше ниже 0.5 не делать.
