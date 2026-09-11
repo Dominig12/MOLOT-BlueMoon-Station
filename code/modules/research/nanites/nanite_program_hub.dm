@@ -24,7 +24,14 @@
 
 /obj/machinery/nanite_program_hub/Initialize(mapload)
 	. = ..()
-	linked_techweb = SSresearch.science_tech
+	AddComponent(/datum/component/techweb_holder)
+	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
+	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, find_rnd_network_for_object(src))
+
+/obj/machinery/nanite_program_hub/proc/on_techweb_changed(datum/source, datum/techweb/new_web)
+	SIGNAL_HANDLER
+
+	linked_techweb = new_web
 
 /obj/machinery/nanite_program_hub/update_overlays()
 	. = ..()

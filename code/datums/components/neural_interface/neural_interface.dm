@@ -240,8 +240,15 @@ proc/string_repeat(string, count)
 /datum/component/neural_interface/proc/on_relay_data(datum/source, signal, force, radius = 15, ...)
 	var/list/arguments = args.Copy()
 	arguments.Cut(2, 5)
-	if(!force && isatom(source) && get_dist(get_turf(source), get_turf(host_mob)) > radius)
-		return FALSE
+	if(isatom(source) && !force)
+		var/turf/source_turf = get_turf(source)
+		var/turf/target_turf = get_turf(host_mob)
+		if(!source_turf && !target_turf)
+			return FALSE
+		if(!force && source_turf.z != target_turf.z)
+			return FALSE
+		if(isatom(source) && get_dist(source_turf, target_turf) > radius)
+			return FALSE
 	return src._SendSignal(signal, arguments)
 
 /datum/component/neural_interface/proc/write_log(text, key="LOG", color="#4ad1fa86", size=12, speed=0)

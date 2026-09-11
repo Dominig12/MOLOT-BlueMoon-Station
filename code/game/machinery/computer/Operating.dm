@@ -15,8 +15,15 @@
 
 /obj/machinery/computer/operating/Initialize(mapload)
 	. = ..()
-	linked_techweb = SSresearch.science_tech
+	AddComponent(/datum/component/techweb_holder)
+	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
+	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, find_rnd_network_for_object(src))
 	find_table()
+
+/obj/machinery/computer/operating/proc/on_techweb_changed(datum/source, datum/techweb/new_web)
+	SIGNAL_HANDLER
+
+	linked_techweb = new_web
 
 /obj/machinery/computer/operating/Destroy()
 	if(table)

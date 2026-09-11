@@ -17,7 +17,9 @@
 /obj/machinery/component_printer/Initialize(mapload)
 	. = ..()
 
-	techweb = SSresearch.science_tech
+	AddComponent(/datum/component/techweb_holder)
+	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
+	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, find_rnd_network_for_object(src))
 
 	materials = AddComponent( \
 		/datum/component/remote_materials, \
@@ -25,6 +27,11 @@
 		mapload, \
 		mat_container_flags = BREAKDOWN_FLAGS_LATHE, \
 	)
+
+/obj/machinery/component_printer/proc/on_techweb_changed(datum/source, datum/techweb/new_web)
+	SIGNAL_HANDLER
+
+	techweb = new_web
 
 /obj/machinery/component_printer/ui_interact(mob/user, datum/tgui/ui)
 	ui = SStgui.try_update_ui(user, src, ui)
