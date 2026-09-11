@@ -280,3 +280,10 @@
       по альт клику
   RG-TRK:
   - rscadd: Added new variant for ACR-5 rifle. Chambered in 7.62x39.
+2026-09-11:
+  Herobrine998:
+  - bugfix: Исправлен баг огромного мувспида с квирком пожиратель
+  - bugfix: Исправлен баг вечно растущего спрайта при актуализации с квирком пожиратель
+  - bugfix: Исправлена неадекватно быстрое развитие проклятие от ревенанта
+  RG-TRK:
+  - bugfix: ACRM mag sprite now visible again.
