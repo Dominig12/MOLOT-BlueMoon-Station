@@ -246,9 +246,9 @@ proc/string_repeat(string, count)
 		return FALSE
 	var/turf/source_turf = get_turf(source_atom)
 	var/turf/target_turf = get_turf(host_mob)
-	if(!source_turf && !target_turf)
+	if(!source_turf || !target_turf)
 		return FALSE
-	if(!force && source_turf.z != target_turf.z)
+	if(source_turf.z != target_turf.z)
 		return FALSE
 	if(get_dist(source_turf, target_turf) > radius)
 		return FALSE
