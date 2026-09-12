@@ -37,13 +37,18 @@
 	. = ..()
 	GLOB.rndservers_list += src
 	SSresearch.servers |= src
-	AddComponent(/datum/component/techweb_holder)
-	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
-	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, SSresearch.get_rnd_network_for(src, network_id, techweb_type))
 	alarmloop = new(src, !working)
 
 	server_id = "[copytext(md5("[world.timeofday][rand()][src]"), 1, 5)]" // Генерируем серверу уникальный айди
 	name += " ([uppertext(server_id)])"
+	if(mapload)
+		return INITIALIZE_HINT_LATELOAD
+
+/obj/machinery/rnd/server/LateInitialize()
+	. = ..()
+	AddComponent(/datum/component/techweb_holder)
+	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
+	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, SSresearch.get_rnd_network_for(src, network_id, techweb_type))
 
 /obj/machinery/rnd/server/process()
 	if(!(machine_stat & NOPOWER) && working)

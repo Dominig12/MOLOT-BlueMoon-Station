@@ -31,10 +31,15 @@
 
 /obj/item/computermath/Initialize(mapload)
 	. = ..()
+	START_PROCESSING(SSobj, src)
+	if(mapload)
+		return INITIALIZE_HINT_LATELOAD
+
+/obj/item/computermath/LateInitialize()
+	. = ..()
 	AddComponent(/datum/component/techweb_holder)
 	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
 	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, find_rnd_network_for_object(src))
-	START_PROCESSING(SSobj, src)
 
 /obj/item/computermath/proc/on_techweb_changed(datum/source, datum/techweb/new_web)
 	SIGNAL_HANDLER

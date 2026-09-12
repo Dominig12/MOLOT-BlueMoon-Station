@@ -41,14 +41,23 @@
 	create_reagents(0, OPENCONTAINER | NO_REACT)
 	gen_access()
 	stored_research = new
-	AddComponent(/datum/component/techweb_holder)
-	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
-	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, SSresearch.get_rnd_network_for(src, network_id, techweb_type))	//BLUEMOON CHANGE: подключение к сети через реестр
 	INVOKE_ASYNC(src, PROC_REF(update_research))
 	materials = AddComponent(/datum/component/remote_materials, "lathe", mapload, _after_insert=CALLBACK(src, PROC_REF(AfterMaterialInsert)))
 	RefreshParts()
 	RegisterSignal(SSdcs, COMSIG_GLOB_RESEARCH_NODE_UNLOCKED, PROC_REF(on_node_unlocked))
 	RegisterSignal(SSdcs, COMSIG_GLOB_RESEARCH_BATCH_COMPLETE, PROC_REF(on_research_batch_complete))
+	if(mapload)
+		return INITIALIZE_HINT_LATELOAD
+	AddComponent(/datum/component/techweb_holder)
+	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
+	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, SSresearch.get_rnd_network_for(src, network_id, techweb_type))
+
+/obj/machinery/rnd/production/LateInitialize()
+	. = ..()
+	AddComponent(/datum/component/techweb_holder)
+	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
+	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, SSresearch.get_rnd_network_for(src, network_id, techweb_type))
+
 
 /obj/machinery/rnd/production/Destroy()
 	if(deferred_sync_timer)
@@ -128,7 +137,7 @@
 	// исследует стартовые ноды прямо в New(), так что researched_designs непуст уже
 	// до первого пересбора - и инкрементальный путь навсегда терял базовые рецепты.
 	var/list/previously_known = designs_cache_built ? stored_research.researched_designs.Copy() : null
-	host_research.copy_research_to(stored_research, TRUE)
+	host_research?.copy_research_to(stored_research, TRUE)
 	if(previously_known)
 		update_designs_incremental(previously_known)
 	else

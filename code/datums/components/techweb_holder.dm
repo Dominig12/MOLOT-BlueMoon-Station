@@ -11,8 +11,10 @@
 	. = ..()
 	linked_techweb = null
 
-/datum/component/techweb_holder/proc/on_set_techweb(datum/source, datum/techweb/new_web)
+/datum/component/techweb_holder/proc/on_set_techweb(datum/source, new_web)
 	SIGNAL_HANDLER
+	if(!new_web)
+		return null
 
 	linked_techweb = new_web
 	SEND_SIGNAL(parent, COMSIG_ATOM_TECHWEB_CHANGED, linked_techweb)
