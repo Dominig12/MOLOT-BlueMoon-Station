@@ -1263,6 +1263,7 @@
 //	chemical_flags = REAGENT_ALL_PROCESS (BLUEMOON REMOVAL - роботы не должны получать эффекты реагента)
 	overdose_threshold = 30
 	color = "#c2391d"
+	material = /datum/material/iron
 
 /datum/reagent/iron/on_mob_life(mob/living/carbon/C)
 	if((HAS_TRAIT(C, TRAIT_NOMARROW)))
@@ -1294,6 +1295,7 @@
 	reagent_state = SOLID
 	color = "#F7C430" // rgb: 247, 196, 48
 	taste_description = "expensive metal"
+	material = /datum/material/gold
 
 /datum/reagent/silver
 	name = "Silver"
@@ -1301,6 +1303,7 @@
 	reagent_state = SOLID
 	color = "#D0D0D0" // rgb: 208, 208, 208
 	taste_description = "expensive yet reasonable metal"
+	material = /datum/material/silver
 
 /datum/reagent/silver/reaction_mob(mob/living/M, method=TOUCH, reac_volume, affected_bodypart)
 	if(M.has_bane(BANE_SILVER))
@@ -1315,6 +1318,7 @@
 	color = "#B8B8C0" // rgb: 184, 184, 192
 	taste_description = "the inside of a reactor"
 	pH = 4
+	material = /datum/material/uranium
 
 /datum/reagent/uranium/on_mob_life(mob/living/carbon/M)
 	M.apply_effect(1/M.metabolism_efficiency,EFFECT_IRRADIATE,0)
@@ -1346,6 +1350,7 @@
 	taste_description = "fizzling blue"
 	pH = 12
 	value = REAGENT_VALUE_RARE
+	material = /datum/material/bluespace
 
 /datum/reagent/bluespace/reaction_mob(mob/living/M, method=TOUCH, reac_volume, affected_bodypart)
 	if(method == TOUCH || method == VAPOR)
