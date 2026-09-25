@@ -4,6 +4,11 @@
 /// Максимум одновременно «живых» подсветок импульсов в окне TGUI (очередь по порядку активации).
 #define IE_TGUI_MAX_LIVE_PULSES 64
 
+/// Автораскладка без сохранённых координат: шаг между колонками (слоями) графа, px.
+#define IE_TGUI_LAYOUT_COL_GAP 360
+/// Автораскладка: вертикальный зазор между нодами в колонке, px.
+#define IE_TGUI_LAYOUT_NODE_Y_PAD 52
+
 #define IC_TOPIC_UNHANDLED 0
 #define IC_TOPIC_HANDLED 1
 #define IC_TOPIC_REFRESH 2

@@ -78,6 +78,19 @@ export interface IntegratedCircuitState {
   componentsPanelOpen: boolean;
   /** Фильтр поиска в списке компонентов. */
   componentsFilter: string;
+  /** Выделенные ноды (индексы 1-based) для группового перетаскивания. */
+  selection: number[];
+  /** Активное групповое перетаскивание выделенных нод. */
+  dragState: GroupDragState | null;
+}
+
+export interface GroupDragState {
+  ids: number[];
+  startPositions: Record<number, { x: number; y: number }>;
+  startClientX: number;
+  startClientY: number;
+  deltaX: number;
+  deltaY: number;
 }
 
 export interface IntegratedCircuitData {

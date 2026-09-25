@@ -367,24 +367,146 @@
 
 
 // Loads assembly (in form of list) into an object and returns it.
-/// Старые JSON без ui_x/ui_y — выставить ноды в ряд, чтобы TGUI не был пустым.
-/proc/ie_tgui_apply_legacy_row_layout(obj/item/electronic_assembly/assembly, list/blocks)
+/// Оценка высоты ноды на канвасе (пиксели) — для вертикальной раскладки слоя без наездов.
+/proc/ie_tgui_estimate_node_height(obj/item/integrated_circuit/chip)
+	if(!chip)
+		return 120
+	var/pulse_in = 0
+	var/pulse_out = 0
+	for(var/datum/integrated_io/io as anything in chip.activators)
+		if(istype(io, /datum/integrated_io/activate/out))
+			pulse_out++
+		else
+			pulse_in++
+	var/data_rows = max(length(chip.inputs), length(chip.outputs))
+	var/pulse_rows = max(pulse_in, pulse_out)
+	. = 72 + data_rows * 27
+	if(pulse_rows > 0)
+		. += 22 + pulse_rows * 27
+	return max(., 96)
+
+/// Автораскладка компонентов без сохранённых координат: читаемое послойное дерево по связям,
+/// отцентрированное с запасом пространства со всех сторон (вместо прежнего «в ряд»).
+/proc/ie_tgui_apply_auto_layout(obj/item/electronic_assembly/assembly, list/blocks)
 	if(!assembly || !blocks)
 		return
 	var/list/comp_blocks = blocks["components"]
-	if(!length(comp_blocks))
+	var/list/comps = assembly.assembly_components
+	var/n = length(comps)
+	if(n < 1 || !length(comp_blocks))
 		return
-	var/spacing = 200
-	var/i = 0
-	for(var/list/cp as anything in comp_blocks)
-		i++
-		if(i > length(assembly.assembly_components))
-			break
-		if(("ui_x" in cp) || ("ui_y" in cp))
+
+	// 1. Какие компоненты нуждаются в раскладке (нет сохранённой позиции).
+	var/list/needs_layout = list()
+	var/any_needs_layout = FALSE
+	for(var/i in 1 to n)
+		var/list/cp = comp_blocks[i]
+		var/has_pos = islist(cp) && (("ui_x" in cp) || ("ui_y" in cp))
+		needs_layout.Add(!has_pos)
+		if(!has_pos)
+			any_needs_layout = TRUE
+	if(!any_needs_layout)
+		return
+
+	// 2. Граф по проводам (направление: output -> input).
+	var/list/children = list()
+	var/list/parents = list()
+	for(var/i in 1 to n)
+		children.Add(list())
+		parents.Add(list())
+
+	if(blocks["wires"] && islist(blocks["wires"]))
+		for(var/w in blocks["wires"])
+			var/list/wire = w
+			if(!islist(wire) || wire.len != 2)
+				continue
+			var/datum/integrated_io/a = assembly.get_pin_ref_list(wire[1])
+			var/datum/integrated_io/b = assembly.get_pin_ref_list(wire[2])
+			if(!a || !b)
+				continue
+			var/datum/integrated_io/out_pin
+			var/datum/integrated_io/in_pin
+			if(ie_ic_is_output_side_pin(a))
+				out_pin = a
+				in_pin = b
+			else
+				out_pin = b
+				in_pin = a
+			var/oi = comps.Find(out_pin.holder)
+			var/ii = comps.Find(in_pin.holder)
+			if(!oi || !ii || oi == ii)
+				continue
+			if(!(oi in parents[ii]))
+				parents[ii] += oi
+			if(!(ii in children[oi]))
+				children[oi] += ii
+
+	// 3. Послойная раскладка (Kahn); узлы в циклах — в слой после всех ацикличных.
+	var/list/indegree = list()
+	var/list/layer = list()
+	var/list/queue = list()
+	for(var/i in 1 to n)
+		var/pc = length(parents[i])
+		indegree.Add(pc)
+		layer.Add(0)
+		if(pc == 0)
+			queue.Add(i)
+
+	var/head = 1
+	while(head <= length(queue))
+		var/cur = queue[head]
+		head++
+		for(var/c in children[cur])
+			layer[c] = max(layer[c], layer[cur] + 1)
+			indegree[c] = indegree[c] - 1
+			if(indegree[c] == 0)
+				queue.Add(c)
+
+	var/max_layer = 0
+	for(var/i in 1 to n)
+		if(indegree[i] > 0)
 			continue
-		var/obj/item/integrated_circuit/chip = assembly.assembly_components[i]
-		chip.ie_ui_rel_x = clamp((i - 1) * spacing, -IE_TGUI_COMPONENT_COORD_LIMIT, IE_TGUI_COMPONENT_COORD_LIMIT)
-		chip.ie_ui_rel_y = 0
+		max_layer = max(max_layer, layer[i])
+	for(var/i in 1 to n)
+		if(indegree[i] > 0)
+			layer[i] = max_layer + 1
+
+	// 4. Группируем по слоям (колонкам); внутри колонки — порядок компонентов, вертикально
+	//    с учётом оценочной высоты ноды.
+	var/list/columns = list()
+	for(var/i in 1 to n)
+		var/L = layer[i]
+		while(length(columns) <= L)
+			columns.Add(list())
+		columns[L + 1].Add(i)
+
+	var/list/rawX = list()
+	var/list/rawY = list()
+	var/list/col_heights = list()
+	for(var/i in 1 to n)
+		rawX.Add(0)
+		rawY.Add(0)
+
+	for(var/ci in 1 to length(columns))
+		var/list/col = columns[ci]
+		var/cursor = 0
+		for(var/index in col)
+			var/obj/item/integrated_circuit/chip = comps[index]
+			rawX[index] = (ci - 1) * IE_TGUI_LAYOUT_COL_GAP
+			rawY[index] = cursor
+			cursor += ie_tgui_estimate_node_height(chip) + IE_TGUI_LAYOUT_NODE_Y_PAD
+		col_heights.Add(cursor)
+
+	// 5. Центрируем граф (середину размаха — в (0,0)); каждую колонку — по вертикали.
+	var/x_shift = -((max(length(columns) - 1, 0)) * IE_TGUI_LAYOUT_COL_GAP) / 2
+	for(var/i in 1 to n)
+		if(!needs_layout[i])
+			continue
+		var/obj/item/integrated_circuit/chip = comps[i]
+		var/L = layer[i]
+		var/col_h = col_heights[L + 1]
+		chip.ie_ui_rel_x = clamp(round(rawX[i] + x_shift), -IE_TGUI_COMPONENT_COORD_LIMIT, IE_TGUI_COMPONENT_COORD_LIMIT)
+		chip.ie_ui_rel_y = clamp(round(rawY[i] - col_h / 2), -IE_TGUI_COMPONENT_COORD_LIMIT, IE_TGUI_COMPONENT_COORD_LIMIT)
 
 // No sanity checks are performed, save file is expected to be validated by validate_electronic_assembly
 /datum/controller/subsystem/processing/circuit/proc/load_electronic_assembly(loc, list/blocks)
@@ -404,7 +526,7 @@
 		assembly.add_component(component)
 		component.load(component_params)
 
-	ie_tgui_apply_legacy_row_layout(assembly, blocks)
+	ie_tgui_apply_auto_layout(assembly, blocks)
 
 	// Block 3. Wires.
 	if(blocks["wires"])

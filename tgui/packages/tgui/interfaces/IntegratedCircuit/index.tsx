@@ -26,6 +26,7 @@ import { PinEditor } from './PinEditor';
 import type {
   CircuitComponentView,
   CircuitPortPayload,
+  GroupDragState,
   IntegratedCircuitData,
   IntegratedCircuitState,
   PortLocation,
@@ -41,6 +42,8 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
   /** Позиции портов, ожидающие перемеривания; замер переносится в requestAnimationFrame, чтобы сотни getBoundingClientRect не превращались в сотни синхронных reflow за кадр. */
   locationPending = new Map<string, { port: CircuitPortPayload; dom: HTMLElement }>();
   locationRaf: number | null = null;
+  /** Актуальный нормализованный массив компонентов (для группового драга). */
+  latestComponents: (CircuitComponentView | null)[] = [];
 
   constructor(props: unknown) {
     super(props);
@@ -58,6 +61,8 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
       planeHomeNonce: 0,
       componentsPanelOpen: false,
       componentsFilter: '',
+      selection: [],
+      dragState: null,
     };
     this.handlePortLocation = this.handlePortLocation.bind(this);
     this.handleMouseDown = this.handleMouseDown.bind(this);
@@ -71,6 +76,10 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     this.handleZoomChange = this.handleZoomChange.bind(this);
     this.handleBackgroundMoved = this.handleBackgroundMoved.bind(this);
     this.handlePanToOrigin = this.handlePanToOrigin.bind(this);
+
+    this.handleNodeMouseDown = this.handleNodeMouseDown.bind(this);
+    this.handleNodeDrag = this.handleNodeDrag.bind(this);
+    this.handleNodeDragEnd = this.handleNodeDragEnd.bind(this);
   }
 
   /**
@@ -387,6 +396,8 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     window.removeEventListener('mouseup', this.handleMouseUp);
     window.removeEventListener('mousemove', this.handlePortDrag);
     window.removeEventListener('mouseup', this.handlePortRelease);
+    window.removeEventListener('mousemove', this.handleNodeDrag);
+    window.removeEventListener('mouseup', this.handleNodeDragEnd);
     if (this.locationRaf !== null) {
       cancelAnimationFrame(this.locationRaf);
       this.locationRaf = null;
@@ -399,6 +410,10 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     const { examined_name } = data;
     if (examined_name) {
       act('remove_examined_component');
+    }
+    // Клик по пустому полю (не по ноде — ноды стопают пропагацию) снимает выделение.
+    if (this.state.selection.length) {
+      this.setState({ selection: [] });
     }
   }
 
@@ -413,6 +428,88 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
       screen_x: backgroundX,
       screen_y: backgroundY,
     });
+  }
+
+  handleNodeMouseDown(componentId: number, event: MouseEvent) {
+    event.stopPropagation();
+    const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+    const { selection } = this.state;
+    let nextSelection: number[];
+    if (additive) {
+      nextSelection = selection.includes(componentId)
+        ? selection.filter((id) => id !== componentId)
+        : [...selection, componentId];
+    }
+    else if (selection.includes(componentId)) {
+      nextSelection = selection;
+    }
+    else {
+      nextSelection = [componentId];
+    }
+    if (!nextSelection.length) {
+      this.setState({ selection: [] });
+      return;
+    }
+    const startPositions: GroupDragState['startPositions'] = {};
+    for (const id of nextSelection) {
+      const comp = this.latestComponents[id - 1];
+      if (comp) {
+        startPositions[id] = { x: comp.x || 0, y: comp.y || 0 };
+      }
+    }
+    this.setState({
+      selection: nextSelection,
+      dragState: {
+        ids: nextSelection,
+        startPositions,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        deltaX: 0,
+        deltaY: 0,
+      },
+    });
+    window.addEventListener('mousemove', this.handleNodeDrag);
+    window.addEventListener('mouseup', this.handleNodeDragEnd);
+  }
+
+  handleNodeDrag(event: MouseEvent) {
+    const { dragState } = this.state;
+    if (!dragState) {
+      return;
+    }
+    event.preventDefault();
+    const z = Math.max(this.state.zoom || 1, 0.01);
+    const deltaX = (event.clientX - dragState.startClientX) / z;
+    const deltaY = (event.clientY - dragState.startClientY) / z;
+    if (deltaX !== dragState.deltaX || deltaY !== dragState.deltaY) {
+      this.setState((s) => s.dragState
+        ? { dragState: { ...s.dragState, deltaX, deltaY } }
+        : null);
+    }
+  }
+
+  handleNodeDragEnd() {
+    window.removeEventListener('mousemove', this.handleNodeDrag);
+    window.removeEventListener('mouseup', this.handleNodeDragEnd);
+    const { dragState } = this.state;
+    if (dragState) {
+      const { act } = useBackend<IntegratedCircuitData>();
+      const moved = dragState.deltaX !== 0 || dragState.deltaY !== 0;
+      if (moved) {
+        for (const id of dragState.ids) {
+          const start = dragState.startPositions[id];
+          if (!start) {
+            continue;
+          }
+          act('set_component_coordinates', {
+            component_id: id,
+            rel_x: Math.round(start.x + dragState.deltaX),
+            rel_y: Math.round(start.y + dragState.deltaY),
+          });
+        }
+      }
+    }
+    this.setState({ dragState: null });
   }
 
   buildWireConnections(
@@ -531,6 +628,7 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     const components = byondListToArray(data.components).map(
       normalizeCircuitComponent,
     );
+    this.latestComponents = components;
     const ieBatteryPercent = ie_circuit && data.ie_battery_percent !== undefined
       ? data.ie_battery_percent
       : undefined;
@@ -542,7 +640,7 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     const panX = this.state.screenPanOverride?.x ?? screen_x ?? 0;
     const panY = this.state.screenPanOverride?.y ?? screen_y ?? 0;
     const { locations, selectedPort, menuOpen, zoom, dragClientX, dragClientY } = this.state;
-    const { componentsPanelOpen, componentsFilter } = this.state;
+    const { componentsPanelOpen, componentsFilter, selection, dragState } = this.state;
     const connections = this.buildWireConnections(
       components,
       locations,
@@ -714,22 +812,32 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
                   pulseKeys={pulseKeys}>
                   {components.map(
                     (comp, index) =>
-                      comp && (
-                        <ObjectComponent
-                          key={index}
-                          {...comp}
-                          index={index + 1}
-                          circuitOn={circuit_on ?? true}
-                          portLayoutKey={`${zoom}|${this.state.backgroundX}|${this.state.backgroundY}`}
-                          onPortUpdated={this.handlePortLocation}
-                          onPortLoaded={this.handlePortLocation}
-                          onPortMouseDown={this.handlePortClick}
-                          onPortRightClick={this.handlePortRightClick}
-                          onPortMouseUp={this.handlePortUp}
-                          debugCopyRef={!!ie_circuit && !!ie_debug_copy_ref}
-                          portLabelByRef={portLabelByRef}
-                        />
-                      )
+                      comp && (() => {
+                        const componentId = index + 1;
+                        const dragging = !!dragState && dragState.ids.includes(componentId);
+                        const dx = dragging ? dragState.deltaX : 0;
+                        const dy = dragging ? dragState.deltaY : 0;
+                        return (
+                          <ObjectComponent
+                            key={index}
+                            {...comp}
+                            x={(comp.x || 0) + dx}
+                            y={(comp.y || 0) + dy}
+                            index={componentId}
+                            circuitOn={circuit_on ?? true}
+                            portLayoutKey={`${zoom}|${this.state.backgroundX}|${this.state.backgroundY}`}
+                            onPortUpdated={this.handlePortLocation}
+                            onPortLoaded={this.handlePortLocation}
+                            onPortMouseDown={this.handlePortClick}
+                            onPortRightClick={this.handlePortRightClick}
+                            onPortMouseUp={this.handlePortUp}
+                            debugCopyRef={!!ie_circuit && !!ie_debug_copy_ref}
+                            portLabelByRef={portLabelByRef}
+                            selected={selection.includes(componentId)}
+                            onNodeMouseDown={(e) => this.handleNodeMouseDown(componentId, e)}
+                          />
+                        );
+                      })()
                   )}
                 </Connections>
               </InfinitePlane>
