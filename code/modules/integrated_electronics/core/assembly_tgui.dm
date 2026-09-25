@@ -73,47 +73,7 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 		if(ie_ic_is_output_side_pin(io))
 			to_chat(M, span_warning("Вставьте память отладчика во вход (слева). С выхода значение можно только скопировать (режим Copy на кнопке upload)."))
 			return
-		switch(ftype_mark)
-			if("entity")
-				if(isnull(D.data_to_write) || isweakref(D.data_to_write))
-					io.write_data_to_pin(D.data_to_write)
-				else
-					to_chat(M, span_warning("The debugger memory is not a reference. Use ref or null on the debugger, then upload again."))
-			if("number", "index", "dir")
-				if(isnull(D.data_to_write))
-					io.write_data_to_pin(null)
-				else if(isnum(D.data_to_write))
-					io.write_data_to_pin(D.data_to_write)
-				else if(istext(D.data_to_write))
-					io.write_data_to_pin(text2num(D.data_to_write))
-				else
-					to_chat(M, span_warning("Debugger memory must be a number or null for this pin."))
-			if("boolean")
-				if(isnull(D.data_to_write))
-					io.write_data_to_pin(null)
-				else if(D.data_to_write == TRUE || D.data_to_write == FALSE)
-					io.write_data_to_pin(D.data_to_write)
-				else if(isnum(D.data_to_write))
-					io.write_data_to_pin(!!D.data_to_write)
-				else if(istext(D.data_to_write))
-					var/nt = lowertext(D.data_to_write)
-					io.write_data_to_pin(nt == "true" || nt == "1" || nt == "yes")
-				else
-					to_chat(M, span_warning("Debugger memory must be boolean-like or null."))
-			if("char", "string", "color")
-				if(isnull(D.data_to_write) || istext(D.data_to_write))
-					io.write_data_to_pin(D.data_to_write)
-				else
-					to_chat(M, span_warning("Debugger memory must be text or null for this pin."))
-			if("list")
-				if(isnull(D.data_to_write) || islist(D.data_to_write))
-					io.write_data_to_pin(D.data_to_write)
-				else
-					to_chat(M, span_warning("Debugger memory must be a list or null."))
-			if("any")
-				io.write_data_to_pin(D.data_to_write)
-			else
-				io.write_data_to_pin(D.data_to_write)
+		ie_ic_write_debugger_memory(io, D, M)
 		return
 
 	if(istype(held) && !istype(held, /obj/item/integrated_electronics/debugger))
@@ -126,6 +86,75 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 	var/client/C = M.client
 	if((ftype_mark == "entity" || ftype_mark == "any") && C?.holder?.marked_datum)
 		io.write_data_to_pin(WEAKREF(C.holder.marked_datum))
+
+/// Пишет память отладчика (data_to_write: скопированное значение / ref / null) в пин
+/// данных с приведением типа по ftype. Возвращает TRUE в случае записи, иначе FALSE
+/// (сообщение пользователю при этом уже выводится).
+/proc/ie_ic_write_debugger_memory(datum/integrated_io/io, obj/item/integrated_electronics/debugger/D, mob/M)
+	var/ftype = ie_ic_fundamental_type(io)
+	var/val = D.data_to_write
+	switch(ftype)
+		if("entity")
+			if(isnull(val) || isweakref(val))
+				io.write_data_to_pin(val)
+				return TRUE
+			to_chat(M, span_warning("The debugger memory is not a reference. Use ref or null on the debugger, then upload again."))
+		if("number", "index", "dir")
+			if(isnull(val))
+				io.write_data_to_pin(null)
+				return TRUE
+			else if(isnum(val))
+				io.write_data_to_pin(val)
+				return TRUE
+			else if(istext(val))
+				io.write_data_to_pin(text2num(val))
+				return TRUE
+			to_chat(M, span_warning("Debugger memory must be a number or null for this pin."))
+		if("boolean")
+			if(isnull(val))
+				io.write_data_to_pin(null)
+				return TRUE
+			else if(val == TRUE || val == FALSE)
+				io.write_data_to_pin(val)
+				return TRUE
+			else if(isnum(val))
+				io.write_data_to_pin(!!val)
+				return TRUE
+			else if(istext(val))
+				var/nt = lowertext(val)
+				io.write_data_to_pin(nt == "true" || nt == "1" || nt == "yes")
+				return TRUE
+			to_chat(M, span_warning("Debugger memory must be boolean-like or null."))
+		if("char", "string", "color")
+			if(isnull(val) || istext(val))
+				if(ftype == "char" && istext(val) && length_char(val) > 1)
+					val = copytext_char(val, 1, 2)
+				io.write_data_to_pin(val)
+				return TRUE
+			to_chat(M, span_warning("Debugger memory must be text or null for this pin."))
+		if("list")
+			if(isnull(val) || islist(val))
+				io.write_data_to_pin(val)
+				return TRUE
+			to_chat(M, span_warning("Debugger memory must be a list or null."))
+		else
+			io.write_data_to_pin(val)
+			return TRUE
+	return FALSE
+
+/// Вставляет память отладчика в открытый пин нативного редактора (данные: скопированное
+/// значение / ref / null — в зависимости от того, что сейчас в памяти отладчика).
+/proc/ie_ic_paste_debugger_value(mob/M, datum/integrated_io/io)
+	if(!M || !io)
+		return
+	if(io.io_type != DATA_CHANNEL)
+		to_chat(M, span_warning("Вставить из отладчика можно только в пины данных, не в импульсные."))
+		return
+	var/obj/item/integrated_electronics/debugger/D = ie_ic_get_debugger_from_hands(M)
+	if(!D)
+		to_chat(M, span_warning("Возьмите отладчик (circuit debugger) в руку, чтобы вставить значение."))
+		return
+	ie_ic_write_debugger_memory(io, D, M)
 
 /proc/ie_ic_is_output_side_pin(datum/integrated_io/io)
 	if(!io)
@@ -680,6 +709,12 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 				return TRUE
 			ie_ic_copy_pin_to_debugger(user, copy_editor["io"])
 			return TRUE
+		if("ie_pin_editor_paste_debugger")
+			var/list/paste_editor = ie_ic_get_editor_pin(host)
+			if(!paste_editor)
+				return TRUE
+			ie_ic_paste_debugger_value(user, paste_editor["io"])
+			return TRUE
 		if("ie_list_edit")
 			var/list/editor = ie_ic_get_editor_pin(host)
 			if(!editor)
@@ -697,6 +732,8 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 				return TRUE
 			if(params["set_null"])
 				io.write_data_to_pin(null)
+			else if(params["make_list"])
+				io.write_data_to_pin(list())
 			else if(params["marked_atom"])
 				ie_ic_tgui_apply_marked_atom_or_debugger(user, io)
 			else if(ie_ic_fundamental_type(io) == "any")

@@ -37,6 +37,7 @@ const ANY_KIND_LABEL = {
   char: 'символ (char)',
   color: 'цвет (color)',
   dir: 'направление (dir)',
+  list: 'список (list)',
 };
 
 const ANY_KINDS = Object.keys(ANY_KIND_LABEL);
@@ -68,6 +69,13 @@ export const PinEditor = (props) => {
               tooltip="Скопировать текущее значение пина в память отладчика"
               onClick={() => act('ie_copy_pin_to_debugger')}>
               В отладчик
+            </Button>
+            <Button
+              icon="upload"
+              color="transparent"
+              tooltip="Вставить в пин память отладчика (скопированное значение, ref или null)"
+              onClick={() => act('ie_pin_editor_paste_debugger')}>
+              Из отладчика
             </Button>
             <Button
               icon="times"
@@ -586,7 +594,27 @@ const AnyValueEditor = ({ editor, act }) => {
   );
 
   let kindInput;
-  if (kind === 'boolean') {
+  if (kind === 'list') {
+    kindInput = (
+      <Stack align="center" wrap>
+        <Stack.Item>
+          <Button
+            icon="list-ul"
+            color="good"
+            tooltip="Заменить текущее значение пустым списком и открыть его редактор"
+            onClick={() => act('ie_value_edit', { make_list: true })}>
+            Создать список
+          </Button>
+        </Stack.Item>
+        <Stack.Item>
+          <Box color="label">
+            Текущее значение будет заменено пустым списком.
+          </Box>
+        </Stack.Item>
+      </Stack>
+    );
+  }
+  else if (kind === 'boolean') {
     const on = editor.value === true || editor.value === 1;
     const off = editor.value === false || editor.value === 0;
     kindInput = (
