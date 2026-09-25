@@ -385,8 +385,44 @@
 		. += 22 + pulse_rows * 27
 	return max(., 96)
 
-/// Автораскладка компонентов без сохранённых координат: читаемое послойное дерево по связям,
-/// отцентрированное с запасом пространства со всех сторон (вместо прежнего «в ряд»).
+/// Рекурсивно считает глубину узла (длина пути от истока) как колонку дерева.
+/// Мемоизованная и устойчивая к циклам: обратные рёбра в процессе обхода не добавляют глубины.
+/// `incoming` — список списков: incoming[i] = индексы компонентов, питающих i.
+/proc/ie_tgui_layout_depth(idx, list/incoming, list/depth, list/state)
+	if(state[idx] == 2)
+		return depth[idx]
+	if(state[idx] == 1)
+		return 0
+	state[idx] = 1
+	var/best = 0
+	var/list/up = incoming[idx]
+	for(var/p in up)
+		best = max(best, ie_tgui_layout_depth(p, incoming, depth, state) + 1)
+	depth[idx] = best
+	state[idx] = 2
+	return best
+
+/// Стабильная сортировка вставкой по весам `scores` (ассоциативный: индекс -> число).
+/// При равных весах раньше идёт меньший индекс компонента — детерминированный порядок.
+/proc/ie_tgui_stable_sort_by_score(list/items, list/scores)
+	var/len = length(items)
+	for(var/j in 2 to len)
+		var/key = items[j]
+		var/score = scores[key]
+		var/k = j - 1
+		while(k >= 1)
+			var/prev = items[k]
+			var/prev_score = scores[prev]
+			if(prev_score > score || (prev_score == score && prev > key))
+				items[k + 1] = prev
+				k--
+			else
+				break
+		items[k + 1] = key
+
+/// Автораскладка компонентов без сохранённых координат: дерево по связям «от истоков к стокам»
+/// (слева направо). Колонка = рекурсивно посчитанная глубина от истока; внутри колонки узлы
+/// упорядочены по барицентру родителей и разложены вертикально без наездов; граф центрируется.
 /proc/ie_tgui_apply_auto_layout(obj/item/electronic_assembly/assembly, list/blocks)
 	if(!assembly || !blocks)
 		return
@@ -396,29 +432,29 @@
 	if(n < 1 || !length(comp_blocks))
 		return
 
-	// 1. Какие компоненты нуждаются в раскладке (нет сохранённой позиции).
-	var/list/needs_layout = list()
+	// 1. Кто нуждается в раскладке (нет полной сохранённой позиции ui_x/ui_y).
+	var/list/needs_layout = new /list(n)
 	var/any_needs_layout = FALSE
 	for(var/i in 1 to n)
 		var/list/cp = comp_blocks[i]
-		var/has_pos = islist(cp) && (("ui_x" in cp) || ("ui_y" in cp))
-		needs_layout.Add(!has_pos)
+		var/has_pos = islist(cp) && isnum(cp["ui_x"]) && isnum(cp["ui_y"])
+		needs_layout[i] = !has_pos
 		if(!has_pos)
 			any_needs_layout = TRUE
 	if(!any_needs_layout)
 		return
 
-	// 2. Граф по проводам (направление: output -> input).
-	var/list/children = list()
-	var/list/parents = list()
+	// 2. Ориентированный граф по проводам (направление: output -> input, то есть «вниз по дереву»).
+	//    Храним только incoming[i] = индексы компонентов, питающих i, — его достаточно для глубины
+	//    и вертикального порядка по барицентру родителей.
+	var/list/incoming = new /list(n)
 	for(var/i in 1 to n)
-		children.Add(list())
-		parents.Add(list())
+		incoming[i] = list()
 
 	if(blocks["wires"] && islist(blocks["wires"]))
 		for(var/w in blocks["wires"])
 			var/list/wire = w
-			if(!islist(wire) || wire.len != 2)
+			if(!islist(wire) || length(wire) != 2)
 				continue
 			var/datum/integrated_io/a = assembly.get_pin_ref_list(wire[1])
 			var/datum/integrated_io/b = assembly.get_pin_ref_list(wire[2])
@@ -436,77 +472,77 @@
 			var/ii = comps.Find(in_pin.holder)
 			if(!oi || !ii || oi == ii)
 				continue
-			if(!(oi in parents[ii]))
-				parents[ii] += oi
-			if(!(ii in children[oi]))
-				children[oi] += ii
+			var/list/up = incoming[ii]
+			if(!(oi in up))
+				up.Add(oi)
 
-	// 3. Послойная раскладка (Kahn); узлы в циклах — в слой после всех ацикличных.
-	var/list/indegree = list()
-	var/list/layer = list()
-	var/list/queue = list()
+	// 3. Рекурсивная глубина (колонка): истоки слева, стоки справа.
+	var/list/depth = new /list(n)
+	var/list/state = new /list(n)
 	for(var/i in 1 to n)
-		var/pc = length(parents[i])
-		indegree.Add(pc)
-		layer.Add(0)
-		if(pc == 0)
-			queue.Add(i)
+		ie_tgui_layout_depth(i, incoming, depth, state)
 
-	var/head = 1
-	while(head <= length(queue))
-		var/cur = queue[head]
-		head++
-		for(var/c in children[cur])
-			layer[c] = max(layer[c], layer[cur] + 1)
-			indegree[c] = indegree[c] - 1
-			if(indegree[c] == 0)
-				queue.Add(c)
-
-	var/max_layer = 0
+	var/max_depth = 0
 	for(var/i in 1 to n)
-		if(indegree[i] > 0)
-			continue
-		max_layer = max(max_layer, layer[i])
-	for(var/i in 1 to n)
-		if(indegree[i] > 0)
-			layer[i] = max_layer + 1
+		max_depth = max(max_depth, depth[i])
 
-	// 4. Группируем по слоям (колонкам); внутри колонки — порядок компонентов, вертикально
-	//    с учётом оценочной высоты ноды.
-	var/list/columns = list()
+	// 4. Группируем узлы по колонкам; внутри колонки — порядок по барицентру родителей.
+	var/list/columns = new /list(max_depth + 1)
+	for(var/d in 0 to max_depth)
+		columns[d + 1] = list()
 	for(var/i in 1 to n)
-		var/L = layer[i]
-		while(length(columns) <= L)
-			columns.Add(list())
-		columns[L + 1].Add(i)
+		var/list/col = columns[depth[i] + 1]
+		col.Add(i)
 
-	var/list/rawX = list()
-	var/list/rawY = list()
-	var/list/col_heights = list()
-	for(var/i in 1 to n)
-		rawX.Add(0)
-		rawY.Add(0)
+	var/list/row = list()
+	var/list/ordered = new /list(max_depth + 1)
+	for(var/d in 0 to max_depth)
+		var/list/col = columns[d + 1]
+		var/list/ord
+		if(d == 0)
+			// Истоки — в порядке индекса (колонка уже заполнялась по возрастанию i).
+			ord = col.Copy()
+		else
+			var/list/scores = list()
+			for(var/c in col)
+				var/psum = 0
+				var/pcnt = 0
+				for(var/p in incoming[c])
+					if(!isnull(row[p]))
+						psum += row[p]
+						pcnt++
+				scores[c] = pcnt > 0 ? (psum / pcnt) : 0
+			ord = col.Copy()
+			ie_tgui_stable_sort_by_score(ord, scores)
+		ordered[d + 1] = ord
+		for(var/k in 1 to length(ord))
+			row[ord[k]] = k
 
-	for(var/ci in 1 to length(columns))
-		var/list/col = columns[ci]
+	// 5. Экранные координаты: x = колонка * шаг, y = накопленная высота нод в колонке.
+	var/list/x_pos = new /list(n)
+	var/list/y_pos = new /list(n)
+	var/list/col_height = list()
+	for(var/d in 0 to max_depth)
+		var/list/ord = ordered[d + 1]
 		var/cursor = 0
-		for(var/index in col)
-			var/obj/item/integrated_circuit/chip = comps[index]
-			rawX[index] = (ci - 1) * IE_TGUI_LAYOUT_COL_GAP
-			rawY[index] = cursor
+		for(var/k in 1 to length(ord))
+			var/idx = ord[k]
+			var/obj/item/integrated_circuit/chip = comps[idx]
+			x_pos[idx] = d * IE_TGUI_LAYOUT_COL_GAP
+			y_pos[idx] = cursor
 			cursor += ie_tgui_estimate_node_height(chip) + IE_TGUI_LAYOUT_NODE_Y_PAD
-		col_heights.Add(cursor)
+		col_height[d + 1] = cursor
 
-	// 5. Центрируем граф (середину размаха — в (0,0)); каждую колонку — по вертикали.
-	var/x_shift = -((max(length(columns) - 1, 0)) * IE_TGUI_LAYOUT_COL_GAP) / 2
+	// 6. Центрируем: середину горизонтального размаха и каждую колонку по вертикали — в 0.
+	var/x_shift = -(max_depth * IE_TGUI_LAYOUT_COL_GAP) / 2
 	for(var/i in 1 to n)
 		if(!needs_layout[i])
 			continue
 		var/obj/item/integrated_circuit/chip = comps[i]
-		var/L = layer[i]
-		var/col_h = col_heights[L + 1]
-		chip.ie_ui_rel_x = clamp(round(rawX[i] + x_shift), -IE_TGUI_COMPONENT_COORD_LIMIT, IE_TGUI_COMPONENT_COORD_LIMIT)
-		chip.ie_ui_rel_y = clamp(round(rawY[i] - col_h / 2), -IE_TGUI_COMPONENT_COORD_LIMIT, IE_TGUI_COMPONENT_COORD_LIMIT)
+		var/d = depth[i]
+		var/ch = col_height[d + 1]
+		chip.ie_ui_rel_x = clamp(round(x_pos[i] + x_shift), -IE_TGUI_COMPONENT_COORD_LIMIT, IE_TGUI_COMPONENT_COORD_LIMIT)
+		chip.ie_ui_rel_y = clamp(round(y_pos[i] - ch / 2), -IE_TGUI_COMPONENT_COORD_LIMIT, IE_TGUI_COMPONENT_COORD_LIMIT)
 
 // No sanity checks are performed, save file is expected to be validated by validate_electronic_assembly
 /datum/controller/subsystem/processing/circuit/proc/load_electronic_assembly(loc, list/blocks)
