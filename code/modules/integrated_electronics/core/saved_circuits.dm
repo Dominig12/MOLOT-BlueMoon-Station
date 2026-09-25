@@ -437,7 +437,7 @@
 	var/any_needs_layout = FALSE
 	for(var/i in 1 to n)
 		var/list/cp = comp_blocks[i]
-		var/has_pos = islist(cp) && isnum(cp["ui_x"]) && isnum(cp["ui_y"])
+		var/has_pos = islist(cp) && isnum(cp["ui_x"]) && isnum(cp["ui_y"]) && cp["ui_x"] != 0 && cp["ui_y"] != 0
 		needs_layout[i] = !has_pos
 		if(!has_pos)
 			any_needs_layout = TRUE
@@ -494,7 +494,7 @@
 		var/list/col = columns[depth[i] + 1]
 		col.Add(i)
 
-	var/list/row = list()
+	var/list/row = new /list(n)
 	var/list/ordered = new /list(max_depth + 1)
 	for(var/d in 0 to max_depth)
 		var/list/col = columns[d + 1]
@@ -503,7 +503,7 @@
 			// Истоки — в порядке индекса (колонка уже заполнялась по возрастанию i).
 			ord = col.Copy()
 		else
-			var/list/scores = list()
+			var/list/scores = new /list(n)
 			for(var/c in col)
 				var/psum = 0
 				var/pcnt = 0
@@ -521,7 +521,7 @@
 	// 5. Экранные координаты: x = колонка * шаг, y = накопленная высота нод в колонке.
 	var/list/x_pos = new /list(n)
 	var/list/y_pos = new /list(n)
-	var/list/col_height = list()
+	var/list/col_height = new /list(n)
 	for(var/d in 0 to max_depth)
 		var/list/ord = ordered[d + 1]
 		var/cursor = 0

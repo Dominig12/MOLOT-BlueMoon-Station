@@ -238,6 +238,7 @@ const EditCell = (props) => {
     <Input
       fluid
       placeholder={row.kind}
+      value={initial}
       defaultValue={initial}
       onEnter={(e, value) => commit(value)}
       onBlur={(e) => {
