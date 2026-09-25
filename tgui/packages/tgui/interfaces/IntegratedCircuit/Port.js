@@ -3,6 +3,7 @@ import { Component, createRef } from 'react';
 import { classes } from '../../../common/react';
 import {
   Box,
+  Button,
   Icon,
   Stack,
 } from '../../components';
@@ -31,6 +32,7 @@ export class Port extends Component {
     this.handleReorderDragOver = this.handleReorderDragOver.bind(this);
     this.handleReorderDrop = this.handleReorderDrop.bind(this);
     this.handleReorderDragEnd = this.handleReorderDragEnd.bind(this);
+    this.removeConnection = this.removeConnection.bind(this);
   }
 
   componentWillUnmount() {
@@ -135,6 +137,19 @@ export class Port extends Component {
   handleReorderDragEnd() {
     this.reorderSrc = null;
     this.setState({ dragOverIndex: null });
+  }
+
+  removeConnection(idx) {
+    const { act, componentId, portIndex, isOutput } = this.props;
+    if (!act) {
+      return;
+    }
+    act('remove_connection_at', {
+      component_id: componentId,
+      port_id: portIndex,
+      is_input: !isOutput,
+      connection_index: idx + 1,
+    });
   }
 
   handlePortMouseDown(e) {
@@ -296,48 +311,62 @@ export class Port extends Component {
                   Перетащи строку, чтобы изменить порядок
                 </Box>
                 <Stack vertical>
-                  {connectionRefs.map((ref, idx) => {
-                    const pos = idx + 1;
-                    const label = resolveLabel(ref);
-                    return (
-                      <Stack.Item key={ref}>
-                        <Stack
-                          align="center"
-                          className={classes([
-                            'PortConnectionPopover__row',
-                            dragOverIndex === idx && 'PortConnectionPopover__row--dragOver',
-                          ])}
-                          draggable
-                          onDragStart={(e) => this.handleReorderDragStart(e, idx)}
-                          onDragOver={(e) => this.handleReorderDragOver(e, idx)}
-                          onDrop={(e) => this.handleReorderDrop(e, idx)}
-                          onDragEnd={this.handleReorderDragEnd}
-                          title="Перетащи для изменения порядка">
-                          <Stack.Item>
-                            <Icon
-                              name="grip-vertical"
-                              size={0.72}
-                              opacity={0.55}
-                            />
+                      {connectionRefs.map((ref, idx) => {
+                        const pos = idx + 1;
+                        const label = resolveLabel(ref);
+                        return (
+                          <Stack.Item key={ref}>
+                            <Stack
+                              align="center"
+                              className={classes([
+                                'PortConnectionPopover__row',
+                                dragOverIndex === idx && 'PortConnectionPopover__row--dragOver',
+                              ])}>
+                              <Stack.Item grow={1}>
+                                <Stack
+                                  align="center"
+                                  draggable
+                                  onDragStart={(e) => this.handleReorderDragStart(e, idx)}
+                                  onDragOver={(e) => this.handleReorderDragOver(e, idx)}
+                                  onDrop={(e) => this.handleReorderDrop(e, idx)}
+                                  onDragEnd={this.handleReorderDragEnd}
+                                  title="Перетащи для изменения порядка">
+                                  <Stack.Item>
+                                    <Icon
+                                      name="grip-vertical"
+                                      size={0.72}
+                                      opacity={0.55}
+                                    />
+                                  </Stack.Item>
+                                  <Stack.Item>
+                                    <Icon
+                                      name="circle"
+                                      color={port.color || 'blue'}
+                                      size={0.85}
+                                    />
+                                  </Stack.Item>
+                                  <Stack.Item grow={1} minWidth="8rem" maxWidth="16rem">
+                                    <Box
+                                      className="PortConnectionPopover__name"
+                                      title={ref}>
+                                      <b>#{pos}</b> {label}
+                                    </Box>
+                                  </Stack.Item>
+                                </Stack>
+                              </Stack.Item>
+                              <Stack.Item>
+                                <Button
+                                  icon="times"
+                                  color="transparent"
+                                  compact
+                                  tooltip="Удалить это соединение"
+                                  onClick={() => this.removeConnection(idx)}
+                                />
+                              </Stack.Item>
+                            </Stack>
                           </Stack.Item>
-                          <Stack.Item>
-                            <Icon
-                              name="circle"
-                              color={port.color || 'blue'}
-                              size={0.85}
-                            />
-                          </Stack.Item>
-                          <Stack.Item grow={1} minWidth="8rem" maxWidth="16rem">
-                            <Box
-                              className="PortConnectionPopover__name"
-                              title={ref}>
-                              <b>#{pos}</b> {label}
-                            </Box>
-                          </Stack.Item>
-                        </Stack>
-                      </Stack.Item>
-                    );
-                  })}
+                        );
+                      })}
                 </Stack>
               </Box>
             )}

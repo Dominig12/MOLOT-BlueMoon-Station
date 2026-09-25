@@ -746,6 +746,26 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			return TRUE
 	return FALSE
 
+/// Удаляет одну конкретную связь пина по 1-based индексу в порядке списка связей
+/// (тот же порядок, что TGUI показывает в попапе «Порядок связей»). Возвращает TRUE,
+/// если связь была разорвана.
+/proc/ie_ic_remove_connection_at(atom/movable/host, list/params, mob/user)
+	var/cid = text2num(params["component_id"])
+	var/port_id = text2num(params["port_id"])
+	var/is_input = params["is_input"] ? TRUE : FALSE
+	var/conn_index = round(text2num(params["connection_index"]))
+	var/obj/item/integrated_circuit/chip = ie_ic_chip_from_index(host, cid)
+	if(!chip || !user)
+		return FALSE
+	var/datum/integrated_io/io = is_input ? ie_ic_get_input_io(chip, port_id) : ie_ic_get_output_io(chip, port_id)
+	if(!io)
+		return FALSE
+	if(conn_index < 1 || conn_index > length(io.linked))
+		return FALSE
+	var/datum/integrated_io/other = io.linked[conn_index]
+	io.disconnect_pin(other)
+	return TRUE
+
 /obj/item/electronic_assembly/ui_assets(mob/user)
 	return list(
 		get_asset_datum(/datum/asset/simple/circuit_assets)
@@ -892,6 +912,9 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 				return
 			io.disconnect_all()
 			. = TRUE
+		if("remove_connection_at")
+			if(ie_ic_remove_connection_at(src, params, usr))
+				. = TRUE
 		if("detach_component")
 			var/cid = text2num(params["component_id"])
 			var/obj/item/integrated_circuit/chip = ie_ic_chip_from_index(src, cid)
@@ -1180,6 +1203,9 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			var/datum/integrated_io/io = is_input ? ie_ic_get_input_io(src, port_id) : ie_ic_get_output_io(src, port_id)
 			if(io)
 				io.disconnect_all()
+				. = TRUE
+		if("remove_connection_at")
+			if(ie_ic_remove_connection_at(src, params, usr))
 				. = TRUE
 		if("detach_component")
 			. = TRUE

@@ -26,6 +26,7 @@ import { PinEditor } from './PinEditor';
 import type {
   CircuitComponentView,
   CircuitPortPayload,
+  CircuitPulse,
   GroupDragState,
   IntegratedCircuitData,
   IntegratedCircuitState,
@@ -34,6 +35,46 @@ import type {
   WireConnection,
 } from './types';
 import { VariableMenu } from './VariableMenu';
+
+/** Карта REF порта → подпись «Компонент · Порт» для попапа порядка связей. */
+function buildPortLabelByRef(
+  components: (CircuitComponentView | null)[],
+): Map<string, string> {
+  const portLabelByRef = new Map<string, string>();
+  for (const comp of components) {
+    if (!comp) {
+      continue;
+    }
+    const compLabel = comp.name || '';
+    for (const p of comp.input_ports) {
+      portLabelByRef.set(p.ref, `${compLabel} · ${p.name}`);
+    }
+    for (const p of comp.output_ports) {
+      portLabelByRef.set(p.ref, `${compLabel} · ${p.name}`);
+    }
+  }
+  return portLabelByRef;
+}
+
+/** Ключи «живых» импульсов проводов: out\0in. IE отдаёт список, wiremod — один ref. */
+function buildPulseKeys(
+  circuit_pulses: CircuitPulse[] | null | undefined,
+  circuit_pulse_out_ref: string | null | undefined,
+  circuit_pulse_in_ref: string | null | undefined,
+): Set<string> {
+  const pulseKeys = new Set<string>();
+  if (Array.isArray(circuit_pulses)) {
+    for (const pulse of circuit_pulses) {
+      if (pulse && pulse.out && pulse.in) {
+        pulseKeys.add(`${pulse.out}\u0000${pulse.in}`);
+      }
+    }
+  }
+  else if (circuit_pulse_out_ref && circuit_pulse_in_ref) {
+    pulseKeys.add(`${circuit_pulse_out_ref}\u0000${circuit_pulse_in_ref}`);
+  }
+  return pulseKeys;
+}
 
 export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState> {
   connectionsSvgRef = createRef<SVGSVGElement>();
@@ -193,7 +234,10 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     // противоположному пину сразу соединяет их — тянуть провод не обязательно.
     const connectSource = this.state.connectSource;
     if (connectSource) {
-      if (connectSource.is_output === isOutput) {
+      if (connectSource.ref === port.ref) {
+        // Повторный клик по уже выбранному пину — снять выбор.
+        this.setState({ connectSource: null });
+      } else if (connectSource.is_output === isOutput) {
         // Тот же тип: просто переносим «источник» на этот пин.
         this.setState({
           connectSource: {
@@ -455,11 +499,13 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
   componentDidMount() {
     window.addEventListener('mousedown', this.handleMouseDown);
     window.addEventListener('mouseup', this.handleMouseUp);
+    window.addEventListener('keydown', this.handleWindowKeyDown);
   }
 
   componentWillUnmount() {
     window.removeEventListener('mousedown', this.handleMouseDown);
     window.removeEventListener('mouseup', this.handleMouseUp);
+    window.removeEventListener('keydown', this.handleWindowKeyDown);
     window.removeEventListener('mousemove', this.handlePortDrag);
     window.removeEventListener('mouseup', this.handlePortRelease);
     window.removeEventListener('mousemove', this.handleNodeDrag);
@@ -478,12 +524,26 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
       act('remove_examined_component');
     }
     // Клик по пустому полю (не по ноде — ноды стопают пропагацию) снимает выделение.
+    // «Клик → клик» (connectSource) намеренно НЕ сбрасываем: игрок должен иметь
+    // возможность пановать схему и соединить выбранный пин кликом в другом месте.
     if (this.state.selection.length) {
       this.setState({ selection: [] });
     }
-    if (this.state.connectSource) {
-      this.setState({ connectSource: null });
+  }
+
+  handleWindowKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') {
+      return;
     }
+    const { connectSource, selectedPort, selection } = this.state;
+    if (!connectSource && !selectedPort && selection.length === 0) {
+      return;
+    }
+    this.setState({
+      connectSource: null,
+      selectedPort: null,
+      selection: [],
+    });
   }
 
   handleMouseUp(_event: MouseEvent) {
@@ -732,32 +792,14 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     const ieAssemblyUi = !!ie_circuit && ie_clone_copy_mode === 'assembly';
 
     // Карта REF порта → подпись «Компонент · Порт» для попапа порядка связей.
-    const portLabelByRef = new Map<string, string>();
-    for (const comp of components) {
-      if (!comp) {
-        continue;
-      }
-      const compLabel = comp.name || '';
-      for (const p of comp.input_ports) {
-        portLabelByRef.set(p.ref, `${compLabel} · ${p.name}`);
-      }
-      for (const p of comp.output_ports) {
-        portLabelByRef.set(p.ref, `${compLabel} · ${p.name}`);
-      }
-    }
+    const portLabelByRef = buildPortLabelByRef(components);
 
     // Ключи «живых» импульсов проводов: out\0in. IE отдаёт список, wiremod — один ref.
-    const pulseKeys = new Set<string>();
-    if (Array.isArray(circuit_pulses)) {
-      for (const pulse of circuit_pulses) {
-        if (pulse && pulse.out && pulse.in) {
-          pulseKeys.add(`${pulse.out}\u0000${pulse.in}`);
-        }
-      }
-    }
-    else if (circuit_pulse_out_ref && circuit_pulse_in_ref) {
-      pulseKeys.add(`${circuit_pulse_out_ref}\u0000${circuit_pulse_in_ref}`);
-    }
+    const pulseKeys = buildPulseKeys(
+      circuit_pulses,
+      circuit_pulse_out_ref,
+      circuit_pulse_in_ref,
+    );
 
     return (
       <Window
