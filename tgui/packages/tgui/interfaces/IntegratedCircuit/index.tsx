@@ -845,7 +845,7 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
                 className="IntegratedCircuit__componentsToggle"
                 position="absolute"
                 right="0.5rem"
-                top="1rem"
+                top="2rem"
                 style={{ zIndex: 6 }}>
                 <Button
                   icon="list-ul"

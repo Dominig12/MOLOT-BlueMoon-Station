@@ -567,47 +567,158 @@ const AnyValueEditor = ({ editor, act }) => {
     </Stack>
   );
 
+  const saveButton = (k) => (
+    <Button
+      icon="save"
+      color="good"
+      onClick={() => act('ie_value_edit', { kind: k, value: draft })}>
+      Записать
+    </Button>
+  );
+
+  let kindInput;
   if (kind === 'boolean') {
     const on = editor.value === true || editor.value === 1;
     const off = editor.value === false || editor.value === 0;
-    return (
-      <Stack vertical>
-        <Stack.Item>{kindRow}</Stack.Item>
+    kindInput = (
+      <Stack>
         <Stack.Item>
-          <Stack>
-            <Stack.Item>
-              <Button
-                color={on ? 'good' : 'transparent'}
-                icon={on ? 'toggle-on' : 'toggle-off'}
-                onClick={() => act('ie_value_edit', { kind: 'boolean', value: 1 })}>
-                Да (true)
-              </Button>
-            </Stack.Item>
-            <Stack.Item>
-              <Button
-                color={off ? 'bad' : 'transparent'}
-                icon={off ? 'toggle-on' : 'toggle-off'}
-                onClick={() => act('ie_value_edit', { kind: 'boolean', value: 0 })}>
-                Нет (false)
-              </Button>
-            </Stack.Item>
-          </Stack>
+          <Button
+            color={on ? 'good' : 'transparent'}
+            icon={on ? 'toggle-on' : 'toggle-off'}
+            onClick={() => act('ie_value_edit', { kind: 'boolean', value: 1 })}>
+            Да (true)
+          </Button>
         </Stack.Item>
         <Stack.Item>
-          <Stack>
-            <Stack.Item>
-              <Button
-                icon="upload"
-                color="transparent"
-                tooltip="Вставить ref из руки/отладчика/marked"
-                onClick={() => act('ie_value_edit', { marked_atom: true })}>
-                Вставить ref
-              </Button>
-            </Stack.Item>
-            <Stack.Item>
-              <NullButton act={act} />
-            </Stack.Item>
-          </Stack>
+          <Button
+            color={off ? 'bad' : 'transparent'}
+            icon={off ? 'toggle-on' : 'toggle-off'}
+            onClick={() => act('ie_value_edit', { kind: 'boolean', value: 0 })}>
+            Нет (false)
+          </Button>
+        </Stack.Item>
+      </Stack>
+    );
+  }
+  else if (kind === 'dir') {
+    const value = typeof editor.value === 'number' ? editor.value : null;
+    const match = IE_DIR_OPTIONS.find(([v]) => v === value);
+    kindInput = (
+      <Dropdown
+        width="9rem"
+        displayText={match ? match[1] : '—'}
+        options={IE_DIR_OPTIONS.map(([, label]) => label)}
+        onSelected={(label) => {
+          const found = IE_DIR_OPTIONS.find(([, l]) => l === label);
+          if (found) {
+            act('ie_value_edit', { kind: 'dir', value: found[0] });
+          }
+        }}
+      />
+    );
+  }
+  else if (kind === 'color') {
+    const hex = typeof draft === 'string' && /^#[0-9A-Fa-f]{6}$/.test(draft)
+      ? draft
+      : '#FFFFFF';
+    kindInput = (
+      <Stack align="center" wrap>
+        <Stack.Item>
+          <input
+            type="color"
+            value={hex}
+            onChange={(e) => {
+              const val = e.target.value.toUpperCase();
+              setDraft(val);
+              act('ie_value_edit', { kind: 'color', value: val });
+            }}
+            style={{
+              width: '36px',
+              height: '28px',
+              padding: 0,
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          />
+        </Stack.Item>
+        <Stack.Item>
+          <Input
+            placeholder="#RRGGBB"
+            value={draft}
+            width="90px"
+            onChange={(e, val) => setDraft(val)}
+            onEnter={(e, val) => act('ie_value_edit', { kind: 'color', value: val })}
+          />
+        </Stack.Item>
+        <Stack.Item>
+          {saveButton('color')}
+        </Stack.Item>
+      </Stack>
+    );
+  }
+  else if (kind === 'char') {
+    kindInput = (
+      <Stack align="center">
+        <Stack.Item>
+          <Input
+            placeholder="символ"
+            maxLength={1}
+            width="4rem"
+            value={draft}
+            onChange={(e, val) => setDraft((val || '').slice(0, 1))}
+            onEnter={(e, val) => act('ie_value_edit', {
+              kind: 'char',
+              value: (val || '').slice(0, 1),
+            })}
+          />
+        </Stack.Item>
+        <Stack.Item>
+          <Button
+            icon="save"
+            color="good"
+            onClick={() => act('ie_value_edit', {
+              kind: 'char',
+              value: (draft || '').slice(0, 1),
+            })}>
+            Записать
+          </Button>
+        </Stack.Item>
+      </Stack>
+    );
+  }
+  else if (kind === 'number') {
+    kindInput = (
+      <Stack align="center">
+        <Stack.Item grow={1}>
+          <Input
+            fluid
+            placeholder="число"
+            value={draft}
+            onChange={(e, val) => setDraft(val)}
+            onEnter={(e, val) => act('ie_value_edit', { kind: 'number', value: val })}
+          />
+        </Stack.Item>
+        <Stack.Item>
+          {saveButton('number')}
+        </Stack.Item>
+      </Stack>
+    );
+  }
+  else {
+    kindInput = (
+      <Stack align="center">
+        <Stack.Item grow={1}>
+          <Input
+            fluid
+            placeholder="значение (текст)"
+            value={draft}
+            onChange={(e, val) => setDraft(val)}
+            onEnter={(e, val) => act('ie_value_edit', { kind: 'string', value: val })}
+          />
+        </Stack.Item>
+        <Stack.Item>
+          {saveButton('string')}
         </Stack.Item>
       </Stack>
     );
@@ -616,25 +727,9 @@ const AnyValueEditor = ({ editor, act }) => {
   return (
     <Stack vertical>
       <Stack.Item>{kindRow}</Stack.Item>
+      <Stack.Item>{kindInput}</Stack.Item>
       <Stack.Item>
-        <Input
-          fluid
-          placeholder={kind === 'number' ? 'число' : kind === 'char' ? 'символ' : 'значение'}
-          value={draft}
-          onChange={(e, val) => setDraft(val)}
-          onEnter={(e, val) => act('ie_value_edit', { kind, value: val })}
-        />
-      </Stack.Item>
-      <Stack.Item>
-        <Stack>
-          <Stack.Item>
-            <Button
-              icon="save"
-              color="good"
-              onClick={() => act('ie_value_edit', { kind, value: draft })}>
-              Записать
-            </Button>
-          </Stack.Item>
+        <Stack justify="space-between">
           <Stack.Item>
             <Button
               icon="upload"
