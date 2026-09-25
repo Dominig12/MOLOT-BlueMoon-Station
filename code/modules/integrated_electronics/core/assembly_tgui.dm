@@ -505,7 +505,7 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 				my_list.Cut(1, my_list.len - IC_MAX_LIST_LENGTH + 1)
 			L.holder.on_data_written()
 		if("set")
-			index = CLAMP(round(index), 1, max(1, my_list.len))
+			index = clamp(round(index), 1, max(1, my_list.len))
 			if(index > my_list.len)
 				return
 			my_list[index] = ie_ic_decode_list_text(kind, text)
@@ -539,12 +539,12 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			var/datum/integrated_io/io = is_out ? ie_ic_get_output_io(chip, pid) : ie_ic_get_input_io(chip, pid)
 			if(!io)
 				return TRUE
-// Редактор открываем только для списков и строковых пинов (длинный текст/список).
-		// «any» не открываем: там значение может быть и списком — для этого есть inspector.
-		var/ftype = ie_ic_fundamental_type(io)
-		if(ftype == "list" || ftype == "string")
-			ie_ic_set_editor_pin(host, io, is_out)
-		return TRUE
+			// Редактор открываем только для списков и строковых пинов (длинный текст/список).
+			// «any» не открываем: там значение может быть и списком — для этого есть inspector.
+			var/ftype = ie_ic_fundamental_type(io)
+			if(ftype == "list" || ftype == "string")
+				ie_ic_set_editor_pin(host, io, is_out)
+			return TRUE
 		if("ie_pin_editor_close")
 			ie_ic_set_editor_pin(host, null, FALSE)
 			return TRUE
