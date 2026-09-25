@@ -44,12 +44,17 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
   locationRaf: number | null = null;
   /** Актуальный нормализованный массив компонентов (для группового драга). */
   latestComponents: (CircuitComponentView | null)[] = [];
+  /** Старт курсора при mousedown по порту: отличает клик от перетаскивания провода. */
+  portDragStartX = 0;
+  portDragStartY = 0;
+  portDragMoved = false;
 
   constructor(props: unknown) {
     super(props);
     this.state = {
       locations: {},
       selectedPort: null,
+      connectSource: null,
       dragClientX: null,
       dragClientY: null,
       zoom: 1,
@@ -183,6 +188,36 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     }
 
     event.stopPropagation();
+
+    // Клик → клик: если пин уже «выбран» без перетаскивания, второй клик по
+    // противоположному пину сразу соединяет их — тянуть провод не обязательно.
+    const connectSource = this.state.connectSource;
+    if (connectSource) {
+      if (connectSource.is_output === isOutput) {
+        // Тот же тип: просто переносим «источник» на этот пин.
+        this.setState({
+          connectSource: {
+            index: portIndex,
+            component_id: componentId,
+            is_output: isOutput,
+            ref: port.ref,
+          },
+        });
+      } else {
+        this.connectPins(connectSource, {
+          index: portIndex,
+          component_id: componentId,
+          is_output: isOutput,
+        });
+        this.setState({ connectSource: null });
+      }
+      return;
+    }
+
+    // Обычное перетаскивание провода (mousedown — mousemove — mouseup).
+    this.portDragMoved = false;
+    this.portDragStartX = event.clientX;
+    this.portDragStartY = event.clientY;
     this.setState({
       selectedPort: {
         index: portIndex,
@@ -198,6 +233,30 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     window.addEventListener('mouseup', this.handlePortRelease);
   }
 
+  connectPins(
+    source: SelectedPortState,
+    target: { index: number; component_id: number; is_output: boolean },
+  ) {
+    const { act } = useBackend<IntegratedCircuitData>();
+    let data;
+    if (target.is_output) {
+      data = {
+        input_port_id: source.index,
+        output_port_id: target.index,
+        input_component_id: source.component_id,
+        output_component_id: target.component_id,
+      };
+    } else {
+      data = {
+        input_port_id: target.index,
+        output_port_id: source.index,
+        input_component_id: target.component_id,
+        output_component_id: source.component_id,
+      };
+    }
+    act("add_connection", data);
+  }
+
   // mouse up called whilst over a port. This means we can check if selectedPort
   // exists and do perform some actions if it does.
   handlePortUp(
@@ -207,7 +266,6 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     isOutput: boolean,
     event: MouseEvent,
   ) {
-    const { act } = useBackend<IntegratedCircuitData>();
     const {
       selectedPort,
     } = this.state;
@@ -217,26 +275,22 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     if (selectedPort.is_output === isOutput) {
       return;
     }
-    let data;
-    if (isOutput) {
-      data = {
-        input_port_id: selectedPort.index,
-        output_port_id: portIndex,
-        input_component_id: selectedPort.component_id,
-        output_component_id: componentId,
-      };
-    } else {
-      data = {
-        input_port_id: portIndex,
-        output_port_id: selectedPort.index,
-        input_component_id: componentId,
-        output_component_id: selectedPort.component_id,
-      };
-    }
-    act("add_connection", data);
+    this.connectPins(selectedPort, {
+      index: portIndex,
+      component_id: componentId,
+      is_output: isOutput,
+    });
   }
 
   handlePortDrag(event: MouseEvent) {
+    if (!this.portDragMoved) {
+      const dx = event.clientX - this.portDragStartX;
+      const dy = event.clientY - this.portDragStartY;
+      if (dx * dx + dy * dy < 9) {
+        return;
+      }
+      this.portDragMoved = true;
+    }
     this.setState({
       dragClientX: event.clientX,
       dragClientY: event.clientY,
@@ -244,11 +298,23 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
   }
 
   handlePortRelease(_event: MouseEvent) {
-    this.setState({
-      selectedPort: null,
-      dragClientX: null,
-      dragClientY: null,
-    });
+    const { selectedPort } = this.state;
+    if (selectedPort && !this.portDragMoved) {
+      // Был клик без перетаскивания — оставляем пин «выбранным» для клик → клик.
+      this.setState({
+        connectSource: selectedPort,
+        selectedPort: null,
+        dragClientX: null,
+        dragClientY: null,
+      });
+    } else {
+      this.setState({
+        selectedPort: null,
+        dragClientX: null,
+        dragClientY: null,
+      });
+    }
+    this.portDragMoved = false;
 
     window.removeEventListener('mousemove', this.handlePortDrag);
     window.removeEventListener('mouseup', this.handlePortRelease);
@@ -414,6 +480,9 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     // Клик по пустому полю (не по ноде — ноды стопают пропагацию) снимает выделение.
     if (this.state.selection.length) {
       this.setState({ selection: [] });
+    }
+    if (this.state.connectSource) {
+      this.setState({ connectSource: null });
     }
   }
 
@@ -620,7 +689,6 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
       global_basic_types,
       ie_circuit,
       ie_clone_copy_mode,
-      ie_debug_copy_ref,
       circuit_pulses,
       circuit_pulse_out_ref,
       circuit_pulse_in_ref,
@@ -831,8 +899,8 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
                             onPortMouseDown={this.handlePortClick}
                             onPortRightClick={this.handlePortRightClick}
                             onPortMouseUp={this.handlePortUp}
-                            debugCopyRef={!!ie_circuit && !!ie_debug_copy_ref}
                             portLabelByRef={portLabelByRef}
+                            connectSourceRef={this.state.connectSource?.ref ?? null}
                             selected={selection.includes(componentId)}
                             onNodeMouseDown={(e) => this.handleNodeMouseDown(componentId, e)}
                           />

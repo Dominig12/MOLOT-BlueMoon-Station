@@ -84,8 +84,8 @@ export class ObjectComponent extends Component {
       || p.removable !== n.removable
       || p.recent_pulse !== n.recent_pulse
       || p.circuitOn !== n.circuitOn
-      || p.debugCopyRef !== n.debugCopyRef
       || p.selected !== n.selected
+      || p.connectSourceRef !== n.connectSourceRef
       || p.ie_size !== n.ie_size
       || p.ie_complexity !== n.ie_complexity
       || p.ie_cooldown_ds !== n.ie_cooldown_ds
@@ -118,13 +118,13 @@ export class ObjectComponent extends Component {
       onPortRightClick,
       onPortMouseUp,
       portLayoutKey: _portLayoutKey,
-      debugCopyRef,
       ie_size,
       ie_complexity,
       ie_cooldown_ds,
       ie_ext_cooldown_ds,
       power_usage_per_input,
       portLabelByRef,
+      connectSourceRef,
       selected,
       onNodeMouseDown,
       ...rest
@@ -192,6 +192,7 @@ export class ObjectComponent extends Component {
       onPortMouseDown: onPortMouseDown,
       onPortRightClick: onPortRightClick,
       onPortMouseUp: onPortMouseUp,
+      connectSourceRef: connectSourceRef,
     };
 
     return (
@@ -321,18 +322,6 @@ export class ObjectComponent extends Component {
                   y: e.pageY + ABSOLUTE_Y_OFFSET,
                 })} />
             </Stack.Item>
-            {!!debugCopyRef && (
-              <Stack.Item>
-                <Button
-                  color="transparent"
-                  icon="hashtag"
-                  compact
-                  tooltip="Ref чипа в чат (только R_DEBUG)"
-                  onClick={() => act('ie_copy_component_ref', {
-                    component_id: index,
-                  })} />
-              </Stack.Item>
-            )}
             {!!removable && (
               <Stack.Item>
                 <Button

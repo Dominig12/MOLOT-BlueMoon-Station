@@ -61,12 +61,21 @@ export const PinEditor = (props) => {
       <Section
         title={`Редактор: ${editor.name}`}
         buttons={(
-          <Button
-            icon="times"
-            color="transparent"
-            tooltip="Закрыть"
-            onClick={close}
-          />
+          <>
+            <Button
+              icon="download"
+              color="transparent"
+              tooltip="Скопировать текущее значение пина в память отладчика"
+              onClick={() => act('ie_copy_pin_to_debugger')}>
+              В отладчик
+            </Button>
+            <Button
+              icon="times"
+              color="transparent"
+              tooltip="Закрыть"
+              onClick={close}
+            />
+          </>
         )}>
         <Box mb={0.5} className="PinEditor__subtitle">
           Тип: <b>{editor.pin_type || editor.type}</b>
@@ -154,7 +163,7 @@ const ListRow = (props) => {
           )
           : (
             <Box className="PinEditor__display">
-              {row.display}
+              {row.display ?? (row.kind === 'ref' ? 'ref' : '')}
             </Box>
           )}
       </Stack.Item>

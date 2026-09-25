@@ -32,16 +32,6 @@ export const DisplayName = (props) => {
     || (pdata !== null && pdata !== undefined && typeof pdata === 'object')
   );
 
-  const showDebuggerUpload = isIeCircuit && hasInput && fundamentalType !== 'signal'
-    && fundamentalType !== 'option' && fundamentalType !== 'entity' && fundamentalType !== 'any'
-    && fundamentalType !== 'list';
-
-  const applyDebuggerUpload = () => act('set_component_input', {
-    component_id: componentId,
-    port_id: portIndex,
-    marked_atom: true,
-  });
-
   const openPortInspect = () => {
     if (!isIeCircuit) {
       return;
@@ -82,17 +72,6 @@ export const DisplayName = (props) => {
         <Flex.Item>
           {(hasInput && (
             <Stack align="center" wrap>
-              {!!showDebuggerUpload && (
-                <Stack.Item>
-                  <Button
-                    compact
-                    color="transparent"
-                    icon="upload"
-                    tooltip="Debugger: вставить память (ref/null/строка/число/список) или скопировать сюда в режиме Copy; предмет в активной руке — ref на ref/any"
-                    onClick={applyDebuggerUpload}
-                  />
-                </Stack.Item>
-              )}
               <Stack.Item grow>
                 <InputComponent
                   act={act}
@@ -128,22 +107,6 @@ export const DisplayName = (props) => {
           ))
             || (isOutput && (
               <Flex align="center" direction="row">
-                {!!(isIeCircuit && fundamentalType !== 'signal' && fundamentalType !== 'option') && (
-                  <Flex.Item>
-                    <Button
-                      compact
-                      color="transparent"
-                      icon="upload"
-                      tooltip="Debugger: вставить память во вход (слева); режим Copy — скопировать текущее значение с этого выхода"
-                      onClick={() => act('set_component_input', {
-                        component_id: componentId,
-                        port_id: portIndex,
-                        marked_atom: true,
-                        is_output: true,
-                      })}
-                    />
-                  </Flex.Item>
-                )}
                 <Flex.Item>
                   <Button
                     compact

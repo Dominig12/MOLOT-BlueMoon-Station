@@ -62,6 +62,8 @@ export interface SelectedPortState {
 export interface IntegratedCircuitState {
   locations: Record<string, PortLocation>;
   selectedPort: SelectedPortState | null;
+  /** Пин, выбранный кликом (без перетаскивания) для соединения «клик → клик». */
+  connectSource: SelectedPortState | null;
   dragClientX: number | null;
   dragClientY: number | null;
   zoom: number;

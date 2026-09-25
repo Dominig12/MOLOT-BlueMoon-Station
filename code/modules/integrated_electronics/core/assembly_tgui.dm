@@ -284,8 +284,13 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 		return list("kind" = "null", "display" = "null", "value" = null)
 	if(isweakref(data))
 		var/datum/weakref/wr = data
-		var/atom/A = wr.resolve()
-		return list("kind" = "ref", "display" = (A ? A.name : "null"), "value" = null)
+		var/datum/resolved = wr.hard_resolve()
+		if(isnull(resolved))
+			resolved = wr.resolve()
+		return list("kind" = "ref", "display" = ie_ic_ref_display_name(resolved), "value" = null)
+	if(istype(data, /atom))
+		var/atom/raw_atom = data
+		return list("kind" = "ref", "display" = (raw_atom.name || "ref"), "value" = null)
 	if(isnum(data))
 		return list("kind" = "number", "display" = "[data]", "value" = data)
 	if(istext(data))
@@ -293,6 +298,15 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 	if(islist(data))
 		return list("kind" = "list", "display" = "list([length(data)])", "value" = null) // вложенные списки редактируются через inspector
 	return list("kind" = "text", "display" = "[data]", "value" = "[data]")
+
+/// Читаемое имя ссылки (ref) для ячейки списка; не падает на не-atom и на удалённых целях.
+/proc/ie_ic_ref_display_name(datum/resolved)
+	if(isnull(resolved))
+		return "null"
+	if(istype(resolved, /atom))
+		var/atom/A = resolved
+		return (isnull(A.name) || A.name == "") ? "[A]" : A.name
+	return "[resolved]"
 
 /// Дерево «открытого в нативном редакторе» пина для ui_data. Per-user-ключ пином не является,
 /// т.к. окно TGUI у пользователя одно; редактор показывает значение последнего открытого пина.
@@ -576,6 +590,20 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			out = WEAKREF(C.holder.marked_datum)
 	return out
 
+/// Копирует текущее значение пина в память отладчика (пин → debugger).
+/proc/ie_ic_copy_pin_to_debugger(mob/M, datum/integrated_io/io)
+	if(!M)
+		return
+	var/obj/item/integrated_electronics/debugger/D = ie_ic_get_debugger_from_hands(M)
+	if(!D)
+		to_chat(M, span_warning("Возьмите отладчик (circuit debugger) в руку, чтобы скопировать значение."))
+		return
+	D.data_to_write = io.data
+	D.accepting_refs = FALSE
+	D.copy_values = FALSE
+	D.copy_id = FALSE
+	to_chat(M, span_notice("Значение пина скопировано в память отладчика."))
+
 /// Вписывает значение из нативного редактора в список (пин-список или «any» со значением-списком).
 /proc/ie_ic_list_mutate(datum/integrated_io/io, action, index, kind, text, mob/user)
 	var/list/my_list = io.data
@@ -645,6 +673,12 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			return TRUE
 		if("ie_pin_editor_close")
 			ie_ic_set_editor_pin(host, null, FALSE)
+			return TRUE
+		if("ie_copy_pin_to_debugger")
+			var/list/copy_editor = ie_ic_get_editor_pin(host)
+			if(!copy_editor)
+				return TRUE
+			ie_ic_copy_pin_to_debugger(user, copy_editor["io"])
 			return TRUE
 		if("ie_list_edit")
 			var/list/editor = ie_ic_get_editor_pin(host)

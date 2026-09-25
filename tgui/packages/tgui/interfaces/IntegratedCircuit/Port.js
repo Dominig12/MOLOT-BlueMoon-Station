@@ -209,12 +209,14 @@ export class Port extends Component {
       isOutput,
       act,
       portLabelByRef,
+      connectSourceRef,
       ...rest
     } = this.props;
 
     const connectionRefs = connectedToRefList(port.connected_to);
     const multiConn = connectionRefs.length > 1;
     const { connPopover, dragOverIndex } = this.state;
+    const armed = !!connectSourceRef && port.ref === connectSourceRef;
 
     const resolveLabel = (ref) => {
       if (portLabelByRef && portLabelByRef.has(ref)) {
@@ -223,9 +225,11 @@ export class Port extends Component {
       return ref;
     };
 
-    const baseHint = isOutput
-      ? 'Выход: ЛКМ — тянуть провод к входу · ПКМ — снять связи'
-      : 'Вход: ЛКМ — принять провод от выхода · ПКМ — снять связи';
+    const baseHint = armed
+      ? 'Пин выбран — кликните по противоположному пину, чтобы соединить; ещё клик сюда — снять выбор'
+      : isOutput
+        ? 'Выход: клик → клик или ЛКМ-тянуть к входу · ПКМ — снять связи'
+        : 'Вход: клик → клик или ЛКМ-тянуть от выхода · ПКМ — снять связи';
     const pulseInHint = ' · Shift+ЛКМ по кругу — вручную импульс';
     const multiHint = multiConn ? ' · Несколько связей: наведи на круг — порядок' : '';
     const portHint
@@ -262,6 +266,7 @@ export class Port extends Component {
               name={'circle'}
               position="relative"
               title={portHint}
+              className={armed ? 'IntegratedCircuit__port--armed' : undefined}
               onMouseDown={this.handlePortMouseDown}
               onContextMenu={this.handlePortRightClick}
               onMouseUp={this.handlePortMouseUp}>

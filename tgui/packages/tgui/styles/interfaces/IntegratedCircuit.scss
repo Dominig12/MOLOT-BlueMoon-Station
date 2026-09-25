@@ -421,6 +421,11 @@ $bg-map: colors.$bg-map !default;
   bottom: 0;
 }
 
+.IntegratedCircuit__port--armed {
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.95))
+    drop-shadow(0 0 5px rgba(120, 220, 200, 0.9));
+}
+
 .PortConnectionPopover {
   min-width: 15rem;
   padding: 0.35rem 0.45rem;
