@@ -232,7 +232,7 @@ const EditCell = (props) => {
     <Input
       fluid
       placeholder={row.kind}
-      defaultValue={initial}
+      value={initial}
       onEnter={(e, value) => commit(value)}
       onBlur={(e) => {
         const val = e.target.value;
