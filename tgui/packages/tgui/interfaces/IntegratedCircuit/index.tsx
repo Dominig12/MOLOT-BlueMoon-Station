@@ -312,8 +312,8 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     let targetY = 0;
     if (svg) {
       const r = svg.getBoundingClientRect();
-      targetX = r.width / 2 / z - (comp.x || 0) * z;
-      targetY = r.height / 2 / z - (comp.y || 0) * z;
+      targetX = r.width / 3 / z - (comp.x || 0) * z;
+      targetY = r.height / 3 / z - (comp.y || 0) * z;
     }
     this.planePanDirty = false;
     this.setState((s) => ({
@@ -845,7 +845,7 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
                 className="IntegratedCircuit__componentsToggle"
                 position="absolute"
                 right="0.5rem"
-                top="0.5rem"
+                top="1rem"
                 style={{ zIndex: 6 }}>
                 <Button
                   icon="list-ul"
