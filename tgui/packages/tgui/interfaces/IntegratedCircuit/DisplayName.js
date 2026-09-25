@@ -62,6 +62,18 @@ export const DisplayName = (props) => {
     }
   };
 
+  // Открыть нативный редактор значения для обычного (не списка и не импульса) пина.
+  const openNativeEditor = () => act('ie_pin_editor_open', {
+    component_id: componentId,
+    port_id: portIndex,
+    is_output: !!isOutput,
+  });
+
+  const canNativeEdit = isIeCircuit
+    && fundamentalType !== 'signal'
+    && fundamentalType !== 'option'
+    && fundamentalType !== 'list';
+
   return (
     <Box
       {...rest}
@@ -101,6 +113,17 @@ export const DisplayName = (props) => {
                   extraData={port.datatype_data}
                 />
               </Stack.Item>
+              {!!canNativeEdit && (
+                <Stack.Item>
+                  <Button
+                    compact
+                    color="transparent"
+                    icon="expand"
+                    tooltip="Открыть нативный редактор значения"
+                    onClick={openNativeEditor}
+                  />
+                </Stack.Item>
+              )}
             </Stack>
           ))
             || (isOutput && (

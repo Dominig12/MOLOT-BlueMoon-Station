@@ -300,16 +300,26 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 	if(!io)
 		return null
 	var/ftype = ie_ic_fundamental_type(io)
+	// Для «any» виджет зависит от текущего значения (список/ref/число/текст).
+	var/widget_kind = ftype
+	if(ftype == "any")
+		if(islist(io.data))
+			widget_kind = "list"
+		else if(isweakref(io.data))
+			widget_kind = "entity"
+		else if(isnum(io.data))
+			widget_kind = "number"
+		else
+			widget_kind = "string"
 	var/list/out = list()
 	out["ref"] = REF(io)
 	out["name"] = io.name
-	out["type"] = ftype
+	out["type"] = widget_kind
+	out["pin_type"] = ftype
 	out["is_output"] = !!is_output
-	out["kind"] = "value" // универсально: value или list
-	if(ftype == "list" && istype(io, /datum/integrated_io/lists))
-		var/datum/integrated_io/lists/L = io
+	if(widget_kind == "list")
+		var/list/my_list = io.data
 		var/list/rows = list()
-		var/list/my_list = L.data
 		for(var/i in 1 to (islist(my_list) ? my_list.len : 0))
 			var/list/entry = ie_ic_pack_list_entry(my_list[i])
 			entry["index"] = i
@@ -318,7 +328,7 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 		out["rows"] = rows
 		out["length"] = islist(my_list) ? my_list.len : 0
 	else
-		// Текст/любой пин: отдаём полное значение для TextArea (без обрезки).
+		out["kind"] = "value"
 		out["value"] = ie_ic_tgui_pack_pin_value(io.data)
 	return out
 
@@ -494,37 +504,78 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 		chip.ie_gui_editor_io = io
 		chip.ie_gui_editor_is_output = is_output
 
-/// Вписывает значение из нативного редактора в список-пин. kind/text из TGUI.
-/proc/ie_ic_list_mutate(datum/integrated_io/lists/L, action, index, kind, text)
-	var/list/my_list = L.data
+/// Достаёт weakref для вставки в pin/список: память-ref отладчика → предмет в активной
+/// руке → marked-датум админа. Возвращает weakref или null (с сообщением уже не пишет).
+/proc/ie_ic_obtain_ref_for_upload(mob/M)
+	if(!M)
+		return null
+	var/datum/weakref/out = null
+	var/obj/item/integrated_electronics/debugger/D = ie_ic_get_debugger_from_hands(M)
+	if(D)
+		if(isweakref(D.data_to_write))
+			out = D.data_to_write
+		else if(D.accepting_refs)
+			to_chat(M, span_warning("Завершите сканирование ref на отладчике (кликните по цели в мире), затем повторите."))
+			return null
+	if(isnull(out))
+		var/atom/movable/held = M.get_active_held_item()
+		if(istype(held) && !istype(held, /obj/item/integrated_electronics/debugger))
+			out = WEAKREF(held)
+	if(isnull(out))
+		var/client/C = M.client
+		if(C?.holder?.marked_datum)
+			out = WEAKREF(C.holder.marked_datum)
+	return out
+
+/// Вписывает значение из нативного редактора в список (пин-список или «any» со значением-списком).
+/proc/ie_ic_list_mutate(datum/integrated_io/io, action, index, kind, text, mob/user)
+	var/list/my_list = io.data
 	switch(action)
 		if("add")
 			var/val = ie_ic_decode_list_text(kind, text)
 			my_list.Add(val)
 			if(my_list.len > IC_MAX_LIST_LENGTH)
 				my_list.Cut(1, my_list.len - IC_MAX_LIST_LENGTH + 1)
-			L.holder.on_data_written()
+			io.holder.on_data_written()
 		if("set")
 			index = clamp(round(index), 1, max(1, my_list.len))
 			if(index > my_list.len)
 				return
 			my_list[index] = ie_ic_decode_list_text(kind, text)
-			L.holder.on_data_written()
+			io.holder.on_data_written()
 		if("remove")
 			index = round(index)
 			if(index >= 1 && index <= my_list.len)
 				my_list.Cut(index, index + 1)
-				L.holder.on_data_written()
+				io.holder.on_data_written()
 		if("move")
 			index = round(index)
 			var/dirn = text2num(text)
 			var/target = index + (dirn > 0 ? 1 : -1)
 			if(index >= 1 && index <= my_list.len && target >= 1 && target <= my_list.len)
 				my_list.Swap(index, target)
-				L.holder.on_data_written()
+				io.holder.on_data_written()
 		if("clear")
 			my_list.Cut()
-			L.holder.on_data_written()
+			io.holder.on_data_written()
+		if("add_ref")
+			var/datum/weakref/wr = ie_ic_obtain_ref_for_upload(user)
+			if(isnull(wr))
+				to_chat(user, span_warning("Чтобы добавить ссылку: возьми предмет в активную руку, либо память-ref на отладчике, либо marked-датум."))
+				return
+			my_list.Add(wr)
+			if(my_list.len > IC_MAX_LIST_LENGTH)
+				my_list.Cut(1, my_list.len - IC_MAX_LIST_LENGTH + 1)
+			io.holder.on_data_written()
+		if("set_ref")
+			index = round(index)
+			if(index >= 1 && index <= my_list.len)
+				var/datum/weakref/wr = ie_ic_obtain_ref_for_upload(user)
+				if(isnull(wr))
+					to_chat(user, span_warning("Чтобы вставить ссылку: возьми предмет в активную руку, либо память-ref на отладчике, либо marked-датум."))
+					return
+				my_list[index] = wr
+				io.holder.on_data_written()
 
 /// Обработка действий нативного редактора пинов. Возвращает TRUE, если action был наш.
 /proc/ie_ic_handle_editor_action(atom/movable/host, action, list/params, mob/user)
@@ -539,10 +590,8 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			var/datum/integrated_io/io = is_out ? ie_ic_get_output_io(chip, pid) : ie_ic_get_input_io(chip, pid)
 			if(!io)
 				return TRUE
-			// Редактор открываем только для списков и строковых пинов (длинный текст/список).
-			// «any» не открываем: там значение может быть и списком — для этого есть inspector.
-			var/ftype = ie_ic_fundamental_type(io)
-			if(ftype == "list" || ftype == "string")
+			// Редактор открываем для всех пинов данных (не импульсных).
+			if(ie_ic_fundamental_type(io) != "signal")
 				ie_ic_set_editor_pin(host, io, is_out)
 			return TRUE
 		if("ie_pin_editor_close")
@@ -553,17 +602,28 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			if(!editor)
 				return TRUE
 			var/datum/integrated_io/io = editor["io"]
-			if(istype(io, /datum/integrated_io/lists))
-				var/datum/integrated_io/lists/L = io
-				ie_ic_list_mutate(L, params["edit_action"], params["index"], params["kind"], params["text"])
+			if(islist(io.data))
+				ie_ic_list_mutate(io, params["edit_action"], params["index"], params["kind"], params["text"], user)
 			return TRUE
 		if("ie_value_edit")
 			var/list/editor = ie_ic_get_editor_pin(host)
 			if(!editor)
 				return TRUE
 			var/datum/integrated_io/io = editor["io"]
-			if(!istype(io, /datum/integrated_io/lists))
-				io.write_data_to_pin(params["text"])
+			if(islist(io.data))
+				return TRUE
+			if(params["set_null"])
+				io.write_data_to_pin(null)
+			else if(params["marked_atom"])
+				ie_ic_tgui_apply_marked_atom_or_debugger(user, io)
+			else if(ie_ic_fundamental_type(io) == "any")
+				// Для «any» декодируем по текущему типу значения (как в payload).
+				if(isnum(io.data))
+					io.write_data_to_pin(text2num(params["value"]))
+				else
+					io.write_data_to_pin(params["value"])
+			else
+				ie_ic_tgui_write_input(io, ie_ic_fundamental_type(io), params["value"])
 			return TRUE
 	return FALSE
 

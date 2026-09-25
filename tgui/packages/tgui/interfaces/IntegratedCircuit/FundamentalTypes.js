@@ -19,34 +19,15 @@ const colorCommitTimers = new WeakMap();
 
 export const FUNDAMENTAL_DATA_TYPES = {
   'string': (props) => {
-    const { name, value, setValue, color, act, componentId, portId, isOutput, ieCircuit } = props;
+    const { name, value, setValue } = props;
     return (
       <BasicInput name={name} setValue={setValue} value={value} defaultValue="">
-        <Stack align="center">
-          <Stack.Item>
-            <Input
-              placeholder={name}
-              value={value ?? ''}
-              onChange={(e, val) => setValue(val)}
-              width="96px"
-            />
-          </Stack.Item>
-          {!!(ieCircuit && act && componentId !== null && componentId !== undefined) && (
-            <Stack.Item>
-              <Button
-                icon="edit"
-                compact
-                color="transparent"
-                tooltip="Открыть большой редактор текста"
-                onClick={() => act('ie_pin_editor_open', {
-                  component_id: componentId,
-                  port_id: portId,
-                  is_output: !!isOutput,
-                })}
-              />
-            </Stack.Item>
-          )}
-        </Stack>
+        <Input
+          placeholder={name}
+          value={value ?? ''}
+          onChange={(e, val) => setValue(val)}
+          width="96px"
+        />
       </BasicInput>
     );
   },

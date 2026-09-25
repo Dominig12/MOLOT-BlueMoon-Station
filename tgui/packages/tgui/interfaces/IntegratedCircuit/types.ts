@@ -113,9 +113,12 @@ export interface IntegratedCircuitData {
 export interface PinEditorPayload {
   ref: string;
   name: string;
+  /** Виджет редактора: список/число/текст/… («any» разрешается по текущему значению). */
   type: string;
+  /** Фундаментальный тип пина (например «any», «number», «list»). */
+  pin_type?: string;
   is_output: boolean;
-  /** "list" — редактирование списка; "value" — одно значение через TextArea. */
+  /** "list" — редактирование списка; "value" — одно значение. */
   kind: 'list' | 'value';
   length?: number;
   rows?: PinEditorRow[] | null;

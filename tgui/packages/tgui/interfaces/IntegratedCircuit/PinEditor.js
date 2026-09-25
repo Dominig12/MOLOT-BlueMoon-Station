@@ -58,7 +58,7 @@ export const PinEditor = (props) => {
           />
         )}>
         <Box mb={0.5} className="PinEditor__subtitle">
-          Тип: <b>{editor.type}</b>
+          Тип: <b>{editor.pin_type || editor.type}</b>
           {' '}
           {editor.is_output ? '(выход)' : '(вход)'}
         </Box>
@@ -234,7 +234,7 @@ const AddRowForm = (props) => {
 
   return (
     <Section title="Добавить элемент" mt={0.75}>
-      <Stack align="center">
+      <Stack align="center" wrap>
         <Stack.Item>
           <Dropdown
             width="7rem"
@@ -249,7 +249,7 @@ const AddRowForm = (props) => {
             }}
           />
         </Stack.Item>
-        <Stack.Item grow={1}>
+        <Stack.Item grow={1} minWidth="10rem">
           <Input
             fluid
             placeholder={addKind === 'boolean' ? 'true / false' : 'значение'}
@@ -263,6 +263,15 @@ const AddRowForm = (props) => {
             Добавить
           </Button>
         </Stack.Item>
+        <Stack.Item>
+          <Button
+            icon="upload"
+            color="transparent"
+            tooltip="Добавить ссылку (ref): предмет в активной руке, либо память-ref на отладчике, либо marked-датум"
+            onClick={() => act('ie_list_edit', { edit_action: 'add_ref' })}>
+            Ref
+          </Button>
+        </Stack.Item>
       </Stack>
     </Section>
   );
@@ -270,43 +279,306 @@ const AddRowForm = (props) => {
 
 const ValueEditor = (props) => {
   const { editor, act } = props;
+
+  switch (editor.type) {
+    case 'boolean':
+      return <BooleanValueEditor editor={editor} act={act} />;
+    case 'number':
+    case 'index':
+      return <NumberValueEditor editor={editor} act={act} />;
+    case 'char':
+      return <CharValueEditor editor={editor} act={act} />;
+    case 'dir':
+      return <DirValueEditor editor={editor} act={act} />;
+    case 'color':
+      return <ColorValueEditor editor={editor} act={act} />;
+    case 'entity':
+      return <EntityValueEditor editor={editor} act={act} />;
+    case 'string':
+    case 'any':
+    default:
+      return <TextValueEditor editor={editor} act={act} />;
+  }
+};
+
+const NullButton = ({ act }) => (
+  <Button
+    icon="eraser"
+    onClick={() => act('ie_value_edit', { set_null: true })}>
+    null
+  </Button>
+);
+
+const BooleanValueEditor = ({ editor, act }) => {
+  const on = editor.value === true || editor.value === 1;
+  const off = editor.value === false || editor.value === 0;
+  return (
+    <Stack align="center" wrap>
+      <Stack.Item>
+        <Button
+          color={on ? 'good' : 'transparent'}
+          icon={on ? 'toggle-on' : 'toggle-off'}
+          onClick={() => act('ie_value_edit', { value: 1 })}>
+          Да (true)
+        </Button>
+      </Stack.Item>
+      <Stack.Item>
+        <Button
+          color={off ? 'bad' : 'transparent'}
+          icon={off ? 'toggle-on' : 'toggle-off'}
+          onClick={() => act('ie_value_edit', { value: 0 })}>
+          Нет (false)
+        </Button>
+      </Stack.Item>
+    </Stack>
+  );
+};
+
+const NumberValueEditor = ({ editor, act }) => {
   const init = editor.value === null || editor.value === undefined
     ? ''
     : String(editor.value);
   const [draft, setDraft] = useState(init);
+  useEffect(() => setDraft(init), [init]);
+  const commit = (val) => act('ie_value_edit', { value: val });
+  return (
+    <Stack vertical>
+      <Stack.Item>
+        <Input
+          fluid
+          placeholder="число"
+          value={draft}
+          onChange={(e, val) => setDraft(val)}
+          onEnter={(e, val) => commit(val)}
+        />
+      </Stack.Item>
+      <Stack.Item>
+        <Stack>
+          <Stack.Item>
+            <Button icon="save" color="good" onClick={() => commit(draft)}>
+              Записать
+            </Button>
+          </Stack.Item>
+          <Stack.Item>
+            <NullButton act={act} />
+          </Stack.Item>
+        </Stack>
+      </Stack.Item>
+    </Stack>
+  );
+};
 
-  // Синхронизация черновика после собственной записи/очистки (сервер вернул новое значение).
+const CharValueEditor = ({ editor, act }) => {
+  const init = editor.value === null || editor.value === undefined
+    ? ''
+    : String(editor.value);
+  const [draft, setDraft] = useState(init.slice(0, 1));
+  useEffect(() => setDraft(init.slice(0, 1)), [init]);
+  const commit = (val) => act('ie_value_edit', { value: (val || '').slice(0, 1) });
+  return (
+    <Stack vertical>
+      <Stack.Item>
+        <Input
+          placeholder="символ"
+          maxLength={1}
+          value={draft}
+          onChange={(e, val) => setDraft((val || '').slice(0, 1))}
+          onEnter={(e, val) => commit(val)}
+          width="4rem"
+        />
+      </Stack.Item>
+      <Stack.Item>
+        <Stack>
+          <Stack.Item>
+            <Button icon="save" color="good" onClick={() => commit(draft)}>
+              Записать
+            </Button>
+          </Stack.Item>
+          <Stack.Item>
+            <NullButton act={act} />
+          </Stack.Item>
+        </Stack>
+      </Stack.Item>
+    </Stack>
+  );
+};
+
+const IE_DIR_OPTIONS = [
+  [1, 'N (1)'],
+  [2, 'S (2)'],
+  [4, 'E (4)'],
+  [8, 'W (8)'],
+  [5, 'NE (5)'],
+  [9, 'NW (9)'],
+  [6, 'SE (6)'],
+  [10, 'SW (10)'],
+];
+
+const DirValueEditor = ({ editor, act }) => {
+  const value = typeof editor.value === 'number' ? editor.value : null;
+  const match = IE_DIR_OPTIONS.find(([v]) => v === value);
+  return (
+    <Stack align="center" wrap>
+      <Stack.Item>
+        <Dropdown
+          width="8rem"
+          displayText={match ? match[1] : '—'}
+          options={IE_DIR_OPTIONS.map(([, label]) => label)}
+          onSelected={(label) => {
+            const found = IE_DIR_OPTIONS.find(([, l]) => l === label);
+            if (found) {
+              act('ie_value_edit', { value: found[0] });
+            }
+          }}
+        />
+      </Stack.Item>
+      <Stack.Item>
+        <NullButton act={act} />
+      </Stack.Item>
+    </Stack>
+  );
+};
+
+const ColorValueEditor = ({ editor, act }) => {
+  const hex = typeof editor.value === 'string'
+      && /^#[0-9A-Fa-f]{6}$/.test(editor.value)
+    ? editor.value
+    : '#FFFFFF';
+  const [draft, setDraft] = useState(typeof editor.value === 'string'
+    ? editor.value
+    : '');
   useEffect(() => {
-    setDraft(init);
-  }, [init]);
+    setDraft(typeof editor.value === 'string' ? editor.value : '');
+  }, [editor.value]);
+  return (
+    <Stack align="center" wrap>
+      <Stack.Item>
+        <input
+          type="color"
+          value={hex}
+          onChange={(e) => act('ie_value_edit', { value: e.target.value.toUpperCase() })}
+          style={{
+            width: '36px',
+            height: '28px',
+            padding: 0,
+            border: 'none',
+            cursor: 'pointer',
+          }}
+        />
+      </Stack.Item>
+      <Stack.Item>
+        <Input
+          placeholder="#RRGGBB"
+          value={draft}
+          width="90px"
+          onChange={(e, val) => setDraft(val)}
+          onEnter={(e, val) => act('ie_value_edit', { value: val })}
+        />
+      </Stack.Item>
+      <Stack.Item>
+        <Button
+          icon="save"
+          color="good"
+          onClick={() => act('ie_value_edit', { value: draft })}>
+          Записать
+        </Button>
+      </Stack.Item>
+      <Stack.Item>
+        <NullButton act={act} />
+      </Stack.Item>
+    </Stack>
+  );
+};
 
-  const commit = () => {
-    act('ie_value_edit', { text: draft });
-  };
+const EntityValueEditor = ({ editor, act }) => {
+  const name = editor.value === null || editor.value === undefined
+    ? 'null'
+    : String(editor.value);
+  return (
+    <Stack vertical>
+      <Stack.Item>
+        <Box className="PinEditor__display">
+          Текущее: <b>{name}</b>
+        </Box>
+      </Stack.Item>
+      <Stack.Item>
+        <Stack wrap>
+          <Stack.Item>
+            <Button
+              icon="upload"
+              color="good"
+              tooltip="Предмет в активной руке; иначе память-ref отладчика; иначе marked-датум"
+              onClick={() => act('ie_value_edit', { marked_atom: true })}>
+              Взять ref
+            </Button>
+          </Stack.Item>
+          <Stack.Item>
+            <NullButton act={act} />
+          </Stack.Item>
+        </Stack>
+      </Stack.Item>
+    </Stack>
+  );
+};
+
+const TextValueEditor = ({ editor, act }) => {
+  const complex = editor.value !== null && typeof editor.value === 'object';
+  const init = complex ? '' : (editor.value === null || editor.value === undefined
+    ? ''
+    : String(editor.value));
+  const [draft, setDraft] = useState(init);
+  useEffect(() => setDraft(init), [init]);
+
+  if (complex) {
+    return (
+      <Box>
+        <Box color="label" mb={0.4}>
+          Значение — сложный объект/список; правка недоступна здесь.
+        </Box>
+        <Box className="PinEditor__display">
+          {JSON.stringify(editor.value)}
+        </Box>
+      </Box>
+    );
+  }
 
   return (
-    <Box>
-      <TextArea
-        fluid
-        height="16rem"
-        placeholder="значение…"
-        value={init}
-        onInput={(e, val) => setDraft(val)}
-      />
-      <Stack mt={0.5} justify="flex-end">
-        <Stack.Item>
-          <Button icon="save" color="good" onClick={commit}>
-            Записать
-          </Button>
-        </Stack.Item>
+    <Stack vertical>
+      <Stack.Item>
+        <TextArea
+          fluid
+          height="16rem"
+          placeholder="значение…"
+          value={init}
+          onInput={(e, val) => setDraft(val)}
+        />
+      </Stack.Item>
+      {editor.pin_type === 'any' && (
         <Stack.Item>
           <Button
-            icon="eraser"
-            onClick={() => act('ie_value_edit', { text: null })}>
-            Очистить (null)
+            icon="upload"
+            color="transparent"
+            tooltip="Вставить ref из руки/отладчика/marked"
+            onClick={() => act('ie_value_edit', { marked_atom: true })}>
+            Вставить ref
           </Button>
         </Stack.Item>
-      </Stack>
-    </Box>
+      )}
+      <Stack.Item>
+        <Stack justify="flex-end">
+          <Stack.Item>
+            <Button
+              icon="save"
+              color="good"
+              onClick={() => act('ie_value_edit', { value: draft })}>
+              Записать
+            </Button>
+          </Stack.Item>
+          <Stack.Item>
+            <NullButton act={act} />
+          </Stack.Item>
+        </Stack>
+      </Stack.Item>
+    </Stack>
   );
 };
