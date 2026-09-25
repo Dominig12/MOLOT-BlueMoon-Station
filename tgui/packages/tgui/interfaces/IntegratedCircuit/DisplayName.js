@@ -18,10 +18,15 @@ export const DisplayName = (props) => {
   const connectionRefs = connectedToRefList(port.connected_to);
 
   const hasInput = !isOutput && !!InputComponent;
+  const isSignal = fundamentalType === 'signal';
+  const isOption = fundamentalType === 'option';
+  // IE: пины данных правятся через нативное меню, а не инлайн-виджетами.
+  const nativeEditableInput = !isOutput && isIeCircuit && !isSignal && !isOption;
 
   const displayType = port.pin_type_label
     || (TypeDisplayHandler ? TypeDisplayHandler(port) : fundamentalType);
-  const showLive = isOutput || !!connectionRefs.length;
+  // Значение показываем всегда: выходы, подключённые входы и IE-входы данных.
+  const showLive = isOutput || !!connectionRefs.length || nativeEditableInput;
   const liveText = showLive
     ? formatPortLiveValue(port.current_data, fundamentalType)
     : null;
@@ -59,18 +64,29 @@ export const DisplayName = (props) => {
     is_output: !!isOutput,
   });
 
-  const canNativeEdit = isIeCircuit
-    && fundamentalType !== 'signal'
-    && fundamentalType !== 'option'
-    && fundamentalType !== 'list';
-
   return (
     <Box
       {...rest}
       className={classes([className, 'IntegratedCircuit__portDisplayName'])}>
       <Flex direction="column">
         <Flex.Item>
-          {(hasInput && (
+          {(nativeEditableInput && (
+            <Flex align="center" direction="row">
+              <Flex.Item>
+                <Button
+                  compact
+                  color="transparent"
+                  icon="expand"
+                  tooltip="Открыть нативный редактор значения"
+                  onClick={openNativeEditor}
+                />
+              </Flex.Item>
+              <Flex.Item grow>
+                <Box color="white">{port.name}</Box>
+              </Flex.Item>
+            </Flex>
+          ))
+            || (hasInput && (
             <Stack align="center" wrap>
               <Stack.Item grow>
                 <InputComponent
@@ -92,17 +108,6 @@ export const DisplayName = (props) => {
                   extraData={port.datatype_data}
                 />
               </Stack.Item>
-              {!!canNativeEdit && (
-                <Stack.Item>
-                  <Button
-                    compact
-                    color="transparent"
-                    icon="expand"
-                    tooltip="Открыть нативный редактор значения"
-                    onClick={openNativeEditor}
-                  />
-                </Stack.Item>
-              )}
             </Stack>
           ))
             || (isOutput && (
