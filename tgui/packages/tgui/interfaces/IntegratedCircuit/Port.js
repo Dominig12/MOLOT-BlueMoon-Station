@@ -146,12 +146,20 @@ export class Port extends Component {
       componentId,
       isOutput,
       act,
+      portLabelByRef,
       ...rest
     } = this.props;
 
     const connectionRefs = connectedToRefList(port.connected_to);
     const multiConn = connectionRefs.length > 1;
     const { connPopover } = this.state;
+
+    const resolveLabel = (ref) => {
+      if (portLabelByRef && portLabelByRef.has(ref)) {
+        return portLabelByRef.get(ref);
+      }
+      return ref;
+    };
 
     const baseHint = isOutput
       ? 'Выход: ЛКМ — тянуть провод к входу · ПКМ — снять связи'
@@ -201,50 +209,72 @@ export class Port extends Component {
               <Box
                 className="PortConnectionPopover"
                 position="absolute"
-                left="100%"
+                left={isOutput ? undefined : '100%'}
+                right={isOutput ? '100%' : undefined}
                 top="50%"
-                ml={0.5}
+                ml={isOutput ? undefined : 0.5}
+                mr={isOutput ? 0.5 : undefined}
                 style={{
                   transform: 'translateY(-50%)',
                   zIndex: 12,
                 }}>
                 <Box className="PortConnectionPopover__title">
-                  Порядок линий
+                  Порядок связей
+                </Box>
+                <Box
+                  className="PortConnectionPopover__caption"
+                  fontSize="0.7rem"
+                  opacity={0.6}
+                  mb={0.3}>
+                  Верхняя — выше, нижняя — ниже
                 </Box>
                 <Stack vertical>
-                  {connectionRefs.map((ref, idx) => (
-                    <Stack.Item key={ref}>
-                      <Stack align="center">
-                        <Stack.Item>
-                          <Icon
-                            name="circle"
-                            color={port.color || 'blue'}
-                            size={0.85}
-                          />
-                        </Stack.Item>
-                        <Stack.Item>
-                          <Box
-                            fontSize="0.75rem"
-                            opacity={0.85}
-                            className="PortConnectionPopover__idx"
-                            title={ref}>
-                            #{idx + 1}
-                          </Box>
-                        </Stack.Item>
-                        {idx < connectionRefs.length - 1 && (
+                  {connectionRefs.map((ref, idx) => {
+                    const pos = idx + 1;
+                    const label = resolveLabel(ref);
+                    const canUp = idx > 0;
+                    const canDown = idx < connectionRefs.length - 1;
+                    return (
+                      <Stack.Item key={ref}>
+                        <Stack align="center" className="PortConnectionPopover__row">
+                          <Stack.Item>
+                            <Icon
+                              name="circle"
+                              color={port.color || 'blue'}
+                              size={0.85}
+                            />
+                          </Stack.Item>
+                          <Stack.Item grow={1} minWidth="8rem" maxWidth="16rem">
+                            <Box
+                              className="PortConnectionPopover__name"
+                              title={ref}>
+                              <b>#{pos}</b> {label}
+                            </Box>
+                          </Stack.Item>
                           <Stack.Item>
                             <Button
                               compact
                               color="transparent"
-                              icon="exchange-alt"
-                              tooltip={`Поменять #${idx + 1} и #${idx + 2}`}
-                              onClick={() => this.swapConnection(idx + 1)}
+                              icon="arrow-up"
+                              disabled={!canUp}
+                              tooltip={canUp ? `Выше (#${pos - 1})` : 'Уже самая верхняя'}
+                              onClick={() => this.swapConnection(pos - 1)}
                             />
                           </Stack.Item>
-                        )}
-                      </Stack>
-                    </Stack.Item>
-                  ))}
+                          <Stack.Item>
+                            <Button
+                              compact
+                              color="transparent"
+                              icon="arrow-down"
+                              disabled={!canDown}
+                              tooltip={canDown ? `Ниже (#${pos + 1})` : 'Уже самая нижняя'}
+                              onClick={() => this.swapConnection(pos)}
+                            />
+                          </Stack.Item>
+                        </Stack>
+                      </Stack.Item>
+                    );
+                  })}
                 </Stack>
               </Box>
             )}

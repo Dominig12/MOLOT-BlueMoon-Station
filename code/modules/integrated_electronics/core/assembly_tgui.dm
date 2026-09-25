@@ -263,6 +263,78 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 		return data
 	return "[data]"
 
+/// Тип значения в терминах TGUI-виджетов (для нативного редактора списка/текста).
+/proc/ie_ic_value_widget_kind(data)
+	if(isnull(data))
+		return "null"
+	if(isweakref(data))
+		return "ref"
+	if(isnum(data))
+		return "number"
+	if(istext(data))
+		return "string"
+	if(islist(data))
+		return "list"
+	return "text"
+
+/// Сериализация значения ЯЧЕЙКИ списка для нативного редактора. Возвращает ассоциативный
+/// список {kind, display, value}; value это JSON-безопасное представление для обратной записи.
+/proc/ie_ic_pack_list_entry(data)
+	if(isnull(data))
+		return list("kind" = "null", "display" = "null", "value" = null)
+	if(isweakref(data))
+		var/datum/weakref/wr = data
+		var/atom/A = wr.resolve()
+		return list("kind" = "ref", "display" = (A ? A.name : "null"), "value" = null)
+	if(isnum(data))
+		return list("kind" = "number", "display" = "[data]", "value" = data)
+	if(istext(data))
+		return list("kind" = "string", "display" = data, "value" = data)
+	if(islist(data))
+		return list("kind" = "list", "display" = "list([length(data)])", "value" = null) // вложенные списки редактируются через inspector
+	return list("kind" = "text", "display" = "[data]", "value" = "[data]")
+
+/// Дерево «открытого в нативном редакторе» пина для ui_data. Per-user-ключ пином не является,
+/// т.к. окно TGUI у пользователя одно; редактор показывает значение последнего открытого пина.
+/proc/ie_ic_editor_payload(datum/integrated_io/io, is_output)
+	if(!io)
+		return null
+	var/ftype = ie_ic_fundamental_type(io)
+	var/list/out = list()
+	out["ref"] = REF(io)
+	out["name"] = io.name
+	out["type"] = ftype
+	out["is_output"] = !!is_output
+	out["kind"] = "value" // универсально: value или list
+	if(ftype == "list" && istype(io, /datum/integrated_io/lists))
+		var/datum/integrated_io/lists/L = io
+		var/list/rows = list()
+		var/list/my_list = L.data
+		for(var/i in 1 to (islist(my_list) ? my_list.len : 0))
+			var/list/entry = ie_ic_pack_list_entry(my_list[i])
+			entry["index"] = i
+			rows += list(entry)
+		out["kind"] = "list"
+		out["rows"] = rows
+		out["length"] = islist(my_list) ? my_list.len : 0
+	else
+		// Текст/любой пин: отдаём полное значение для TextArea (без обрезки).
+		out["value"] = ie_ic_tgui_pack_pin_value(io.data)
+	return out
+
+/// Читает строку из TGUI и превращает в подходящий DM-тип для записи в список (по kind).
+/proc/ie_ic_decode_list_text(kind, text)
+	switch(kind)
+		if("number")
+			return text2num(text)
+		if("boolean")
+			var/t = lowertext(text)
+			return (t == "true" || t == "1" || t == "yes")
+		if("null")
+			return null
+		else
+			return text
+
 /proc/ie_ic_collect_input_ios(obj/item/integrated_circuit/chip)
 	var/list/L = list()
 	for(var/datum/integrated_io/io as anything in chip.inputs)
@@ -362,7 +434,11 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 	ie_tgui_pulse_output_ref = REF(out_io)
 	ie_tgui_pulse_input_ref = REF(in_io)
 	ie_tgui_pulse_chip_weak = WEAKREF(in_io.holder)
-	SStgui.update_uis(src)
+	// Полная ресериализация на каждый импульс упирается в O(компонентов x пинов) JSON.
+	// Форс-апдейт раз в 0.1с даёт плавную подсветку, не заливая подсистему.
+	if(world.time >= ie_tgui_last_ui_push + 0.1 SECONDS)
+		ie_tgui_last_ui_push = world.time
+		SStgui.update_uis(src)
 
 /obj/item/integrated_circuit/proc/ie_tgui_register_solo_data_pulse(datum/integrated_io/out_io, datum/integrated_io/in_io)
 	if(!out_io || !in_io)
@@ -389,6 +465,107 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 	if(istype(ea, /obj/item/electronic_assembly) && (B?.loc == ea))
 		return ea
 	return null
+
+/// Возвращает {io, is_output} открытого в редакторе пина для сборки или одиночного чипа,
+/// либо null, если пин уже исчез (чип снят). shared-источник для ui_data и ui_act.
+/proc/ie_ic_get_editor_pin(atom/movable/host)
+	if(istype(host, /obj/item/electronic_assembly))
+		var/obj/item/electronic_assembly/ea = host
+		var/datum/integrated_io/io = ea.ie_gui_editor_io
+		if(!io || !io.holder || !(io.holder in ea.assembly_components) || io.holder.assembly != ea)
+			return null
+		return list("io" = io, "is_output" = ea.ie_gui_editor_is_output)
+	if(istype(host, /obj/item/integrated_circuit))
+		var/obj/item/integrated_circuit/chip = host
+		var/datum/integrated_io/io = chip.ie_gui_editor_io
+		if(!io || io.holder != chip || chip.assembly)
+			return null
+		return list("io" = io, "is_output" = chip.ie_gui_editor_is_output)
+	return null
+
+/// Устанавливает открытый в нативном редакторе пин; см. ie_ic_get_editor_pin.
+/proc/ie_ic_set_editor_pin(atom/movable/host, datum/integrated_io/io, is_output)
+	if(istype(host, /obj/item/electronic_assembly))
+		var/obj/item/electronic_assembly/ea = host
+		ea.ie_gui_editor_io = io
+		ea.ie_gui_editor_is_output = is_output
+	else if(istype(host, /obj/item/integrated_circuit))
+		var/obj/item/integrated_circuit/chip = host
+		chip.ie_gui_editor_io = io
+		chip.ie_gui_editor_is_output = is_output
+
+/// Вписывает значение из нативного редактора в список-пин. kind/text из TGUI.
+/proc/ie_ic_list_mutate(datum/integrated_io/lists/L, action, index, kind, text)
+	var/list/my_list = L.data
+	switch(action)
+		if("add")
+			var/val = ie_ic_decode_list_text(kind, text)
+			my_list.Add(val)
+			if(my_list.len > IC_MAX_LIST_LENGTH)
+				my_list.Cut(1, my_list.len - IC_MAX_LIST_LENGTH + 1)
+			L.holder.on_data_written()
+		if("set")
+			index = CLAMP(round(index), 1, max(1, my_list.len))
+			if(index > my_list.len)
+				return
+			my_list[index] = ie_ic_decode_list_text(kind, text)
+			L.holder.on_data_written()
+		if("remove")
+			index = round(index)
+			if(index >= 1 && index <= my_list.len)
+				my_list.Cut(index, index + 1)
+				L.holder.on_data_written()
+		if("move")
+			index = round(index)
+			var/dirn = text2num(text)
+			var/target = index + (dirn > 0 ? 1 : -1)
+			if(index >= 1 && index <= my_list.len && target >= 1 && target <= my_list.len)
+				my_list.Swap(index, target)
+				L.holder.on_data_written()
+		if("clear")
+			my_list.Cut()
+			L.holder.on_data_written()
+
+/// Обработка действий нативного редактора пинов. Возвращает TRUE, если action был наш.
+/proc/ie_ic_handle_editor_action(atom/movable/host, action, list/params, mob/user)
+	switch(action)
+		if("ie_pin_editor_open")
+			var/cid = text2num(params["component_id"])
+			var/pid = text2num(params["port_id"])
+			var/obj/item/integrated_circuit/chip = ie_ic_chip_from_index(host, cid)
+			if(!chip || !user)
+				return TRUE
+			var/is_out = params["is_output"] ? TRUE : FALSE
+			var/datum/integrated_io/io = is_out ? ie_ic_get_output_io(chip, pid) : ie_ic_get_input_io(chip, pid)
+			if(!io)
+				return TRUE
+// Редактор открываем только для списков и строковых пинов (длинный текст/список).
+		// «any» не открываем: там значение может быть и списком — для этого есть inspector.
+		var/ftype = ie_ic_fundamental_type(io)
+		if(ftype == "list" || ftype == "string")
+			ie_ic_set_editor_pin(host, io, is_out)
+		return TRUE
+		if("ie_pin_editor_close")
+			ie_ic_set_editor_pin(host, null, FALSE)
+			return TRUE
+		if("ie_list_edit")
+			var/list/editor = ie_ic_get_editor_pin(host)
+			if(!editor)
+				return TRUE
+			var/datum/integrated_io/io = editor["io"]
+			if(istype(io, /datum/integrated_io/lists))
+				var/datum/integrated_io/lists/L = io
+				ie_ic_list_mutate(L, params["edit_action"], params["index"], params["kind"], params["text"])
+			return TRUE
+		if("ie_value_edit")
+			var/list/editor = ie_ic_get_editor_pin(host)
+			if(!editor)
+				return TRUE
+			var/datum/integrated_io/io = editor["io"]
+			if(!istype(io, /datum/integrated_io/lists))
+				io.write_data_to_pin(params["text"])
+			return TRUE
+	return FALSE
 
 /obj/item/electronic_assembly/ui_assets(mob/user)
 	return list(
@@ -448,10 +625,18 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 	var/pulse_live = world.time < ie_tgui_pulse_until
 	.["circuit_pulse_out_ref"] = pulse_live ? ie_tgui_pulse_output_ref : null
 	.["circuit_pulse_in_ref"] = pulse_live ? ie_tgui_pulse_input_ref : null
+	var/list/editor = ie_ic_get_editor_pin(src)
+	if(editor)
+		.["pin_editor"] = ie_ic_editor_payload(editor["io"], editor["is_output"])
+	else
+		.["pin_editor"] = null
 
 /obj/item/electronic_assembly/ui_act(action, list/params)
 	. = ..()
 	if(.)
+		return
+	if(ie_ic_handle_editor_action(src, action, params, usr))
+		. = TRUE
 		return
 	switch(action)
 		if("ie_switch_classic_ui")
@@ -737,12 +922,20 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 	var/solo_pulse = world.time < ie_tgui_solo_pulse_until
 	.["circuit_pulse_out_ref"] = solo_pulse ? ie_tgui_solo_pulse_out_ref : null
 	.["circuit_pulse_in_ref"] = solo_pulse ? ie_tgui_solo_pulse_in_ref : null
+	var/list/editor = ie_ic_get_editor_pin(src)
+	if(editor)
+		.["pin_editor"] = ie_ic_editor_payload(editor["io"], editor["is_output"])
+	else
+		.["pin_editor"] = null
 
 /obj/item/integrated_circuit/ui_act(action, list/params)
 	if(assembly)
 		return assembly.ui_act(action, params)
 	. = ..()
 	if(.)
+		return
+	if(ie_ic_handle_editor_action(src, action, params, usr))
+		. = TRUE
 		return
 	switch(action)
 		if("ie_switch_classic_ui")

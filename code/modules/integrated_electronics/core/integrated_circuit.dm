@@ -42,6 +42,9 @@
 	var/ie_tgui_solo_pulse_until = 0
 	var/ie_tgui_solo_pulse_out_ref = null
 	var/ie_tgui_solo_pulse_in_ref = null
+	/// TGUI: открытый в нативном редакторе значений пин (список/текст).
+	var/datum/integrated_io/ie_gui_editor_io
+	var/ie_gui_editor_is_output = FALSE
 
 
 /*

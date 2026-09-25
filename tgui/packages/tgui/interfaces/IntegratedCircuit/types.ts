@@ -106,6 +106,27 @@ export interface IntegratedCircuitData {
   circuit_pulse_in_ref?: string | null;
   /** Wiremod: заряд power cell на плате, null если нет. */
   circuit_cell_percent?: number | null;
+  /** IE: нативный редактор значений пина (список или текст). */
+  pin_editor?: PinEditorPayload | null;
+}
+
+export interface PinEditorPayload {
+  ref: string;
+  name: string;
+  type: string;
+  is_output: boolean;
+  /** "list" — редактирование списка; "value" — одно значение через TextArea. */
+  kind: 'list' | 'value';
+  length?: number;
+  rows?: PinEditorRow[] | null;
+  value?: unknown;
+}
+
+export interface PinEditorRow {
+  index: number;
+  kind: string;
+  display: string;
+  value: unknown;
 }
 
 export interface WireConnection {

@@ -19,15 +19,34 @@ const colorCommitTimers = new WeakMap();
 
 export const FUNDAMENTAL_DATA_TYPES = {
   'string': (props) => {
-    const { name, value, setValue, color } = props;
+    const { name, value, setValue, color, act, componentId, portId, isOutput, ieCircuit } = props;
     return (
       <BasicInput name={name} setValue={setValue} value={value} defaultValue="">
-        <Input
-          placeholder={name}
-          value={value ?? ''}
-          onChange={(e, val) => setValue(val)}
-          width="96px"
-        />
+        <Stack align="center">
+          <Stack.Item>
+            <Input
+              placeholder={name}
+              value={value ?? ''}
+              onChange={(e, val) => setValue(val)}
+              width="96px"
+            />
+          </Stack.Item>
+          {!!(ieCircuit && act && componentId !== null && componentId !== undefined) && (
+            <Stack.Item>
+              <Button
+                icon="edit"
+                compact
+                color="transparent"
+                tooltip="Открыть большой редактор текста"
+                onClick={() => act('ie_pin_editor_open', {
+                  component_id: componentId,
+                  port_id: portId,
+                  is_output: !!isOutput,
+                })}
+              />
+            </Stack.Item>
+          )}
+        </Stack>
       </BasicInput>
     );
   },
@@ -168,7 +187,7 @@ export const FUNDAMENTAL_DATA_TYPES = {
             compact
             color="transparent"
             tooltip="Редактор / просмотр списка"
-            onClick={() => act('ie_open_list_editor', {
+            onClick={() => act('ie_pin_editor_open', {
               component_id: componentId,
               port_id: portId,
               is_output: !!isOutput,

@@ -14,6 +14,30 @@ import { formatIeCooldownDs, formatIeSizeDisplay } from './circuitNodeFormat';
 import { ABSOLUTE_Y_OFFSET } from './constants';
 import { Port } from './Port';
 
+/**
+ * Cheap structural equality for a single port row. Only the fields that can
+ * change at runtime are compared (live value + wiring); name/type/color are
+ * static for a mount so skipping them is safe and keeps this O(rows).
+ */
+const portSig = (p) => (p
+  ? `${p.ref}\u0000${JSON.stringify(p.current_data)}\u0000${JSON.stringify(p.connected_to)}`
+  : '');
+
+const portsEqual = (a, b) => {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b || a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i++) {
+    if (portSig(a[i]) !== portSig(b[i])) {
+      return false;
+    }
+  }
+  return true;
+};
+
 
 export class ObjectComponent extends Component {
   constructor() {
@@ -106,14 +130,37 @@ export class ObjectComponent extends Component {
   }
 
   shouldComponentUpdate(nextProps, nextState) {
-    const { input_ports, output_ports } = this.props;
-
-    return (
-      shallowDiffers(this.props, nextProps)
-      || shallowDiffers(this.state, nextState)
-      || shallowDiffers(input_ports, nextProps.input_ports)
-      || shallowDiffers(output_ports, nextProps.output_ports)
-    );
+    // Локальное состояние ноды (перетаскивание, переименование) — редкое и важное.
+    if (shallowDiffers(this.state, nextState)) {
+      return true;
+    }
+    // Смена зума/панорамы обязана перемерить позиции портов, даже если данные не
+    // изменились: координаты проводов зависят от transform плоскости.
+    if (this.props.portLayoutKey !== nextProps.portLayoutKey) {
+      return true;
+    }
+    const p = this.props;
+    const n = nextProps;
+    if (
+      p.x !== n.x
+      || p.y !== n.y
+      || p.name !== n.name
+      || p.color !== n.color
+      || p.removable !== n.removable
+      || p.recent_pulse !== n.recent_pulse
+      || p.circuitOn !== n.circuitOn
+      || p.debugCopyRef !== n.debugCopyRef
+      || p.ie_size !== n.ie_size
+      || p.ie_complexity !== n.ie_complexity
+      || p.ie_cooldown_ds !== n.ie_cooldown_ds
+      || p.ie_ext_cooldown_ds !== n.ie_ext_cooldown_ds
+      || p.power_usage_per_input !== n.power_usage_per_input
+      || !portsEqual(p.input_ports, n.input_ports)
+      || !portsEqual(p.output_ports, n.output_ports)
+    ) {
+      return true;
+    }
+    return false;
   }
 
   render() {
@@ -141,6 +188,7 @@ export class ObjectComponent extends Component {
       ie_cooldown_ds,
       ie_ext_cooldown_ds,
       power_usage_per_input,
+      portLabelByRef,
       ...rest
     } = this.props;
     const input_ports = byondListToArray(rawInputPorts);
@@ -169,6 +217,7 @@ export class ObjectComponent extends Component {
             componentId={index}
             isOutput={!!isOutput}
             act={act}
+            portLabelByRef={portLabelByRef}
             {...PortOptions}
           />
         </Stack.Item>

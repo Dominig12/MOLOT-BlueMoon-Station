@@ -20,6 +20,7 @@ import { CircuitToolbar } from './CircuitToolbar';
 import { Connections } from './Connections';
 import { ABSOLUTE_Y_OFFSET, MOUSE_BUTTON_LEFT } from './constants';
 import { ObjectComponent } from './ObjectComponent';
+import { PinEditor } from './PinEditor';
 import type {
   CircuitComponentView,
   CircuitPortPayload,
@@ -35,6 +36,9 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
   connectionsSvgRef = createRef<SVGSVGElement>();
   /** Смещали ли поле мышью с прошлого сохранённого screen_x/y (не слать move_screen на каждый mouseup). */
   planePanDirty = false;
+  /** Позиции портов, ожидающие перемеривания; замер переносится в requestAnimationFrame, чтобы сотни getBoundingClientRect не превращались в сотни синхронных reflow за кадр. */
+  locationPending = new Map<string, { port: CircuitPortPayload; dom: HTMLElement }>();
+  locationRaf: number | null = null;
 
   constructor(props: unknown) {
     super(props);
@@ -102,27 +106,56 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
   }
 
   handlePortLocation(port: CircuitPortPayload, dom: HTMLElement | null) {
+    if (!dom || !dom.isConnected) {
+      return;
+    }
+    this.locationPending.set(port.ref, { port, dom });
+    if (this.locationRaf === null) {
+      this.locationRaf = requestAnimationFrame(() => {
+        this.locationRaf = null;
+        this.flushPortLocations();
+      });
+    }
+  }
+
+  /**
+   * Один замер на кадр: перечитываем только порты, которые просили обновление,
+   * и шлём один setState, если что-то реально сдвинулось. Убирает O(портов)
+   * форс-layout на каждый «пустой» апдейт данных от сервера.
+   */
+  flushPortLocations() {
+    const pending = this.locationPending;
+    if (pending.size === 0) {
+      return;
+    }
+    this.locationPending = new Map();
     const { locations } = this.state;
-
-    if (!dom) {
-      return;
+    let next: Record<string, PortLocation> | null = null;
+    pending.forEach(({ port, dom }) => {
+      if (!dom.isConnected) {
+        return;
+      }
+      const position = this.getPosition(dom);
+      const withColor = { x: position.x, y: position.y, color: port.color };
+      if (Number.isNaN(withColor.x) || Number.isNaN(withColor.y)) {
+        return;
+      }
+      const last = locations[port.ref];
+      if (
+        last
+        && last.x === withColor.x
+        && last.y === withColor.y
+      ) {
+        return;
+      }
+      if (!next) {
+        next = { ...locations };
+      }
+      next[port.ref] = withColor;
+    });
+    if (next) {
+      this.setState({ locations: next });
     }
-
-    const lastPosition = locations[port.ref];
-    const position = this.getPosition(dom);
-    const withColor = { ...position, color: port.color };
-
-    if (
-      Number.isNaN(withColor.x)
-      || Number.isNaN(withColor.y)
-      || (lastPosition
-        && lastPosition.x === withColor.x
-        && lastPosition.y === withColor.y)
-    ) {
-      return;
-    }
-    locations[port.ref] = withColor;
-    this.setState({ locations: locations });
   }
 
   handlePortClick(
@@ -320,6 +353,11 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     window.removeEventListener('mouseup', this.handleMouseUp);
     window.removeEventListener('mousemove', this.handlePortDrag);
     window.removeEventListener('mouseup', this.handlePortRelease);
+    if (this.locationRaf !== null) {
+      cancelAnimationFrame(this.locationRaf);
+      this.locationRaf = null;
+    }
+    this.locationPending.clear();
   }
 
   handleMouseDown(_event: MouseEvent) {
@@ -423,7 +461,8 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
         return 0;
       }
       if (a.outRef !== b.outRef) {
-        return a.outRef.localeCompare(b.outRef);
+        // REF-строки сравниваем код-поинтами (быстрее localeCompare на сотнях проводов).
+        return a.outRef < b.outRef ? -1 : 1;
       }
       const ia = fanOutOrder.get(`${a.outRef}\0${a.inRef}`) ?? 999;
       const ib = fanOutOrder.get(`${b.outRef}\0${b.inRef}`) ?? 999;
@@ -481,6 +520,21 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     const zoomPercent = Math.round((zoom || 1) * 100);
     /** Только корпус сборки (не одиночный чип в руках) — вставка чипа в поле. */
     const ieAssemblyUi = !!ie_circuit && ie_clone_copy_mode === 'assembly';
+
+    // Карта REF порта → подпись «Компонент · Порт» для попапа порядка связей.
+    const portLabelByRef = new Map<string, string>();
+    for (const comp of components) {
+      if (!comp) {
+        continue;
+      }
+      const compLabel = comp.name || '';
+      for (const p of comp.input_ports) {
+        portLabelByRef.set(p.ref, `${compLabel} · ${p.name}`);
+      }
+      for (const p of comp.output_ports) {
+        portLabelByRef.set(p.ref, `${compLabel} · ${p.name}`);
+      }
+    }
 
     return (
       <Window
@@ -617,6 +671,7 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
                           onPortRightClick={this.handlePortRightClick}
                           onPortMouseUp={this.handlePortUp}
                           debugCopyRef={!!ie_circuit && !!ie_debug_copy_ref}
+                          portLabelByRef={portLabelByRef}
                         />
                       )
                   )}
@@ -635,6 +690,7 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
               notices={examined_notices}
             />
           )}
+          <PinEditor />
           {!!menuOpen && !ie_circuit && (
             <Box
               className="IntegratedCircuit__variableDock"

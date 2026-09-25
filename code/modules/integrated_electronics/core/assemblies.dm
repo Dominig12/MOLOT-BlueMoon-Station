@@ -46,6 +46,11 @@
 	var/ie_tgui_pulse_output_ref = null
 	var/ie_tgui_pulse_input_ref = null
 	var/datum/weakref/ie_tgui_pulse_chip_weak
+	/// TGUI: троттлинг форс-обновлений окна при непрерывной работе схемы (иначе каждый push_data → полная ресериализация сотен компонентов).
+	var/ie_tgui_last_ui_push = 0
+	/// TGUI: пины, для которых открыт нативный редактор значений (список/текст) — REF(io) активен.
+	var/datum/integrated_io/ie_gui_editor_io
+	var/ie_gui_editor_is_output = FALSE
 	/// Last coarse diagnostic HUD state from compute_diagnostic_hud_process_key; skips redundant health/cell updates in process().
 	var/last_diag_process_key = ""
 	/// Cached "[icon]-[icon_state]-[dir]" so sync_diagnostic_hud_offsets avoids allocating /icon every diag call.

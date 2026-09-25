@@ -47,7 +47,7 @@ export const DisplayName = (props) => {
       return;
     }
     if (fundamentalType === 'list') {
-      act('ie_open_list_editor', {
+      act('ie_pin_editor_open', {
         component_id: componentId,
         port_id: portIndex,
         is_output: !!isOutput,
