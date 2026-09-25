@@ -30,6 +30,17 @@ const KIND_LABEL = {
   text: 'текст',
 };
 
+const ANY_KIND_LABEL = {
+  string: 'текст (string)',
+  number: 'число (number)',
+  boolean: 'bool (boolean)',
+  char: 'символ (char)',
+  color: 'цвет (color)',
+  dir: 'направление (dir)',
+};
+
+const ANY_KINDS = Object.keys(ANY_KIND_LABEL);
+
 /**
  * Нативный редактор значения пина: список (добавить/убрать/передвинуть/очистить,
  * поправить ячейку) или длинный текст (для string/any). Заменяет старый браузерный
@@ -280,6 +291,10 @@ const AddRowForm = (props) => {
 const ValueEditor = (props) => {
   const { editor, act } = props;
 
+  if (editor.pin_type === 'any') {
+    return <AnyValueEditor editor={editor} act={act} />;
+  }
+
   switch (editor.type) {
     case 'boolean':
       return <BooleanValueEditor editor={editor} act={act} />;
@@ -510,6 +525,123 @@ const EntityValueEditor = ({ editor, act }) => {
               tooltip="Предмет в активной руке; иначе память-ref отладчика; иначе marked-датум"
               onClick={() => act('ie_value_edit', { marked_atom: true })}>
               Взять ref
+            </Button>
+          </Stack.Item>
+          <Stack.Item>
+            <NullButton act={act} />
+          </Stack.Item>
+        </Stack>
+      </Stack.Item>
+    </Stack>
+  );
+};
+
+const AnyValueEditor = ({ editor, act }) => {
+  const [kind, setKind] = useState('string');
+  const init = editor.value === null || editor.value === undefined
+    ? ''
+    : String(editor.value);
+  const [draft, setDraft] = useState(init);
+  useEffect(() => setDraft(init), [init]);
+
+  const kindOptions = ANY_KINDS.map((k) => ANY_KIND_LABEL[k]);
+
+  const kindRow = (
+    <Stack align="center" wrap>
+      <Stack.Item>
+        <Box color="label">Тип значения:</Box>
+      </Stack.Item>
+      <Stack.Item>
+        <Dropdown
+          width="10rem"
+          displayText={ANY_KIND_LABEL[kind]}
+          options={kindOptions}
+          onSelected={(label) => {
+            const k = ANY_KINDS.find(
+              (kk) => ANY_KIND_LABEL[kk] === label,
+            ) || 'string';
+            setKind(k);
+          }}
+        />
+      </Stack.Item>
+    </Stack>
+  );
+
+  if (kind === 'boolean') {
+    const on = editor.value === true || editor.value === 1;
+    const off = editor.value === false || editor.value === 0;
+    return (
+      <Stack vertical>
+        <Stack.Item>{kindRow}</Stack.Item>
+        <Stack.Item>
+          <Stack>
+            <Stack.Item>
+              <Button
+                color={on ? 'good' : 'transparent'}
+                icon={on ? 'toggle-on' : 'toggle-off'}
+                onClick={() => act('ie_value_edit', { kind: 'boolean', value: 1 })}>
+                Да (true)
+              </Button>
+            </Stack.Item>
+            <Stack.Item>
+              <Button
+                color={off ? 'bad' : 'transparent'}
+                icon={off ? 'toggle-on' : 'toggle-off'}
+                onClick={() => act('ie_value_edit', { kind: 'boolean', value: 0 })}>
+                Нет (false)
+              </Button>
+            </Stack.Item>
+          </Stack>
+        </Stack.Item>
+        <Stack.Item>
+          <Stack>
+            <Stack.Item>
+              <Button
+                icon="upload"
+                color="transparent"
+                tooltip="Вставить ref из руки/отладчика/marked"
+                onClick={() => act('ie_value_edit', { marked_atom: true })}>
+                Вставить ref
+              </Button>
+            </Stack.Item>
+            <Stack.Item>
+              <NullButton act={act} />
+            </Stack.Item>
+          </Stack>
+        </Stack.Item>
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack vertical>
+      <Stack.Item>{kindRow}</Stack.Item>
+      <Stack.Item>
+        <Input
+          fluid
+          placeholder={kind === 'number' ? 'число' : kind === 'char' ? 'символ' : 'значение'}
+          value={draft}
+          onChange={(e, val) => setDraft(val)}
+          onEnter={(e, val) => act('ie_value_edit', { kind, value: val })}
+        />
+      </Stack.Item>
+      <Stack.Item>
+        <Stack>
+          <Stack.Item>
+            <Button
+              icon="save"
+              color="good"
+              onClick={() => act('ie_value_edit', { kind, value: draft })}>
+              Записать
+            </Button>
+          </Stack.Item>
+          <Stack.Item>
+            <Button
+              icon="upload"
+              color="transparent"
+              tooltip="Вставить ref из руки/отладчика/marked"
+              onClick={() => act('ie_value_edit', { marked_atom: true })}>
+              Вставить ref
             </Button>
           </Stack.Item>
           <Stack.Item>

@@ -666,8 +666,11 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			else if(params["marked_atom"])
 				ie_ic_tgui_apply_marked_atom_or_debugger(user, io)
 			else if(ie_ic_fundamental_type(io) == "any")
-				// Для «any» декодируем по текущему типу значения (как в payload).
-				if(isnum(io.data))
+				// Для «any» можно явно выбрать тип значения (kind), иначе — по текущему типу (как в payload).
+				var/any_kind = params["kind"]
+				if(!isnull(any_kind) && any_kind != "" && any_kind != "any")
+					ie_ic_tgui_write_input(io, any_kind, params["value"])
+				else if(isnum(io.data))
 					io.write_data_to_pin(text2num(params["value"]))
 				else
 					io.write_data_to_pin(params["value"])
