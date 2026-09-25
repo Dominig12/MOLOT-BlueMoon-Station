@@ -958,32 +958,32 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 		if("move_input_connection_order")
 			var/cid = text2num(params["component_id"])
 			var/pid = text2num(params["port_id"])
-			var/from = text2num(params["from_index"])
-			var/to = text2num(params["to_index"])
+			var/from_pos = text2num(params["from_index"])
+			var/to_pos = text2num(params["to_index"])
 			var/obj/item/integrated_circuit/chip = ie_ic_chip_from_index(src, cid)
 			if(!chip)
 				return
 			var/datum/integrated_io/io = ie_ic_get_input_io(chip, pid)
-			if(!io || from < 1 || to < 1 || from > length(io.linked) || to > length(io.linked) || from == to)
+			if(!io || from_pos < 1 || to_pos < 1 || from_pos > length(io.linked) || to_pos > length(io.linked) || from_pos == to_pos)
 				return
-			var/datum/integrated_io/item = io.linked[from]
-			io.linked.Cut(from, from + 1)
-			io.linked.Insert(to, item)
+			var/datum/integrated_io/item = io.linked[from_pos]
+			io.linked.Cut(from_pos, from_pos + 1)
+			io.linked.Insert(to_pos, item)
 			. = TRUE
 		if("move_output_connection_order")
 			var/cid = text2num(params["component_id"])
 			var/pid = text2num(params["port_id"])
-			var/from = text2num(params["from_index"])
-			var/to = text2num(params["to_index"])
+			var/from_pos = text2num(params["from_index"])
+			var/to_pos = text2num(params["to_index"])
 			var/obj/item/integrated_circuit/chip = ie_ic_chip_from_index(src, cid)
 			if(!chip)
 				return
 			var/datum/integrated_io/io = ie_ic_get_output_io(chip, pid)
-			if(!io || !ie_ic_is_output_side_pin(io) || from < 1 || to < 1 || from > length(io.linked) || to > length(io.linked) || from == to)
+			if(!io || !ie_ic_is_output_side_pin(io) || from_pos < 1 || to_pos < 1 || from_pos > length(io.linked) || to_pos > length(io.linked) || from_pos == to_pos)
 				return
-			var/datum/integrated_io/item = io.linked[from]
-			io.linked.Cut(from, from + 1)
-			io.linked.Insert(to, item)
+			var/datum/integrated_io/item = io.linked[from_pos]
+			io.linked.Cut(from_pos, from_pos + 1)
+			io.linked.Insert(to_pos, item)
 			. = TRUE
 		if("ie_copy_assembly_code")
 			if(!usr)
@@ -1207,25 +1207,25 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			. = TRUE
 		if("move_input_connection_order")
 			var/pid = text2num(params["port_id"])
-			var/from = text2num(params["from_index"])
-			var/to = text2num(params["to_index"])
+			var/from_pos = text2num(params["from_index"])
+			var/to_pos = text2num(params["to_index"])
 			var/datum/integrated_io/io = ie_ic_get_input_io(src, pid)
-			if(!io || from < 1 || to < 1 || from > length(io.linked) || to > length(io.linked) || from == to)
+			if(!io || from_pos < 1 || to_pos < 1 || from_pos > length(io.linked) || to_pos > length(io.linked) || from_pos == to_pos)
 				return
-			var/datum/integrated_io/item = io.linked[from]
-			io.linked.Cut(from, from + 1)
-			io.linked.Insert(to, item)
+			var/datum/integrated_io/item = io.linked[from_pos]
+			io.linked.Cut(from_pos, from_pos + 1)
+			io.linked.Insert(to_pos, item)
 			. = TRUE
 		if("move_output_connection_order")
 			var/pid = text2num(params["port_id"])
-			var/from = text2num(params["from_index"])
-			var/to = text2num(params["to_index"])
+			var/from_pos = text2num(params["from_index"])
+			var/to_pos = text2num(params["to_index"])
 			var/datum/integrated_io/io = ie_ic_get_output_io(src, pid)
-			if(!io || !ie_ic_is_output_side_pin(io) || from < 1 || to < 1 || from > length(io.linked) || to > length(io.linked) || from == to)
+			if(!io || !ie_ic_is_output_side_pin(io) || from_pos < 1 || to_pos < 1 || from_pos > length(io.linked) || to_pos > length(io.linked) || from_pos == to_pos)
 				return
-			var/datum/integrated_io/item = io.linked[from]
-			io.linked.Cut(from, from + 1)
-			io.linked.Insert(to, item)
+			var/datum/integrated_io/item = io.linked[from_pos]
+			io.linked.Cut(from_pos, from_pos + 1)
+			io.linked.Insert(to_pos, item)
 			. = TRUE
 		if("ie_copy_component_code")
 			if(!usr)
