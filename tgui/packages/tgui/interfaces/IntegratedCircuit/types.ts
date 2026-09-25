@@ -74,6 +74,10 @@ export interface IntegratedCircuitState {
   screenPanOverride: { x: number; y: number } | null;
   /** Сброс локального drag-offset в InfinitePlane (инкремент при «к началу координат»). */
   planeHomeNonce: number;
+  /** Показывать боковую панель списка компонентов. */
+  componentsPanelOpen: boolean;
+  /** Фильтр поиска в списке компонентов. */
+  componentsFilter: string;
 }
 
 export interface IntegratedCircuitData {

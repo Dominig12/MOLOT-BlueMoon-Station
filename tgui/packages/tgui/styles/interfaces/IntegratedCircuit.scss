@@ -125,6 +125,20 @@ $bg-map: colors.$bg-map !default;
   position: relative;
 }
 
+.IntegratedCircuit__componentsToggle {
+  // кнопка «Компоненты» поверх поля (не мешает канвасу)
+}
+
+.IntegratedCircuit__componentsPanel {
+  background: linear-gradient(
+    180deg,
+    rgba(14, 20, 30, 0.97) 0%,
+    rgba(10, 14, 22, 0.98) 100%
+  );
+  border-left: 1px solid rgba(120, 170, 230, 0.22);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.45);
+}
+
 .IntegratedCircuit__variableDock {
   border-top: 2px solid rgba(100, 170, 255, 0.28);
   background: linear-gradient(

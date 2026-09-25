@@ -5,8 +5,10 @@ import { useBackend } from '../../backend';
 import {
   Box,
   Button,
+  Icon,
   InfinitePlane,
   Input,
+  Section,
   Stack,
 } from '../../components';
 import { Window } from '../../layouts';
@@ -54,6 +56,8 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
       lgbtqRainbowMode: false,
       screenPanOverride: null,
       planeHomeNonce: 0,
+      componentsPanelOpen: false,
+      componentsFilter: '',
     };
     this.handlePortLocation = this.handlePortLocation.bind(this);
     this.handleMouseDown = this.handleMouseDown.bind(this);
@@ -290,6 +294,28 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     act('move_screen', { screen_x: 0, screen_y: 0 });
   }
 
+  /** Отцентрировать поле на компоненте из списка (jump to). */
+  handleJumpToComponent(comp: CircuitComponentView) {
+    const { act } = useBackend<IntegratedCircuitData>();
+    const svg = this.connectionsSvgRef?.current;
+    const z = Math.max(this.state.zoom || 1, 0.01);
+    let targetX = 0;
+    let targetY = 0;
+    if (svg) {
+      const r = svg.getBoundingClientRect();
+      targetX = r.width / 2 / z - (comp.x || 0) * z;
+      targetY = r.height / 2 / z - (comp.y || 0) * z;
+    }
+    this.planePanDirty = false;
+    this.setState((s) => ({
+      screenPanOverride: { x: targetX, y: targetY },
+      backgroundX: targetX,
+      backgroundY: targetY,
+      planeHomeNonce: s.planeHomeNonce + 1,
+    }));
+    act('move_screen', { screen_x: targetX, screen_y: targetY });
+  }
+
   /** IE: экранные координаты → rel_x/rel_y в пространстве нод (как при перетаскивании). */
   ieClientToCircuitCoords(clientX: number, clientY: number) {
     const svg = this.connectionsSvgRef?.current;
@@ -338,7 +364,15 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     }
     const sx = data.screen_x;
     const sy = data.screen_y;
-    if (typeof sx === 'number' && sx === 0 && typeof sy === 'number' && sy === 0) {
+    const ox = this.state.screenPanOverride.x;
+    const oy = this.state.screenPanOverride.y;
+    // Сбрасываем подмену якоря, когда сервер подтвердил наши координаты (0,0 или цель прыжка).
+    if (
+      typeof sx === 'number'
+      && typeof sy === 'number'
+      && Math.abs(sx - ox) < 0.01
+      && Math.abs(sy - oy) < 0.01
+    ) {
       this.setState({ screenPanOverride: null });
     }
   }
@@ -507,6 +541,7 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     const panX = this.state.screenPanOverride?.x ?? screen_x ?? 0;
     const panY = this.state.screenPanOverride?.y ?? screen_y ?? 0;
     const { locations, selectedPort, menuOpen, zoom, dragClientX, dragClientY } = this.state;
+    const { componentsPanelOpen, componentsFilter } = this.state;
     const connections = this.buildWireConnections(
       components,
       locations,
@@ -518,6 +553,14 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     const componentCount = components.reduce((n, c) => n + (c ? 1 : 0), 0);
     const variableCount = variables?.length ?? 0;
     const zoomPercent = Math.round((zoom || 1) * 100);
+    const filterQuery = componentsFilter.trim().toLowerCase();
+    const filteredComponents = components
+      .map((comp, i) => (comp ? { comp, index: i + 1 } : null))
+      .filter((entry): entry is { comp: CircuitComponentView; index: number } =>
+        entry !== null
+        && (!filterQuery
+          || entry.comp.name.toLowerCase().includes(filterQuery)
+          || String(entry.index).includes(filterQuery)));
     /** Только корпус сборки (не одиночный чип в руках) — вставка чипа в поле. */
     const ieAssemblyUi = !!ie_circuit && ie_clone_copy_mode === 'assembly';
 
@@ -677,6 +720,79 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
                   )}
                 </Connections>
               </InfinitePlane>
+              <Box
+                className="IntegratedCircuit__componentsToggle"
+                position="absolute"
+                right="0.5rem"
+                top="0.5rem"
+                style={{ zIndex: 6 }}>
+                <Button
+                  icon="list-ul"
+                  selected={componentsPanelOpen}
+                  color="transparent"
+                  tooltip="Список компонентов (прыжок к компоненту)"
+                  onClick={() => this.setState((s) => ({
+                    componentsPanelOpen: !s.componentsPanelOpen,
+                  }))}>
+                  Компоненты
+                </Button>
+              </Box>
+              {componentsPanelOpen && (
+                <Box
+                  className="IntegratedCircuit__componentsPanel"
+                  position="absolute"
+                  right="0"
+                  top="2.9rem"
+                  bottom="0"
+                  width="18rem"
+                  style={{ zIndex: 6 }}>
+                  <Section
+                    title={`Компоненты (${componentCount})`}
+                    fill
+                    scrollable
+                    buttons={(
+                      <Button
+                        icon="times"
+                        color="transparent"
+                        tooltip="Закрыть список"
+                        onClick={() => this.setState({ componentsPanelOpen: false })}
+                      />
+                    )}>
+                    <Stack vertical>
+                      <Stack.Item>
+                        <Input
+                          fluid
+                          placeholder="Поиск по имени / номеру…"
+                          value={componentsFilter}
+                          onChange={(e, val) => this.setState({ componentsFilter: val })}
+                        />
+                      </Stack.Item>
+                      {filteredComponents.length === 0 && (
+                        <Stack.Item>
+                          <Box color="label" opacity={0.7} mt={0.5}>
+                            {components.length === 0 ? 'Нет компонентов' : 'Ничего не найдено'}
+                          </Box>
+                        </Stack.Item>
+                      )}
+                      {filteredComponents.map(({ comp, index }) => (
+                        <Stack.Item key={index}>
+                          <Button
+                            fluid
+                            color="transparent"
+                            tooltip={`Перейти к «${comp.name}»`}
+                            onClick={() => this.handleJumpToComponent(comp)}>
+                            <Icon name="circle" color={comp.color || 'blue'} />
+                            {' '}
+                            #{index}
+                            {' '}
+                            {comp.name}
+                          </Button>
+                        </Stack.Item>
+                      ))}
+                    </Stack>
+                  </Section>
+                </Box>
+              )}
             </Box>
           </Box>
           {!!examined_name && (
