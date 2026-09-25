@@ -724,12 +724,12 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			if(!editor)
 				return TRUE
 			var/datum/integrated_io/io = editor["io"]
-			if(islist(io.data))
-				return TRUE
 			if(params["set_null"])
 				io.write_data_to_pin(null)
 			else if(params["make_list"])
 				io.write_data_to_pin(list())
+			else if(islist(io.data))
+				return TRUE
 			else if(params["marked_atom"])
 				ie_ic_tgui_apply_marked_atom_or_debugger(user, io)
 			else if(ie_ic_fundamental_type(io) == "any")

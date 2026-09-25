@@ -37,6 +37,7 @@ const ANY_KIND_LABEL = {
   char: 'символ (char)',
   color: 'цвет (color)',
   dir: 'направление (dir)',
+  ref: 'референс (ref)',
   list: 'список (list)',
 };
 
@@ -95,6 +96,9 @@ export const PinEditor = (props) => {
             <>
               <ListEditor editor={editor} act={act} />
               <AddRowForm act={act} />
+              <Box mt={0.5}>
+                <NullButton act={act} />
+              </Box>
             </>
           )
           : (
@@ -660,6 +664,29 @@ const AnyValueEditor = ({ editor, act }) => {
           }
         }}
       />
+    );
+  }
+  else if (kind === 'ref') {
+    const name = editor.value === null || editor.value === undefined
+      ? 'null'
+      : String(editor.value);
+    kindInput = (
+      <Stack vertical>
+        <Stack.Item>
+          <Box className="PinEditor__display">
+            Текущее: <b>{name}</b>
+          </Box>
+        </Stack.Item>
+        <Stack.Item>
+          <Button
+            icon="upload"
+            color="good"
+            tooltip="Предмет в активной руке; иначе память-ref отладчика; иначе marked-датум"
+            onClick={() => act('ie_value_edit', { marked_atom: true })}>
+            Взять ref
+          </Button>
+        </Stack.Item>
+      </Stack>
     );
   }
   else if (kind === 'color') {
