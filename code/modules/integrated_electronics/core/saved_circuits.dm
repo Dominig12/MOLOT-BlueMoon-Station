@@ -437,7 +437,7 @@
 	var/any_needs_layout = FALSE
 	for(var/i in 1 to n)
 		var/list/cp = comp_blocks[i]
-		var/has_pos = islist(cp) && isnum(cp["ui_x"]) && isnum(cp["ui_y"]) && cp["ui_x"] != 0 && cp["ui_y"] != 0
+		var/has_pos = islist(cp) && isnum(cp["ui_x"]) && isnum(cp["ui_y"]) && (cp["ui_x"] != 0 || cp["ui_y"] != 0)
 		needs_layout[i] = !has_pos
 		if(!has_pos)
 			any_needs_layout = TRUE
