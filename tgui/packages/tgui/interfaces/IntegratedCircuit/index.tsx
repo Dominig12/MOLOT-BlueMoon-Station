@@ -422,8 +422,8 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
     let targetY = 0;
     if (svg) {
       const r = svg.getBoundingClientRect();
-      targetX = r.width / 3 / z - (comp.x || 0) * z;
-      targetY = r.height / 3 / z - (comp.y || 0) * z;
+      targetX = r.width / 3 - (comp.x || 0) * z;
+      targetY = r.height / 3 - (comp.y || 0) * z;
     }
     this.planePanDirty = false;
     this.setState((s) => ({
