@@ -105,13 +105,20 @@ export interface IntegratedCircuitData {
   ie_max_complexity?: number | null;
   /** BYOND list, array, or dense 1..N object of component dicts. */
   components?: unknown;
-  /** Краткая подсветка «какая связь сработала» (совпадает с ref портов в connections). */
+  /** IE: список «живых» импульсов в порядке активации. */
+  circuit_pulses?: CircuitPulse[] | null;
+  /** Wiremod: одиночная подсветка сработавшей связи. */
   circuit_pulse_out_ref?: string | null;
   circuit_pulse_in_ref?: string | null;
   /** Wiremod: заряд power cell на плате, null если нет. */
   circuit_cell_percent?: number | null;
   /** IE: нативный редактор значений пина (список или текст). */
   pin_editor?: PinEditorPayload | null;
+}
+
+export interface CircuitPulse {
+  out: string;
+  in: string;
 }
 
 export interface PinEditorPayload {

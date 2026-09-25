@@ -13,6 +13,8 @@ $bg-map: colors.$bg-map !default;
 
   .Window__titleBar {
     overflow: hidden;
+    position: relative;
+    z-index: 20;
   }
 }
 
@@ -72,6 +74,9 @@ $bg-map: colors.$bg-map !default;
     rgba(12, 18, 28, 0.75) 100%
   );
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+  // Тулбар поверх фиксированного канваса (ноды не должны перекрывать служебную панель).
+  position: relative;
+  z-index: 10;
 }
 
 .IntegratedCircuit__chip {
@@ -235,6 +240,7 @@ $bg-map: colors.$bg-map !default;
 
 .ObjectComponent__root {
   z-index: 1;
+  min-width: 11rem;
   border-radius: 10px;
   /* visible — чтобы всплывающее окно порядка связей не обрезалось у края ноды */
   overflow: visible;
@@ -315,6 +321,10 @@ $bg-map: colors.$bg-map !default;
   color: rgba(255, 255, 255, 0.98);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
   cursor: default;
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ObjectComponent__titleInput {
@@ -323,7 +333,7 @@ $bg-map: colors.$bg-map !default;
 }
 
 .IntegratedCircuit__portDisplayName {
-  min-width: 0;
+  min-width: 7.5rem;
   max-width: 13.5rem;
   white-space: normal;
 }
@@ -437,10 +447,20 @@ $bg-map: colors.$bg-map !default;
 
 .PortConnectionPopover__row {
   padding: 0.1rem 0;
+  cursor: grab;
 
   &:hover {
     background: rgba(255, 255, 255, 0.04);
   }
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.PortConnectionPopover__row--dragOver {
+  background: rgba(95, 200, 160, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(95, 200, 160, 0.4);
 }
 
 .PortConnectionPopover__name {

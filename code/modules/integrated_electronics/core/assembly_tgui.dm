@@ -414,10 +414,19 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 	var/pulsing = FALSE
 	var/obj/item/electronic_assembly/ea = chip.assembly
 	if(ea)
-		if(world.time < ea.ie_tgui_pulse_until && ea.ie_tgui_pulse_chip_weak?.resolve() == chip)
-			pulsing = TRUE
-	else if(world.time < chip.ie_tgui_solo_pulse_until)
-		pulsing = TRUE
+		for(var/list/pulse in ea.ie_tgui_pulses)
+			if(world.time >= pulse["until"])
+				continue
+			var/datum/weakref/ci = pulse["chip_in"]
+			var/datum/weakref/co = pulse["chip_out"]
+			if(ci?.resolve() == chip || co?.resolve() == chip)
+				pulsing = TRUE
+				break
+	else
+		for(var/list/pulse in chip.ie_tgui_solo_pulses)
+			if(world.time < pulse["until"])
+				pulsing = TRUE
+				break
 	component_data["recent_pulse"] = pulsing
 	component_data["ie_size"] = chip.size
 	component_data["ie_complexity"] = chip.complexity
@@ -440,23 +449,63 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 /obj/item/electronic_assembly/proc/ie_tgui_register_data_pulse(datum/integrated_io/out_io, datum/integrated_io/in_io)
 	if(!out_io || !in_io)
 		return
-	ie_tgui_pulse_until = world.time + 0.35 SECONDS
-	ie_tgui_pulse_output_ref = REF(out_io)
-	ie_tgui_pulse_input_ref = REF(in_io)
-	ie_tgui_pulse_chip_weak = WEAKREF(in_io.holder)
+	ie_tgui_pulses += list(list(
+		"out" = REF(out_io),
+		"in" = REF(in_io),
+		"chip_in" = WEAKREF(in_io.holder),
+		"chip_out" = WEAKREF(out_io.holder),
+		"until" = world.time + 0.35 SECONDS,
+	))
+	ie_tgui_prune_pulses()
 	// Полная ресериализация на каждый импульс упирается в O(компонентов x пинов) JSON.
-	// Форс-апдейт раз в 0.1с даёт плавную подсветку, не заливая подсистему.
+	// Форс-апдейт раз в 0.1с даёт плавную подсветку; при этом очередь выше сохраняет все
+	// недавние активации — ничего не теряется между апдейтами.
 	if(world.time >= ie_tgui_last_ui_push + 0.1 SECONDS)
 		ie_tgui_last_ui_push = world.time
 		SStgui.update_uis(src)
 
+/// Вычищает протухшие импульсы и ограничивает длину очереди (старые выпадают из хвоста).
+/obj/item/electronic_assembly/proc/ie_tgui_prune_pulses()
+	var/now = world.time
+	for(var/i = length(ie_tgui_pulses); i >= 1; i--)
+		var/list/pulse = ie_tgui_pulses[i]
+		if(now >= pulse["until"])
+			ie_tgui_pulses.Cut(i, i + 1)
+	var/over = length(ie_tgui_pulses) - IE_TGUI_MAX_LIVE_PULSES
+	if(over > 0)
+		ie_tgui_pulses.Cut(1, over + 1)
+
 /obj/item/integrated_circuit/proc/ie_tgui_register_solo_data_pulse(datum/integrated_io/out_io, datum/integrated_io/in_io)
 	if(!out_io || !in_io)
 		return
-	ie_tgui_solo_pulse_until = world.time + 0.35 SECONDS
-	ie_tgui_solo_pulse_out_ref = REF(out_io)
-	ie_tgui_solo_pulse_in_ref = REF(in_io)
+	ie_tgui_solo_pulses += list(list(
+		"out" = REF(out_io),
+		"in" = REF(in_io),
+		"until" = world.time + 0.35 SECONDS,
+	))
+	ie_tgui_solo_prune_pulses()
 	SStgui.update_uis(src)
+
+/// Тот же санитарный вычиститель для одиночного чипа.
+/obj/item/integrated_circuit/proc/ie_tgui_solo_prune_pulses()
+	var/now = world.time
+	for(var/i = length(ie_tgui_solo_pulses); i >= 1; i--)
+		var/list/pulse = ie_tgui_solo_pulses[i]
+		if(now >= pulse["until"])
+			ie_tgui_solo_pulses.Cut(i, i + 1)
+	var/over = length(ie_tgui_solo_pulses) - IE_TGUI_MAX_LIVE_PULSES
+	if(over > 0)
+		ie_tgui_solo_pulses.Cut(1, over + 1)
+
+/// Сериализует все «живые» импульсы (out/in ref) в порядке активации для TGUI.
+/proc/ie_ic_serialize_live_pulses(list/pulses)
+	var/list/out = list()
+	var/now = world.time
+	for(var/list/pulse in pulses)
+		if(now >= pulse["until"])
+			continue
+		out += list(list("out" = pulse["out"], "in" = pulse["in"]))
+	return out
 
 /proc/ie_ic_chip_from_index(atom/movable/host, component_id)
 	if(istype(host, /obj/item/electronic_assembly))
@@ -682,9 +731,7 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 	.["examined_notices"] = examined ? ie_ic_ui_examine_notices(examined) : list()
 	.["examined_rel_x"] = ie_gui_examined_x
 	.["examined_rel_y"] = ie_gui_examined_y
-	var/pulse_live = world.time < ie_tgui_pulse_until
-	.["circuit_pulse_out_ref"] = pulse_live ? ie_tgui_pulse_output_ref : null
-	.["circuit_pulse_in_ref"] = pulse_live ? ie_tgui_pulse_input_ref : null
+	.["circuit_pulses"] = ie_ic_serialize_live_pulses(ie_tgui_pulses)
 	var/list/editor = ie_ic_get_editor_pin(src)
 	if(editor)
 		.["pin_editor"] = ie_ic_editor_payload(editor["io"], editor["is_output"])
@@ -908,6 +955,36 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 				return
 			io.linked.Swap(lower, lower + 1)
 			. = TRUE
+		if("move_input_connection_order")
+			var/cid = text2num(params["component_id"])
+			var/pid = text2num(params["port_id"])
+			var/from = text2num(params["from_index"])
+			var/to = text2num(params["to_index"])
+			var/obj/item/integrated_circuit/chip = ie_ic_chip_from_index(src, cid)
+			if(!chip)
+				return
+			var/datum/integrated_io/io = ie_ic_get_input_io(chip, pid)
+			if(!io || from < 1 || to < 1 || from > length(io.linked) || to > length(io.linked) || from == to)
+				return
+			var/datum/integrated_io/item = io.linked[from]
+			io.linked.Cut(from, from + 1)
+			io.linked.Insert(to, item)
+			. = TRUE
+		if("move_output_connection_order")
+			var/cid = text2num(params["component_id"])
+			var/pid = text2num(params["port_id"])
+			var/from = text2num(params["from_index"])
+			var/to = text2num(params["to_index"])
+			var/obj/item/integrated_circuit/chip = ie_ic_chip_from_index(src, cid)
+			if(!chip)
+				return
+			var/datum/integrated_io/io = ie_ic_get_output_io(chip, pid)
+			if(!io || !ie_ic_is_output_side_pin(io) || from < 1 || to < 1 || from > length(io.linked) || to > length(io.linked) || from == to)
+				return
+			var/datum/integrated_io/item = io.linked[from]
+			io.linked.Cut(from, from + 1)
+			io.linked.Insert(to, item)
+			. = TRUE
 		if("ie_copy_assembly_code")
 			if(!usr)
 				return
@@ -979,9 +1056,7 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 	.["examined_notices"] = examined ? ie_ic_ui_examine_notices(examined) : list()
 	.["examined_rel_x"] = ie_gui_examined_x
 	.["examined_rel_y"] = ie_gui_examined_y
-	var/solo_pulse = world.time < ie_tgui_solo_pulse_until
-	.["circuit_pulse_out_ref"] = solo_pulse ? ie_tgui_solo_pulse_out_ref : null
-	.["circuit_pulse_in_ref"] = solo_pulse ? ie_tgui_solo_pulse_in_ref : null
+	.["circuit_pulses"] = ie_ic_serialize_live_pulses(ie_tgui_solo_pulses)
 	var/list/editor = ie_ic_get_editor_pin(src)
 	if(editor)
 		.["pin_editor"] = ie_ic_editor_payload(editor["io"], editor["is_output"])
@@ -1129,6 +1204,28 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			if(ie_ic_is_output_side_pin(a) || ie_ic_is_output_side_pin(b))
 				return
 			io.linked.Swap(lower, lower + 1)
+			. = TRUE
+		if("move_input_connection_order")
+			var/pid = text2num(params["port_id"])
+			var/from = text2num(params["from_index"])
+			var/to = text2num(params["to_index"])
+			var/datum/integrated_io/io = ie_ic_get_input_io(src, pid)
+			if(!io || from < 1 || to < 1 || from > length(io.linked) || to > length(io.linked) || from == to)
+				return
+			var/datum/integrated_io/item = io.linked[from]
+			io.linked.Cut(from, from + 1)
+			io.linked.Insert(to, item)
+			. = TRUE
+		if("move_output_connection_order")
+			var/pid = text2num(params["port_id"])
+			var/from = text2num(params["from_index"])
+			var/to = text2num(params["to_index"])
+			var/datum/integrated_io/io = ie_ic_get_output_io(src, pid)
+			if(!io || !ie_ic_is_output_side_pin(io) || from < 1 || to < 1 || from > length(io.linked) || to > length(io.linked) || from == to)
+				return
+			var/datum/integrated_io/item = io.linked[from]
+			io.linked.Cut(from, from + 1)
+			io.linked.Insert(to, item)
 			. = TRUE
 		if("ie_copy_component_code")
 			if(!usr)

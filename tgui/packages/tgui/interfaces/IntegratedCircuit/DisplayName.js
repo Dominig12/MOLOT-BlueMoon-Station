@@ -156,7 +156,7 @@ export const DisplayName = (props) => {
                         port_id: portIndex,
                       })} />
                 </Flex.Item>
-                {isIeCircuit && fundamentalType === 'list' && (
+                {(isIeCircuit && fundamentalType === 'list') && (
                   <Flex.Item>
                     <Button
                       compact
@@ -167,6 +167,18 @@ export const DisplayName = (props) => {
                     />
                   </Flex.Item>
                 )}
+                {isIeCircuit && fundamentalType !== 'signal'
+                  && fundamentalType !== 'option' && fundamentalType !== 'list' && (
+                    <Flex.Item>
+                      <Button
+                        compact
+                        color="transparent"
+                        icon="expand"
+                        tooltip="Открыть нативный редактор значения"
+                        onClick={openNativeEditor}
+                      />
+                    </Flex.Item>
+                  )}
                 <Flex.Item grow>
                   <Box color="white">{port.name}</Box>
                 </Flex.Item>

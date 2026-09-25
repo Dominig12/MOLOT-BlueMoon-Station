@@ -1,6 +1,9 @@
 /// Max |x|/|y| for IE chips on the TGUI canvas (must match wire-scale panning).
 #define IE_TGUI_COMPONENT_COORD_LIMIT 25000
 
+/// Максимум одновременно «живых» подсветок импульсов в окне TGUI (очередь по порядку активации).
+#define IE_TGUI_MAX_LIVE_PULSES 64
+
 #define IC_TOPIC_UNHANDLED 0
 #define IC_TOPIC_HANDLED 1
 #define IC_TOPIC_REFRESH 2

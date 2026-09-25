@@ -524,6 +524,7 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
       ie_circuit,
       ie_clone_copy_mode,
       ie_debug_copy_ref,
+      circuit_pulses,
       circuit_pulse_out_ref,
       circuit_pulse_in_ref,
     } = data;
@@ -577,6 +578,19 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
       for (const p of comp.output_ports) {
         portLabelByRef.set(p.ref, `${compLabel} · ${p.name}`);
       }
+    }
+
+    // Ключи «живых» импульсов проводов: out\0in. IE отдаёт список, wiremod — один ref.
+    const pulseKeys = new Set<string>();
+    if (Array.isArray(circuit_pulses)) {
+      for (const pulse of circuit_pulses) {
+        if (pulse && pulse.out && pulse.in) {
+          pulseKeys.add(`${pulse.out}\u0000${pulse.in}`);
+        }
+      }
+    }
+    else if (circuit_pulse_out_ref && circuit_pulse_in_ref) {
+      pulseKeys.add(`${circuit_pulse_out_ref}\u0000${circuit_pulse_in_ref}`);
     }
 
     return (
@@ -697,8 +711,7 @@ export class IntegratedCircuit extends Component<unknown, IntegratedCircuitState
                 <Connections
                   connections={connections}
                   svgRef={this.connectionsSvgRef}
-                  pulseOutRef={circuit_pulse_out_ref ?? null}
-                  pulseInRef={circuit_pulse_in_ref ?? null}>
+                  pulseKeys={pulseKeys}>
                   {components.map(
                     (comp, index) =>
                       comp && (

@@ -1,8 +1,8 @@
 import { Component, createRef } from 'react';
 
+import { classes } from '../../../common/react';
 import {
   Box,
-  Button,
   Icon,
   Stack,
 } from '../../components';
@@ -16,7 +16,8 @@ export class Port extends Component {
   constructor() {
     super();
     this.iconRef = createRef();
-    this.state = { connPopover: false };
+    this.state = { connPopover: false, dragOverIndex: null };
+    this.reorderSrc = null;
     this.hoverEnterTimer = null;
     this.hoverLeaveTimer = null;
     this.componentDidUpdate = this.componentDidUpdate.bind(this);
@@ -26,6 +27,10 @@ export class Port extends Component {
     this.handlePortMouseUp = this.handlePortMouseUp.bind(this);
     this.handleConnHoverEnter = this.handleConnHoverEnter.bind(this);
     this.handleConnHoverLeave = this.handleConnHoverLeave.bind(this);
+    this.handleReorderDragStart = this.handleReorderDragStart.bind(this);
+    this.handleReorderDragOver = this.handleReorderDragOver.bind(this);
+    this.handleReorderDrop = this.handleReorderDrop.bind(this);
+    this.handleReorderDragEnd = this.handleReorderDragEnd.bind(this);
   }
 
   componentWillUnmount() {
@@ -73,6 +78,63 @@ export class Port extends Component {
       port_id: portIndex,
       lower_index: lowerIndexOneBased,
     });
+  }
+
+  moveConnection(fromIndex, toIndex) {
+    const { act, componentId, portIndex, isOutput } = this.props;
+    if (!act) {
+      return;
+    }
+    const action = isOutput
+      ? 'move_output_connection_order'
+      : 'move_input_connection_order';
+    act(action, {
+      component_id: componentId,
+      port_id: portIndex,
+      from_index: fromIndex,
+      to_index: toIndex,
+    });
+  }
+
+  handleReorderDragStart(e, idx) {
+    // 1-based позиция источника
+    this.reorderSrc = idx + 1;
+    e.dataTransfer.effectAllowed = 'move';
+    try {
+      e.dataTransfer.setData('text/plain', String(idx + 1));
+    }
+    catch (err) {}
+  }
+
+  handleReorderDragOver(e, idx) {
+    if (this.reorderSrc === null) {
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (this.state.dragOverIndex !== idx) {
+      this.setState({ dragOverIndex: idx });
+    }
+  }
+
+  handleReorderDrop(e, idx) {
+    e.preventDefault();
+    const from = this.reorderSrc;
+    this.reorderSrc = null;
+    this.setState({ dragOverIndex: null });
+    if (from === null) {
+      return;
+    }
+    const to = idx + 1;
+    if (from === to) {
+      return;
+    }
+    this.moveConnection(from, to);
+  }
+
+  handleReorderDragEnd() {
+    this.reorderSrc = null;
+    this.setState({ dragOverIndex: null });
   }
 
   handlePortMouseDown(e) {
@@ -152,7 +214,7 @@ export class Port extends Component {
 
     const connectionRefs = connectedToRefList(port.connected_to);
     const multiConn = connectionRefs.length > 1;
-    const { connPopover } = this.state;
+    const { connPopover, dragOverIndex } = this.state;
 
     const resolveLabel = (ref) => {
       if (portLabelByRef && portLabelByRef.has(ref)) {
@@ -226,17 +288,33 @@ export class Port extends Component {
                   fontSize="0.7rem"
                   opacity={0.6}
                   mb={0.3}>
-                  Верхняя — выше, нижняя — ниже
+                  Перетащи строку, чтобы изменить порядок
                 </Box>
                 <Stack vertical>
                   {connectionRefs.map((ref, idx) => {
                     const pos = idx + 1;
                     const label = resolveLabel(ref);
-                    const canUp = idx > 0;
-                    const canDown = idx < connectionRefs.length - 1;
                     return (
                       <Stack.Item key={ref}>
-                        <Stack align="center" className="PortConnectionPopover__row">
+                        <Stack
+                          align="center"
+                          className={classes([
+                            'PortConnectionPopover__row',
+                            dragOverIndex === idx && 'PortConnectionPopover__row--dragOver',
+                          ])}
+                          draggable
+                          onDragStart={(e) => this.handleReorderDragStart(e, idx)}
+                          onDragOver={(e) => this.handleReorderDragOver(e, idx)}
+                          onDrop={(e) => this.handleReorderDrop(e, idx)}
+                          onDragEnd={this.handleReorderDragEnd}
+                          title="Перетащи для изменения порядка">
+                          <Stack.Item>
+                            <Icon
+                              name="grip-vertical"
+                              size={0.72}
+                              opacity={0.55}
+                            />
+                          </Stack.Item>
                           <Stack.Item>
                             <Icon
                               name="circle"
@@ -250,26 +328,6 @@ export class Port extends Component {
                               title={ref}>
                               <b>#{pos}</b> {label}
                             </Box>
-                          </Stack.Item>
-                          <Stack.Item>
-                            <Button
-                              compact
-                              color="transparent"
-                              icon="arrow-up"
-                              disabled={!canUp}
-                              tooltip={canUp ? `Выше (#${pos - 1})` : 'Уже самая верхняя'}
-                              onClick={() => this.swapConnection(pos - 1)}
-                            />
-                          </Stack.Item>
-                          <Stack.Item>
-                            <Button
-                              compact
-                              color="transparent"
-                              icon="arrow-down"
-                              disabled={!canDown}
-                              tooltip={canDown ? `Ниже (#${pos + 1})` : 'Уже самая нижняя'}
-                              onClick={() => this.swapConnection(pos)}
-                            />
                           </Stack.Item>
                         </Stack>
                       </Stack.Item>
