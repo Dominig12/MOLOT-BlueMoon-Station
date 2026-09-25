@@ -126,15 +126,21 @@ const ListEditor = (props) => {
         mb={0.25}>
         Элементов: <b>{editor.length}</b>
       </Box>
-      <Stack vertical>
-        {rows.map((row) => (
-          <ListRow
-            key={`${row.index}-${row.display}`}
-            row={row}
-            act={act}
-          />
-        ))}
-      </Stack>
+      <Box
+        className="PinEditor__listScroll"
+        maxHeight="22rem"
+        overflowY="auto"
+        pr={0.5}>
+        <Stack vertical>
+          {rows.map((row) => (
+            <ListRow
+              key={`${row.index}-${row.display}`}
+              row={row}
+              act={act}
+            />
+          ))}
+        </Stack>
+      </Box>
       <Box mt={0.5}>
         <Button
           icon="trash"
@@ -232,7 +238,7 @@ const EditCell = (props) => {
     <Input
       fluid
       placeholder={row.kind}
-      value={initial}
+      defaultValue={initial}
       onEnter={(e, value) => commit(value)}
       onBlur={(e) => {
         const val = e.target.value;

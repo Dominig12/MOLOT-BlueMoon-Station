@@ -580,6 +580,26 @@ $border-radius: base.$border-radius !default;
   padding-bottom: 0.25rem;
 }
 
+.PinEditor__listScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  scrollbar-gutter: stable;
+
+  &::-webkit-scrollbar {
+    width: 0.5rem;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 0.25rem;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0.25rem;
+  }
+}
+
 .PinEditor__row {
   padding: 0.2rem 0.15rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
