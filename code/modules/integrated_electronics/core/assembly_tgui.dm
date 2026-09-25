@@ -69,10 +69,6 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 		if(D.accepting_refs)
 			to_chat(M, span_warning("Finish ref scan on the debugger first (click a target in the world), or switch mode."))
 			return
-		// Вставка памяти — только во входы; с выходов можно только скопировать (режим Copy выше).
-		if(ie_ic_is_output_side_pin(io))
-			to_chat(M, span_warning("Вставьте память отладчика во вход (слева). С выхода значение можно только скопировать (режим Copy на кнопке upload)."))
-			return
 		ie_ic_write_debugger_memory(io, D, M)
 		return
 
