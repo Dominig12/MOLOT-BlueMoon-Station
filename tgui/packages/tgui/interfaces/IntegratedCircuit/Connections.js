@@ -161,24 +161,22 @@ class WireCanvas extends Component {
   }
 }
 
-export class Connections extends Component {
-  render() {
-    const {
-      connections,
-      svgRef,
-      pulseKeys,
-      children,
-    } = this.props;
+export const Connections = (props) => {
+  const {
+    connections,
+    svgRef,
+    pulseKeys,
+    children,
+  } = props;
 
-    return (
-      <>
-        <WireCanvas
-          connections={connections}
-          pulseKeys={pulseKeys}
-          svgRef={svgRef}
-        />
-        {children}
-      </>
-    );
-  }
-}
+  return (
+    <>
+      <WireCanvas
+        connections={connections}
+        pulseKeys={pulseKeys}
+        svgRef={svgRef}
+      />
+      {children}
+    </>
+  );
+};
