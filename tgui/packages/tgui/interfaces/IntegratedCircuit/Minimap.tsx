@@ -101,8 +101,8 @@ export const Minimap = (props: MinimapProps) => {
       raf = requestAnimationFrame(tick);
       const svg = svgRef.current;
       const z = Math.max(zoomRef.current || 1, 0.01);
-      const vw = svg ? svg.offsetWidth : 0;
-      const vh = svg ? svg.offsetHeight : 0;
+      const vw = svg ? svg.clientWidth : 0;
+      const vh = svg ? svg.clientHeight : 0;
       const x = -backgroundXRef.current / z;
       const y = -backgroundYRef.current / z;
       const w = vw / z;

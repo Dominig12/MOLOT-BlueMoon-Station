@@ -204,6 +204,16 @@ $bg-map: colors.$bg-map !default;
   z-index: 2;
 }
 
+.IntegratedCircuit__marquee {
+  position: fixed;
+  z-index: 15;
+  pointer-events: none;
+  border: 1px solid rgba(120, 190, 255, 0.9);
+  background: rgba(90, 160, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(120, 190, 255, 0.25);
+  border-radius: 2px;
+}
+
 .IntegratedCircuit__variableDock {
   border-top: 1px solid rgba(100, 170, 255, 0.3);
   background: linear-gradient(
@@ -315,7 +325,6 @@ $bg-map: colors.$bg-map !default;
     0 0 0 1px rgba(0, 0, 0, 0.28);
   transition:
     box-shadow 0.14s ease,
-    transform 0.14s ease,
     border-color 0.14s ease;
 
   &:hover {
@@ -325,7 +334,6 @@ $bg-map: colors.$bg-map !default;
       0 10px 28px rgba(0, 0, 0, 0.6),
       0 0 0 1px rgba(0, 0, 0, 0.28),
       0 0 16px rgba(90, 150, 230, 0.12);
-    transform: translateY(-1px);
   }
 }
 

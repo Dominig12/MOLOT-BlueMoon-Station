@@ -87,6 +87,15 @@ export class InfinitePlane extends Component {
       event.stopPropagation();
       return;
     }
+    // ЛКМ по пустому полю — marquee-выделение (обрабатывает родитель).
+    if (event.button === 0 && this.props.onPlaneMouseDown) {
+      this.props.onPlaneMouseDown(event);
+      return;
+    }
+    // Средняя/правая кнопка — панорама.
+    if (event.button === 2) {
+      event.preventDefault();
+    }
     this.setState((state) => {
       return {
         mouseDown: true,

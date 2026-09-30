@@ -108,6 +108,8 @@ export const IntegratedCircuit = () => {
   const [componentsFilter, setComponentsFilter] = useState('');
   const [selection, setSelection] = useState<number[]>([]);
   const [dragState, setDragState] = useState<GroupDragState | null>(null);
+  /** Рамка выделения (marquee) в экранных координатах: x0..x1, y0..y1. */
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   const connectionsSvgRef = useRef<SVGSVGElement | null>(null);
   /** Смещали ли поле мышью с прошлого сохранённого screen_x/y (не слать move_screen на каждый mouseup). */
@@ -129,6 +131,13 @@ export const IntegratedCircuit = () => {
   const locationsRef = useRef<Record<string, PortLocation>>({});
   zoomRef.current = zoom;
   locationsRef.current = locations;
+
+  /** Состояние marquee-выделения (не в state, т.к. активно только в момент драга). */
+  const marqueeStart = useRef<{ x: number; y: number; additive: boolean } | null>(null);
+  const marqueeBaseSelection = useRef<number[]>([]);
+  const marqueeNodeRects = useRef<{ index: number; left: number; top: number; right: number; bottom: number }[]>([]);
+  const marqueeMoved = useRef(false);
+  const lastMarqueeSelection = useRef<number[]>([]);
 
   /** Кэш данных, зависящих от payload сервера; ключ — сам объект `data`. */
   const memoDataKey = useRef<unknown>(null);
@@ -180,6 +189,40 @@ export const IntegratedCircuit = () => {
       x: xPos + w / 2,
       y: yPos + h / 2 + ABSOLUTE_Y_OFFSET,
     };
+  };
+
+  /** Фактический масштаб поля (из CTM SVG), не зависящий от синхронизации zoom в state. */
+  const readPlaneScale = () => {
+    const svg = connectionsSvgRef.current;
+    if (svg) {
+      const cw = svg.clientWidth;
+      const rectW = svg.getBoundingClientRect().width;
+      if (cw > 0 && rectW > 0) {
+        return rectW / cw;
+      }
+    }
+    return zoomRef.current || 1;
+  };
+
+  /** Экранные прямоугольники всех узлов (для marquee), измеряются один раз в момент старта. */
+  const measureNodeRects = () => {
+    const svg = connectionsSvgRef.current;
+    if (!svg) {
+      return [];
+    }
+    const host = svg.parentElement;
+    if (!host) {
+      return [];
+    }
+    const nodes = host.querySelectorAll<HTMLElement>('[data-ic-component-id]');
+    const out: { index: number; left: number; top: number; right: number; bottom: number }[] = [];
+    nodes.forEach((node) => {
+      const raw = node.getAttribute('data-ic-component-id');
+      const index = raw ? Number(raw) : 0;
+      const r = node.getBoundingClientRect();
+      out.push({ index, left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+    });
+    return out;
   };
 
   const flushPortLocations = () => {
@@ -283,7 +326,7 @@ export const IntegratedCircuit = () => {
       return;
     }
     event.preventDefault();
-    const z = Math.max(zoomRef.current || 1, 0.01);
+    const z = readPlaneScale();
     const deltaX = (event.clientX - dragState.startClientX) / z;
     const deltaY = (event.clientY - dragState.startClientY) / z;
     if (deltaX !== dragState.deltaX || deltaY !== dragState.deltaY) {
@@ -312,6 +355,70 @@ export const IntegratedCircuit = () => {
     }
     setDragState(null);
   });
+
+  const handleMarqueeMove = useStableCallback((event: MouseEvent) => {
+    const start = marqueeStart.current;
+    if (!start) {
+      return;
+    }
+    marqueeMoved.current = true;
+    const x0 = Math.min(start.x, event.clientX);
+    const y0 = Math.min(start.y, event.clientY);
+    const x1 = Math.max(start.x, event.clientX);
+    const y1 = Math.max(start.y, event.clientY);
+    setMarquee({ x0, y0, x1, y1 });
+
+    const inside = marqueeNodeRects.current
+      .filter((nr) => nr.right >= x0 && nr.left <= x1 && nr.bottom >= y0 && nr.top <= y1)
+      .map((nr) => nr.index);
+    const next = start.additive
+      ? Array.from(new Set([...marqueeBaseSelection.current, ...inside]))
+      : inside;
+    if (
+      next.length !== lastMarqueeSelection.current.length
+      || next.some((v, i) => v !== lastMarqueeSelection.current[i])
+    ) {
+      lastMarqueeSelection.current = next;
+      setSelection(next);
+    }
+  });
+
+  const handleMarqueeEnd = useStableCallback(() => {
+    window.removeEventListener('mousemove', handleMarqueeMove);
+    window.removeEventListener('mouseup', handleMarqueeEnd);
+    const start = marqueeStart.current;
+    if (start && !marqueeMoved.current && !start.additive) {
+      // Клик по пустому полю без перетаскивания — снять выделение.
+      setSelection([]);
+    }
+    marqueeStart.current = null;
+    marqueeBaseSelection.current = [];
+    marqueeNodeRects.current = [];
+    marqueeMoved.current = false;
+    lastMarqueeSelection.current = [];
+    setMarquee(null);
+  });
+
+  /** ЛКМ по пустому полю — начало marquee-выделения (вместо панорамы). */
+  const handlePlaneMouseDown = (event: MouseEvent) => {
+    if (event.button !== MOUSE_BUTTON_LEFT) {
+      return;
+    }
+    event.stopPropagation();
+    event.preventDefault();
+    marqueeNodeRects.current = measureNodeRects();
+    marqueeBaseSelection.current = selection;
+    marqueeStart.current = {
+      x: event.clientX,
+      y: event.clientY,
+      additive: event.shiftKey || event.ctrlKey || event.metaKey,
+    };
+    marqueeMoved.current = false;
+    lastMarqueeSelection.current = selection;
+    setMarquee({ x0: event.clientX, y0: event.clientY, x1: event.clientX, y1: event.clientY });
+    window.addEventListener('mousemove', handleMarqueeMove);
+    window.addEventListener('mouseup', handleMarqueeEnd);
+  };
 
   const handleMouseDown = useStableCallback((_event: MouseEvent) => {
     if (data.examined_name) {
@@ -473,18 +580,27 @@ export const IntegratedCircuit = () => {
     act('move_screen', { screen_x: targetX, screen_y: targetY });
   };
 
-  /** IE: экранные координаты → rel_x/rel_y в пространстве нод. */
+  /** IE: экранные координаты → rel_x/rel_y через обратную CTM SVG (без деления на zoom-состояние). */
   const ieClientToCircuitCoords = (clientX: number, clientY: number) => {
     const svg = connectionsSvgRef.current;
-    const z = Math.max(zoomRef.current || 1, 0.01);
     if (!svg) {
       return { rel_x: 0, rel_y: 0 };
     }
-    const r = svg.getBoundingClientRect();
-    return {
-      rel_x: (clientX - r.left) / z,
-      rel_y: (clientY - r.top) / z,
-    };
+    const ctm = svg.getScreenCTM();
+    if (ctm) {
+      try {
+        const inv = ctm.inverse();
+        const pt = svg.createSVGPoint();
+        pt.x = clientX;
+        pt.y = clientY;
+        const local = pt.matrixTransform(inv);
+        return { rel_x: local.x, rel_y: local.y };
+      }
+      catch {
+        // fall through
+      }
+    }
+    return { rel_x: 0, rel_y: 0 };
   };
 
   const handleShiftPlaneMouseDown = (event: MouseEvent) => {
@@ -500,16 +616,13 @@ export const IntegratedCircuit = () => {
       return;
     }
     const svg = connectionsSvgRef.current;
-    const z = Math.max(zoomRef.current || 1, 0.01);
     if (!svg) {
       act('ie_place_hand_chip_at', { rel_x: 0, rel_y: 0 });
       return;
     }
     const r = svg.getBoundingClientRect();
-    act('ie_place_hand_chip_at', {
-      rel_x: (r.width / 2) / z,
-      rel_y: (r.height / 2) / z,
-    });
+    const { rel_x, rel_y } = ieClientToCircuitCoords(r.left + r.width / 2, r.top + r.height / 2);
+    act('ie_place_hand_chip_at', { rel_x, rel_y });
   };
 
   const handleNodeMouseDown = (componentId: number, event: MouseEvent) => {
@@ -640,8 +753,8 @@ export const IntegratedCircuit = () => {
   const computeViewportSize = () => {
     const svg = connectionsSvgRef.current;
     if (svg) {
-      const vw = svg.offsetWidth;
-      const vh = svg.offsetHeight;
+      const vw = svg.clientWidth;
+      const vh = svg.clientHeight;
       if (vw > 0 && vh > 0) {
         return { vw, vh };
       }
@@ -659,16 +772,15 @@ export const IntegratedCircuit = () => {
     if (!host) {
       return null;
     }
+    let inv = null;
     const ctm = svg.getScreenCTM();
-    if (!ctm) {
-      return null;
-    }
-    let inv;
-    try {
-      inv = ctm.inverse();
-    }
-    catch {
-      return null;
+    if (ctm) {
+      try {
+        inv = ctm.inverse();
+      }
+      catch {
+        inv = null;
+      }
     }
     const nodes = host.querySelectorAll<HTMLElement>('[data-ic-component-id]');
     if (nodes.length === 0) {
@@ -680,25 +792,44 @@ export const IntegratedCircuit = () => {
     let maxY = -Infinity;
     nodes.forEach((node) => {
       const r = node.getBoundingClientRect();
-      const tl = svg.createSVGPoint();
-      tl.x = r.left;
-      tl.y = r.top;
-      const p0 = tl.matrixTransform(inv);
-      const br = svg.createSVGPoint();
-      br.x = r.right;
-      br.y = r.bottom;
-      const p1 = br.matrixTransform(inv);
-      if (p0.x < minX) {
-        minX = p0.x;
+      let x0;
+      let y0;
+      let x1;
+      let y1;
+      if (inv) {
+        const tl = svg.createSVGPoint();
+        tl.x = r.left;
+        tl.y = r.top;
+        const p0 = tl.matrixTransform(inv);
+        const br = svg.createSVGPoint();
+        br.x = r.right;
+        br.y = r.bottom;
+        const p1 = br.matrixTransform(inv);
+        x0 = p0.x;
+        y0 = p0.y;
+        x1 = p1.x;
+        y1 = p1.y;
       }
-      if (p0.y < minY) {
-        minY = p0.y;
+      else {
+        // Fallback: CTM недоступен — делим на текущий zoom (лучшее из худшего).
+        const z = Math.max(zoomRef.current || 1, 0.01);
+        const sr = svg.getBoundingClientRect();
+        x0 = (r.left - sr.left) / z;
+        y0 = (r.top - sr.top) / z;
+        x1 = (r.right - sr.left) / z;
+        y1 = (r.bottom - sr.top) / z;
       }
-      if (p1.x > maxX) {
-        maxX = p1.x;
+      if (x0 < minX) {
+        minX = x0;
       }
-      if (p1.y > maxY) {
-        maxY = p1.y;
+      if (y0 < minY) {
+        minY = y0;
+      }
+      if (x1 > maxX) {
+        maxX = x1;
+      }
+      if (y1 > maxY) {
+        maxY = y1;
       }
     });
     return { minX, minY, maxX, maxY };
@@ -748,6 +879,8 @@ export const IntegratedCircuit = () => {
       window.removeEventListener('mouseup', handlePortRelease);
       window.removeEventListener('mousemove', handleNodeDrag);
       window.removeEventListener('mouseup', handleNodeDragEnd);
+      window.removeEventListener('mousemove', handleMarqueeMove);
+      window.removeEventListener('mouseup', handleMarqueeEnd);
       if (locationRaf.current !== null) {
         cancelAnimationFrame(locationRaf.current);
         locationRaf.current = null;
@@ -762,6 +895,8 @@ export const IntegratedCircuit = () => {
     handlePortRelease,
     handleNodeDrag,
     handleNodeDragEnd,
+    handleMarqueeMove,
+    handleMarqueeEnd,
   ]);
 
   useEffect(() => {
@@ -984,6 +1119,7 @@ export const IntegratedCircuit = () => {
               onShiftPlaneMouseDown={
                 ieAssemblyUi ? handleShiftPlaneMouseDown : undefined
               }
+              onPlaneMouseDown={handlePlaneMouseDown}
             >
               <Connections
                 connections={connections}
@@ -1125,6 +1261,15 @@ export const IntegratedCircuit = () => {
           />
         )}
         <PinEditor />
+        {marquee && (
+          <Box
+            className="IntegratedCircuit__marquee"
+            left={marquee.x0}
+            top={marquee.y0}
+            width={marquee.x1 - marquee.x0}
+            height={marquee.y1 - marquee.y0}
+          />
+        )}
         {!!menuOpen && !ie_circuit && (
           <Box
             className="IntegratedCircuit__variableDock"
