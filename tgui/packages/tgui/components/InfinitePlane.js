@@ -80,22 +80,18 @@ export class InfinitePlane extends Component {
   }
 
   handleMouseDown(event) {
-    // Shift+ЛКМ: вставка чипа IE по клику (не начинать панораму поля)
-    if (this.props.onShiftPlaneMouseDown && event.shiftKey) {
-      this.props.onShiftPlaneMouseDown(event);
+    // Shift+ЛКМ: marquee-выделение (обрабатывает родитель).
+    if (event.shiftKey && event.button === 0 && this.props.onPlaneMouseDown) {
+      this.props.onPlaneMouseDown(event);
       event.preventDefault();
       event.stopPropagation();
       return;
     }
-    // ЛКМ по пустому полю — marquee-выделение (обрабатывает родитель).
-    if (event.button === 0 && this.props.onPlaneMouseDown) {
-      this.props.onPlaneMouseDown(event);
-      return;
-    }
-    // Средняя/правая кнопка — панорама.
+    // Правая кнопка тащит панораму без вызова контекстного меню.
     if (event.button === 2) {
       event.preventDefault();
     }
+    // ЛКМ/средняя/правая — панорама поля.
     this.setState((state) => {
       return {
         mouseDown: true,

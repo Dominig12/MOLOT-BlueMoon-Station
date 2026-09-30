@@ -409,7 +409,7 @@ export const IntegratedCircuit = () => {
     setMarquee(null);
   });
 
-  /** ЛКМ по пустому полю — начало marquee-выделения (вместо панорамы). */
+  /** Shift+ЛКМ по пустому полю — начало marquee-выделения. */
   const handlePlaneMouseDown = (event: MouseEvent) => {
     if (event.button !== MOUSE_BUTTON_LEFT) {
       return;
@@ -421,7 +421,7 @@ export const IntegratedCircuit = () => {
     marqueeStart.current = {
       x: event.clientX,
       y: event.clientY,
-      additive: event.shiftKey || event.ctrlKey || event.metaKey,
+      additive: event.ctrlKey || event.metaKey,
     };
     marqueeMoved.current = false;
     lastMarqueeSelection.current = selection;
@@ -611,14 +611,6 @@ export const IntegratedCircuit = () => {
       }
     }
     return { rel_x: 0, rel_y: 0 };
-  };
-
-  const handleShiftPlaneMouseDown = (event: MouseEvent) => {
-    if (!data.ie_circuit || data.ie_clone_copy_mode !== 'assembly') {
-      return;
-    }
-    const { rel_x, rel_y } = ieClientToCircuitCoords(event.clientX, event.clientY);
-    act('ie_place_hand_chip_at', { rel_x, rel_y });
   };
 
   const handleIePlaceChipCenter = () => {
@@ -1159,9 +1151,6 @@ export const IntegratedCircuit = () => {
               initialTop={panY}
               initialZoom={zoom}
               resetPanNonce={planeHomeNonce}
-              onShiftPlaneMouseDown={
-                ieAssemblyUi ? handleShiftPlaneMouseDown : undefined
-              }
               onPlaneMouseDown={handlePlaneMouseDown}
             >
               <Connections
@@ -1318,12 +1307,14 @@ export const IntegratedCircuit = () => {
         )}
         <PinEditor />
         {marquee && (
-          <Box
+          <div
             className="IntegratedCircuit__marquee"
-            left={marquee.x0}
-            top={marquee.y0}
-            width={marquee.x1 - marquee.x0}
-            height={marquee.y1 - marquee.y0}
+            style={{
+              left: `${marquee.x0}px`,
+              top: `${marquee.y0}px`,
+              width: `${marquee.x1 - marquee.x0}px`,
+              height: `${marquee.y1 - marquee.y0}px`,
+            }}
           />
         )}
         {!!menuOpen && !ie_circuit && (
