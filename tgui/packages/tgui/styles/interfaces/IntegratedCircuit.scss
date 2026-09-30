@@ -27,12 +27,14 @@ $bg-map: colors.$bg-map !default;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: linear-gradient(
-    165deg,
-    rgba(16, 24, 34, 0.99) 0%,
-    rgba(7, 11, 18, 1) 55%,
-    rgba(10, 14, 22, 1) 100%
-  );
+  background:
+    radial-gradient(120% 90% at 20% 0%, rgba(70, 120, 190, 0.14) 0%, transparent 55%),
+    linear-gradient(
+      165deg,
+      rgba(18, 26, 38, 0.99) 0%,
+      rgba(8, 12, 20, 1) 55%,
+      rgba(11, 15, 24, 1) 100%
+    );
 }
 
 .IntegratedCircuit__frame {
@@ -44,14 +46,18 @@ $bg-map: colors.$bg-map !default;
 
 .IntegratedCircuit__toolbar {
   flex-shrink: 0;
-  padding: 0.45rem 0.55rem 0.5rem;
-  border-bottom: 1px solid rgba(120, 170, 230, 0.18);
-  background: linear-gradient(
-    180deg,
-    rgba(22, 32, 48, 0.92) 0%,
-    rgba(12, 18, 28, 0.75) 100%
-  );
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid rgba(120, 170, 230, 0.16);
+  background:
+    linear-gradient(180deg, rgba(120, 170, 230, 0.08) 0%, transparent 48%),
+    linear-gradient(
+      180deg,
+      rgba(22, 32, 48, 0.92) 0%,
+      rgba(12, 18, 28, 0.78) 100%
+    );
+  box-shadow:
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.03);
   // Тулбар поверх фиксированного канваса (ноды не должны перекрывать служебную панель).
   position: relative;
   z-index: 10;
@@ -61,16 +67,18 @@ $bg-map: colors.$bg-map !default;
   display: inline-flex;
   align-items: center;
   gap: 0.4em;
-  padding: 0.2rem 0.55rem;
-  border-radius: base.$border-radius;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
   font-size: 0.8rem;
-  line-height: 1.2;
+  line-height: 1.25;
   white-space: nowrap;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(8, 12, 20, 0.5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 
   .Icon {
     flex-shrink: 0;
+    opacity: 0.8;
   }
 
   b {
@@ -83,13 +91,16 @@ $bg-map: colors.$bg-map !default;
   color: #cfffdb;
   border-color: rgba(80, 255, 140, 0.45);
   background: rgba(25, 110, 55, 0.42);
-  box-shadow: 0 0 0 1px rgba(60, 220, 120, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(60, 220, 120, 0.12);
 }
 
 .IntegratedCircuit__chip--off {
   color: #ffb8b8;
   border-color: rgba(220, 100, 100, 0.35);
   background: rgba(80, 35, 35, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .IntegratedCircuit__chip--muted {
@@ -100,6 +111,7 @@ $bg-map: colors.$bg-map !default;
   color: #ffb3b3;
   border-color: rgba(255, 110, 110, 0.5);
   background: rgba(120, 32, 36, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 
   b {
     color: #ff8383;
@@ -119,11 +131,13 @@ $bg-map: colors.$bg-map !default;
 .IntegratedCircuit__componentsPanel {
   background: linear-gradient(
     180deg,
-    rgba(14, 20, 30, 0.97) 0%,
-    rgba(10, 14, 22, 0.98) 100%
+    rgba(15, 21, 31, 0.97) 0%,
+    rgba(9, 13, 21, 0.98) 100%
   );
-  border-left: 1px solid rgba(120, 170, 230, 0.22);
-  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.45);
+  border-left: 1px solid rgba(120, 170, 230, 0.2);
+  box-shadow:
+    -6px 0 22px rgba(0, 0, 0, 0.5),
+    inset 1px 0 0 rgba(255, 255, 255, 0.03);
 }
 
 .IntegratedCircuit__minimap {
@@ -131,12 +145,18 @@ $bg-map: colors.$bg-map !default;
   right: 0.5rem;
   bottom: 0.5rem;
   z-index: 7;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
-  border: 1px solid rgba(120, 170, 230, 0.28);
-  background: rgba(5, 9, 15, 0.92);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(120, 170, 230, 0.26);
+  background: rgba(5, 9, 15, 0.94);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
   cursor: crosshair;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+
+  &:hover {
+    border-color: rgba(150, 195, 250, 0.5);
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(90, 150, 230, 0.16);
+  }
 
   &::before {
     content: '';
@@ -185,13 +205,15 @@ $bg-map: colors.$bg-map !default;
 }
 
 .IntegratedCircuit__variableDock {
-  border-top: 2px solid rgba(100, 170, 255, 0.28);
+  border-top: 1px solid rgba(100, 170, 255, 0.3);
   background: linear-gradient(
     0deg,
     rgba(12, 16, 24, 0.98) 0%,
     rgba(20, 28, 40, 0.96) 100%
   );
-  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.45);
+  box-shadow:
+    0 -6px 24px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .IntegratedCircuit__connections--base .IntegratedCircuit__wire {
@@ -248,17 +270,18 @@ $bg-map: colors.$bg-map !default;
 .CircuitInfo__Examined {
   background: linear-gradient(
     145deg,
-    rgba(8, 12, 20, 0.97) 0%,
-    rgba(4, 8, 14, 0.98) 100%
+    rgba(10, 15, 24, 0.97) 0%,
+    rgba(5, 8, 14, 0.98) 100%
   );
-  padding: 0.65rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid rgba(130, 180, 255, 0.22);
+  padding: 0.7rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid rgba(130, 180, 255, 0.24);
   box-shadow:
-    0 4px 18px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(0, 0, 0, 0.35);
+    0 6px 22px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
   max-width: 280px;
 
+  backdrop-filter: blur(6px);
   user-select: none;
   pointer-events: none;
 }
@@ -281,42 +304,55 @@ $bg-map: colors.$bg-map !default;
 .ObjectComponent__root {
   z-index: 1;
   min-width: 11rem;
-  border-radius: 10px;
+  border-radius: 12px;
   /* visible — чтобы всплывающее окно порядка связей не обрезалось у края ноды */
   overflow: visible;
-  background: rgba(14, 19, 28, 0.96);
+  background: rgba(15, 20, 30, 0.97);
+  border: 1px solid rgba(190, 215, 250, 0.1);
   box-shadow:
-    0 4px 16px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(180, 210, 255, 0.09);
-  transition: box-shadow 0.14s ease;
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 5px 18px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(0, 0, 0, 0.28);
+  transition:
+    box-shadow 0.14s ease,
+    transform 0.14s ease,
+    border-color 0.14s ease;
 
   &:hover {
+    border-color: rgba(200, 225, 255, 0.2);
     box-shadow:
-      0 8px 26px rgba(0, 0, 0, 0.62),
-      0 0 0 1px rgba(190, 220, 255, 0.22);
+      0 1px 0 rgba(255, 255, 255, 0.05) inset,
+      0 10px 28px rgba(0, 0, 0, 0.6),
+      0 0 0 1px rgba(0, 0, 0, 0.28),
+      0 0 16px rgba(90, 150, 230, 0.12);
+    transform: translateY(-1px);
   }
 }
 
 .ObjectComponent--poweroff {
-  opacity: 0.62;
-  filter: saturate(0.65);
+  opacity: 0.6;
+  filter: saturate(0.62) brightness(0.9);
 }
 
 .ObjectComponent--selected {
+  border-color: rgba(255, 205, 90, 0.7);
   box-shadow:
-    0 8px 26px rgba(0, 0, 0, 0.62),
-    0 0 0 2px rgba(255, 205, 90, 0.85),
-    0 0 18px rgba(255, 205, 90, 0.35);
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 10px 28px rgba(0, 0, 0, 0.6),
+    0 0 0 2px rgba(255, 205, 90, 0.7),
+    0 0 22px rgba(255, 185, 60, 0.32);
   outline: none;
 }
 
 .ObjectComponent__ActivityLamp {
-  width: 0.55rem;
-  height: 0.55rem;
-  min-width: 0.55rem;
+  width: 0.6rem;
+  height: 0.6rem;
+  min-width: 0.6rem;
   border-radius: 50%;
-  background: rgba(80, 120, 90, 0.85);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  background: rgba(90, 130, 100, 0.9);
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.25),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35);
   flex-shrink: 0;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
@@ -324,23 +360,34 @@ $bg-map: colors.$bg-map !default;
 .ObjectComponent__ActivityLamp--pulse {
   background: #5dff8a;
   box-shadow:
-    0 0 0.35rem rgba(93, 255, 138, 0.95),
+    0 0 0 2px rgba(0, 0, 0, 0.25),
+    0 0 0.4rem rgba(93, 255, 138, 0.95),
     inset 0 0 0 1px rgba(255, 255, 255, 0.25);
 }
 
 .ObjectComponent__ActivityLamp--off {
-  background: rgba(90, 70, 70, 0.9);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+  background: rgba(100, 78, 78, 0.9);
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.25),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.4);
 }
 
 .ObjectComponent__Titlebar {
-  border-top-left-radius: 10px;
-  border-top-right-radius: 10px;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
 
   white-space: nowrap;
 
   user-select: none;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+  background-image: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.2) 0%,
+    rgba(255, 255, 255, 0.04) 45%,
+    rgba(0, 0, 0, 0.24) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22);
 }
 
 .ObjectComponent__ieStats {
@@ -443,12 +490,12 @@ $bg-map: colors.$bg-map !default;
   white-space: normal;
   background: linear-gradient(
     180deg,
-    rgba(0, 0, 0, 0.42) 0%,
-    rgba(0, 0, 0, 0.58) 100%
+    rgba(2, 5, 10, 0.28) 0%,
+    rgba(0, 0, 0, 0.42) 100%
   );
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-  border-bottom-left-radius: 10px;
-  border-bottom-right-radius: 10px;
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
 
   user-select: none;
 }
@@ -567,14 +614,14 @@ $bg-map: colors.$bg-map !default;
 }
 
 .IntegratedCircuit__portRow {
-  border-radius: 3px;
-  padding: 0.05rem 0.1rem;
+  border-radius: 5px;
+  padding: 0.08rem 0.15rem;
   margin: 0.12rem 0;
   align-items: flex-start;
   transition: background 0.12s ease;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.045);
   }
 }
 

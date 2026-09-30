@@ -905,10 +905,7 @@ export const IntegratedCircuit = () => {
     >
       <Window.Content
         fitted
-        className="IntegratedCircuit__content"
-        style={{
-          backgroundImage: 'none',
-        }}>
+        className="IntegratedCircuit__content">
         <Box className="IntegratedCircuit__frame">
           <CircuitToolbar
             circuitOn={circuit_on}
