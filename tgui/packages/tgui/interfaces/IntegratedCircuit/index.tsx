@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type DragEvent as ReactDragEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 
 import { resolveAsset } from '../../assets';
 import { useBackend } from '../../backend';
@@ -110,6 +116,8 @@ export const IntegratedCircuit = () => {
   const [dragState, setDragState] = useState<GroupDragState | null>(null);
   /** Рамка выделения (marquee) в экранных координатах: x0..x1, y0..y1. */
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  /** Индекс (1-based) строки списка компонентов, над которой висит drag (подсветка). */
+  const [componentDragOver, setComponentDragOver] = useState<number | null>(null);
 
   const connectionsSvgRef = useRef<SVGSVGElement | null>(null);
   /** Смещали ли поле мышью с прошлого сохранённого screen_x/y (не слать move_screen на каждый mouseup). */
@@ -138,6 +146,8 @@ export const IntegratedCircuit = () => {
   const marqueeNodeRects = useRef<{ index: number; left: number; top: number; right: number; bottom: number }[]>([]);
   const marqueeMoved = useRef(false);
   const lastMarqueeSelection = useRef<number[]>([]);
+  /** Источник перетаскивания в списке компонентов (1-based индекс). */
+  const componentReorderSrc = useRef<number | null>(null);
 
   /** Кэш данных, зависящих от payload сервера; ключ — сам объект `data`. */
   const memoDataKey = useRef<unknown>(null);
@@ -623,6 +633,39 @@ export const IntegratedCircuit = () => {
     const r = svg.getBoundingClientRect();
     const { rel_x, rel_y } = ieClientToCircuitCoords(r.left + r.width / 2, r.top + r.height / 2);
     act('ie_place_hand_chip_at', { rel_x, rel_y });
+  };
+
+  const handleComponentDragStart = (e: ReactDragEvent, index: number) => {
+    componentReorderSrc.current = index;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  };
+
+  const handleComponentDragOver = (e: ReactDragEvent, index: number) => {
+    if (componentReorderSrc.current === null) {
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (componentDragOver !== index) {
+      setComponentDragOver(index);
+    }
+  };
+
+  const handleComponentDrop = (e: ReactDragEvent, index: number) => {
+    e.preventDefault();
+    const from = componentReorderSrc.current;
+    componentReorderSrc.current = null;
+    setComponentDragOver(null);
+    if (from === null || from === index) {
+      return;
+    }
+    act('move_component_order', { from_index: from, to_index: index });
+  };
+
+  const handleComponentDragEnd = () => {
+    componentReorderSrc.current = null;
+    setComponentDragOver(null);
   };
 
   const handleNodeMouseDown = (componentId: number, event: MouseEvent) => {
@@ -1227,20 +1270,33 @@ export const IntegratedCircuit = () => {
                     )}
                     {filteredComponents.map(({ comp, index }) => (
                       <Stack.Item key={index}>
-                        <Button
-                          fluid
-                          color="transparent"
-                          tooltip={`Перейти к «${comp.name}»`}
-                          onClick={() => handleJumpToComponent(comp, index)}>
-                          <Icon
-                            name="circle"
-                            color={comp.recent_pulse ? '#5dff8a' : (comp.color || 'blue')}
-                          />
-                          {' '}
-                          #{index}
-                          {' '}
-                          {comp.name}
-                        </Button>
+                        <Box
+                          className={
+                            componentDragOver === index
+                              ? 'IntegratedCircuit__componentRow IntegratedCircuit__componentRow--dragOver'
+                              : 'IntegratedCircuit__componentRow'
+                          }
+                          draggable={!filterQuery}
+                          title={filterQuery ? undefined : 'Перетащите, чтобы изменить порядок'}
+                          onDragStart={(e) => handleComponentDragStart(e, index)}
+                          onDragOver={(e) => handleComponentDragOver(e, index)}
+                          onDrop={(e) => handleComponentDrop(e, index)}
+                          onDragEnd={handleComponentDragEnd}>
+                          <Button
+                            fluid
+                            color="transparent"
+                            tooltip={`Перейти к «${comp.name}»`}
+                            onClick={() => handleJumpToComponent(comp, index)}>
+                            <Icon
+                              name="circle"
+                              color={comp.recent_pulse ? '#5dff8a' : (comp.color || 'blue')}
+                            />
+                            {' '}
+                            #{index}
+                            {' '}
+                            {comp.name}
+                          </Button>
+                        </Box>
                       </Stack.Item>
                     ))}
                   </Stack>

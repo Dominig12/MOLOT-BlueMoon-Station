@@ -1078,6 +1078,27 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			io.linked.Cut(from_pos, from_pos + 1)
 			io.linked.Insert(to_pos, item)
 			. = TRUE
+		if("move_component_order")
+			var/from_pos = text2num(params["from_index"])
+			var/to_pos = text2num(params["to_index"])
+			if(from_pos < 1 || to_pos < 1 || from_pos > length(assembly_components) || to_pos > length(assembly_components) || from_pos == to_pos)
+				return
+			var/obj/item/integrated_circuit/chip = assembly_components[from_pos]
+			if(!chip || !chip.removable)
+				return
+			// Несъёмные (встроенные) чипы всегда в начале — не даём ставить перед ними.
+			var/first_removable_pos = 1
+			for(var/i in 1 to length(assembly_components))
+				var/obj/item/integrated_circuit/candidate = assembly_components[i]
+				if(candidate.removable)
+					first_removable_pos = i
+					break
+			if(to_pos < first_removable_pos)
+				to_pos = first_removable_pos
+			add_allowed_scanner(usr.ckey)
+			assembly_components.Remove(chip)
+			assembly_components.Insert(to_pos, chip)
+			. = TRUE
 		if("ie_copy_assembly_code")
 			if(!usr)
 				return

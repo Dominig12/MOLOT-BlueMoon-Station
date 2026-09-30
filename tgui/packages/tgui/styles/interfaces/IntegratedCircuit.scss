@@ -214,6 +214,21 @@ $bg-map: colors.$bg-map !default;
   border-radius: 2px;
 }
 
+.IntegratedCircuit__componentRow {
+  border-radius: 5px;
+  cursor: grab;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+}
+
+.IntegratedCircuit__componentRow--dragOver {
+  background: rgba(120, 190, 255, 0.14);
+  box-shadow: 0 0 0 1px rgba(120, 190, 255, 0.5);
+}
+
 .IntegratedCircuit__variableDock {
   border-top: 1px solid rgba(100, 170, 255, 0.3);
   background: linear-gradient(
@@ -253,26 +268,8 @@ $bg-map: colors.$bg-map !default;
   }
 }
 
-.ObjectComponent--recentPulse {
-  animation: object-component-recent-pulse 0.5s ease-in-out 2 alternate;
-}
-
-@keyframes object-component-recent-pulse {
-  from {
-    box-shadow:
-      0 0 0 1px rgba(120, 200, 255, 0.35),
-      0 0 8px rgba(80, 160, 255, 0.25);
-  }
-  to {
-    box-shadow:
-      0 0 0 3px rgba(160, 230, 255, 0.7),
-      0 0 22px rgba(100, 200, 255, 0.55);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .IntegratedCircuit__connections--base .IntegratedCircuit__wire--pulse,
-  .ObjectComponent--recentPulse {
+  .IntegratedCircuit__connections--base .IntegratedCircuit__wire--pulse {
     animation: none !important;
   }
 }
@@ -366,11 +363,11 @@ $bg-map: colors.$bg-map !default;
 }
 
 .ObjectComponent__ActivityLamp--pulse {
-  background: #5dff8a;
   box-shadow:
     0 0 0 2px rgba(0, 0, 0, 0.25),
-    0 0 0.4rem rgba(93, 255, 138, 0.95),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 0 4px rgba(93, 255, 138, 0.55),
+    0 0 10px rgba(93, 255, 138, 0.8);
 }
 
 .ObjectComponent__ActivityLamp--off {

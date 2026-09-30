@@ -204,7 +204,6 @@ export class ObjectComponent extends Component {
         className={classes([
           'ObjectComponent__root',
           !powered && 'ObjectComponent--poweroff',
-          recent_pulse && powered && 'ObjectComponent--recentPulse',
           selected && 'ObjectComponent--selected',
         ])}
         onMouseDown={onNodeMouseDown}>
