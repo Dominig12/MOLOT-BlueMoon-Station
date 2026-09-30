@@ -249,28 +249,34 @@ export class InfinitePlane extends Component {
           },
         })}
       >
+        {/* absolute (не fixed): fixed привязывался к вьюпорту и ломал выравнивание
+           соединений при HiDPI / дробном масштабе. inset: 0 держит поле внутри planeHost. */}
         <div
           onMouseDown={this.handleMouseDown}
           onMouseMove={this.handleMouseMove}
           style={{
-            "position": "fixed",
-            "height": "100%",
-            "width": "100%",
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
             backgroundImage: `url("${backgroundImage}")`,
             backgroundPosition: `${finalLeft}px ${finalTop}px`,
-            backgroundRepeat: "repeat",
-            "background-size": `${zoom*imageWidth}px`,
+            backgroundRepeat: 'repeat',
+            backgroundSize: `${zoom * imageWidth}px`,
           }}
         />
         <div
           onMouseDown={this.handleMouseDown}
           onMouseMove={this.handleMouseMove}
           style={{
-            "position": "fixed",
-            "transform": `translate(${finalLeft}px, ${finalTop}px) scale(${zoom})`,
-            "transform-origin": "top left",
-            "height": "100%",
-            "width": "100%",
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            transform: `translate(${finalLeft}px, ${finalTop}px) scale(${zoom})`,
+            transformOrigin: 'top left',
           }}
         >
           {children}
