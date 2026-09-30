@@ -11,7 +11,10 @@ import type { CircuitComponentView } from './types';
 const MAP_W = 160;
 const MAP_H = 104;
 const DOT_SIZE = 4;
+/** Мировой отступ вокруг компонентов — контекст для рамки вьюпорта. */
 const MINIMAP_MARGIN = 60;
+/** Пиксельный отступ внутри миникарты, чтобы крайние компоненты не упирались в рамку. */
+const MINIMAP_PAD = 10;
 
 type MutableRef<T> = { current: T };
 
@@ -123,7 +126,12 @@ export const Minimap = (props: MinimapProps) => {
 
   const worldW = world.maxX - world.minX;
   const worldH = world.maxY - world.minY;
-  const scale = Math.min(MAP_W / worldW, MAP_H / worldH);
+  // Вписываем мир с фиксированным пиксельным отступом, чтобы крайние точки
+  // не упирались в границу миникарты при большом разбросе компонентов.
+  const scale = Math.min(
+    (MAP_W - 2 * MINIMAP_PAD) / worldW,
+    (MAP_H - 2 * MINIMAP_PAD) / worldH,
+  );
   const offsetX = (MAP_W - worldW * scale) / 2;
   const offsetY = (MAP_H - worldH * scale) / 2;
   const toX = (wx: number) => offsetX + (wx - world.minX) * scale;
