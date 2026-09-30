@@ -170,7 +170,7 @@ export const DisplayName = (props) => {
               mt={0.12}
               textAlign={isOutput ? 'right' : 'left'}
               className="PortConnectionOrder__hint">
-              Порядок связей — наведи на круг порта
+              Порядок — наведи на круг
             </Box>
           </Flex.Item>
         )}

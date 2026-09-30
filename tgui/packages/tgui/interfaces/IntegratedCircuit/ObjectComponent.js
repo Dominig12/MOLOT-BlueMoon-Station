@@ -263,7 +263,7 @@ export class ObjectComponent extends Component {
               ) : (
                 <Box
                   className="ObjectComponent__titleText"
-                  title="Двойной клик или карандаш — переименовать; второй клик по карандашу — подтвердить"
+                  title="Двойной клик — переименовать"
                   onMouseDown={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
@@ -315,7 +315,7 @@ export class ObjectComponent extends Component {
                 color="transparent"
                 icon="info"
                 compact
-                tooltip="Описание и подсказки"
+                tooltip="Описание"
                 onClick={(e) => act('set_examined_component', {
                   component_id: index,
                   x: e.pageX,
@@ -338,7 +338,7 @@ export class ObjectComponent extends Component {
           <Box className="ObjectComponent__ieStats" px={1} py={0.35}>
             <Box
               className="ObjectComponent__ieStatsText"
-              title={'Размер и сложность — лимиты корпуса. КД — пауза компонента после срабатывания. Внеш. КД — общая пауза корпуса при действиях компонента в мир.'}>
+              title={'Размер и сложность — лимиты корпуса. КД — пауза после срабатывания. Внеш. КД — общая пауза корпуса.'}>
               Разм. {formatIeSizeDisplay(ie_size)} · Сложн. {ie_complexity} · КД {formatIeCooldownDs(ie_cooldown_ds, false)} · Вн. КД {formatIeCooldownDs(ie_ext_cooldown_ds, true)}
             </Box>
           </Box>

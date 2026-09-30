@@ -59,31 +59,6 @@ export interface SelectedPortState {
   ref: string;
 }
 
-export interface IntegratedCircuitState {
-  locations: Record<string, PortLocation>;
-  selectedPort: SelectedPortState | null;
-  /** Пин, выбранный кликом (без перетаскивания) для соединения «клик → клик». */
-  connectSource: SelectedPortState | null;
-  dragClientX: number | null;
-  dragClientY: number | null;
-  zoom: number;
-  menuOpen: boolean;
-  /** Клиентский «ЛГБТК+ режим»: радужные переливы всего окна схемы. */
-  lgbtqRainbowMode: boolean;
-  /** Пока ждём ответ сервера после «к (0,0)», якорь панорамы с сервера подменяем нулями. */
-  screenPanOverride: { x: number; y: number } | null;
-  /** Сброс локального drag-offset в InfinitePlane (инкремент при «к началу координат»). */
-  planeHomeNonce: number;
-  /** Показывать боковую панель списка компонентов. */
-  componentsPanelOpen: boolean;
-  /** Фильтр поиска в списке компонентов. */
-  componentsFilter: string;
-  /** Выделенные ноды (индексы 1-based) для группового перетаскивания. */
-  selection: number[];
-  /** Активное групповое перетаскивание выделенных нод. */
-  dragState: GroupDragState | null;
-}
-
 export interface GroupDragState {
   ids: number[];
   startPositions: Record<number, { x: number; y: number }>;

@@ -241,12 +241,12 @@ export class Port extends Component {
     };
 
     const baseHint = armed
-      ? 'Пин выбран — кликните по противоположному пину, чтобы соединить; ещё клик сюда — снять выбор'
+      ? 'Пин выбран: клик по другому пину соединит'
       : isOutput
-        ? 'Выход: клик → клик или ЛКМ-тянуть к входу · ПКМ — снять связи'
-        : 'Вход: клик → клик или ЛКМ-тянуть от выхода · ПКМ — снять связи';
-    const pulseInHint = ' · Shift+ЛКМ по кругу — вручную импульс';
-    const multiHint = multiConn ? ' · Несколько связей: наведи на круг — порядок' : '';
+        ? 'ЛКМ-тянуть или клик—клик к входу · ПКМ — снять связи'
+        : 'ПКМ — снять связи';
+    const pulseInHint = ' · Shift+ЛКМ — импульс вручную';
+    const multiHint = multiConn ? ' · Наведи — порядок связей' : '';
     const portHint
       = port.type === 'signal' && !isOutput
         ? `${baseHint}${pulseInHint}${multiHint}`
@@ -308,7 +308,7 @@ export class Port extends Component {
                   fontSize="0.7rem"
                   opacity={0.6}
                   mb={0.3}>
-                  Перетащи строку, чтобы изменить порядок
+                  Перетащи строку для смены порядка
                 </Box>
                 <Stack vertical>
                       {connectionRefs.map((ref, idx) => {
