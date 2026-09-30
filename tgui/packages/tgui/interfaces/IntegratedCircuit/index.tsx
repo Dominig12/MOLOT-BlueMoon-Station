@@ -143,14 +143,27 @@ export const IntegratedCircuit = () => {
       return { x: 0, y: 0 };
     }
     const svg = connectionsSvgRef.current;
-    const z = Math.max(zoomRef.current || 1, 0.01);
     const portRect = el.getBoundingClientRect?.();
-    const svgRect = svg?.getBoundingClientRect?.();
-    if (portRect && svgRect && portRect.width >= 0 && svgRect.width >= 0) {
-      return {
-        x: (portRect.left + portRect.width / 2 - svgRect.left) / z,
-        y: (portRect.top + portRect.height / 2 - svgRect.top) / z,
-      };
+    // Мировые координаты получаем через обратную CTM самого SVG (включает
+    // translate+scale контейнера), а не делением на «zoom» из state — иначе при
+    // рассинхронизации zoom (например, после fit-to-view) провода «уплывают».
+    if (portRect && svg && portRect.width >= 0) {
+      const ctm = svg.getScreenCTM();
+      if (ctm) {
+        try {
+          const inv = ctm.inverse();
+          const pt = svg.createSVGPoint();
+          pt.x = portRect.left + portRect.width / 2;
+          pt.y = portRect.top + portRect.height / 2;
+          const local = pt.matrixTransform(inv);
+          if (!Number.isNaN(local.x) && !Number.isNaN(local.y)) {
+            return { x: local.x, y: local.y };
+          }
+        }
+        catch {
+          // fall through to offset fallback
+        }
+      }
     }
 
     let xPos = 0;
@@ -626,11 +639,9 @@ export const IntegratedCircuit = () => {
   /** Размер видимой области в мировых единицах (не зависит от transform-scale). */
   const computeViewportSize = () => {
     const svg = connectionsSvgRef.current;
-    const z = Math.max(zoomRef.current || 1, 0.01);
     if (svg) {
-      const r = svg.getBoundingClientRect();
-      const vw = r.width / z;
-      const vh = r.height / z;
+      const vw = svg.offsetWidth;
+      const vh = svg.offsetHeight;
       if (vw > 0 && vh > 0) {
         return { vw, vh };
       }
@@ -638,7 +649,7 @@ export const IntegratedCircuit = () => {
     return { vw: 0, vh: 0 };
   };
 
-  /** Мировые границы всех узлов (замер по DOM, учитывает реальный размер). */
+  /** Мировые границы всех узлов (замер по DOM через обратную CTM, без деления на zoom). */
   const computeComponentBounds = () => {
     const svg = connectionsSvgRef.current;
     if (!svg) {
@@ -648,8 +659,17 @@ export const IntegratedCircuit = () => {
     if (!host) {
       return null;
     }
-    const z = Math.max(zoomRef.current || 1, 0.01);
-    const svgRect = svg.getBoundingClientRect();
+    const ctm = svg.getScreenCTM();
+    if (!ctm) {
+      return null;
+    }
+    let inv;
+    try {
+      inv = ctm.inverse();
+    }
+    catch {
+      return null;
+    }
     const nodes = host.querySelectorAll<HTMLElement>('[data-ic-component-id]');
     if (nodes.length === 0) {
       return null;
@@ -660,21 +680,25 @@ export const IntegratedCircuit = () => {
     let maxY = -Infinity;
     nodes.forEach((node) => {
       const r = node.getBoundingClientRect();
-      const x0 = (r.left - svgRect.left) / z;
-      const y0 = (r.top - svgRect.top) / z;
-      const x1 = (r.right - svgRect.left) / z;
-      const y1 = (r.bottom - svgRect.top) / z;
-      if (x0 < minX) {
-        minX = x0;
+      const tl = svg.createSVGPoint();
+      tl.x = r.left;
+      tl.y = r.top;
+      const p0 = tl.matrixTransform(inv);
+      const br = svg.createSVGPoint();
+      br.x = r.right;
+      br.y = r.bottom;
+      const p1 = br.matrixTransform(inv);
+      if (p0.x < minX) {
+        minX = p0.x;
       }
-      if (y0 < minY) {
-        minY = y0;
+      if (p0.y < minY) {
+        minY = p0.y;
       }
-      if (x1 > maxX) {
-        maxX = x1;
+      if (p1.x > maxX) {
+        maxX = p1.x;
       }
-      if (y1 > maxY) {
-        maxY = y1;
+      if (p1.y > maxY) {
+        maxY = p1.y;
       }
     });
     return { minX, minY, maxX, maxY };
