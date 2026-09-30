@@ -211,6 +211,7 @@ export class InfinitePlane extends Component {
       this.setState({
         left: 0,
         top: 0,
+        zoom: this.props.initialZoom ?? 1,
       });
     }
   }
@@ -222,6 +223,7 @@ export class InfinitePlane extends Component {
       imageWidth,
       initialLeft = 0,
       initialTop = 0,
+      initialZoom = 1,
       resetPanNonce = 0,
       ...rest
     } = this.props;

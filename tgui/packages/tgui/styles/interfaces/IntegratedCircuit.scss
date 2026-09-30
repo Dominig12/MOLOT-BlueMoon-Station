@@ -126,6 +126,64 @@ $bg-map: colors.$bg-map !default;
   box-shadow: -4px 0 16px rgba(0, 0, 0, 0.45);
 }
 
+.IntegratedCircuit__minimap {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  z-index: 7;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(120, 170, 230, 0.28);
+  background: rgba(5, 9, 15, 0.92);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  cursor: crosshair;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(140, 180, 230, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(140, 180, 230, 0.06) 1px, transparent 1px);
+    background-size: 16px 16px;
+    pointer-events: none;
+  }
+}
+
+.IntegratedCircuit__minimapViewport {
+  position: absolute;
+  border: 1px solid rgba(160, 205, 255, 0.7);
+  background: rgba(120, 180, 255, 0.12);
+  pointer-events: none;
+}
+
+.IntegratedCircuit__minimapDot {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.IntegratedCircuit__emptyHint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  color: rgba(200, 215, 235, 0.82);
+  font-size: 0.85rem;
+  background: rgba(10, 14, 22, 0.78);
+  border: 1px dashed rgba(120, 170, 230, 0.32);
+  pointer-events: none;
+  user-select: none;
+  z-index: 2;
+}
+
 .IntegratedCircuit__variableDock {
   border-top: 2px solid rgba(100, 170, 255, 0.28);
   background: linear-gradient(

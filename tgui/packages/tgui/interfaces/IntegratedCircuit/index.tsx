@@ -21,6 +21,7 @@ import { CircuitInfo } from './CircuitInfo';
 import { CircuitToolbar } from './CircuitToolbar';
 import { Connections } from './Connections';
 import { ABSOLUTE_Y_OFFSET, MOUSE_BUTTON_LEFT } from './constants';
+import { Minimap } from './Minimap';
 import { ObjectComponent } from './ObjectComponent';
 import { PinEditor } from './PinEditor';
 import type {
@@ -113,6 +114,8 @@ export const IntegratedCircuit = () => {
   const planePanDirty = useRef(false);
   const backgroundX = useRef(0);
   const backgroundY = useRef(0);
+  /** Однократная инициализация якоря панорамы из server screen_x/y для миникарты. */
+  const panInitialized = useRef(false);
   /** Позиции портов, ожидающие перемеривания (одно измерение на кадр). */
   const locationPending = useRef<Map<string, { port: CircuitPortPayload; dom: HTMLElement }>>(new Map());
   const locationRaf = useRef<number | null>(null);
@@ -620,6 +623,95 @@ export const IntegratedCircuit = () => {
     return connections;
   };
 
+  /** Размер видимой области в мировых единицах (не зависит от transform-scale). */
+  const computeViewportSize = () => {
+    const svg = connectionsSvgRef.current;
+    const z = Math.max(zoomRef.current || 1, 0.01);
+    if (svg) {
+      const r = svg.getBoundingClientRect();
+      const vw = r.width / z;
+      const vh = r.height / z;
+      if (vw > 0 && vh > 0) {
+        return { vw, vh };
+      }
+    }
+    return { vw: 0, vh: 0 };
+  };
+
+  /** Мировые границы всех узлов (замер по DOM, учитывает реальный размер). */
+  const computeComponentBounds = () => {
+    const svg = connectionsSvgRef.current;
+    if (!svg) {
+      return null;
+    }
+    const host = svg.parentElement;
+    if (!host) {
+      return null;
+    }
+    const z = Math.max(zoomRef.current || 1, 0.01);
+    const svgRect = svg.getBoundingClientRect();
+    const nodes = host.querySelectorAll<HTMLElement>('[data-ic-component-id]');
+    if (nodes.length === 0) {
+      return null;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    nodes.forEach((node) => {
+      const r = node.getBoundingClientRect();
+      const x0 = (r.left - svgRect.left) / z;
+      const y0 = (r.top - svgRect.top) / z;
+      const x1 = (r.right - svgRect.left) / z;
+      const y1 = (r.bottom - svgRect.top) / z;
+      if (x0 < minX) {
+        minX = x0;
+      }
+      if (y0 < minY) {
+        minY = y0;
+      }
+      if (x1 > maxX) {
+        maxX = x1;
+      }
+      if (y1 > maxY) {
+        maxY = y1;
+      }
+    });
+    return { minX, minY, maxX, maxY };
+  };
+
+  /** Центрирует мировую точку (wx, wy) при зуме z и сохраняет якорь для миникарты. */
+  const centerOnWorld = (wx: number, wy: number, z: number) => {
+    const { vw, vh } = computeViewportSize();
+    const targetLeft = vw / 2 - wx * z;
+    const targetTop = vh / 2 - wy * z;
+    backgroundX.current = targetLeft;
+    backgroundY.current = targetTop;
+    setZoom(z);
+    setScreenPanOverride({ x: targetLeft, y: targetTop });
+    setPlaneHomeNonce((n) => n + 1);
+    act('move_screen', { screen_x: targetLeft, screen_y: targetTop });
+  };
+
+  /** Вписать все компоненты в видимую область (fit-to-view / «Показать всё»). */
+  const fitToView = () => {
+    const bounds = computeComponentBounds();
+    if (!bounds) {
+      return;
+    }
+    const { vw, vh } = computeViewportSize();
+    if (vw <= 0 || vh <= 0) {
+      return;
+    }
+    const PAD = 60;
+    const w = Math.max(bounds.maxX - bounds.minX + PAD * 2, 1);
+    const h = Math.max(bounds.maxY - bounds.minY + PAD * 2, 1);
+    const z = Math.min(1.5, Math.max(0.1, Math.min(vw / w, vh / h)));
+    const cx = (bounds.minX + bounds.maxX) / 2;
+    const cy = (bounds.minY + bounds.maxY) / 2;
+    centerOnWorld(cx, cy, z);
+  };
+
   useEffect(() => {
     window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mouseup', handleMouseUp);
@@ -711,6 +803,11 @@ export const IntegratedCircuit = () => {
   const circuitCellPercent = !ie_circuit ? data.circuit_cell_percent : undefined;
   const panX = screenPanOverride?.x ?? screen_x ?? 0;
   const panY = screenPanOverride?.y ?? screen_y ?? 0;
+  if (!panInitialized.current) {
+    panInitialized.current = true;
+    backgroundX.current = panX;
+    backgroundY.current = panY;
+  }
 
   const connInputs: unknown[] = [
     components,
@@ -849,6 +946,7 @@ export const IntegratedCircuit = () => {
             onIePlaceChipCenter={
               ieAssemblyUi ? handleIePlaceChipCenter : undefined
             }
+            onFitToView={fitToView}
           />
           <Box className="IntegratedCircuit__planeHost">
             <InfinitePlane
@@ -860,6 +958,7 @@ export const IntegratedCircuit = () => {
               onBackgroundMoved={handleBackgroundMoved}
               initialLeft={panX}
               initialTop={panY}
+              initialZoom={zoom}
               resetPanNonce={planeHomeNonce}
               onShiftPlaneMouseDown={
                 ieAssemblyUi ? handleShiftPlaneMouseDown : undefined
@@ -899,6 +998,24 @@ export const IntegratedCircuit = () => {
                 )}
               </Connections>
             </InfinitePlane>
+            {componentCount === 0 && (
+              <Box className="IntegratedCircuit__emptyHint">
+                <Icon name="microchip" mr={1.5} />
+                {ieAssemblyUi
+                  ? 'Вставьте чип из руки: «Чип сюда» или Shift+ЛКМ по полю'
+                  : 'Схема пуста'}
+              </Box>
+            )}
+            {!componentsPanelOpen && !menuOpen && (
+              <Minimap
+                components={components}
+                backgroundXRef={backgroundX}
+                backgroundYRef={backgroundY}
+                zoomRef={zoomRef}
+                svgRef={connectionsSvgRef}
+                onCenter={centerOnWorld}
+              />
+            )}
             <Box
               className="IntegratedCircuit__componentsToggle"
               position="absolute"
@@ -958,7 +1075,10 @@ export const IntegratedCircuit = () => {
                           color="transparent"
                           tooltip={`Перейти к «${comp.name}»`}
                           onClick={() => handleJumpToComponent(comp, index)}>
-                          <Icon name="circle" color={comp.color || 'blue'} />
+                          <Icon
+                            name="circle"
+                            color={comp.recent_pulse ? '#5dff8a' : (comp.color || 'blue')}
+                          />
                           {' '}
                           #{index}
                           {' '}

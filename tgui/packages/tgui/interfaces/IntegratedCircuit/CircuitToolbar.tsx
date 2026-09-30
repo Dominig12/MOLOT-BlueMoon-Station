@@ -19,6 +19,7 @@ export type CircuitToolbarProps = {
   onIeClassicUi?: () => void;
   onIePlaceChipCenter?: () => void;
   onEjectPowerCell?: () => void;
+  onFitToView?: () => void;
   ieUsedSize?: number | null;
   ieMaxSize?: number | null;
   ieUsedComplexity?: number | null;
@@ -65,6 +66,7 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
     onIeClassicUi,
     onIePlaceChipCenter,
     onEjectPowerCell,
+    onFitToView,
     ieUsedSize,
     ieMaxSize,
     ieUsedComplexity,
@@ -168,6 +170,18 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
         </Stack.Item>
         <Stack.Item>
           <Stack align="center">
+            {onFitToView && (
+              <Stack.Item>
+                <Button
+                  icon="expand"
+                  color="transparent"
+                  compact
+                  tooltip="Вписать все компоненты в поле"
+                  onClick={onFitToView}>
+                  Показать всё
+                </Button>
+              </Stack.Item>
+            )}
             <Stack.Item>
               <Chip icon="search-plus" title="Текущий масштаб поля">
                 {zoomPercent}%
