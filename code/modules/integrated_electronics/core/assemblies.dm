@@ -50,6 +50,10 @@
 	/// TGUI: пины, для которых открыт нативный редактор значений (список/текст) — REF(io) активен.
 	var/datum/integrated_io/ie_gui_editor_io
 	var/ie_gui_editor_is_output = FALSE
+	/// TGUI: заметки-аннотации на схеме: list("name"=текст, "x"=мир.x, "y"=мир.y, "color"=hex).
+	var/list/ie_notes = list()
+	/// TGUI: группы нод на схеме: list("name"=..., "components"=list(weakref), "collapsed"=bool).
+	var/list/ie_groups = list()
 	/// Last coarse diagnostic HUD state from compute_diagnostic_hud_process_key; skips redundant health/cell updates in process().
 	var/last_diag_process_key = ""
 	/// Cached "[icon]-[icon_state]-[dir]" so sync_diagnostic_hud_offsets avoids allocating /icon every diag call.

@@ -102,6 +102,23 @@ export interface IntegratedCircuitData {
   circuit_cell_percent?: number | null;
   /** IE: нативный редактор значений пина (список или текст). */
   pin_editor?: PinEditorPayload | null;
+  /** IE: заметки-аннотации на схеме. */
+  ie_notes?: IntegratedCircuitNote[];
+  /** IE: группы нод (персистентные). */
+  ie_groups?: IntegratedCircuitGroup[];
+}
+
+export interface IntegratedCircuitNote {
+  name: string;
+  x: number;
+  y: number;
+  color: string;
+}
+
+export interface IntegratedCircuitGroup {
+  name: string;
+  components: number[];
+  collapsed: boolean;
 }
 
 export interface CircuitPulse {
