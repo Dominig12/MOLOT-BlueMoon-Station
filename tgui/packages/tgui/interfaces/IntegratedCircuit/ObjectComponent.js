@@ -86,6 +86,8 @@ export class ObjectComponent extends Component {
       || p.circuitOn !== n.circuitOn
       || p.selected !== n.selected
       || p.connectSourceRef !== n.connectSourceRef
+      || p.spotlit !== n.spotlit
+      || p.dimmed !== n.dimmed
       || p.ie_size !== n.ie_size
       || p.ie_complexity !== n.ie_complexity
       || p.ie_cooldown_ds !== n.ie_cooldown_ds
@@ -125,6 +127,8 @@ export class ObjectComponent extends Component {
       portLabelByRef,
       connectSourceRef,
       selected,
+      spotlit,
+      dimmed,
       onNodeMouseDown,
       ...rest
     } = this.props;
@@ -205,6 +209,8 @@ export class ObjectComponent extends Component {
           'ObjectComponent__root',
           !powered && 'ObjectComponent--poweroff',
           selected && 'ObjectComponent--selected',
+          spotlit && 'ObjectComponent--spotlit',
+          dimmed && 'ObjectComponent--dimmed',
         ])}
         onMouseDown={onNodeMouseDown}>
         <Box

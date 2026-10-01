@@ -141,4 +141,6 @@ export interface WireConnection {
   inRef?: string;
   /** Временная линия при перетаскивании провода. */
   isPreview?: boolean;
+  /** Приглушить провод (он не относится к выделенным нодам). */
+  dimmed?: boolean;
 }

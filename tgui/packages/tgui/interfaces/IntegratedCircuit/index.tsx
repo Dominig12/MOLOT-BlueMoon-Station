@@ -26,7 +26,7 @@ import {
 import { CircuitInfo } from './CircuitInfo';
 import { CircuitToolbar } from './CircuitToolbar';
 import { Connections } from './Connections';
-import { ABSOLUTE_Y_OFFSET, MOUSE_BUTTON_LEFT } from './constants';
+import { ABSOLUTE_Y_OFFSET, GRID_SNAP, MOUSE_BUTTON_LEFT } from './constants';
 import { Minimap } from './Minimap';
 import { ObjectComponent } from './ObjectComponent';
 import { PinEditor } from './PinEditor';
@@ -118,6 +118,13 @@ export const IntegratedCircuit = () => {
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   /** Индекс (1-based) строки списка компонентов, над которой висит drag (подсветка). */
   const [componentDragOver, setComponentDragOver] = useState<number | null>(null);
+  /** Клиентские группы компонентов (схлопываемые коробки, без персистенции). */
+  const [groups, setGroups] = useState<{
+    id: string;
+    name: string;
+    collapsed: boolean;
+    memberIds: number[];
+  }[]>([]);
 
   const connectionsSvgRef = useRef<SVGSVGElement | null>(null);
   /** Смещали ли поле мышью с прошлого сохранённого screen_x/y (не слать move_screen на каждый mouseup). */
@@ -148,6 +155,10 @@ export const IntegratedCircuit = () => {
   const lastMarqueeSelection = useRef<number[]>([]);
   /** Источник перетаскивания в списке компонентов (1-based индекс). */
   const componentReorderSrc = useRef<number | null>(null);
+  /** Точка начала grab-and-drag панорамы из миникарты. */
+  const panGrabStart = useRef<{ left: number; top: number; zoom: number } | null>(null);
+  /** Счётчик для уникальных id групп (клиентские, не персистятся). */
+  const groupSeq = useRef(0);
 
   /** Кэш данных, зависящих от payload сервера; ключ — сам объект `data`. */
   const memoDataKey = useRef<unknown>(null);
@@ -337,8 +348,17 @@ export const IntegratedCircuit = () => {
     }
     event.preventDefault();
     const z = readPlaneScale();
-    const deltaX = (event.clientX - dragState.startClientX) / z;
-    const deltaY = (event.clientY - dragState.startClientY) / z;
+    const rawDeltaX = (event.clientX - dragState.startClientX) / z;
+    const rawDeltaY = (event.clientY - dragState.startClientY) / z;
+    // Прилипание к сетке: «якорная» нода (первая в выделении) выравнивается к сетке,
+    // остальные двигаются с тем же смещением, сохраняя взаимное расположение.
+    const anchorStart = dragState.startPositions[dragState.ids[0]];
+    let deltaX = rawDeltaX;
+    let deltaY = rawDeltaY;
+    if (anchorStart) {
+      deltaX = Math.round((anchorStart.x + rawDeltaX) / GRID_SNAP) * GRID_SNAP - anchorStart.x;
+      deltaY = Math.round((anchorStart.y + rawDeltaY) / GRID_SNAP) * GRID_SNAP - anchorStart.y;
+    }
     if (deltaX !== dragState.deltaX || deltaY !== dragState.deltaY) {
       setDragState((s) => (s ? { ...s, deltaX, deltaY } : null));
     }
@@ -660,6 +680,30 @@ export const IntegratedCircuit = () => {
     setComponentDragOver(null);
   };
 
+  /** Создать группу из текущего выделения. */
+  const handleGroupSelection = () => {
+    if (selection.length < 2) {
+      return;
+    }
+    groupSeq.current += 1;
+    const id = `g${groupSeq.current}`;
+    setGroups((g) => [
+      ...g,
+      { id, name: `Группа ${g.length + 1}`, collapsed: false, memberIds: [...selection] },
+    ]);
+    setSelection([]);
+  };
+
+  /** Свернуть/развернуть группу. */
+  const handleToggleGroup = (id: string) => {
+    setGroups((g) => g.map((gr) => (gr.id === id ? { ...gr, collapsed: !gr.collapsed } : gr)));
+  };
+
+  /** Разгруппировать. */
+  const handleUngroup = (id: string) => {
+    setGroups((g) => g.filter((gr) => gr.id !== id));
+  };
+
   const handleNodeMouseDown = (componentId: number, event: MouseEvent) => {
     event.stopPropagation();
     const additive = event.shiftKey || event.ctrlKey || event.metaKey;
@@ -706,8 +750,46 @@ export const IntegratedCircuit = () => {
     dragX: number | null,
     dragY: number | null,
     zoomState: number,
+    selectedIds: number[],
+    groups: { collapsed: boolean; memberIds: number[] }[],
   ): WireConnection[] => {
     const connections: WireConnection[] = [];
+    // Подсветка связей выделенных нод: остальные провода приглушаем.
+    const activePortRefs = new Set<string>();
+    if (selectedIds.length > 0) {
+      const selSet = new Set(selectedIds);
+      for (let i = 0; i < components.length; i++) {
+        const c = components[i];
+        if (!c || !selSet.has(i + 1)) {
+          continue;
+        }
+        for (const p of c.input_ports) {
+          activePortRefs.add(p.ref);
+        }
+        for (const p of c.output_ports) {
+          activePortRefs.add(p.ref);
+        }
+      }
+    }
+    // Провода свёрнутых групп не рисуем.
+    const hiddenPortRefs = new Set<string>();
+    for (const g of groups) {
+      if (!g.collapsed) {
+        continue;
+      }
+      for (const id of g.memberIds) {
+        const c = components[id - 1];
+        if (!c) {
+          continue;
+        }
+        for (const p of c.input_ports) {
+          hiddenPortRefs.add(p.ref);
+        }
+        for (const p of c.output_ports) {
+          hiddenPortRefs.add(p.ref);
+        }
+      }
+    }
 
     for (const comp of components) {
       if (comp === null) {
@@ -716,8 +798,14 @@ export const IntegratedCircuit = () => {
 
       const inputPorts = comp.input_ports;
       for (const input of inputPorts) {
+        if (hiddenPortRefs.has(input.ref)) {
+          continue;
+        }
         const linked = connectedToRefList(input?.connected_to);
         for (const outputRef of linked) {
+          if (hiddenPortRefs.has(outputRef)) {
+            continue;
+          }
           const output_port = portLocations[outputRef];
           connections.push({
             color: (output_port && output_port.color) || 'blue',
@@ -725,6 +813,9 @@ export const IntegratedCircuit = () => {
             to: portLocations[input.ref],
             outRef: outputRef,
             inRef: input.ref,
+            dimmed: activePortRefs.size > 0
+              && !activePortRefs.has(input.ref)
+              && !activePortRefs.has(outputRef),
           });
         }
       }
@@ -883,6 +974,35 @@ export const IntegratedCircuit = () => {
     act('move_screen', { screen_x: targetLeft, screen_y: targetTop });
   };
 
+  /** Начало grab-and-drag панорамы из миникарты. */
+  const handleMinimapPanBegin = () => {
+    panGrabStart.current = {
+      left: backgroundX.current,
+      top: backgroundY.current,
+      zoom: zoomRef.current || 1,
+    };
+  };
+
+  /** Протяжка миникарты: панорама живьём (без commit), контент следует за курсором. */
+  const handleMinimapPanBy = (worldDX: number, worldDY: number) => {
+    const grab = panGrabStart.current;
+    if (!grab) {
+      return;
+    }
+    backgroundX.current = grab.left + worldDX * grab.zoom;
+    backgroundY.current = grab.top + worldDY * grab.zoom;
+    setScreenPanOverride({ x: backgroundX.current, y: backgroundY.current });
+  };
+
+  /** Завершение перетаскивания миникарты: закрепляем панораму на сервере. */
+  const handleMinimapPanCommit = () => {
+    panGrabStart.current = null;
+    act('move_screen', {
+      screen_x: backgroundX.current,
+      screen_y: backgroundY.current,
+    });
+  };
+
   /** Вписать все компоненты в видимую область (fit-to-view / «Показать всё»). */
   const fitToView = () => {
     const bounds = computeComponentBounds();
@@ -1009,6 +1129,8 @@ export const IntegratedCircuit = () => {
     selectedPort,
     dragClientX,
     dragClientY,
+    selection,
+    groups,
   ];
   if (selectedPort) {
     connInputs.push(zoom);
@@ -1028,6 +1150,8 @@ export const IntegratedCircuit = () => {
       dragClientX,
       dragClientY,
       zoom,
+      selection,
+      groups,
     );
     memoConnInputs.current = connInputs;
     memoConnections.current = connections;
@@ -1048,6 +1172,56 @@ export const IntegratedCircuit = () => {
     );
   /** Только корпус сборки (не одиночный чип в руках) — вставка чипа в поле. */
   const ieAssemblyUi = !!ie_circuit && ie_clone_copy_mode === 'assembly';
+
+  /** Компоненты, скрытые схлопнутыми группами. */
+  const collapsedMemberIds = new Set<number>();
+  for (const g of groups) {
+    if (g.collapsed) {
+      for (const id of g.memberIds) {
+        collapsedMemberIds.add(id);
+      }
+    }
+  }
+
+  /** Грубая оценка границ коробки группы по позициям участников. */
+  const groupFrameBounds = (memberIds: number[]) => {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const id of memberIds) {
+      const comp = components[id - 1];
+      if (!comp) {
+        continue;
+      }
+      const x = comp.x || 0;
+      const y = comp.y || 0;
+      if (x < minX) {
+        minX = x;
+      }
+      if (y < minY) {
+        minY = y;
+      }
+      if (x > maxX) {
+        maxX = x;
+      }
+      if (y > maxY) {
+        maxY = y;
+      }
+    }
+    if (minX === Infinity) {
+      return null;
+    }
+    const titleH = 26;
+    const padX = 24;
+    const padY = 18;
+    return {
+      x: minX - padX,
+      y: minY - titleH - padY,
+      w: (maxX - minX) + padX * 2 + 160,
+      h: (maxY - minY) + titleH + padY * 2 + 120,
+    };
+  };
 
   return (
     <Window
@@ -1138,6 +1312,8 @@ export const IntegratedCircuit = () => {
               ieAssemblyUi ? handleIePlaceChipCenter : undefined
             }
             onFitToView={fitToView}
+            searchValue={componentsFilter}
+            onSearchChange={(e, value) => setComponentsFilter(value)}
           />
           <Box className="IntegratedCircuit__planeHost">
             <InfinitePlane
@@ -1157,13 +1333,61 @@ export const IntegratedCircuit = () => {
                 connections={connections}
                 svgRef={connectionsSvgRef}
                 pulseKeys={pulseKeys}>
+                {groups.map((g) => {
+                  const bounds = groupFrameBounds(g.memberIds);
+                  if (!bounds) {
+                    return null;
+                  }
+                  return (
+                    <Box
+                      key={g.id}
+                      className="IntegratedCircuit__groupFrame"
+                      position="absolute"
+                      left={`${bounds.x}px`}
+                      top={`${bounds.y}px`}
+                      width={`${g.collapsed ? 200 : bounds.w}px`}
+                      height={`${g.collapsed ? 26 : bounds.h}px`}>
+                      <Stack
+                        className="IntegratedCircuit__groupFrameTitle"
+                        align="center"
+                        onMouseDown={(e) => e.stopPropagation()}>
+                        <Stack.Item>
+                          <Button
+                            icon={g.collapsed ? 'plus' : 'minus'}
+                            color="transparent"
+                            compact
+                            tooltip={g.collapsed ? 'Развернуть' : 'Свернуть'}
+                            onClick={() => handleToggleGroup(g.id)}
+                          />
+                        </Stack.Item>
+                        <Stack.Item grow={1}>
+                          <Box className="IntegratedCircuit__groupFrameName">{g.name}</Box>
+                        </Stack.Item>
+                        <Stack.Item>
+                          <Button
+                            icon="object-ungroup"
+                            color="transparent"
+                            compact
+                            tooltip="Разгруппировать"
+                            onClick={() => handleUngroup(g.id)}
+                          />
+                        </Stack.Item>
+                      </Stack>
+                    </Box>
+                  );
+                })}
                 {components.map(
                   (comp, index) =>
                     comp && (() => {
                       const componentId = index + 1;
+                      if (collapsedMemberIds.has(componentId)) {
+                        return null;
+                      }
                       const dragging = !!dragState && dragState.ids.includes(componentId);
                       const dx = dragging ? dragState.deltaX : 0;
                       const dy = dragging ? dragState.deltaY : 0;
+                      const spotlightMatch = !filterQuery
+                        || comp.name.toLowerCase().includes(filterQuery);
                       return (
                         <ObjectComponent
                           key={index}
@@ -1180,6 +1404,8 @@ export const IntegratedCircuit = () => {
                           portLabelByRef={portLabelByRef}
                           connectSourceRef={connectSource?.ref ?? null}
                           selected={selection.includes(componentId)}
+                          spotlit={!!filterQuery && spotlightMatch}
+                          dimmed={!!filterQuery && !spotlightMatch}
                           onNodeMouseDown={(e) => handleNodeMouseDown(componentId, e)}
                         />
                       );
@@ -1187,11 +1413,26 @@ export const IntegratedCircuit = () => {
                 )}
               </Connections>
             </InfinitePlane>
+            {selection.length >= 2 && (
+              <Box
+                className="IntegratedCircuit__groupAction"
+                position="absolute"
+                right="0.5rem"
+                top="4.6rem"
+                style={{ zIndex: 6 }}>
+                <Button
+                  icon="object-group"
+                  color="transparent"
+                  onClick={handleGroupSelection}>
+                  Сгруппировать ({selection.length})
+                </Button>
+              </Box>
+            )}
             {componentCount === 0 && (
               <Box className="IntegratedCircuit__emptyHint">
                 <Icon name="microchip" mr={1.5} />
                 {ieAssemblyUi
-                  ? 'Вставьте чип из руки: «Чип сюда» или Shift+ЛКМ по полю'
+                  ? 'Вставьте чип из руки: кнопка «Чип сюда»'
                   : 'Схема пуста'}
               </Box>
             )}
@@ -1203,6 +1444,9 @@ export const IntegratedCircuit = () => {
                 zoomRef={zoomRef}
                 svgRef={connectionsSvgRef}
                 onCenter={centerOnWorld}
+                onPanBegin={handleMinimapPanBegin}
+                onPanBy={handleMinimapPanBy}
+                onPanCommit={handleMinimapPanCommit}
               />
             )}
             <Box

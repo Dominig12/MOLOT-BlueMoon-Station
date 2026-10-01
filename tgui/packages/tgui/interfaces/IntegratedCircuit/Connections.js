@@ -109,6 +109,7 @@ class WireCanvas extends Component {
                 className={classes([
                   'IntegratedCircuit__wire',
                   !hexStroke && isColorClass(color) && `color-stroke-${color}`,
+                  val.dimmed && 'IntegratedCircuit__wire--dimmed',
                   hot && 'IntegratedCircuit__wire--hot',
                   pulsing && 'IntegratedCircuit__wire--pulse',
                 ])}

@@ -229,6 +229,31 @@ $bg-map: colors.$bg-map !default;
   box-shadow: 0 0 0 1px rgba(120, 190, 255, 0.5);
 }
 
+.IntegratedCircuit__groupFrame {
+  pointer-events: none;
+  overflow: hidden;
+  border: 1.5px dashed rgba(140, 200, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(90, 150, 230, 0.03);
+}
+
+.IntegratedCircuit__groupFrameTitle {
+  pointer-events: auto;
+  height: 26px;
+  padding: 0 0.3rem;
+  background: rgba(12, 20, 32, 0.92);
+  border-bottom: 1px solid rgba(140, 200, 255, 0.25);
+  border-radius: 8px 8px 0 0;
+}
+
+.IntegratedCircuit__groupFrameName {
+  font-size: 0.78rem;
+  color: rgba(210, 230, 250, 0.92);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .IntegratedCircuit__variableDock {
   border-top: 1px solid rgba(100, 170, 255, 0.3);
   background: linear-gradient(
@@ -245,6 +270,10 @@ $bg-map: colors.$bg-map !default;
   stroke-linecap: round;
   filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.65));
   transition: filter 0.12s ease, opacity 0.12s ease;
+}
+
+.IntegratedCircuit__connections--base .IntegratedCircuit__wire--dimmed {
+  opacity: 0.16;
 }
 
 .IntegratedCircuit__connections--base .IntegratedCircuit__wire--hot {
@@ -347,6 +376,21 @@ $bg-map: colors.$bg-map !default;
     0 0 0 2px rgba(255, 205, 90, 0.7),
     0 0 22px rgba(255, 185, 60, 0.32);
   outline: none;
+}
+
+.ObjectComponent--spotlit {
+  border-color: rgba(140, 215, 255, 0.9);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 10px 28px rgba(0, 0, 0, 0.6),
+    0 0 0 2px rgba(120, 205, 255, 0.85),
+    0 0 20px rgba(90, 180, 255, 0.45);
+  outline: none;
+}
+
+.ObjectComponent--dimmed {
+  opacity: 0.22;
+  filter: saturate(0.4) brightness(0.9);
 }
 
 .ObjectComponent__ActivityLamp {

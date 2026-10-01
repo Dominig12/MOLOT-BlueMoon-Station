@@ -1,5 +1,6 @@
 import {
   type MouseEvent as ReactMouseEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -25,8 +26,14 @@ type MinimapProps = {
   zoomRef: MutableRef<number>;
   /** Основной SVG схемы — используется для замера видимой области (без transform-scale). */
   svgRef: MutableRef<SVGSVGElement | null>;
-  /** Сместить вид так, чтобы мировая точка (wx, wy) попала в центр при текущем зуме. */
+  /** Клик: центрировать вид на мировой точке. */
   onCenter: (wx: number, wy: number, zoom: number) => void;
+  /** Начало перетаскивания рамки вьюпорта. */
+  onPanBegin: () => void;
+  /** Протяжка: сдвиг на мировую дельту (grab-and-drag панорама). */
+  onPanBy: (worldDX: number, worldDY: number) => void;
+  /** Завершение перетаскивания: закрепить панораму на сервере. */
+  onPanCommit: () => void;
 };
 
 type World = {
@@ -40,11 +47,22 @@ type World = {
 type ViewRect = { x: number; y: number; w: number; h: number };
 
 /**
- * Миникарта: все узлы точками + рамка текущей видимой области. Точки и рамка
- * отрисовываются в фиксированных пикселях (не зависят от масштаба мира), что
- * читаемо при десятках чипов. Обновляется собственным RAF-циклом, читающим
- * ref-координаты панорамы/зума, — без перерисовки всего дерева схемы на каждый
- * кадр перетаскивания. Клик по миникарте центрирует вид на точке.
+ * Стабильная ссылка на колбэк, вызывающий свою самую свежую версию
+ * (для window add/removeEventListener в функциональном компоненте).
+ */
+function useStableCallback<A extends unknown[], R>(
+  fn: (...args: A) => R,
+): (...args: A) => R {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useCallback((...args: A) => ref.current(...args), []);
+}
+
+/**
+ * Миникарта: все узлы точками + рамка текущей видимой области. Точки/рамка — в
+ * фиксированных пикселях (не зависят от масштаба мира). Обновляется собственным
+ * RAF-циклом, читающим ref-координаты панорамы/зума, без перерисовки всего дерева.
+ * Клик — центрировать вид; перетаскивание — grab-and-drag панорама.
  */
 export const Minimap = (props: MinimapProps) => {
   const {
@@ -54,10 +72,17 @@ export const Minimap = (props: MinimapProps) => {
     zoomRef,
     svgRef,
     onCenter,
+    onPanBegin,
+    onPanBy,
+    onPanCommit,
   } = props;
 
   const mapRef = useRef<HTMLDivElement | null>(null);
   const [view, setView] = useState<ViewRect | null>(null);
+  const dragRef = useRef<{ wx: number; wy: number; moved: boolean } | null>(null);
+  const toWorldRef = useRef<(cx: number, cy: number) => { x: number; y: number }>(
+    () => ({ x: 0, y: 0 }),
+  );
 
   const world = useMemo<World | null>(() => {
     const pts: { x: number; y: number; color: string }[] = [];
@@ -120,6 +145,40 @@ export const Minimap = (props: MinimapProps) => {
     return () => cancelAnimationFrame(raf);
   }, [svgRef, zoomRef, backgroundXRef, backgroundYRef]);
 
+  const handleDragMove = useStableCallback((event: MouseEvent) => {
+    const drag = dragRef.current;
+    if (!drag) {
+      return;
+    }
+    const local = toWorldRef.current(event.clientX, event.clientY);
+    const dx = local.x - drag.wx;
+    const dy = local.y - drag.wy;
+    if (!drag.moved) {
+      if (dx * dx + dy * dy < 9) {
+        return;
+      }
+      drag.moved = true;
+    }
+    onPanBy(dx, dy);
+  });
+
+  const handleDragEnd = useStableCallback((event: MouseEvent) => {
+    window.removeEventListener('mousemove', handleDragMove);
+    window.removeEventListener('mouseup', handleDragEnd);
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (!drag) {
+      return;
+    }
+    if (drag.moved) {
+      onPanCommit();
+    }
+    else {
+      const local = toWorldRef.current(event.clientX, event.clientY);
+      onCenter(local.x, local.y, zoomRef.current || 1);
+    }
+  });
+
   if (!world) {
     return null;
   }
@@ -136,18 +195,28 @@ export const Minimap = (props: MinimapProps) => {
   const offsetY = (MAP_H - worldH * scale) / 2;
   const toX = (wx: number) => offsetX + (wx - world.minX) * scale;
   const toY = (wy: number) => offsetY + (wy - world.minY) * scale;
-
-  const handleClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+  toWorldRef.current = (cx, cy) => {
     const el = mapRef.current;
     if (!el) {
-      return;
+      return { x: 0, y: 0 };
     }
     const r = el.getBoundingClientRect();
-    const cx = e.clientX - r.left;
-    const cy = e.clientY - r.top;
-    const wx = world.minX + (cx - offsetX) / scale;
-    const wy = world.minY + (cy - offsetY) / scale;
-    onCenter(wx, wy, zoomRef.current || 1);
+    return {
+      x: world.minX + ((cx - r.left) - offsetX) / scale,
+      y: world.minY + ((cy - r.top) - offsetY) / scale,
+    };
+  };
+
+  const handleMouseDown = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) {
+      return;
+    }
+    e.preventDefault();
+    const local = toWorldRef.current(e.clientX, e.clientY);
+    dragRef.current = { wx: local.x, wy: local.y, moved: false };
+    onPanBegin();
+    window.addEventListener('mousemove', handleDragMove);
+    window.addEventListener('mouseup', handleDragEnd);
   };
 
   return (
@@ -155,7 +224,7 @@ export const Minimap = (props: MinimapProps) => {
       ref={mapRef}
       className="IntegratedCircuit__minimap"
       style={{ width: MAP_W, height: MAP_H }}
-      onClick={handleClick}>
+      onMouseDown={handleMouseDown}>
       {view && (
         <div
           className="IntegratedCircuit__minimapViewport"

@@ -1,7 +1,7 @@
 import { classes } from 'common/react';
 import { ReactNode } from 'react';
 
-import { Box, Button, Icon, Stack } from '../../components';
+import { Box, Button, Icon, Input, Stack } from '../../components';
 import type { IeCloneCopyMode } from './types';
 
 export type CircuitToolbarProps = {
@@ -24,6 +24,9 @@ export type CircuitToolbarProps = {
   ieMaxSize?: number | null;
   ieUsedComplexity?: number | null;
   ieMaxComplexity?: number | null;
+  /** Spotlight: строка поиска по имени компонента (подсветка на схеме). */
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
 };
 
 type ChipTone = 'on' | 'off' | 'muted' | 'danger';
@@ -71,6 +74,8 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
     ieMaxSize,
     ieUsedComplexity,
     ieMaxComplexity,
+    searchValue = '',
+    onSearchChange,
   } = props;
 
   const powered = circuitOn !== false && circuitOn !== 0;
@@ -170,6 +175,16 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
         </Stack.Item>
         <Stack.Item>
           <Stack align="center">
+            {onSearchChange && (
+              <Stack.Item>
+                <Input
+                  width="9rem"
+                  placeholder="Поиск…"
+                  value={searchValue}
+                  onChange={(e, value) => onSearchChange(value)}
+                />
+              </Stack.Item>
+            )}
             {onFitToView && (
               <Stack.Item>
                 <Button
@@ -222,7 +237,7 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
                   icon="crosshairs"
                   color="transparent"
                   compact
-                  tooltip="Вставить чип из руки в центр вида (Shift+ЛКМ — в точку клика)"
+                  tooltip="Вставить чип из руки в центр вида"
                   onClick={onIePlaceChipCenter}>
                   Чип сюда
                 </Button>
