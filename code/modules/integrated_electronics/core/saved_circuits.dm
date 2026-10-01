@@ -156,6 +156,37 @@
 	if(initial(detail_color) != detail_color)
 		assembly_params["detail_color"] = detail_color
 
+	// Заметки-аннотации схемы.
+	if(length(ie_notes))
+		var/list/notes = list()
+		for(var/list/note as anything in ie_notes)
+			notes += list(list(\
+				"name" = note["name"], \
+				"x" = note["x"], \
+				"y" = note["y"], \
+				"color" = note["color"]))
+		assembly_params["notes"] = notes
+
+	// Группы нод: компоненты — 1-based индексы в порядке компоновки.
+	if(length(ie_groups))
+		var/list/groups = list()
+		for(var/list/grp as anything in ie_groups)
+			var/list/member_ids = list()
+			for(var/datum/weakref/wr as anything in grp["components"])
+				var/obj/item/integrated_circuit/chip = wr.resolve()
+				if(!chip)
+					continue
+				var/idx = assembly_components.Find(chip)
+				if(idx)
+					member_ids += list(idx)
+			if(member_ids.len >= 2)
+				groups += list(list(\
+					"name" = grp["name"], \
+					"components" = member_ids, \
+					"collapsed" = grp["collapsed"]))
+		if(groups.len)
+			assembly_params["groups"] = groups
+
 	return assembly_params
 
 
@@ -169,6 +200,24 @@
 		return "Bad assembly description."
 	if(assembly_params["detail_color"] && !reject_bad_text(assembly_params["detail_color"], 7))
 		return "Bad assembly color."
+	if(assembly_params["notes"])
+		if(!islist(assembly_params["notes"]))
+			return "Invalid notes list."
+		for(var/list/note in assembly_params["notes"])
+			if(!islist(note))
+				return "Invalid note data."
+			if(note["name"] && !reject_bad_name(note["name"], TRUE))
+				return "Bad note name."
+			if(!isnum(note["x"]) || !isnum(note["y"]))
+				return "Invalid note coordinates."
+	if(assembly_params["groups"])
+		if(!islist(assembly_params["groups"]))
+			return "Invalid groups list."
+		for(var/list/grp in assembly_params["groups"])
+			if(!islist(grp))
+				return "Invalid group data."
+			if(grp["name"] && !reject_bad_name(grp["name"], TRUE))
+				return "Bad group name."
 
 // Loads assembly parameters from a list
 // Doesn't verify any of the parameters it loads, this is the job of verify_save()
@@ -563,6 +612,28 @@
 		component.load(component_params)
 
 	ie_tgui_apply_auto_layout(assembly, blocks)
+
+	// Block 2.5. Notes & groups (компоненты уже загружены).
+	if(islist(assembly_params["notes"]))
+		for(var/list/note_params in assembly_params["notes"])
+			assembly.ie_notes += list(list(\
+				"name" = "[note_params["name"]]", \
+				"x" = clamp(text2num(note_params["x"]), -IE_TGUI_COMPONENT_COORD_LIMIT, IE_TGUI_COMPONENT_COORD_LIMIT), \
+				"y" = clamp(text2num(note_params["y"]), -IE_TGUI_COMPONENT_COORD_LIMIT, IE_TGUI_COMPONENT_COORD_LIMIT), \
+				"color" = (note_params["color"] || "#f2d37a")))
+	if(islist(assembly_params["groups"]))
+		for(var/list/group_params in assembly_params["groups"])
+			var/list/comps = list()
+			if(islist(group_params["components"]))
+				for(var/member_idx in group_params["components"])
+					var/idx = text2num(member_idx)
+					if(idx >= 1 && idx <= length(assembly.assembly_components))
+						comps += WEAKREF(assembly.assembly_components[idx])
+			if(comps.len >= 2)
+				assembly.ie_groups += list(list(\
+					"name" = "[group_params["name"]]", \
+					"components" = comps, \
+					"collapsed" = (group_params["collapsed"] ? TRUE : FALSE)))
 
 	// Block 3. Wires.
 	if(blocks["wires"])
