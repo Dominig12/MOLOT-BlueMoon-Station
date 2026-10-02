@@ -25,11 +25,20 @@
 	/// Once we reach infestation beyond WOUND_INFESTATION_SEPSIS, we get this many warnings before the limb is completely paralyzed (you'd have to ignore a really bad burn for a really long time for this to happen)
 	var/strikes_to_lose_limb = 3
 
-	// BLUEMOON ADD - синтетическая конечность: тепло, оставшееся в перегоревших цепях.
-	/// Чем выше, тем опаснее чинить проводку кабелем «на горячую». Остывает со временем, быстрее на холоде.
-	var/overheat = 0
-	/// Стартовый объём оплавленной изоляции (для прогресса при осмотре/сканере)
+	// BLUEMOON ADD START - синтетическая конечность: оплавленная изоляция и перегрев цепей.
+	/// Физический объём повреждённой проводки, который чинится кабелем (аналог flesh_damage)
+	var/insulation_damage = 0
+	/// Стартовый объём изоляции для расчёта прогресса при осмотре/сканере
 	var/insulation_max = 0
+	/// Перегрев цепей — растёт, пока проводка повреждена и не охлаждается; опасен, но уменьшается холодом/починкой (восстанавливаемо)
+	var/overheat = 0
+	/// Скорость роста перегрева по тяжести ожога (аналог infestation_rate)
+	var/overheat_rate = 0
+	/// Наногель нанесён — постепенно восстанавливает проводку, пока не исчерпается
+	var/nanogel_active = FALSE
+	/// Оставшийся ресурс наногеля (тики постепенного восстановления)
+	var/nanogel_potency = 0
+	// BLUEMOON ADD END
 
 /datum/wound/burn/wound_injury(datum/wound/burn/old_wound = null)
 	. = ..()
@@ -37,21 +46,9 @@
 /datum/wound/burn/handle_process()
 	. = ..()
 
-	// BLUEMOON EDIT - ожог синтетической конечности это оплавленная изоляция (flesh_damage),
-	// которая восстанавливается кабелем через reinsulate(). Отдельной системы лечения нет,
-	// и рана не претендует ни на сварку, ни на мази/сетку, чтобы не конфликтовать с порезами
-	// и починкой обшивки сваркой.
+	// Синтетическая конечность обрабатывается отдельно от органики
 	if(limb.is_robotic_limb())
-		if(flesh_damage <= 0)
-			to_chat(victim, "<span class='green'>Повреждённая проводка на [limb.ru_name_v] восстановлена!</span>")
-			qdel(src)
-			return
-		// Перегретые цепи остывают со временем, быстрее на холоде/в космосе.
-		if(overheat > 0)
-			var/cool_rate = (victim.bodytemperature < (BODYTEMP_NORMAL - 10)) ? 0.3 : 0.15
-			overheat = max(0, overheat - cool_rate)
-			if(overheat <= 0)
-				to_chat(victim, "<span class='notice'>Перегретые цепи на [limb.ru_name_v] остыли. Теперь проводку можно безопасно восстанавливать кабелем.</span>")
+		handle_process_synthetic()
 		return
 
 	// Труп с инфекцией не борется: заражение - это реакция живых тканей. Лечение при этом
@@ -147,18 +144,103 @@
 						victim.gain_trauma(sepsis)
 				strikes_to_lose_limb--
 
+/// Обработка ожога синтетической конечности: перегрев цепей растёт со временем (опасность
+/// по тяжести, как инфекция у органики), но полностью восстанавливается охлаждением и починкой.
+/datum/wound/burn/proc/handle_process_synthetic()
+	// Наногель постепенно восстанавливает проводку и слегка охлаждает цепи
+	if(nanogel_active && nanogel_potency > 0)
+		insulation_damage = max(0, insulation_damage - 0.5)
+		overheat = max(0, overheat - 0.05)
+		nanogel_potency -= 0.25
+		if(prob(4))
+			victim.visible_message("<span class='notice'>Наногель на [limb.ru_name_v] мягко светится, восстанавливая проводку.</span>")
+		if(nanogel_potency <= 0)
+			nanogel_active = FALSE
+			to_chat(victim, "<span class='notice'>Наногель на [limb.ru_name_v] полностью исчерпан.</span>")
+
+	// Починенная проводка больше не греется — конечность оживает, цепи остывают сами
+	if(insulation_damage <= 0)
+		disabling = FALSE
+		overheat = max(0, overheat - 0.5)
+		if(overheat <= 0)
+			to_chat(victim, "<span class='green'>Повреждённая проводка на [limb.ru_name_v] восстановлена!</span>")
+			qdel(src)
+		return
+
+	// Холод остужает повреждённые цепи, комнатный жар — продолжает разогревать их.
+	if(victim.bodytemperature < (BODYTEMP_NORMAL - 10))
+		overheat = max(0, overheat - 0.3)
+	else
+		overheat = min(6, overheat + overheat_rate)
+
+	// Мёртвый синтетик не коротит дальше: гейт ниже по образцу органики
+	var/reacting = !victim_appears_dead()
+	if(!reacting)
+		return
+
+	// Перегрев отключает конечность, но это обратимо: остыла — снова слушается
+	disabling = (overheat >= 4)
+
+	switch(overheat)
+		if(0 to 1)
+			// стабильно, можно спокойно чинить кабелем
+		if(1 to 2)
+			if(prob(12))
+				victim.visible_message("<span class='warning'>Из [limb.ru_name_v] персонажа [victim] пробегает слабая искра.</span>", "<span class='warning'>Вы чувствуете лёгкое покалывание в [limb.ru_name_v].</span>")
+				do_sparks(rand(3, 5), FALSE, victim.loc)
+		if(2 to 4)
+			if(prob(15))
+				victim.adjustFireLoss(0.3)
+				do_sparks(rand(5, 8), FALSE, victim.loc)
+			if(prob(10))
+				to_chat(victim, "<span class='warning'>Сервоприводы [limb.ru_name_v] работают нестабильно из-за перегрева.</span>")
+		if(4 to INFINITY)
+			if(prob(25))
+				victim.adjustFireLoss(0.6)
+				do_sparks(rand(6, 10), FALSE, victim.loc)
+			if(prob(10))
+				victim.visible_message("<span class='danger'>Из [limb.ru_name_v] персонажа [victim] вырывается сноп искр!</span>", "<span class='userdanger'>Системы [limb.ru_name_v] аварийно отключаются от перегрева!</span>")
+
+/// Описание проводки при осмотре синтетической конечности
+/datum/wound/burn/proc/get_examine_description_synthetic(mob/user)
+	var/insulation_left = insulation_max > 0 ? (insulation_damage / insulation_max) : 0
+	var/wire_state
+	if(insulation_left <= 0.25)
+		wire_state = "проводка почти полностью выгорела"
+	else if(insulation_left <= 0.6)
+		wire_state = "проводка сильно оплавлена"
+	else
+		wire_state = "проводка частично оплавлена"
+	var/heat_state
+	if(overheat >= 4)
+		heat_state = "<span class='danger'>из контактов бьют снопы искр от перегрева</span>"
+	else if(overheat > 1)
+		heat_state = "<span class='warning'>контакты ещё искрят от перегрева</span>"
+	else
+		heat_state = "<span class='notice'>цепи уже остыли</span>"
+	return "<B>[victim.ru_ego(TRUE)] [limb.ru_name] [wire_state], [heat_state].</B>"
+
+/// Показания сканера для синтетической конечности
+/datum/wound/burn/proc/get_scanner_description_synthetic(mob/user)
+	. = "Тип: [ru_name]\nТяжесть: [severity_text()]\n"
+	. += "<div class='ml-3'>"
+	. += "Повреждение проводки: [round(insulation_damage, 0.1)] ед.\n"
+	. += "Перегрев цепей: [round(overheat, 0.1)]/6 ед.\n"
+	if(nanogel_active)
+		. += "Наногель: <span class='notice'>АКТИВЕН ([round(nanogel_potency, 0.1)] ед.)</span>\n"
+	if(overheat >= 4)
+		. += "Состояние: <span class='danger'>АВАРИЙНОЕ — конечность отключается, высокий нагрев.</span>\n"
+	else if(overheat > 1)
+		. += "Состояние: <span class='warning'>ПЕРЕГРЕВ — возможны искры и разряды при починке.</span>\n"
+	else
+		. += "Состояние: <span class='green'>СТАБИЛЬНО — безопасно восстанавливать кабелем.</span>\n"
+	. += "Рекомендуемое лечение: [treat_text]\n"
+	. += "Остудите конечность (холод/космос), затем восстановите провода кабелем.\n"
+	. += "</div>"
+
 /datum/wound/burn/get_examine_description(mob/user)
 	if(limb.is_robotic_limb())
-		var/insulation_left = insulation_max > 0 ? (flesh_damage / insulation_max) : 0
-		var/wire_state
-		if(insulation_left <= 0.25)
-			wire_state = "проводка почти полностью выгорела"
-		else if(insulation_left <= 0.6)
-			wire_state = "проводка сильно оплавлена"
-		else
-			wire_state = "проводка частично оплавлена"
-		var/heat_state = overheat > 0 ? "<span class='warning'>контакты всё ещё искрят от перегрева</span>" : "<span class='notice'>цепи уже остыли</span>"
-		return "<B>[victim.ru_ego(TRUE)] [limb.ru_name] [wire_state], [heat_state].</B>"
+		return get_examine_description_synthetic(user)
 
 	if(strikes_to_lose_limb <= 0)
 		return "<span class='deadsay'><B>[victim.ru_ego(TRUE)] [limb.ru_name] отмерла целиком.</B></span>"
@@ -193,17 +275,7 @@
 
 /datum/wound/burn/get_scanner_description(mob/user)
 	if(limb.is_robotic_limb())
-		. = "Тип: [ru_name]\nТяжесть: [severity_text()]\n"
-		. += "<div class='ml-3'>"
-		. += "Осталось оплавленной изоляции: [round(flesh_damage, 0.1)] ед.\n"
-		if(overheat > 0)
-			. += "Состояние цепей: <span class='warning'>ПЕРЕГРЕТЫ ([round(overheat, 0.1)] ед.)</span> — починка кабелем «на горячую» может ударить током.\n"
-			. += "Остудите конечность (холод/космос) либо рискуйте.\n"
-		else
-			. += "Состояние цепей: <span class='green'>ОСТЫЛИ</span> — безопасно восстанавливать кабелем.\n"
-		. += "Рекомендуемое лечение: [treat_text]\n"
-		. += "</div>"
-		return
+		return get_scanner_description_synthetic(user)
 
 	if(strikes_to_lose_limb == 0)
 		var/oopsie = "Тип: [name]\nТяжесть: [severity_text()]"
@@ -284,9 +356,9 @@
 	COOLDOWN_START(I, uv_cooldown, I.uv_cooldown_length)
 
 /// Восстановление перегоревшей проводки на синтетической конечности кабелем.
-/// Пока цепи не остыли (overheat > 0), есть риск получить разряд и сорвать попытку.
+/// Пока цепи перегреты, есть риск получить разряд; успех также снимает часть перегрева.
 /datum/wound/burn/proc/reinsulate(obj/item/stack/cable_coil/I, mob/user)
-	if(flesh_damage <= 0)
+	if(insulation_damage <= 0)
 		to_chat(user, "<span class='notice'>Проводка на [limb.ru_name_v] персонажа [victim] уже восстановлена!</span>")
 		return
 	var/self_penalty_mult = (user == victim ? 1.4 : 1)
@@ -295,10 +367,10 @@
 	user.visible_message("<span class='notice'>[user] начинает восстанавливать обгоревшую проводку на [limb.ru_name_v] персонажа [victim] с помощью [I]...</span>", "<span class='notice'>Вы начинаете восстанавливать обгоревшую проводку на [user == victim ? "своей [limb.ru_name_v]" : "[limb.ru_name_v] персонажа [victim]"] с помощью [I]...</span>")
 	if(!do_after(user, treat_time, target=victim, extra_checks = CALLBACK(src, PROC_REF(still_exists))))
 		return
-	if(flesh_damage <= 0)
+	if(insulation_damage <= 0)
 		to_chat(user, "<span class='notice'>Проводка уже восстановлена!</span>")
 		return
-	if(overheat > 0 && prob(overheat * 25))
+	if(overheat > 1 && prob(overheat * 15))
 		user.visible_message("<span class='danger'>[user] задевает перегретую цепь на [limb.ru_name_v] персонажа [victim], и сноп искр бьёт в стороны!</span>", "<span class='danger'>Перегретая цепь на [user == victim ? "вашей [limb.ru_name_v]" : "[limb.ru_name_v] персонажа [victim]"] бьёт вас током — попытка сорвана!</span>")
 		do_sparks(rand(5, 9), FALSE, victim.loc)
 		limb.receive_damage(burn = 1 + severity, wound_bonus = CANT_WOUND)
@@ -306,20 +378,55 @@
 	user.visible_message("<span class='green'>[user] восстанавливает проводку на [limb.ru_name_v] персонажа [victim].</span>", "<span class='green'>Вы восстанавливаете проводку на [user == victim ? "своей [limb.ru_name_v]" : "[limb.ru_name_v] персонажа [victim]"].</span>")
 	I.use(1)
 	var/insulation_fixed = 5
-	flesh_damage = max(0, flesh_damage - insulation_fixed)
+	insulation_damage = max(0, insulation_damage - insulation_fixed)
+	overheat = max(0, overheat - 1) // починка убирает источник нагрева
 	limb.heal_damage(0, insulation_fixed, 0, TRUE, FALSE)
-	if(flesh_damage > 0)
+	if(insulation_damage > 0)
 		try_treating(I, user)
 	else
 		to_chat(user, "<span class='green'>Вы полностью восстановили проводку на [user == victim ? "своей [limb.ru_name_v]" : "[limb.ru_name_v] персонажа [victim]"].</span>")
 		qdel(src)
 
+/// Альтернатива кабелю: наногель наносится один раз и дальше постепенно восстанавливает
+/// проводку и охлаждает цепи, пока ресурс не исчерпается.
+/datum/wound/burn/proc/nanogel_treatment(obj/item/stack/medical/nanogel/I, mob/user)
+	if(nanogel_active)
+		to_chat(user, "<span class='notice'>Наногель уже работает на [limb.ru_name_v] персонажа [victim]!</span>")
+		return
+	if(insulation_damage <= 0)
+		to_chat(user, "<span class='notice'>Проводка на [limb.ru_name_v] персонажа [victim] уже восстановлена!</span>")
+		return
+	user.visible_message("<span class='notice'>[user] наносит наногель на [limb.ru_name_v] персонажа [victim]...</span>", "<span class='notice'>Вы наносите наногель на [user == victim ? "свою [limb.ru_name_v]" : "[limb.ru_name_v] персонажа [victim]"]...</span>")
+	if(!do_after(user, (user == victim ? I.self_delay : I.other_delay), target=victim, extra_checks = CALLBACK(src, PROC_REF(still_exists))))
+		return
+	if(insulation_damage <= 0)
+		to_chat(user, "<span class='notice'>Проводка уже восстановлена!</span>")
+		return
+	I.use(1)
+	nanogel_active = TRUE
+	nanogel_potency = 10
+	user.visible_message("<span class='green'>[user] завершает обработку наногелем.</span>", "<span class='green'>Вы завершаете обработку наногелем.</span>")
+	victim.visible_message("<span class='notice'>Наногель проникает в оплавленную проводку на [limb.ru_name_v] и начинает постепенное восстановление.</span>")
+
+/// Обработка лечения синтетической конечности (отдельно от органики)
+/datum/wound/burn/proc/treat_synthetic(obj/item/I, mob/user)
+	if(istype(I, /obj/item/stack/cable_coil))
+		reinsulate(I, user)
+	else if(istype(I, /obj/item/stack/medical/nanogel))
+		nanogel_treatment(I, user)
+	else
+		to_chat(user, "<span class='warning'>Проводку синтетической конечности восстанавливают кабелем или наногелем.")
+
+/// Пока наногель уже работает, не перехватываем его — иначе он не достанется другой ране
+/// (например, повреждению гидравлики) или штатной обработке внутренних порогов.
+/datum/wound/burn/try_treating(obj/item/I, mob/user)
+	if(limb.is_robotic_limb() && istype(I, /obj/item/stack/medical/nanogel) && nanogel_active)
+		return FALSE
+	return ..()
+
 /datum/wound/burn/treat(obj/item/I, mob/user)
 	if(limb.is_robotic_limb())
-		if(istype(I, /obj/item/stack/cable_coil))
-			reinsulate(I, user)
-		else
-			to_chat(user, "<span class='warning'>Проводку синтетической конечности восстанавливают кабелем.</span>")
+		treat_synthetic(I, user)
 		return
 	if(!check_armor_for_treatment(I, user))
 		return
@@ -371,13 +478,15 @@
 		ru_name = "Повреждение изоляции проводки"
 		ru_name_r = "повреждения изоляции проводки"
 		desc = "Изоляция проводов частично оплавлена, видны оголённые контакты."
-		treat_text = "Восстановить обгоревшие провода кабелем."
+		treat_text = "Восстановить провода кабелем или нанести наногель для постепенного восстановления."
 		examine_desc = "оплавлена, видны оголённые провода"
 		occur_text = "шипит от перегрева, изоляция плавится"
 		infestation_rate = 0
-		treatable_by = list(/obj/item/stack/cable_coil)
-		overheat = 1
+		treatable_by = list(/obj/item/stack/cable_coil, /obj/item/stack/medical/nanogel)
+		insulation_damage = flesh_damage
 		insulation_max = flesh_damage
+		overheat = 1
+		overheat_rate = 0.01
 
 	return ..()
 // BLUEMOON ADD END
@@ -406,13 +515,15 @@
 		ru_name = "Критическое повреждение проводки"
 		ru_name_r = "критического повреждения проводки"
 		desc = "Проводка сильно оплавлена, частые короткие замыкания."
-		treat_text = "Заменить обгоревшие провода кабелем."
+		treat_text = "Заменить провода кабелем или нанести наногель для постепенного восстановления."
 		examine_desc = "обуглена, из трещин видны искрящие провода"
 		occur_text = "вспыхивает короткими замыканиями, разбрызгивая расплавленную изоляцию"
 		infestation_rate = 0
-		treatable_by = list(/obj/item/stack/cable_coil)
-		overheat = 2
+		treatable_by = list(/obj/item/stack/cable_coil, /obj/item/stack/medical/nanogel)
+		insulation_damage = flesh_damage
 		insulation_max = flesh_damage
+		overheat = 2
+		overheat_rate = 0.02
 
 	return ..()
 // BLUEMOON ADD END
@@ -442,13 +553,15 @@
 		ru_name = "Полный отказ проводки"
 		ru_name_r = "полного отказа проводки"
 		desc = "Проводка выгорела, цепь конечности нестабильна."
-		treat_text = "Полностью заменить перегоревшую проводку кабелем."
+		treat_text = "Полностью заменить проводку кабелем или нанести наногель для постепенного восстановления."
 		examine_desc = "представляет собой обгоревший клубок проводов"
 		occur_text = "взрывается каскадом коротких замыканий, разбрасывая искры"
 		infestation_rate = 0
-		treatable_by = list(/obj/item/stack/cable_coil)
-		overheat = 3
+		treatable_by = list(/obj/item/stack/cable_coil, /obj/item/stack/medical/nanogel)
+		insulation_damage = flesh_damage
 		insulation_max = flesh_damage
+		overheat = 3
+		overheat_rate = 0.04
 
 	return ..()
 // BLUEMOON ADD END
