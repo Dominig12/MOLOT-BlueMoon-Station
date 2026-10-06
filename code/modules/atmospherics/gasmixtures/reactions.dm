@@ -293,7 +293,7 @@
 		var/plasma_moles = air.get_moles(GAS_PLASMA)
 		var/oxygen_moles = air.get_moles(GAS_O2)
 		oxygen_burn_rate = OXYGEN_BURN_RATE_BASE - temperature_scale
-		if(oxygen_moles / plasma_moles > SUPER_SATURATION_THRESHOLD) //supersaturation. Form Tritium.
+		if(oxygen_moles / (oxygen_moles + plasma_moles) > SUPER_SATURATION_THRESHOLD) //supersaturation. Form Tritium.
 			super_saturation = TRUE
 		if(oxygen_moles > plasma_moles*PLASMA_OXYGEN_FULLBURN)
 			plasma_burn_rate = (plasma_moles*temperature_scale)/PLASMA_BURN_RATE_DELTA
