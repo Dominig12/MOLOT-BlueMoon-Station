@@ -1060,14 +1060,14 @@ export const IntegratedCircuit = () => {
     };
   };
 
-  /** Протяжка миникарты: ведём рамку окна — вид едет в ту же сторону, что и курсор. */
+  /** Протяжка миникарты: панорама живьём (без commit), контент следует за курсором. */
   const handleMinimapPanBy = (worldDX: number, worldDY: number) => {
     const grab = panGrabStart.current;
     if (!grab) {
       return;
     }
-    backgroundX.current = grab.left - worldDX * grab.zoom;
-    backgroundY.current = grab.top - worldDY * grab.zoom;
+    backgroundX.current = grab.left + worldDX * grab.zoom;
+    backgroundY.current = grab.top + worldDY * grab.zoom;
     setScreenPanOverride({ x: backgroundX.current, y: backgroundY.current });
   };
 
@@ -1400,7 +1400,7 @@ export const IntegratedCircuit = () => {
             }
             onFitToView={fitToView}
             searchValue={componentsFilter}
-            onSearchChange={(value) => setComponentsFilter(value)}
+            onSearchChange={(e, value) => setComponentsFilter(value)}
           />
           <Box className="IntegratedCircuit__planeHost">
             <InfinitePlane
