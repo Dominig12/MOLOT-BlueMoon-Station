@@ -827,29 +827,6 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 		.["pin_editor"] = ie_ic_editor_payload(editor["io"], editor["is_output"])
 	else
 		.["pin_editor"] = null
-	// Заметки-аннотации
-	.["ie_notes"] = list()
-	for(var/list/note as anything in ie_notes)
-		.["ie_notes"] += list(list(\
-			"name" = note["name"], \
-			"x" = note["x"], \
-			"y" = note["y"], \
-			"color" = note["color"]))
-	// Группы нод (компоненты — как 1-based индексы в текущем порядке).
-	.["ie_groups"] = list()
-	for(var/list/grp as anything in ie_groups)
-		var/list/member_ids = list()
-		for(var/datum/weakref/wr as anything in grp["components"])
-			var/obj/item/integrated_circuit/chip = wr.resolve()
-			if(!chip)
-				continue
-			var/idx = assembly_components.Find(chip)
-			if(idx)
-				member_ids += list(idx)
-		.["ie_groups"] += list(list(\
-			"name" = grp["name"], \
-			"components" = member_ids, \
-			"collapsed" = grp["collapsed"]))
 
 /obj/item/electronic_assembly/ui_act(action, list/params)
 	. = ..()
@@ -1121,71 +1098,6 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			add_allowed_scanner(usr.ckey)
 			assembly_components.Remove(chip)
 			assembly_components.Insert(to_pos, chip)
-			. = TRUE
-		if("ie_note_add")
-			var/nx = text2num(params["x"])
-			var/ny = text2num(params["y"])
-			if(!isnum(nx) || !isnum(ny))
-				return
-			var/nname = reject_bad_name(strip_html(params["name"]), TRUE)
-			if(!nname)
-				nname = "Заметка"
-			ie_notes += list(list("name" = nname, "x" = nx, "y" = ny, "color" = "#f2d37a"))
-			. = TRUE
-		if("ie_note_update")
-			var/nidx = text2num(params["note_id"])
-			if(nidx < 1 || nidx > length(ie_notes))
-				return
-			var/list/note = ie_notes[nidx]
-			if(!isnull(params["name"]))
-				var/nname = reject_bad_name(strip_html(params["name"]), TRUE)
-				if(nname)
-					note["name"] = nname
-			if(!isnull(params["x"]))
-				note["x"] = text2num(params["x"])
-			if(!isnull(params["y"]))
-				note["y"] = text2num(params["y"])
-			. = TRUE
-		if("ie_note_delete")
-			var/nidx = text2num(params["note_id"])
-			if(nidx >= 1 && nidx <= length(ie_notes))
-				ie_notes.Cut(nidx, nidx + 1)
-			. = TRUE
-
-		// --- Группы нод ---
-		if("ie_group_create")
-			var/list/member_ids = params["components"]
-			if(!islist(member_ids))
-				return
-			var/list/comps = list()
-			for(var/cid in member_ids)
-				var/idx = text2num(cid)
-				if(idx >= 1 && idx <= length(assembly_components))
-					comps += WEAKREF(assembly_components[idx])
-			if(length(comps) < 2)
-				return
-			var/gname = reject_bad_name(strip_html(params["name"]), TRUE)
-			if(!gname)
-				gname = "Группа"
-			ie_groups += list(list("name" = gname, "components" = comps, "collapsed" = FALSE))
-			add_allowed_scanner(usr.ckey)
-			. = TRUE
-		if("ie_group_toggle")
-			var/gidx = text2num(params["group_id"])
-			if(gidx >= 1 && gidx <= length(ie_groups))
-				ie_groups[gidx]["collapsed"] = !ie_groups[gidx]["collapsed"]
-			. = TRUE
-		if("ie_group_rename")
-			var/gidx = text2num(params["group_id"])
-			if(gidx >= 1 && gidx <= length(ie_groups))
-				var/gname = reject_bad_name(strip_html(params["name"]), TRUE)
-				if(gname)
-					ie_groups[gidx]["name"] = gname
-					. = TRUE
-		if("ie_group_delete")
-			var/gidx = text2num(params["group_id"])
-			if(gidx >= 1 && gidx <= length(ie_groups))
-				ie_groups.Cut(gidx, gidx + 1)
 			. = TRUE
 		if("ie_copy_assembly_code")
 			if(!usr)

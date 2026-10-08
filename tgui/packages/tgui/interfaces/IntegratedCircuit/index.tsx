@@ -36,8 +36,6 @@ import type {
   CircuitPulse,
   GroupDragState,
   IntegratedCircuitData,
-  IntegratedCircuitGroup,
-  IntegratedCircuitNote,
   PortLocation,
   SelectedPortState,
   WireConnection,
@@ -120,19 +118,13 @@ export const IntegratedCircuit = () => {
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   /** Индекс (1-based) строки списка компонентов, над которой висит drag (подсветка). */
   const [componentDragOver, setComponentDragOver] = useState<number | null>(null);
-  /** Перетаскивание заметки (note_id, смещения). */
-  const [noteDrag, setNoteDrag] = useState<{
-    noteId: number;
-    startClientX: number;
-    startClientY: number;
-    startX: number;
-    startY: number;
-    dx: number;
-    dy: number;
-  } | null>(null);
-  /** Редактирование текста заметки (note_id + draft). */
-  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
-  const [noteDraft, setNoteDraft] = useState('');
+  /** Клиентские группы компонентов (схлопываемые коробки, без персистенции). */
+  const [groups, setGroups] = useState<{
+    id: string;
+    name: string;
+    collapsed: boolean;
+    memberIds: number[];
+  }[]>([]);
 
   const connectionsSvgRef = useRef<SVGSVGElement | null>(null);
   /** Смещали ли поле мышью с прошлого сохранённого screen_x/y (не слать move_screen на каждый mouseup). */
@@ -165,6 +157,8 @@ export const IntegratedCircuit = () => {
   const componentReorderSrc = useRef<number | null>(null);
   /** Точка начала grab-and-drag панорамы из миникарты. */
   const panGrabStart = useRef<{ left: number; top: number; zoom: number } | null>(null);
+  /** Счётчик для уникальных id групп (клиентские, не персистятся). */
+  const groupSeq = useRef(0);
 
   /** Кэш данных, зависящих от payload сервера; ключ — сам объект `data`. */
   const memoDataKey = useRef<unknown>(null);
@@ -173,8 +167,6 @@ export const IntegratedCircuit = () => {
   const memoPulseKeys = useRef<Set<string>>(new Set());
   const memoConnInputs = useRef<unknown[] | null>(null);
   const memoConnections = useRef<WireConnection[] | null>(null);
-  const memoNotes = useRef<IntegratedCircuitNote[]>([]);
-  const memoGroups = useRef<IntegratedCircuitGroup[]>([]);
 
   const getPosition = (el: HTMLElement | null): PortLocation => {
     if (!el) {
@@ -688,97 +680,28 @@ export const IntegratedCircuit = () => {
     setComponentDragOver(null);
   };
 
-  /** Создать группу из текущего выделения (сервер, персистентно). */
+  /** Создать группу из текущего выделения. */
   const handleGroupSelection = () => {
     if (selection.length < 2) {
       return;
     }
-    act('ie_group_create', { name: 'Группа', components: selection });
+    groupSeq.current += 1;
+    const id = `g${groupSeq.current}`;
+    setGroups((g) => [
+      ...g,
+      { id, name: `Группа ${g.length + 1}`, collapsed: false, memberIds: [...selection] },
+    ]);
     setSelection([]);
   };
 
-  /** Свернуть/развернуть группу (groupIndex — 1-based). */
-  const handleToggleGroup = (groupIndex: number) => {
-    act('ie_group_toggle', { group_id: groupIndex });
+  /** Свернуть/развернуть группу. */
+  const handleToggleGroup = (id: string) => {
+    setGroups((g) => g.map((gr) => (gr.id === id ? { ...gr, collapsed: !gr.collapsed } : gr)));
   };
 
-  /** Разгруппировать (удалить группу). */
-  const handleUngroup = (groupIndex: number) => {
-    act('ie_group_delete', { group_id: groupIndex });
-  };
-
-  /** Добавить заметку в центр вида. */
-  const handleAddNote = () => {
-    const svg = connectionsSvgRef.current;
-    if (!svg) {
-      return;
-    }
-    const r = svg.getBoundingClientRect();
-    const world = ieClientToCircuitCoords(r.left + r.width / 2, r.top + r.height / 2);
-    act('ie_note_add', {
-      name: 'Заметка',
-      x: Math.round(world.rel_x),
-      y: Math.round(world.rel_y),
-    });
-  };
-
-  const handleNoteMove = useStableCallback((event: MouseEvent) => {
-    setNoteDrag((d) => {
-      if (!d) {
-        return null;
-      }
-      const scale = readPlaneScale();
-      return {
-        ...d,
-        dx: (event.clientX - d.startClientX) / scale,
-        dy: (event.clientY - d.startClientY) / scale,
-      };
-    });
-  });
-
-  const handleNoteRelease = useStableCallback(() => {
-    window.removeEventListener('mousemove', handleNoteMove);
-    window.removeEventListener('mouseup', handleNoteRelease);
-    setNoteDrag((d) => {
-      if (d) {
-        act('ie_note_update', {
-          note_id: d.noteId,
-          x: Math.round(d.startX + d.dx),
-          y: Math.round(d.startY + d.dy),
-        });
-      }
-      return null;
-    });
-  });
-
-  const handleNoteMouseDown = (e: MouseEvent, noteId: number, note: IntegratedCircuitNote) => {
-    if (e.button !== MOUSE_BUTTON_LEFT) {
-      return;
-    }
-    e.stopPropagation();
-    setNoteDrag({
-      noteId,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      startX: note.x,
-      startY: note.y,
-      dx: 0,
-      dy: 0,
-    });
-    window.addEventListener('mousemove', handleNoteMove);
-    window.addEventListener('mouseup', handleNoteRelease);
-  };
-
-  const commitNoteEdit = () => {
-    if (editingNoteId === null) {
-      return;
-    }
-    const text = noteDraft.trim();
-    if (text) {
-      act('ie_note_update', { note_id: editingNoteId, name: text });
-    }
-    setEditingNoteId(null);
-    setNoteDraft('');
+  /** Разгруппировать. */
+  const handleUngroup = (id: string) => {
+    setGroups((g) => g.filter((gr) => gr.id !== id));
   };
 
   const handleNodeMouseDown = (componentId: number, event: MouseEvent) => {
@@ -828,7 +751,7 @@ export const IntegratedCircuit = () => {
     dragY: number | null,
     zoomState: number,
     selectedIds: number[],
-    groups: IntegratedCircuitGroup[],
+    groups: { collapsed: boolean; memberIds: number[] }[],
   ): WireConnection[] => {
     const connections: WireConnection[] = [];
     // Подсветка связей выделенных нод: остальные провода приглушаем.
@@ -854,7 +777,7 @@ export const IntegratedCircuit = () => {
       if (!g.collapsed) {
         continue;
       }
-      for (const id of g.components) {
+      for (const id of g.memberIds) {
         const c = components[id - 1];
         if (!c) {
           continue;
@@ -1113,8 +1036,6 @@ export const IntegratedCircuit = () => {
       window.removeEventListener('mouseup', handleNodeDragEnd);
       window.removeEventListener('mousemove', handleMarqueeMove);
       window.removeEventListener('mouseup', handleMarqueeEnd);
-      window.removeEventListener('mousemove', handleNoteMove);
-      window.removeEventListener('mouseup', handleNoteRelease);
       if (locationRaf.current !== null) {
         cancelAnimationFrame(locationRaf.current);
         locationRaf.current = null;
@@ -1131,8 +1052,6 @@ export const IntegratedCircuit = () => {
     handleNodeDragEnd,
     handleMarqueeMove,
     handleMarqueeEnd,
-    handleNoteMove,
-    handleNoteRelease,
   ]);
 
   useEffect(() => {
@@ -1169,8 +1088,6 @@ export const IntegratedCircuit = () => {
     circuit_pulses,
     circuit_pulse_out_ref,
     circuit_pulse_in_ref,
-    ie_notes: rawNotes,
-    ie_groups: rawGroups,
   } = data;
 
   if (memoDataKey.current !== data) {
@@ -1184,12 +1101,8 @@ export const IntegratedCircuit = () => {
       circuit_pulse_out_ref,
       circuit_pulse_in_ref,
     );
-    memoNotes.current = Array.isArray(rawNotes) ? rawNotes : [];
-    memoGroups.current = Array.isArray(rawGroups) ? rawGroups : [];
   }
   const components = memoComponents.current;
-  const notes = memoNotes.current;
-  const groups = memoGroups.current;
   const portLabelByRef = memoPortLabelByRef.current;
   const pulseKeys = memoPulseKeys.current;
   latestComponents.current = components;
@@ -1264,7 +1177,7 @@ export const IntegratedCircuit = () => {
   const collapsedMemberIds = new Set<number>();
   for (const g of groups) {
     if (g.collapsed) {
-      for (const id of g.components) {
+      for (const id of g.memberIds) {
         collapsedMemberIds.add(id);
       }
     }
@@ -1420,15 +1333,14 @@ export const IntegratedCircuit = () => {
                 connections={connections}
                 svgRef={connectionsSvgRef}
                 pulseKeys={pulseKeys}>
-                {groups.map((g, gi) => {
-                  const bounds = groupFrameBounds(g.components);
+                {groups.map((g) => {
+                  const bounds = groupFrameBounds(g.memberIds);
                   if (!bounds) {
                     return null;
                   }
-                  const groupId = gi + 1;
                   return (
                     <Box
-                      key={groupId}
+                      key={g.id}
                       className="IntegratedCircuit__groupFrame"
                       position="absolute"
                       left={`${bounds.x}px`}
@@ -1445,7 +1357,7 @@ export const IntegratedCircuit = () => {
                             color="transparent"
                             compact
                             tooltip={g.collapsed ? 'Развернуть' : 'Свернуть'}
-                            onClick={() => handleToggleGroup(groupId)}
+                            onClick={() => handleToggleGroup(g.id)}
                           />
                         </Stack.Item>
                         <Stack.Item grow={1}>
@@ -1457,7 +1369,7 @@ export const IntegratedCircuit = () => {
                             color="transparent"
                             compact
                             tooltip="Разгруппировать"
-                            onClick={() => handleUngroup(groupId)}
+                            onClick={() => handleUngroup(g.id)}
                           />
                         </Stack.Item>
                       </Stack>
@@ -1499,93 +1411,21 @@ export const IntegratedCircuit = () => {
                       );
                     })()
                 )}
-                {notes.map((note, ni) => {
-                  const noteId = ni + 1;
-                  const dragging = noteDrag?.noteId === noteId;
-                  const nx = dragging ? note.x + (noteDrag!.dx) : note.x;
-                  const ny = dragging ? note.y + (noteDrag!.dy) : note.y;
-                  return (
-                    <Box
-                      key={`note-${noteId}`}
-                      className="IntegratedCircuit__note"
-                      position="absolute"
-                      left={`${nx}px`}
-                      top={`${ny}px`}
-                      backgroundColor={note.color || '#f2d37a'}
-                      onMouseDown={(e) => handleNoteMouseDown(e, noteId, note)}>
-                      {editingNoteId === noteId ? (
-                        <Input
-                          autoFocus
-                          fluid
-                          value={noteDraft}
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onChange={(e, val) => setNoteDraft(val)}
-                          onBlur={commitNoteEdit}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.currentTarget.blur();
-                            }
-                            if (e.key === 'Escape') {
-                              setEditingNoteId(null);
-                            }
-                          }}
-                        />
-                      ) : (
-                        <Box
-                          className="IntegratedCircuit__noteText"
-                          onDoubleClick={(e) => {
-                            e.stopPropagation();
-                            setEditingNoteId(noteId);
-                            setNoteDraft(note.name);
-                          }}>
-                          {note.name}
-                        </Box>
-                      )}
-                      <Button
-                        className="IntegratedCircuit__noteDelete"
-                        icon="times"
-                        color="transparent"
-                        compact
-                        tooltip="Удалить заметку"
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          act('ie_note_delete', { note_id: noteId });
-                        }}
-                      />
-                    </Box>
-                  );
-                })}
               </Connections>
             </InfinitePlane>
-            {ieAssemblyUi && (
+            {selection.length >= 2 && (
               <Box
-                className="IntegratedCircuit__floatingActions"
+                className="IntegratedCircuit__groupAction"
                 position="absolute"
                 right="0.5rem"
                 top="4.6rem"
                 style={{ zIndex: 6 }}>
-                <Stack vertical>
-                  <Stack.Item>
-                    <Button
-                      icon="sticky-note"
-                      color="transparent"
-                      tooltip="Добавить заметку"
-                      onClick={handleAddNote}>
-                      Заметка
-                    </Button>
-                  </Stack.Item>
-                  {selection.length >= 2 && (
-                    <Stack.Item>
-                      <Button
-                        icon="object-group"
-                        color="transparent"
-                        onClick={handleGroupSelection}>
-                        Сгруппировать ({selection.length})
-                      </Button>
-                    </Stack.Item>
-                  )}
-                </Stack>
+                <Button
+                  icon="object-group"
+                  color="transparent"
+                  onClick={handleGroupSelection}>
+                  Сгруппировать ({selection.length})
+                </Button>
               </Box>
             )}
             {componentCount === 0 && (
