@@ -399,7 +399,7 @@
 	switch(verb_name)
 		if("help", "?")
 			log_line("net \[id\] — сети / открыть сеть; sel <адрес> — выбрать узел; run <команда> — выполнить; \
-				breach \[адрес | id сети\] — взлом; scan — сканировать выбранный; ls — локальные файлы; clear — очистить экран")
+				breach \[адрес | id сети\] — взлом; scan — сканировать; ping \[адрес\] — задержка; ls — локальные файлы; clear — очистить экран")
 		if("clear")
 			log.Cut()
 		if("net")
@@ -425,6 +425,9 @@
 			run_command(selected_node(), lowertext(argument))
 		if("scan")
 			run_command(selected_node(), "scan")
+		if("ping")
+			var/datum/component/netrun_node/pnode = argument ? SSnetrun.find_node(argument) : selected_node()
+			run_command(pnode, "ping")
 		if("breach")
 			if(argument && SSnetrun.networks[lowertext(argument)])
 				start_breach("network", lowertext(argument))

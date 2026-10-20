@@ -13,6 +13,8 @@
 	var/danger = FALSE
 	/// Работает даже когда узел офлайн (например, диагностика)
 	var/works_offline = FALSE
+	/// Выполняется без задержки маршрута (ping сам измеряет задержку)
+	var/ignores_latency = FALSE
 
 /// Выполнить команду. Возвращает текст результата или null при неудаче (причину пишет в консоль сам)
 /datum/netrun_command/proc/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg)
@@ -55,6 +57,21 @@
 	if(length(node.entities) && console.node_level(node) >= NETRUN_ACCESS_USER)
 		lines += "Обнаружены резидентные процессы: [length(node.entities)]"
 	return jointext(lines, "\n")
+
+/datum/netrun_command/ping
+	id = "ping"
+	name = "Ping"
+	desc = "Измерить задержку маршрута до узла."
+	access = NETRUN_ACCESS_GUEST
+	trace = 0
+	icon = "stopwatch"
+	works_offline = TRUE
+	ignores_latency = TRUE
+
+/datum/netrun_command/ping/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg)
+	var/lat = console.latency_to(node)
+	var/route = (node == console.jack) ? "прямое подключение" : (lat <= 2 ? "локальная сеть" : "через реле NTnet")
+	return "[node.address]: [lat * 100]мс ([route])"
 
 /datum/netrun_command/reboot
 	id = "reboot"

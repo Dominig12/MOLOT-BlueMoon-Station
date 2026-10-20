@@ -86,3 +86,6 @@
 
 /datum/netrun_console/circuit/add_trace(amount)
 	return
+
+/datum/netrun_console/circuit/latency_to(datum/component/netrun_node/node)
+	return 0

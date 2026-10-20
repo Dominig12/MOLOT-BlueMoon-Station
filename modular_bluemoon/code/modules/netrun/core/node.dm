@@ -21,7 +21,7 @@
 	if(!isatom(parent))
 		return COMPONENT_INCOMPATIBLE
 	src.node_type = node_type
-	src.command_ids = list("scan") + (command_ids || list())
+	src.command_ids = list("scan", "ping") + (command_ids || list())
 	base_security = security
 	src.required_access = required_access
 	src.storage_capacity = storage_capacity

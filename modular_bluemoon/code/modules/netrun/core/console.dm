@@ -179,18 +179,54 @@
 		log_line("[node.address]: недостаточно прав для «[command.name]».", "bad")
 		return FALSE
 	var/illegal = legit_node_level(node) < command.access
-	log_line("> [command_id] @ [node.address]")
 	node.touch()
+	// Задержка маршрута: прямое/близкое подключение - почти мгновенно, дальнее через реле - с лагом.
+	var/lat = command.ignores_latency ? 0 : latency_to(node)
+	if(lat <= 0)
+		log_line("> [command_id] @ [node.address]")
+		do_command(node, command, command_id, illegal)
+	else
+		log_line("> [command_id] @ [node.address] (отправка, ~[lat * 100]мс)")
+		next_command = world.time + max(0.5 SECONDS, lat)
+		addtimer(CALLBACK(src, PROC_REF(do_command), node, command, command_id, illegal), lat)
+	return TRUE
+
+/// Собственно выполнение команды - может вызываться с задержкой маршрута
+/datum/netrun_console/proc/do_command(datum/component/netrun_node/node, datum/netrun_command/command, command_id, illegal)
+	if(QDELETED(src) || QDELETED(node) || !command)
+		return
+	if(is_locked())
+		return
+	if(!command.works_offline && !node.is_online(node != jack))
+		log_line("[node.address]: узел не отвечает.", "bad")
+		return
 	var/result = command.execute(node, src, netrun_command_arg(command_id))
 	if(isnull(result))
-		return FALSE
+		return
 	log_line(result, illegal ? "average" : "good")
 	var/atom/target = node.parent
 	log_game("NETRUN: [key_name(operator)] ([origin]) [command.id] -> [node.get_name()] [node.address][illegal ? " (взлом)" : ""] [AREACOORD(target)]")
 	node.network?.add_log("[log_source()] -> [node.address]: [command.name][illegal ? " (без авторизации)" : ""]", illegal && command.access >= NETRUN_ACCESS_ROOT)
 	if(illegal)
 		add_trace(command.trace * node.get_security())
-	return TRUE
+
+/// Задержка маршрута до узла в децисекундах: 0 - прямое/рядом, больше - дальше и через реле
+/datum/netrun_console/proc/latency_to(datum/component/netrun_node/node)
+	if(!node || node == jack)
+		return 0
+	var/turf/here = get_turf(host)
+	var/turf/there = get_turf(node.parent)
+	if(!here || !there)
+		return 2
+	var/wired = (node.network in home_networks()) && !wireless
+	if(wired)
+		return here.z == there.z ? clamp(round(get_dist(here, there) / 40), 0, 2) : 3
+	var/lat = 3 // прыжок через квантовое реле
+	if(here.z == there.z)
+		lat += clamp(round(get_dist(here, there) / 25), 0, 4)
+	else
+		lat += 5
+	return clamp(lat, 1, 15)
 
 /datum/netrun_console/proc/log_source()
 	if(operator && !wireless)
