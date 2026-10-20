@@ -72,7 +72,16 @@ export const NodePanel = () => {
       title={selected.name}
       fill
       scrollable
-      buttons={<Icon name={NODE_ICONS[selected.type] || 'circle'} />}
+      buttons={
+        <Box inline>
+          <Button
+            icon="window-maximize"
+            tooltip="Открыть окном"
+            onClick={() => act('window_open', { address: selected.address })}
+          />
+          <Icon name={NODE_ICONS[selected.type] || 'circle'} ml={1} />
+        </Box>
+      }
     >
       <LabeledList>
         <LabeledList.Item label="Адрес">

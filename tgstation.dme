@@ -5353,6 +5353,7 @@
 #include "modular_bluemoon\code\modules\netrun\integration\research.dm"
 #include "modular_bluemoon\code\modules\netrun\items\devices.dm"
 #include "modular_bluemoon\code\modules\netrun\machines\terminal.dm"
+#include "modular_bluemoon\code\modules\netrun\machines\windows.dm"
 #include "modular_bluemoon\code\modules\netrun\targets\airlock.dm"
 #include "modular_bluemoon\code\modules\netrun\targets\audio.dm"
 #include "modular_bluemoon\code\modules\netrun\targets\computers.dm"

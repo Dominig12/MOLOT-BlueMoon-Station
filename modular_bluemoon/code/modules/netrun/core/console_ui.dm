@@ -84,6 +84,8 @@
 		data["entity"] = entity_data()
 		data["chat"] = chat_data()
 		data["cli"] = list("verbs" = cli_verbs())
+		data["windows"] = windows_payload()
+		data["window"] = active_window ? window_payload() : null
 		return data
 	data["web"] = null
 
@@ -139,6 +141,8 @@
 	data["entity"] = entity_data()
 	data["chat"] = chat_data()
 	data["cli"] = list("verbs" = cli_verbs())
+	data["windows"] = windows_payload()
+	data["window"] = active_window ? window_payload() : null
 	return data
 
 /// Дополнительные кнопки носителя (выдернуть провод, вынуть шард, вернуться в тело...)
@@ -216,6 +220,7 @@
 	operator = ui.user
 	switch(action)
 		if("view_network")
+			active_window = null
 			if(params["id"] == "web")
 				if(web_browsing())
 					viewed_network_id = "web"
@@ -228,6 +233,19 @@
 			var/datum/component/netrun_node/node = SSnetrun.find_node(params["address"])
 			if(node && node_level(node) >= NETRUN_ACCESS_GUEST)
 				selected_address = node.address
+			return TRUE
+		if("window_open")
+			open_window(params["address"])
+			return TRUE
+		if("window_close")
+			close_window(params["address"])
+			return TRUE
+		if("window_focus")
+			if(params["address"] in windows)
+				active_window = params["address"]
+			return TRUE
+		if("window_act")
+			window_act(params["address"], params["waction"], params)
 			return TRUE
 		if("command")
 			run_command(selected_node(), params["id"])

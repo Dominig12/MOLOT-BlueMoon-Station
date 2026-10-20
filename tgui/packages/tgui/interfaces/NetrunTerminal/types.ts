@@ -125,6 +125,38 @@ export type NetrunData = {
   chat: { handle: string; messages: string[] };
   web: WebState | null;
   cli?: { verbs: { id: string; args: string; desc: string }[] };
+  windows: WindowTab[];
+  window: MachineWindow | null;
+};
+
+export type WindowTab = {
+  address: string;
+  title: string;
+  type: string;
+  online: boolean;
+};
+
+export type WindowAction = {
+  id: string;
+  name: string;
+  icon: string;
+  access: number;
+  danger?: boolean;
+  desc?: string;
+  allowed: boolean;
+};
+
+export type MachineWindow = {
+  address: string;
+  title: string;
+  type: string;
+  online: boolean;
+  access: number;
+  fields: string[];
+  commands: NetCommand[];
+  extra: WindowAction[];
+  feed: string[] | null;
+  watching: boolean;
 };
 
 export type WebSite = { id: string; domain: string; title: string };

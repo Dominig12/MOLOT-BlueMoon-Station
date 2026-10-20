@@ -36,6 +36,12 @@
 	/// Мост «сайты в терминале»: выбранный сайт NTnet и страница
 	var/web_site_id
 	var/web_slug
+	/// Открытые окна машин (адреса узлов) и активное окно
+	var/list/windows = list()
+	var/active_window
+	/// Просмотр камеры: кто смотрит и через какой узел
+	var/mob/watch_viewer
+	var/datum/component/netrun_node/watch_node
 	/// Кеш на время одного ui_data: доступы оператора и уровни сетей
 	var/list/access_cache
 	var/list/network_level_cache
@@ -48,6 +54,7 @@
 	log_line("Сеанс открыт.", "good")
 
 /datum/netrun_console/Destroy()
+	stop_watch()
 	SSnetrun.consoles -= src
 	QDEL_NULL(breach)
 	QDEL_LIST(storage)
@@ -247,6 +254,9 @@
 	node_access.Cut()
 	network_access.Cut()
 	QDEL_NULL(breach)
+	stop_watch()
+	windows.Cut()
+	active_window = null
 	var/where = get_area_name(host, TRUE) || "неизвестно"
 	log_line("ВАС ОТСЛЕДИЛИ. Соединение разорвано.", "bad")
 	SSnetrun.ntnet_log("Нарушитель отслежен: точка [origin], район: [where].", TRUE)
@@ -267,6 +277,8 @@
 	if(jack && !jack_valid())
 		log_line("Провод выдернут.", "average")
 		set_jack(null)
+	if(watch_node && (QDELETED(watch_node) || !watch_node.is_online() || watch_viewer != operator || is_locked()))
+		stop_watch()
 
 // MARK: Взлом
 

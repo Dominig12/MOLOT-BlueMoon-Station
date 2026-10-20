@@ -8,6 +8,7 @@ import { NodePanel } from './NodePanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
 import { ACCESS_COLORS, ACCESS_NAMES, NetrunData, THEME } from './types';
 import { WebPanel } from './WebPanel';
+import { WindowPanel } from './WindowPanel';
 
 const ORIGIN_NAMES: Record<string, string> = {
   terminal: 'Проводной терминал',
@@ -21,7 +22,7 @@ const ORIGIN_NAMES: Record<string, string> = {
 /** Общее содержимое окна - используется и терминалом, и NTOS-программой */
 export const NetrunContent = () => {
   const { act, data } = useBackend<NetrunData>();
-  const { view, networks, breach, web } = data;
+  const { view, networks, breach, web, windows, window: machineWindow } = data;
   const [mode, setMode] = useState<'topology' | 'lan'>(view ? 'lan' : 'topology');
   const [bottom, setBottom] = useState<'console' | 'chat'>('console');
   return (
@@ -64,7 +65,33 @@ export const NetrunContent = () => {
             </Tabs.Tab>
           ))}
       </Tabs>
-      {web ? (
+      {windows.length > 0 && (
+        <Tabs>
+          {windows.map((wtab) => (
+            <Tabs.Tab
+              key={wtab.address}
+              icon={wtab.online ? undefined : 'triangle-exclamation'}
+              selected={machineWindow?.address === wtab.address}
+              onClick={() => act('window_focus', { address: wtab.address })}
+            >
+              {wtab.title.length > 12 ? wtab.title.slice(0, 11) + '…' : wtab.title}
+              <Icon
+                name="xmark"
+                ml={0.5}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  act('window_close', { address: wtab.address });
+                }}
+              />
+            </Tabs.Tab>
+          ))}
+        </Tabs>
+      )}
+      {machineWindow ? (
+        <Box style={{ minHeight: '360px' }}>
+          <WindowPanel window={machineWindow} />
+        </Box>
+      ) : web ? (
         <Box style={{ minHeight: '360px' }}>
           <WebPanel web={web} />
         </Box>
