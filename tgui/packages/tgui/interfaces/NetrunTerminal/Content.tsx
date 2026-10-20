@@ -7,6 +7,7 @@ import { LanMap, TopologyMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
 import { ACCESS_COLORS, ACCESS_NAMES, NetrunData, THEME } from './types';
+import { WebPanel } from './WebPanel';
 
 const ORIGIN_NAMES: Record<string, string> = {
   terminal: 'Проводной терминал',
@@ -20,7 +21,7 @@ const ORIGIN_NAMES: Record<string, string> = {
 /** Общее содержимое окна - используется и терминалом, и NTOS-программой */
 export const NetrunContent = () => {
   const { act, data } = useBackend<NetrunData>();
-  const { view, networks, breach } = data;
+  const { view, networks, breach, web } = data;
   const [mode, setMode] = useState<'topology' | 'lan'>(view ? 'lan' : 'topology');
   const [bottom, setBottom] = useState<'console' | 'chat'>('console');
   return (
@@ -47,7 +48,11 @@ export const NetrunContent = () => {
           .map((net) => (
             <Tabs.Tab
               key={net.id}
-              selected={mode === 'lan' && view?.id === net.id}
+              selected={
+                net.id === 'web'
+                  ? !!web
+                  : mode === 'lan' && !web && view?.id === net.id
+              }
               color={net.access > 0 ? undefined : 'grey'}
               onClick={() => {
                 act('view_network', { id: net.id });
@@ -59,6 +64,11 @@ export const NetrunContent = () => {
             </Tabs.Tab>
           ))}
       </Tabs>
+      {web ? (
+        <Box style={{ minHeight: '360px' }}>
+          <WebPanel web={web} />
+        </Box>
+      ) : (
       <Stack>
         <Stack.Item grow basis={0}>
           {breach ? (
@@ -91,6 +101,7 @@ export const NetrunContent = () => {
           <NodePanel />
         </Stack.Item>
       </Stack>
+      )}
       <Stack mt={1}>
         <Stack.Item grow basis={0}>
           <Tabs>

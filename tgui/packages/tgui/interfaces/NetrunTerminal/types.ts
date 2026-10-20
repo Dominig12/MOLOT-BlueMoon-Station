@@ -118,6 +118,27 @@ export type NetrunData = {
   breach: MatrixState | null;
   entity: EntityState | null;
   chat: { handle: string; messages: string[] };
+  web: WebState | null;
+};
+
+export type WebSite = { id: string; domain: string; title: string };
+
+export type WebState = {
+  available: boolean;
+  sites: WebSite[];
+  site: {
+    id: string;
+    domain: string;
+    title: string;
+    pages: { slug: string; title: string }[];
+  } | null;
+  page: {
+    slug: string;
+    title: string;
+    text: string | null;
+    loading: boolean;
+    failed: boolean;
+  } | null;
 };
 
 export const ACCESS_NAMES = ['НЕТ', 'ГОСТЬ', 'ПОЛЬЗОВАТЕЛЬ', 'ROOT'];

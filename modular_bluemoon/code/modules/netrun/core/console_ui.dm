@@ -53,7 +53,32 @@
 			"access" = network_level(network),
 			"nodes" = length(network.nodes),
 		))
+	if(web_browsing() && has_uplink() && SSntnet.is_enabled())
+		networks += list(list(
+			"id" = "web",
+			"name" = "NTnet — сайты",
+			"short" = "WEB",
+			"color" = "#5bc0de",
+			"security" = 0,
+			"isolated" = FALSE,
+			"home" = FALSE,
+			"reachable" = TRUE,
+			"access" = NETRUN_ACCESS_GUEST,
+			"nodes" = length(SSntnet.catalog),
+		))
 	data["networks"] = networks
+
+	if(viewed_network_id == "web" && web_browsing())
+		data["view"] = null
+		data["selected"] = null
+		data["web"] = web_payload()
+		data["storage"] = storage_payload()
+		data["shard"] = shard_payload()
+		data["breach"] = breach?.ui_payload()
+		data["entity"] = entity_data()
+		data["chat"] = chat_data()
+		return data
+	data["web"] = null
 
 	var/datum/netrun_network/viewed = SSnetrun.networks[viewed_network_id]
 	if(!viewed && length(homes))
@@ -99,17 +124,8 @@
 			selected["storage"] = list("used" = node.used_storage(), "capacity" = node.storage_capacity)
 	data["selected"] = selected
 
-	var/list/local = list()
-	for(var/datum/netrun_file/file as anything in storage)
-		local += list(file.ui_entry())
-	data["storage"] = list("files" = local, "used" = netrun_storage_used(storage), "capacity" = storage_capacity)
-	if(shard)
-		var/list/shard_files = list()
-		for(var/datum/netrun_file/file as anything in shard.files)
-			shard_files += list(file.ui_entry())
-		data["shard"] = list("name" = shard.name, "files" = shard_files, "used" = netrun_storage_used(shard.files), "capacity" = shard.capacity)
-	else
-		data["shard"] = null
+	data["storage"] = storage_payload()
+	data["shard"] = shard_payload()
 
 	data["breach"] = breach?.ui_payload()
 	data["entity"] = entity_data()
@@ -128,6 +144,62 @@
 /datum/netrun_console/proc/entity_data()
 	return null
 
+/datum/netrun_console/proc/storage_payload()
+	var/list/local = list()
+	for(var/datum/netrun_file/file as anything in storage)
+		local += list(file.ui_entry())
+	return list("files" = local, "used" = netrun_storage_used(storage), "capacity" = storage_capacity)
+
+/datum/netrun_console/proc/shard_payload()
+	if(!shard)
+		return null
+	var/list/shard_files = list()
+	for(var/datum/netrun_file/file as anything in shard.files)
+		shard_files += list(file.ui_entry())
+	return list("name" = shard.name, "files" = shard_files, "used" = netrun_storage_used(shard.files), "capacity" = shard.capacity)
+
+// MARK: Мост «сайты NTnet в терминале» (только чтение, данные из SSntnet)
+
+/// Можно ли с этой точки просматривать сайты NTnet
+/datum/netrun_console/proc/web_browsing()
+	return origin != NETRUN_ORIGIN_CIRCUIT
+
+/datum/netrun_console/proc/web_payload()
+	SSntnet.last_used = world.time
+	SSntnet.refresh_index()
+	var/list/sites = list()
+	for(var/site_id in SSntnet.sites)
+		var/list/site = SSntnet.sites[site_id]
+		sites += list(list("id" = site_id, "domain" = site["domain"], "title" = site["title"]))
+	var/list/payload = list(
+		"available" = SSntnet.available,
+		"sites" = sites,
+		"site" = null,
+		"page" = null,
+	)
+	var/list/site = web_site_id ? SSntnet.sites[web_site_id] : null
+	if(!site)
+		web_site_id = null
+		web_slug = null
+		return payload
+	var/list/pages = list()
+	for(var/list/page as anything in site["pages"])
+		pages += list(list("slug" = page["slug"], "title" = page["title"]))
+	payload["site"] = list("id" = web_site_id, "domain" = site["domain"], "title" = site["title"], "pages" = pages)
+	if(!web_slug)
+		return payload
+	SSntnet.request_page(web_site_id, web_slug)
+	var/cache_key = json_encode(list(web_site_id, web_slug))
+	var/list/cached = SSntnet.pages[cache_key]
+	payload["page"] = list(
+		"slug" = web_slug,
+		"title" = cached ? cached["title"] : web_slug,
+		"text" = cached ? cached["text"] : null,
+		"loading" = !cached && !SSntnet.page_failed(web_site_id, web_slug),
+		"failed" = SSntnet.page_failed(web_site_id, web_slug),
+	)
+	return payload
+
 /datum/netrun_console/ui_act(action, list/params, datum/tgui/ui, datum/ui_state/state)
 	. = ..()
 	if(.)
@@ -135,6 +207,10 @@
 	operator = ui.user
 	switch(action)
 		if("view_network")
+			if(params["id"] == "web")
+				if(web_browsing())
+					viewed_network_id = "web"
+				return TRUE
 			var/datum/netrun_network/network = SSnetrun.networks[params["id"]]
 			if(network && can_reach(network))
 				viewed_network_id = network.id
@@ -183,6 +259,21 @@
 			var/new_handle = reject_bad_name(params["handle"], allow_numbers = TRUE)
 			if(new_handle && origin != NETRUN_ORIGIN_ENTITY)
 				handle = copytext_char(new_handle, 1, 24)
+			return TRUE
+		if("web_site")
+			if(SSntnet.sites[params["id"]])
+				web_site_id = params["id"]
+				web_slug = SSntnet.has_page(web_site_id, "index") ? "index" : null
+			return TRUE
+		if("web_page")
+			if(web_site_id && SSntnet.has_page(web_site_id, params["slug"]))
+				web_slug = params["slug"]
+			return TRUE
+		if("web_back")
+			if(web_slug)
+				web_slug = null
+			else
+				web_site_id = null
 			return TRUE
 		else
 			return host_act(action, params, ui.user)

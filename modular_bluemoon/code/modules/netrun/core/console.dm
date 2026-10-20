@@ -33,6 +33,9 @@
 	/// Последний оператор - от его ID считается легальный доступ
 	var/mob/operator
 	var/next_command = 0
+	/// Мост «сайты в терминале»: выбранный сайт NTnet и страница
+	var/web_site_id
+	var/web_slug
 	/// Кеш на время одного ui_data: доступы оператора и уровни сетей
 	var/list/access_cache
 	var/list/network_level_cache
