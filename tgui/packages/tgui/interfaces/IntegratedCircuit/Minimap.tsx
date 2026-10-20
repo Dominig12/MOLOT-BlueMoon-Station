@@ -79,7 +79,10 @@ export const Minimap = (props: MinimapProps) => {
 
   const mapRef = useRef<HTMLDivElement | null>(null);
   const [view, setView] = useState<ViewRect | null>(null);
-  const dragRef = useRef<{ wx: number; wy: number; moved: boolean } | null>(null);
+  const dragRef = useRef<{
+    wx: number; wy: number; clientX: number; clientY: number; moved: boolean;
+    toWorld(cx: number, cy: number): { x: number; y: number };
+  } | null>(null);
   const toWorldRef = useRef<(cx: number, cy: number) => { x: number; y: number }>(
     () => ({ x: 0, y: 0 }),
   );
@@ -150,11 +153,13 @@ export const Minimap = (props: MinimapProps) => {
     if (!drag) {
       return;
     }
-    const local = toWorldRef.current(event.clientX, event.clientY);
+    const local = drag.toWorld(event.clientX, event.clientY);
     const dx = local.x - drag.wx;
     const dy = local.y - drag.wy;
     if (!drag.moved) {
-      if (dx * dx + dy * dy < 9) {
+      const screenDX = event.clientX - drag.clientX;
+      const screenDY = event.clientY - drag.clientY;
+      if (screenDX * screenDX + screenDY * screenDY < 9) {
         return;
       }
       drag.moved = true;
@@ -163,6 +168,7 @@ export const Minimap = (props: MinimapProps) => {
   });
 
   const handleDragEnd = useStableCallback((event: MouseEvent) => {
+    handleDragMove(event);
     window.removeEventListener('mousemove', handleDragMove);
     window.removeEventListener('mouseup', handleDragEnd);
     const drag = dragRef.current;
@@ -178,6 +184,12 @@ export const Minimap = (props: MinimapProps) => {
       onCenter(local.x, local.y, zoomRef.current || 1);
     }
   });
+
+  useEffect(() => () => {
+    window.removeEventListener('mousemove', handleDragMove);
+    window.removeEventListener('mouseup', handleDragEnd);
+    dragRef.current = null;
+  }, [handleDragMove, handleDragEnd]);
 
   if (!world) {
     return null;
@@ -212,8 +224,12 @@ export const Minimap = (props: MinimapProps) => {
       return;
     }
     e.preventDefault();
+    e.stopPropagation();
     const local = toWorldRef.current(e.clientX, e.clientY);
-    dragRef.current = { wx: local.x, wy: local.y, moved: false };
+    dragRef.current = {
+      wx: local.x, wy: local.y, clientX: e.clientX, clientY: e.clientY,
+      moved: false, toWorld: toWorldRef.current,
+    };
     onPanBegin();
     window.addEventListener('mousemove', handleDragMove);
     window.addEventListener('mouseup', handleDragEnd);
@@ -223,6 +239,7 @@ export const Minimap = (props: MinimapProps) => {
     <div
       ref={mapRef}
       className="IntegratedCircuit__minimap"
+      title="Клик — перейти к месту на схеме. Перетаскивание — переместить область просмотра."
       style={{ width: MAP_W, height: MAP_H }}
       onMouseDown={handleMouseDown}>
       {view && (

@@ -9,6 +9,7 @@ const ZOOM_MIN_VAL = 0.1;
 const ZOOM_MAX_VAL = 1.5;
 
 const ZOOM_INCREMENT = 0.1;
+const clampZoom = (value) => Math.max(ZOOM_MIN_VAL, Math.min(ZOOM_MAX_VAL, value));
 
 /** Snap to discrete steps; repeated +/- avoids float drift (e.g. 0.9999999999999997). */
 const ZOOM_STEP_COUNT = Math.round((ZOOM_MAX_VAL - ZOOM_MIN_VAL) / ZOOM_INCREMENT);
@@ -20,8 +21,8 @@ const snapZoom = (value) => {
 };
 
 export class InfinitePlane extends Component {
-  constructor() {
-    super();
+  constructor(props) {
+    super(props);
 
     this.planeRootRef = createRef();
 
@@ -34,7 +35,7 @@ export class InfinitePlane extends Component {
       lastLeft: 0,
       lastTop: 0,
 
-      zoom: 1,
+      zoom: clampZoom(props.initialZoom ?? 1),
     };
 
     this.handleMouseDown = this.handleMouseDown.bind(this);
@@ -49,6 +50,7 @@ export class InfinitePlane extends Component {
 
   componentDidMount() {
     window.addEventListener("mouseup", this.onMouseUp);
+    window.addEventListener('mousemove', this.handleMouseMove);
 
     window.addEventListener("mousedown", this.doOffsetMouse);
     window.addEventListener("mousemove", this.doOffsetMouse);
@@ -62,6 +64,7 @@ export class InfinitePlane extends Component {
 
   componentWillUnmount() {
     window.removeEventListener("mouseup", this.onMouseUp);
+    window.removeEventListener('mousemove', this.handleMouseMove);
 
     window.removeEventListener("mousedown", this.doOffsetMouse);
     window.removeEventListener("mousemove", this.doOffsetMouse);
@@ -74,14 +77,15 @@ export class InfinitePlane extends Component {
   }
 
   doOffsetMouse(event) {
-    const zoom = snapZoom(this.state.zoom);
+    const zoom = clampZoom(this.state.zoom);
     event.screenZoomX = event.screenX * Math.pow(zoom, -1);
     event.screenZoomY = event.screenY * Math.pow(zoom, -1);
   }
 
   handleMouseDown(event) {
     // Shift+ЛКМ: marquee-выделение (обрабатывает родитель).
-    if (event.shiftKey && event.button === 0 && this.props.onPlaneMouseDown) {
+    if ((event.shiftKey || event.ctrlKey || event.metaKey)
+      && event.button === 0 && this.props.onPlaneMouseDown) {
       this.props.onPlaneMouseDown(event);
       event.preventDefault();
       event.stopPropagation();
@@ -108,7 +112,8 @@ export class InfinitePlane extends Component {
   }
 
   onPlaneWheel(event) {
-    if (event.deltaY === 0) {
+    if (event.deltaY === 0 || this.state.mouseDown
+      || event.target.closest('input, textarea, select, .Input, .NumberInput')) {
       return;
     }
     event.preventDefault();
@@ -119,7 +124,7 @@ export class InfinitePlane extends Component {
       initialLeft = 0,
       initialTop = 0,
     } = this.props;
-    const zoom = snapZoom(this.state.zoom);
+    const zoom = clampZoom(this.state.zoom);
     const next = event.deltaY < 0
       ? snapZoom(Math.min(zoom + ZOOM_INCREMENT, ZOOM_MAX_VAL))
       : snapZoom(Math.max(zoom - ZOOM_INCREMENT, ZOOM_MIN_VAL));
@@ -130,8 +135,11 @@ export class InfinitePlane extends Component {
     const finalLeft0 = initialLeft + this.state.left;
     const finalTop0 = initialTop + this.state.top;
     const k = next / zoom;
-    const finalLeft1 = event.clientX - (event.clientX - finalLeft0) * k;
-    const finalTop1 = event.clientY - (event.clientY - finalTop0) * k;
+    const rect = this.planeRootRef.current.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const finalLeft1 = x - (x - finalLeft0) * k;
+    const finalTop1 = y - (y - finalTop0) * k;
     this.setState({
       zoom: next,
       left: finalLeft1 - initialLeft,
@@ -230,6 +238,9 @@ export class InfinitePlane extends Component {
       initialTop = 0,
       initialZoom = 1,
       resetPanNonce = 0,
+      onZoomChange,
+      onBackgroundMoved,
+      onPlaneMouseDown,
       ...rest
     } = this.props;
     const {
@@ -237,7 +248,7 @@ export class InfinitePlane extends Component {
       top,
       zoom: rawZoom,
     } = this.state;
-    const zoom = snapZoom(rawZoom);
+    const zoom = clampZoom(rawZoom);
 
     const finalLeft = initialLeft + left;
     const finalTop = initialTop + top;
@@ -258,7 +269,7 @@ export class InfinitePlane extends Component {
            соединений при HiDPI / дробном масштабе. inset: 0 держит поле внутри planeHost. */}
         <div
           onMouseDown={this.handleMouseDown}
-          onMouseMove={this.handleMouseMove}
+          onContextMenu={(event) => event.preventDefault()}
           style={{
             position: 'absolute',
             top: 0,
@@ -273,7 +284,7 @@ export class InfinitePlane extends Component {
         />
         <div
           onMouseDown={this.handleMouseDown}
-          onMouseMove={this.handleMouseMove}
+          onContextMenu={(event) => event.preventDefault()}
           style={{
             position: 'absolute',
             top: 0,

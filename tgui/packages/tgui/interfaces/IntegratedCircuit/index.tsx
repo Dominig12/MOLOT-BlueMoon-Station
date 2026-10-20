@@ -14,7 +14,6 @@ import {
   Icon,
   InfinitePlane,
   Input,
-  Section,
   Stack,
 } from '../../components';
 import { Window } from '../../layouts';
@@ -23,8 +22,9 @@ import {
   connectedToRefList,
   normalizeCircuitComponent,
 } from './byondPayload';
+import { CircuitComponentsPanel } from './CircuitComponentsPanel';
 import { CircuitInfo } from './CircuitInfo';
-import { CircuitToolbar } from './CircuitToolbar';
+import { CircuitToolbar, getCircuitToolbarProps } from './CircuitToolbar';
 import { Connections } from './Connections';
 import { ABSOLUTE_Y_OFFSET, GRID_SNAP, MOUSE_BUTTON_LEFT } from './constants';
 import { Minimap } from './Minimap';
@@ -110,10 +110,12 @@ export const IntegratedCircuit = () => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [screenPanOverride, setScreenPanOverride] = useState<{ x: number; y: number } | null>(null);
   const [planeHomeNonce, setPlaneHomeNonce] = useState(0);
-  const [componentsPanelOpen, setComponentsPanelOpen] = useState(false);
+  const [componentsPanelOpen, setComponentsPanelOpen] = useState(true);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [componentsFilter, setComponentsFilter] = useState('');
   const [selection, setSelection] = useState<number[]>([]);
   const [dragState, setDragState] = useState<GroupDragState | null>(null);
+  const nodeDragRef = useRef<GroupDragState | null>(null);
   /** Рамка выделения (marquee) в экранных координатах: x0..x1, y0..y1. */
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   /** Индекс (1-based) строки списка компонентов, над которой висит drag (подсветка). */
@@ -343,30 +345,39 @@ export const IntegratedCircuit = () => {
   });
 
   const handleNodeDrag = useStableCallback((event: MouseEvent) => {
-    if (!dragState) {
+    const drag = nodeDragRef.current;
+    if (!drag) {
       return;
     }
     event.preventDefault();
+    const dx = event.clientX - drag.startClientX;
+    const dy = event.clientY - drag.startClientY;
+    if (!drag.deltaX && !drag.deltaY && dx * dx + dy * dy < 9) {
+      return;
+    }
     const z = readPlaneScale();
-    const rawDeltaX = (event.clientX - dragState.startClientX) / z;
-    const rawDeltaY = (event.clientY - dragState.startClientY) / z;
+    const rawDeltaX = dx / z;
+    const rawDeltaY = dy / z;
     // Прилипание к сетке: «якорная» нода (первая в выделении) выравнивается к сетке,
     // остальные двигаются с тем же смещением, сохраняя взаимное расположение.
-    const anchorStart = dragState.startPositions[dragState.ids[0]];
+    const anchorStart = drag.startPositions[drag.ids[0]];
     let deltaX = rawDeltaX;
     let deltaY = rawDeltaY;
-    if (anchorStart) {
+    if (anchorStart && !event.altKey) {
       deltaX = Math.round((anchorStart.x + rawDeltaX) / GRID_SNAP) * GRID_SNAP - anchorStart.x;
       deltaY = Math.round((anchorStart.y + rawDeltaY) / GRID_SNAP) * GRID_SNAP - anchorStart.y;
     }
-    if (deltaX !== dragState.deltaX || deltaY !== dragState.deltaY) {
-      setDragState((s) => (s ? { ...s, deltaX, deltaY } : null));
+    if (deltaX !== drag.deltaX || deltaY !== drag.deltaY) {
+      nodeDragRef.current = { ...drag, deltaX, deltaY };
+      setDragState(nodeDragRef.current);
     }
   });
 
-  const handleNodeDragEnd = useStableCallback(() => {
+  const handleNodeDragEnd = useStableCallback((event: MouseEvent) => {
+    handleNodeDrag(event);
     window.removeEventListener('mousemove', handleNodeDrag);
     window.removeEventListener('mouseup', handleNodeDragEnd);
+    const dragState = nodeDragRef.current;
     if (dragState) {
       const moved = dragState.deltaX !== 0 || dragState.deltaY !== 0;
       if (moved) {
@@ -383,6 +394,7 @@ export const IntegratedCircuit = () => {
         }
       }
     }
+    nodeDragRef.current = null;
     setDragState(null);
   });
 
@@ -429,13 +441,18 @@ export const IntegratedCircuit = () => {
     setMarquee(null);
   });
 
-  /** Shift+ЛКМ по пустому полю — начало marquee-выделения. */
+  /** Shift+ЛКМ по пустому полю — начало marquee-выделения (либо вставка чипа в корпусе IE). */
   const handlePlaneMouseDown = (event: MouseEvent) => {
     if (event.button !== MOUSE_BUTTON_LEFT) {
       return;
     }
     event.stopPropagation();
     event.preventDefault();
+    // В режиме корпуса IE shift-клик вставляет чип из руки в точку клика.
+    if (ieAssemblyUi && event.shiftKey && !event.ctrlKey && !event.metaKey) {
+      placeChipInHandAt(event.clientX, event.clientY);
+      return;
+    }
     marqueeNodeRects.current = measureNodeRects();
     marqueeBaseSelection.current = selection;
     marqueeStart.current = {
@@ -450,11 +467,14 @@ export const IntegratedCircuit = () => {
     window.addEventListener('mouseup', handleMarqueeEnd);
   };
 
-  const handleMouseDown = useStableCallback((_event: MouseEvent) => {
+  const handleMouseDown = useStableCallback((event: MouseEvent) => {
     if (data.examined_name) {
       act('remove_examined_component');
     }
-    if (selection.length) {
+    const target = event.target as HTMLElement;
+    if (selection.length && event.button === MOUSE_BUTTON_LEFT
+      && target.closest?.('.IntegratedCircuit__canvas')
+      && !target.closest?.('.ObjectComponent__root, .Button, .Input')) {
       setSelection([]);
     }
   });
@@ -463,12 +483,19 @@ export const IntegratedCircuit = () => {
     if (event.key !== 'Escape') {
       return;
     }
-    if (!connectSource && !selectedPort && selection.length === 0) {
+    if (!connectSource && !selectedPort && selection.length === 0 && !marqueeStart.current) {
       return;
     }
     setConnectSource(null);
     setSelectedPort(null);
     setSelection([]);
+    nodeDragRef.current = null;
+    setDragState(null);
+    window.removeEventListener('mousemove', handleNodeDrag);
+    window.removeEventListener('mouseup', handleNodeDragEnd);
+    window.removeEventListener('mousemove', handlePortDrag);
+    window.removeEventListener('mouseup', handlePortRelease);
+    handleMarqueeEnd();
   });
 
   const handleMouseUp = useStableCallback((_event: MouseEvent) => {
@@ -482,7 +509,7 @@ export const IntegratedCircuit = () => {
     });
   });
 
-  const handlePortClick = (
+  const handlePortClick = useStableCallback((
     portIndex: number,
     componentId: number,
     port: CircuitPortPayload,
@@ -533,9 +560,9 @@ export const IntegratedCircuit = () => {
 
     window.addEventListener('mousemove', handlePortDrag);
     window.addEventListener('mouseup', handlePortRelease);
-  };
+  });
 
-  const handlePortUp = (
+  const handlePortUp = useStableCallback((
     portIndex: number,
     componentId: number,
     _port: CircuitPortPayload,
@@ -553,9 +580,9 @@ export const IntegratedCircuit = () => {
       component_id: componentId,
       is_output: isOutput,
     });
-  };
+  });
 
-  const handlePortRightClick = (
+  const handlePortRightClick = useStableCallback((
     portIndex: number,
     componentId: number,
     _port: CircuitPortPayload,
@@ -568,7 +595,7 @@ export const IntegratedCircuit = () => {
       is_input: !isOutput,
       port_id: portIndex,
     });
-  };
+  });
 
   const handleZoomChange = (newZoom: number) => {
     setZoom(newZoom);
@@ -585,6 +612,10 @@ export const IntegratedCircuit = () => {
 
   /** Отцентрировать поле на компоненте из списка (jump to). */
   const handleJumpToComponent = (comp: CircuitComponentView, index: number) => {
+    setGroups((current) => current.map((group) => (
+      group.memberIds.includes(index) ? { ...group, collapsed: false } : group
+    )));
+    setSelection([index]);
     const svg = connectionsSvgRef.current;
     const z = Math.max(zoomRef.current || 1, 0.01);
     let targetX = 0;
@@ -633,6 +664,12 @@ export const IntegratedCircuit = () => {
     return { rel_x: 0, rel_y: 0 };
   };
 
+  /** Вставить чип из руки в точку экранных координат (клиент → circuit-координаты). */
+  const placeChipInHandAt = (clientX: number, clientY: number) => {
+    const { rel_x, rel_y } = ieClientToCircuitCoords(clientX, clientY);
+    act('ie_place_hand_chip_at', { rel_x, rel_y });
+  };
+
   const handleIePlaceChipCenter = () => {
     if (!data.ie_circuit || data.ie_clone_copy_mode !== 'assembly') {
       return;
@@ -642,9 +679,8 @@ export const IntegratedCircuit = () => {
       act('ie_place_hand_chip_at', { rel_x: 0, rel_y: 0 });
       return;
     }
-    const r = svg.getBoundingClientRect();
-    const { rel_x, rel_y } = ieClientToCircuitCoords(r.left + r.width / 2, r.top + r.height / 2);
-    act('ie_place_hand_chip_at', { rel_x, rel_y });
+    const r = (svg.closest('.IntegratedCircuit__canvas') || svg).getBoundingClientRect();
+    placeChipInHandAt(r.left + r.width / 2, r.top + r.height / 2);
   };
 
   const handleComponentDragStart = (e: ReactDragEvent, index: number) => {
@@ -704,14 +740,21 @@ export const IntegratedCircuit = () => {
     setGroups((g) => g.filter((gr) => gr.id !== id));
   };
 
-  const handleNodeMouseDown = (componentId: number, event: MouseEvent) => {
+  const handleNodeMouseDown = useStableCallback((componentId: number, event: MouseEvent) => {
     event.stopPropagation();
+    if (event.button !== MOUSE_BUTTON_LEFT) {
+      return;
+    }
+    event.preventDefault();
     const additive = event.shiftKey || event.ctrlKey || event.metaKey;
     let nextSelection: number[];
     if (additive) {
       nextSelection = selection.includes(componentId)
         ? selection.filter((id) => id !== componentId)
         : [...selection, componentId];
+      setSelection(nextSelection);
+      // A modifier-click changes selection only; it must not drag the remaining nodes.
+      return;
     }
     else if (selection.includes(componentId)) {
       nextSelection = selection;
@@ -731,17 +774,19 @@ export const IntegratedCircuit = () => {
       }
     }
     setSelection(nextSelection);
-    setDragState({
-      ids: nextSelection,
+    const drag = {
+      ids: [componentId, ...nextSelection.filter((id) => id !== componentId)],
       startPositions,
       startClientX: event.clientX,
       startClientY: event.clientY,
       deltaX: 0,
       deltaY: 0,
-    });
+    };
+    nodeDragRef.current = drag;
+    setDragState(drag);
     window.addEventListener('mousemove', handleNodeDrag);
     window.addEventListener('mouseup', handleNodeDragEnd);
-  };
+  });
 
   const buildWireConnections = (
     components: (CircuitComponentView | null)[],
@@ -989,8 +1034,8 @@ export const IntegratedCircuit = () => {
     if (!grab) {
       return;
     }
-    backgroundX.current = grab.left + worldDX * grab.zoom;
-    backgroundY.current = grab.top + worldDY * grab.zoom;
+    backgroundX.current = grab.left - worldDX * grab.zoom;
+    backgroundY.current = grab.top - worldDY * grab.zoom;
     setScreenPanOverride({ x: backgroundX.current, y: backgroundY.current });
   };
 
@@ -1107,14 +1152,6 @@ export const IntegratedCircuit = () => {
   const pulseKeys = memoPulseKeys.current;
   latestComponents.current = components;
 
-  const ieBatteryPercent = ie_circuit && data.ie_battery_percent !== undefined
-    ? data.ie_battery_percent
-    : undefined;
-  const ieUsedSize = ie_circuit ? data.ie_used_size : undefined;
-  const ieMaxSize = ie_circuit ? data.ie_max_size : undefined;
-  const ieUsedComplexity = ie_circuit ? data.ie_used_complexity : undefined;
-  const ieMaxComplexity = ie_circuit ? data.ie_max_complexity : undefined;
-  const circuitCellPercent = !ie_circuit ? data.circuit_cell_percent : undefined;
   const panX = screenPanOverride?.x ?? screen_x ?? 0;
   const panY = screenPanOverride?.y ?? screen_y ?? 0;
   if (!panInitialized.current) {
@@ -1225,8 +1262,8 @@ export const IntegratedCircuit = () => {
 
   return (
     <Window
-      width={920}
-      height={720}
+      width={1100}
+      height={760}
       buttons={(
         <Box
           className="IntegratedCircuit__titleNameWrap"
@@ -1280,261 +1317,220 @@ export const IntegratedCircuit = () => {
             componentCount={componentCount}
             variableCount={variableCount}
             zoomPercent={zoomPercent}
-            showVariableChip={!ie_circuit}
-            ieBatteryPercent={ieBatteryPercent}
-            circuitCellPercent={circuitCellPercent}
-            onEjectPowerCell={
-              (ie_circuit && ieBatteryPercent !== null)
-              || (!ie_circuit && circuitCellPercent !== null && circuitCellPercent !== undefined)
-                ? () => act(ie_circuit ? 'ie_eject_battery' : 'eject_circuit_cell')
-                : undefined
-            }
-            ieCloneCopyMode={ie_circuit ? ie_clone_copy_mode : null}
-            ieUsedSize={ieUsedSize}
-            ieMaxSize={ieMaxSize}
-            ieUsedComplexity={ieUsedComplexity}
-            ieMaxComplexity={ieMaxComplexity}
-            onIeCloneCopy={
-              ie_circuit
-              && (ie_clone_copy_mode === 'assembly' || ie_clone_copy_mode === 'chip')
-                ? () =>
-                  act(
-                    ie_clone_copy_mode === 'assembly'
-                      ? 'ie_copy_assembly_code'
-                      : 'ie_copy_component_code',
-                  )
-                : undefined
-            }
-            onIeClassicUi={
-              ie_circuit ? () => act('ie_switch_classic_ui') : undefined
-            }
+            {...getCircuitToolbarProps(data, act)}
             onIePlaceChipCenter={
               ieAssemblyUi ? handleIePlaceChipCenter : undefined
             }
             onFitToView={fitToView}
             searchValue={componentsFilter}
-            onSearchChange={(e, value) => setComponentsFilter(value)}
+            onSearchChange={(value) => {
+              setComponentsFilter(value);
+              if (value.trim()) {
+                setComponentsPanelOpen(true);
+              }
+            }}
+            componentsPanelOpen={componentsPanelOpen}
+            onToggleComponents={() => setComponentsPanelOpen((open) => !open)}
+            helpOpen={helpOpen}
+            onToggleHelp={() => setHelpOpen((open) => !open)}
           />
-          <Box className="IntegratedCircuit__planeHost">
-            <InfinitePlane
-              width="100%"
-              height="100%"
-              backgroundImage={resolveAsset('grid_background.png')}
-              imageWidth={1200}
-              onZoomChange={handleZoomChange}
-              onBackgroundMoved={handleBackgroundMoved}
-              initialLeft={panX}
-              initialTop={panY}
-              initialZoom={zoom}
-              resetPanNonce={planeHomeNonce}
-              onPlaneMouseDown={handlePlaneMouseDown}
-            >
-              <Connections
-                connections={connections}
-                svgRef={connectionsSvgRef}
-                pulseKeys={pulseKeys}>
-                {groups.map((g) => {
-                  const bounds = groupFrameBounds(g.memberIds);
-                  if (!bounds) {
-                    return null;
-                  }
-                  return (
-                    <Box
-                      key={g.id}
-                      className="IntegratedCircuit__groupFrame"
-                      position="absolute"
-                      left={`${bounds.x}px`}
-                      top={`${bounds.y}px`}
-                      width={`${g.collapsed ? 200 : bounds.w}px`}
-                      height={`${g.collapsed ? 26 : bounds.h}px`}>
-                      <Stack
-                        className="IntegratedCircuit__groupFrameTitle"
-                        align="center"
-                        onMouseDown={(e) => e.stopPropagation()}>
-                        <Stack.Item>
-                          <Button
-                            icon={g.collapsed ? 'plus' : 'minus'}
-                            color="transparent"
-                            compact
-                            tooltip={g.collapsed ? 'Развернуть' : 'Свернуть'}
-                            onClick={() => handleToggleGroup(g.id)}
-                          />
-                        </Stack.Item>
-                        <Stack.Item grow={1}>
-                          <Box className="IntegratedCircuit__groupFrameName">{g.name}</Box>
-                        </Stack.Item>
-                        <Stack.Item>
-                          <Button
-                            icon="object-ungroup"
-                            color="transparent"
-                            compact
-                            tooltip="Разгруппировать"
-                            onClick={() => handleUngroup(g.id)}
-                          />
-                        </Stack.Item>
-                      </Stack>
-                    </Box>
-                  );
-                })}
-                {components.map(
-                  (comp, index) =>
-                    comp && (() => {
-                      const componentId = index + 1;
-                      if (collapsedMemberIds.has(componentId)) {
-                        return null;
-                      }
-                      const dragging = !!dragState && dragState.ids.includes(componentId);
-                      const dx = dragging ? dragState.deltaX : 0;
-                      const dy = dragging ? dragState.deltaY : 0;
-                      const spotlightMatch = !filterQuery
-                        || comp.name.toLowerCase().includes(filterQuery);
-                      return (
-                        <ObjectComponent
-                          key={index}
-                          {...comp}
-                          x={(comp.x || 0) + dx}
-                          y={(comp.y || 0) + dy}
-                          index={componentId}
-                          circuitOn={circuit_on ?? true}
-                          onPortUpdated={handlePortLocation}
-                          onPortLoaded={handlePortLocation}
-                          onPortMouseDown={handlePortClick}
-                          onPortRightClick={handlePortRightClick}
-                          onPortMouseUp={handlePortUp}
-                          portLabelByRef={portLabelByRef}
-                          connectSourceRef={connectSource?.ref ?? null}
-                          selected={selection.includes(componentId)}
-                          spotlit={!!filterQuery && spotlightMatch}
-                          dimmed={!!filterQuery && !spotlightMatch}
-                          onNodeMouseDown={(e) => handleNodeMouseDown(componentId, e)}
-                        />
-                      );
-                    })()
-                )}
-              </Connections>
-            </InfinitePlane>
-            {selection.length >= 2 && (
-              <Box
-                className="IntegratedCircuit__groupAction"
-                position="absolute"
-                right="0.5rem"
-                top="4.6rem"
-                style={{ zIndex: 6 }}>
-                <Button
-                  icon="object-group"
-                  color="transparent"
-                  onClick={handleGroupSelection}>
-                  Сгруппировать ({selection.length})
-                </Button>
-              </Box>
-            )}
-            {componentCount === 0 && (
-              <Box className="IntegratedCircuit__emptyHint">
-                <Icon name="microchip" mr={1.5} />
+          {helpOpen && (
+            <Box className="IntegratedCircuit__help">
+              <Box><b>01 · Разместите</b><br />
                 {ieAssemblyUi
-                  ? 'Вставьте чип из руки: кнопка «Чип сюда»'
-                  : 'Схема пуста'}
+                  ? 'Возьмите чип в руку и нажмите «Вставить чип» или Shift + клик по полю.'
+                  : 'Перетаскивайте компоненты за заголовок. Список справа поможет найти нужный.'}
               </Box>
-            )}
-            {!componentsPanelOpen && !menuOpen && (
-              <Minimap
-                components={components}
-                backgroundXRef={backgroundX}
-                backgroundYRef={backgroundY}
-                zoomRef={zoomRef}
-                svgRef={connectionsSvgRef}
-                onCenter={centerOnWorld}
-                onPanBegin={handleMinimapPanBegin}
-                onPanBy={handleMinimapPanBy}
-                onPanCommit={handleMinimapPanCommit}
-              />
-            )}
-            <Box
-              className="IntegratedCircuit__componentsToggle"
-              position="absolute"
-              right="0.5rem"
-              top="2rem"
-              style={{ zIndex: 6 }}>
-              <Button
-                icon="list-ul"
-                selected={componentsPanelOpen}
-                color="transparent"
-                tooltip="Список компонентов"
-                onClick={() => setComponentsPanelOpen((open) => !open)}>
-                Компоненты
-              </Button>
+              <Box><b>02 · Соедините</b><br />
+                Нажмите на значок выхода, затем входа, или протяните провод между ними.
+                Данные и импульсы соединяются отдельно. Esc отменяет выбор.
+              </Box>
+              <Box><b>03 · Проверьте</b><br />
+                Shift + клик по входу импульса запускает его. ПКМ по порту удаляет все его связи.
+                Колесо — масштаб, фон — перемещение. Ctrl + перетаскивание фона — рамка выделения.
+                Ноды перемещаются за заголовок; Alt при перетаскивании отключает сетку.
+              </Box>
+            </Box>
+          )}
+          <Box className="IntegratedCircuit__workspace">
+            <Box className="IntegratedCircuit__planeHost">
+              <InfinitePlane
+                className="IntegratedCircuit__canvas"
+                width="100%"
+                height="100%"
+                backgroundImage={resolveAsset('grid_background.png')}
+                imageWidth={1200}
+                onZoomChange={handleZoomChange}
+                onBackgroundMoved={handleBackgroundMoved}
+                initialLeft={panX}
+                initialTop={panY}
+                initialZoom={zoom}
+                resetPanNonce={planeHomeNonce}
+                onPlaneMouseDown={handlePlaneMouseDown}
+              >
+                <Connections
+                  connections={connections}
+                  svgRef={connectionsSvgRef}
+                  pulseKeys={pulseKeys}>
+                  {groups.map((g) => {
+                    const bounds = groupFrameBounds(g.memberIds);
+                    if (!bounds) {
+                      return null;
+                    }
+                    return (
+                      <Box
+                        key={g.id}
+                        className="IntegratedCircuit__groupFrame"
+                        position="absolute"
+                        left={`${bounds.x}px`}
+                        top={`${bounds.y}px`}
+                        width={`${g.collapsed ? 200 : bounds.w}px`}
+                        height={`${g.collapsed ? 26 : bounds.h}px`}>
+                        <Stack
+                          className="IntegratedCircuit__groupFrameTitle"
+                          align="center"
+                          onMouseDown={(e) => e.stopPropagation()}>
+                          <Stack.Item>
+                            <Button
+                              icon={g.collapsed ? 'plus' : 'minus'}
+                              color="transparent"
+                              compact
+                              tooltip={g.collapsed ? 'Развернуть' : 'Свернуть'}
+                              onClick={() => handleToggleGroup(g.id)}
+                            />
+                          </Stack.Item>
+                          <Stack.Item grow={1}>
+                            <Box className="IntegratedCircuit__groupFrameName">{g.name}</Box>
+                          </Stack.Item>
+                          <Stack.Item>
+                            <Button
+                              icon="object-ungroup"
+                              color="transparent"
+                              compact
+                              tooltip="Разгруппировать"
+                              onClick={() => handleUngroup(g.id)}
+                            />
+                          </Stack.Item>
+                        </Stack>
+                      </Box>
+                    );
+                  })}
+                  {components.map(
+                    (comp, index) =>
+                      comp && (() => {
+                        const componentId = index + 1;
+                        if (collapsedMemberIds.has(componentId)) {
+                          return null;
+                        }
+                        const dragging = !!dragState && dragState.ids.includes(componentId);
+                        const dx = dragging ? dragState.deltaX : 0;
+                        const dy = dragging ? dragState.deltaY : 0;
+                        const spotlightMatch = !filterQuery
+                          || comp.name.toLowerCase().includes(filterQuery)
+                          || String(componentId).includes(filterQuery);
+                        return (
+                          <ObjectComponent
+                            key={index}
+                            {...comp}
+                            x={(comp.x || 0) + dx}
+                            y={(comp.y || 0) + dy}
+                            index={componentId}
+                            circuitOn={circuit_on ?? true}
+                            onPortUpdated={handlePortLocation}
+                            onPortLoaded={handlePortLocation}
+                            onPortMouseDown={handlePortClick}
+                            onPortRightClick={handlePortRightClick}
+                            onPortMouseUp={handlePortUp}
+                            portLabelByRef={portLabelByRef}
+                            connectSourceRef={connectSource?.ref ?? null}
+                            selected={selection.includes(componentId)}
+                            spotlit={!!filterQuery && spotlightMatch}
+                            dimmed={!!filterQuery && !spotlightMatch}
+                            onNodeMouseDown={(e) => handleNodeMouseDown(componentId, e)}
+                          />
+                        );
+                      })()
+                  )}
+                </Connections>
+              </InfinitePlane>
+              {selection.length >= 2 && (
+                <Box
+                  className="IntegratedCircuit__groupAction"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  position="absolute"
+                  right="0.5rem"
+                  top="0.6rem"
+                  style={{ zIndex: 6 }}>
+                  <Button
+                    icon="object-group"
+                    color="transparent"
+                    onClick={handleGroupSelection}>
+                    Сгруппировать ({selection.length})
+                  </Button>
+                </Box>
+              )}
+              {componentCount === 0 && (
+                <Box className="IntegratedCircuit__emptyHint" onMouseDown={(e) => e.stopPropagation()}>
+                  <Icon name="microchip" size={3} />
+                  <Box fontSize="1.3rem" bold mt={1}>Начните с первого компонента</Box>
+                  <Box mt={0.5} mb={1.5}>
+                    {ieAssemblyUi
+                      ? 'Возьмите микросхему в руку и добавьте её в корпус. Затем соедините выходы с входами.'
+                      : 'Добавьте компоненты в схему, чтобы соединить их порты и настроить значения.'}
+                  </Box>
+                  {ieAssemblyUi && (
+                    <Button icon="plus" onClick={handleIePlaceChipCenter}>Вставить чип из руки</Button>
+                  )}
+                </Box>
+              )}
+              {componentCount > 0 && !menuOpen && (
+                <Minimap
+                  components={components}
+                  backgroundXRef={backgroundX}
+                  backgroundYRef={backgroundY}
+                  zoomRef={zoomRef}
+                  svgRef={connectionsSvgRef}
+                  onCenter={centerOnWorld}
+                  onPanBegin={handleMinimapPanBegin}
+                  onPanBy={handleMinimapPanBy}
+                  onPanCommit={handleMinimapPanCommit}
+                />
+              )}
             </Box>
             {componentsPanelOpen && (
-              <Box
-                className="IntegratedCircuit__componentsPanel"
-                position="absolute"
-                right="0"
-                top="2.9rem"
-                bottom="0"
-                width="18rem"
-                style={{ zIndex: 6 }}>
-                <Section
-                  title={`Компоненты (${componentCount})`}
-                  fill
-                  scrollable
-                  buttons={(
-                    <Button
-                      icon="times"
-                      color="transparent"
-                      tooltip="Закрыть список"
-                      onClick={() => setComponentsPanelOpen(false)}
-                    />
-                  )}>
-                  <Stack vertical>
-                    <Stack.Item>
-                      <Input
-                        fluid
-                        placeholder="Поиск по имени / номеру…"
-                        value={componentsFilter}
-                        onChange={(e, val) => setComponentsFilter(val)}
-                      />
-                    </Stack.Item>
-                    {filteredComponents.length === 0 && (
-                      <Stack.Item>
-                        <Box color="label" opacity={0.7} mt={0.5}>
-                          {components.length === 0 ? 'Нет компонентов' : 'Ничего не найдено'}
-                        </Box>
-                      </Stack.Item>
-                    )}
-                    {filteredComponents.map(({ comp, index }) => (
-                      <Stack.Item key={index}>
-                        <Box
-                          className={
-                            componentDragOver === index
-                              ? 'IntegratedCircuit__componentRow IntegratedCircuit__componentRow--dragOver'
-                              : 'IntegratedCircuit__componentRow'
-                          }
-                          draggable={!filterQuery}
-                          title={filterQuery ? undefined : 'Перетащите, чтобы изменить порядок'}
-                          onDragStart={(e) => handleComponentDragStart(e, index)}
-                          onDragOver={(e) => handleComponentDragOver(e, index)}
-                          onDrop={(e) => handleComponentDrop(e, index)}
-                          onDragEnd={handleComponentDragEnd}>
-                          <Button
-                            fluid
-                            color="transparent"
-                            tooltip={`Перейти к «${comp.name}»`}
-                            onClick={() => handleJumpToComponent(comp, index)}>
-                            <Icon
-                              name="circle"
-                              color={comp.recent_pulse ? '#5dff8a' : (comp.color || 'blue')}
-                            />
-                            {' '}
-                            #{index}
-                            {' '}
-                            {comp.name}
-                          </Button>
-                        </Box>
-                      </Stack.Item>
-                    ))}
-                  </Stack>
-                </Section>
-              </Box>
+              <CircuitComponentsPanel
+                componentCount={componentCount}
+                filteredComponents={filteredComponents}
+                filterQuery={filterQuery}
+                ieAssemblyUi={ieAssemblyUi}
+                componentDragOver={componentDragOver}
+                selection={selection}
+                setComponentsPanelOpen={setComponentsPanelOpen}
+                setComponentsFilter={setComponentsFilter}
+                handleComponentDragStart={handleComponentDragStart}
+                handleComponentDragOver={handleComponentDragOver}
+                handleComponentDrop={handleComponentDrop}
+                handleComponentDragEnd={handleComponentDragEnd}
+                handleJumpToComponent={handleJumpToComponent}
+              />
+            )}
+          </Box>
+          <Box className="IntegratedCircuit__status" onMouseDown={(e) => e.stopPropagation()}>
+            <Icon name={connectSource ? 'link' : 'mouse-pointer'} />
+            <Box style={{ flex: 1 }}>
+              {connectSource
+                ? `${portLabelByRef.get(connectSource.ref) || 'Порт выбран'} → выберите ${connectSource.is_output ? 'вход' : 'выход'}`
+                : selection.length
+                  ? `Выбрано: ${selection.length}. Shift + клик по заголовку — добавить или убрать компонент.`
+                  : 'Заголовок — двигать ноду · Ctrl + фон — выделить рамкой · Колесо — масштаб'}
+            </Box>
+            {(connectSource || selection.length > 0) && (
+              <Button compact color="transparent" icon="times" onClick={() => {
+                setConnectSource(null);
+                setSelection([]);
+              }}>
+                Отменить · Esc
+              </Button>
             )}
           </Box>
         </Box>

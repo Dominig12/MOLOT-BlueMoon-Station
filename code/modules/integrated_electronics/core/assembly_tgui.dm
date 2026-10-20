@@ -861,8 +861,10 @@ GLOBAL_LIST_INIT(ie_integrated_circuit_ui_types, list("string", "number", "boole
 			if(!istype(chip))
 				chip = usr.get_inactive_held_item()
 			if(!istype(chip))
+				usr.balloon_alert(usr, "возьмите микросхему в руку")
 				return
 			if(chip.assembly)
+				usr.balloon_alert(usr, "микросхема уже в корпусе")
 				return
 			if(!try_add_component(chip, usr))
 				return

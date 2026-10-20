@@ -2,10 +2,37 @@ import { classes } from 'common/react';
 import { ReactNode } from 'react';
 
 import { Box, Button, Icon, Input, Stack } from '../../components';
-import type { IeCloneCopyMode } from './types';
+import type { IeCloneCopyMode, IntegratedCircuitData } from './types';
+
+/** Keep assembly-only actions separate from the shared wiremod editor. */
+export const getCircuitToolbarProps = (
+  data: IntegratedCircuitData,
+  act: (action: string) => void,
+) => {
+  const isIe = !!data.ie_circuit;
+  const battery = isIe ? data.ie_battery_percent : data.circuit_cell_percent;
+  return {
+    showVariableChip: !isIe,
+    ieBatteryPercent: isIe ? battery : undefined,
+    circuitCellPercent: isIe ? undefined : battery,
+    ieUsedSize: isIe ? data.ie_used_size : undefined,
+    ieMaxSize: isIe ? data.ie_max_size : undefined,
+    ieUsedComplexity: isIe ? data.ie_used_complexity : undefined,
+    ieMaxComplexity: isIe ? data.ie_max_complexity : undefined,
+    ieCloneCopyMode: isIe ? data.ie_clone_copy_mode : null,
+    onEjectPowerCell: typeof battery === 'number'
+      ? () => act(isIe ? 'ie_eject_battery' : 'eject_circuit_cell')
+      : undefined,
+    onIeClassicUi: isIe ? () => act('ie_switch_classic_ui') : undefined,
+    onIeCloneCopy: isIe && data.ie_clone_copy_mode
+      ? () => act(data.ie_clone_copy_mode === 'assembly'
+        ? 'ie_copy_assembly_code' : 'ie_copy_component_code')
+      : undefined,
+  };
+};
 
 export type CircuitToolbarProps = {
-  circuitOn?: boolean;
+  circuitOn?: boolean | number;
   componentCount: number;
   variableCount?: number;
   zoomPercent: number;
@@ -27,6 +54,10 @@ export type CircuitToolbarProps = {
   /** Spotlight: строка поиска по имени компонента (подсветка на схеме). */
   searchValue?: string;
   onSearchChange?: (value: string) => void;
+  componentsPanelOpen?: boolean;
+  onToggleComponents?: () => void;
+  helpOpen?: boolean;
+  onToggleHelp?: () => void;
 };
 
 type ChipTone = 'on' | 'off' | 'muted' | 'danger';
@@ -76,6 +107,10 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
     ieMaxComplexity,
     searchValue = '',
     onSearchChange,
+    componentsPanelOpen,
+    onToggleComponents,
+    helpOpen,
+    onToggleHelp,
   } = props;
 
   const powered = circuitOn !== false && circuitOn !== 0;
@@ -91,12 +126,12 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
 
   return (
     <Box className="IntegratedCircuit__toolbar">
-      <Stack align="center" justify="space-between" wrap>
+      <Stack vertical>
         <Stack.Item>
           <Stack align="center" wrap>
             <Stack.Item>
               <Chip icon="power-off" tone={powered ? 'on' : 'off'}>
-                {powered ? 'Вкл.' : 'Выкл.'}
+                {showVariableChip ? (powered ? 'Включено' : 'Выключено') : 'Редактор схемы'}
               </Chip>
             </Stack.Item>
             <Stack.Item>
@@ -129,6 +164,7 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
                 <Stack align="center">
                   <Chip
                     icon="battery-half"
+                    tone={ieBatteryPercent === null || ieBatteryPercent <= 20 ? 'danger' : 'on'}
                     title="Элемент питания в отсеке батареи">
                     Батарея{' '}
                     {ieBatteryPercent === null ? 'нет' : `${ieBatteryPercent}%`}
@@ -148,7 +184,7 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
             {circuitCellPercent !== undefined && (
               <Stack.Item>
                 <Stack align="center">
-                  <Chip icon="battery-half">
+                  <Chip icon="battery-half" tone={circuitCellPercent === null || circuitCellPercent <= 20 ? 'danger' : 'on'}>
                     Ячейка{' '}
                     {circuitCellPercent === null ? 'нет' : `${circuitCellPercent}%`}
                   </Chip>
@@ -174,14 +210,28 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
           </Stack>
         </Stack.Item>
         <Stack.Item>
-          <Stack align="center">
+          <Stack align="center" wrap className="IntegratedCircuit__tools">
+            {onIePlaceChipCenter && (
+              <Stack.Item>
+                <Button icon="plus" onClick={onIePlaceChipCenter}
+                  tooltip="Вставить микросхему из руки в центр поля. Shift + клик по полю — вставить в выбранное место.">
+                  Вставить чип
+                </Button>
+              </Stack.Item>
+            )}
+            <Stack.Item>
+              <Button icon="list-ul" selected={componentsPanelOpen}
+                color="transparent" onClick={onToggleComponents}>
+                Компоненты
+              </Button>
+            </Stack.Item>
             {onSearchChange && (
               <Stack.Item>
                 <Input
-                  width="9rem"
-                  placeholder="Поиск…"
+                  width="13rem"
+                  placeholder="Найти имя или номер…"
                   value={searchValue}
-                  onChange={(e, value) => onSearchChange(value)}
+                  onInput={(e, value) => onSearchChange(value)}
                 />
               </Stack.Item>
             )}
@@ -215,7 +265,7 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
                         : 'JSON одного чипа'
                     }
                     onClick={onIeCloneCopy}>
-                    Код
+                    Экспорт JSON
                   </Button>
                 </Stack.Item>
               )}
@@ -227,22 +277,16 @@ export const CircuitToolbar = (props: CircuitToolbarProps) => {
                   compact
                   tooltip="Классический интерфейс"
                   onClick={onIeClassicUi}>
-                  Классика
+                  Старый интерфейс
                 </Button>
               </Stack.Item>
             )}
-            {onIePlaceChipCenter && (
-              <Stack.Item>
-                <Button
-                  icon="crosshairs"
-                  color="transparent"
-                  compact
-                  tooltip="Вставить чип из руки в центр вида"
-                  onClick={onIePlaceChipCenter}>
-                  Чип сюда
-                </Button>
-              </Stack.Item>
-            )}
+            <Stack.Item>
+              <Button icon="question-circle" color="transparent"
+                selected={helpOpen} onClick={onToggleHelp}>
+                Как пользоваться
+              </Button>
+            </Stack.Item>
           </Stack>
         </Stack.Item>
       </Stack>

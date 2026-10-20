@@ -212,12 +212,18 @@ export class ObjectComponent extends Component {
           spotlit && 'ObjectComponent--spotlit',
           dimmed && 'ObjectComponent--dimmed',
         ])}
-        onMouseDown={onNodeMouseDown}>
+        onMouseDown={(event) => event.stopPropagation()}>
         <Box
           backgroundColor={color}
           py={1}
           px={1}
-          className="ObjectComponent__Titlebar">
+          className="ObjectComponent__Titlebar"
+          onMouseDown={(event) => {
+            if (event.target.closest('.Button, .Input, input, textarea, select')) {
+              return;
+            }
+            onNodeMouseDown(event);
+          }}>
           <Stack align="center">
             <Stack.Item>
               <Box
@@ -269,7 +275,6 @@ export class ObjectComponent extends Component {
                 <Box
                   className="ObjectComponent__titleText"
                   title="Двойной клик — переименовать"
-                  onMouseDown={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     if (!showIeNodeStats) {
