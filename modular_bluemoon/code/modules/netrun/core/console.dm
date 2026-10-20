@@ -175,13 +175,16 @@
 	if(world.time < next_command)
 		return FALSE
 	next_command = world.time + 0.5 SECONDS
-	if(!node || !(command_id in node.command_ids))
+	if(!node || !(command_id in node.all_command_ids()))
 		return FALSE
 	var/datum/netrun_command/command = SSnetrun.get_command(command_id)
 	if(!command)
 		return FALSE
 	if(is_locked())
 		log_line("Точка подключения заблокирована.", "bad")
+		return FALSE
+	if(!can_route(node))
+		log_line("[node.address]: нет маршрута к узлу.", "bad")
 		return FALSE
 	if(!command.works_offline && !node.is_online(node != jack))
 		log_line("[node.address]: узел не отвечает.", "bad")
@@ -221,6 +224,22 @@
 	node.network?.add_log("[log_source()] -> [node.address]: [command.name][illegal ? " (без авторизации)" : ""]", illegal && command.access >= NETRUN_ACCESS_ROOT)
 	if(illegal)
 		add_trace(command.trace * node.get_security())
+
+/// Есть ли вообще маршрут к узлу (иначе узел отрезан - подключиться нельзя)
+/datum/netrun_console/proc/can_route(datum/component/netrun_node/node)
+	if(!node)
+		return FALSE
+	if(node == jack)
+		return TRUE
+	return node.network && can_reach(node.network)
+
+/// Ответ ping приходит после round-trip
+/datum/netrun_console/proc/ping_reply(address, lat, route_name)
+	var/datum/component/netrun_node/node = SSnetrun.find_node(address)
+	if(!node || !can_route(node))
+		log_line("ping [address]: ответа нет (узел отрезан).", "bad")
+		return
+	log_line("[address]: [lat * 2 * 100]мс туда-обратно ([route_name]).", "good")
 
 /// Задержка маршрута до узла в децисекундах: 0 - прямое/рядом, больше - дальше и через реле
 /datum/netrun_console/proc/latency_to(datum/component/netrun_node/node)
@@ -300,7 +319,7 @@
 		target_name = "шлюз [network.short_name]"
 	else
 		var/datum/component/netrun_node/node = SSnetrun.find_node(id)
-		if(!node || node_level(node) < NETRUN_ACCESS_GUEST || !node.is_online(node != jack))
+		if(!node || node_level(node) < NETRUN_ACCESS_GUEST || !node.is_online(node != jack) || !can_route(node))
 			return FALSE
 		security = node.get_security() - (node == jack ? 1 : 0)
 		target_name = "[node.get_name()] [node.address]"

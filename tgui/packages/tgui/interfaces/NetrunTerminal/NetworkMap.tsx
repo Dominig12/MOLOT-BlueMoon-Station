@@ -409,7 +409,9 @@ export const StationMap = () => {
         }}
         style={{
           position: 'relative',
-          height: '360px',
+          height: '420px',
+          minHeight: '220px',
+          resize: 'vertical',
           overflow: 'hidden',
           cursor: 'grab',
           outline: 'none',

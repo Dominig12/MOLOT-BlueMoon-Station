@@ -69,6 +69,8 @@
 	ignores_latency = TRUE
 
 /datum/netrun_command/ping/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg)
+	if(!console.can_route(node))
+		return "[node.address]: нет маршрута."
 	var/lat = console.latency_to(node)
 	var/route_name = (node == console.jack) ? "прямое подключение" : (lat <= 2 ? "локальная сеть" : "через реле NTnet")
 	// Маршрут для подсветки на карте: узел -> APC -> гейтвей -> хаб
@@ -81,7 +83,11 @@
 	route += list(list("kind" = "hub"))
 	console.ping_route = route
 	console.ping_at = world.time
-	return "[node.address]: [lat * 100]мс ([route_name]), прыжков: [length(route)]"
+	if(lat <= 0)
+		return "[node.address]: 0мс ([route_name])"
+	// Ответ приходит после того, как пакет дойдёт и вернётся
+	addtimer(CALLBACK(console, TYPE_PROC_REF(/datum/netrun_console, ping_reply), node.address, lat, route_name), lat * 2)
+	return "[node.address]: пакет отправлен, [length(route)] прыжков…"
 
 /datum/netrun_command/reboot
 	id = "reboot"
@@ -106,13 +112,19 @@
 	danger = TRUE
 
 /datum/netrun_command/purge/execute(datum/component/netrun_node/node, datum/netrun_console/console)
-	if(!length(node.entities))
+	if(!LAZYLEN(node.entities))
 		return "Посторонних процессов не найдено."
+	var/hit = 0
 	for(var/mob/camera/netrun_entity/entity as anything in node.entities.Copy())
 		if(entity.console == console)
 			continue
-		entity.take_integrity(35, "очистка памяти узла")
-	return "Очистка выполнена: задето процессов - [length(node.entities)]."
+		hit++
+		entity.take_integrity(45, "очистка памяти узла")
+		if(!QDELETED(entity) && entity.host_node == node)
+			entity.eject_from_node()
+	if(!hit)
+		return "Посторонних процессов не найдено."
+	return "Очистка выполнена: вычищено процессов - [hit]."
 
 /datum/netrun_command/issue_key
 	id = "issue_key"

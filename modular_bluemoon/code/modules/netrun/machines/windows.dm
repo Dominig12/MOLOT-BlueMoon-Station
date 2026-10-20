@@ -29,7 +29,7 @@
 
 /datum/netrun_console/proc/open_window(address)
 	var/datum/component/netrun_node/node = SSnetrun.find_node(address)
-	if(!node || node_level(node) < NETRUN_ACCESS_GUEST)
+	if(!node || node_level(node) < NETRUN_ACCESS_GUEST || !can_route(node))
 		return FALSE
 	if(!(address in windows))
 		if(length(windows) >= NETRUN_MAX_WINDOWS)
@@ -55,7 +55,7 @@
 		return null
 	var/atom/A = node.parent
 	var/list/commands = list()
-	for(var/command_id in node.command_ids)
+	for(var/command_id in node.all_command_ids())
 		var/datum/netrun_command/command = SSnetrun.get_command(command_id)
 		if(command)
 			commands += list(command.ui_entry(node, src, command_id))
@@ -92,7 +92,7 @@
 	if(!node || node_level(node) < NETRUN_ACCESS_GUEST)
 		return
 	// Команда узла - обычный сетевой запрос с задержкой и трассировкой
-	if(action in node.command_ids)
+	if(action in node.all_command_ids())
 		run_command(node, action)
 		return
 	// Оконное действие машины

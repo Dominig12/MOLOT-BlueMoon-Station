@@ -91,6 +91,11 @@
 /datum/component/netrun_node/proc/touch()
 	last_activity = world.time
 
+/// Все команды узла: базовые плюс зависящие от компонентов атома
+/datum/component/netrun_node/proc/all_command_ids()
+	var/atom/A = parent
+	return command_ids + A.netrun_extra_commands()
+
 /datum/component/netrun_node/proc/used_storage()
 	. = 0
 	for(var/datum/netrun_file/file as anything in files)
@@ -148,6 +153,10 @@
 /// Имя узла в интерфейсе сети (консоли показывают имя корпуса, а не внутренней платы)
 /atom/proc/netrun_name()
 	return name
+
+/// Доп. команды узла, зависящие от компонентов атома (например, привязка техвеба)
+/atom/proc/netrun_extra_commands()
+	return list()
 
 /// Отвечает ли атом на сетевые запросы. remote = запрос пришёл не по проводу
 /atom/proc/netrun_online(remote = TRUE)

@@ -128,7 +128,7 @@
 		selected["network"] = node.network?.short_name
 		selected["legit"] = legit_node_level(node)
 		var/list/commands = list()
-		for(var/command_id in node.command_ids)
+		for(var/command_id in node.all_command_ids())
 			var/datum/netrun_command/command = SSnetrun.get_command(command_id)
 			if(command)
 				commands += list(command.ui_entry(node, src, command_id))
@@ -376,7 +376,7 @@
 
 /datum/netrun_console/proc/transfer_from_node(uid, to_shard)
 	var/datum/component/netrun_node/node = selected_node()
-	if(!node?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != jack))
+	if(!node?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != jack) || !can_route(node))
 		return
 	var/datum/netrun_file/file = remote_file(node, uid)
 	if(!file)
@@ -395,7 +395,7 @@
 
 /datum/netrun_console/proc/transfer_to_node(uid)
 	var/datum/component/netrun_node/node = selected_node()
-	if(!node?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != jack))
+	if(!node?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != jack) || !can_route(node))
 		return
 	var/datum/netrun_file/file = find_local_file(uid)
 	if(!file)

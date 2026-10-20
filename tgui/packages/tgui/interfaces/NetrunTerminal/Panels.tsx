@@ -117,7 +117,9 @@ export const ConsoleLog = () => {
       <div
         ref={scroller}
         style={{
-          height: '120px',
+          height: '140px',
+          minHeight: '70px',
+          resize: 'vertical',
           overflowY: 'auto',
           padding: '4px 6px',
           fontFamily: 'monospace',
@@ -262,7 +264,9 @@ export const NetChat = () => {
       <div
         ref={scroller}
         style={{
-          height: '120px',
+          height: '140px',
+          minHeight: '70px',
+          resize: 'vertical',
           overflowY: 'auto',
           padding: '4px 6px',
           fontFamily: 'monospace',

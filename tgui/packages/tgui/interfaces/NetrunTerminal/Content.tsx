@@ -89,8 +89,19 @@ export const NetrunContent = () => {
         <Stack.Item grow basis={0}>
           {breach ? <MatrixPanel state={breach} /> : <StationMap />}
         </Stack.Item>
-        <Stack.Item basis="270px" style={{ minHeight: '360px' }}>
-          <NodePanel />
+        <Stack.Item>
+          <div
+            style={{
+              width: '280px',
+              minWidth: '210px',
+              maxWidth: '520px',
+              minHeight: '360px',
+              resize: 'horizontal',
+              overflow: 'auto',
+            }}
+          >
+            <NodePanel />
+          </div>
         </Stack.Item>
       </Stack>
       )}

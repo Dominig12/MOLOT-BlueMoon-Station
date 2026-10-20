@@ -16,6 +16,7 @@
 	/// Тело нетраннера, если это погружение
 	var/mob/living/carbon/dive_body
 	var/datum/action/innate/netrun_console/console_action
+	var/datum/action/innate/netrun_rename/rename_action
 
 /mob/camera/netrun_entity/Initialize(mapload, datum/component/netrun_node/start)
 	. = ..()
@@ -23,6 +24,8 @@
 	SSnetrun.entities += src
 	console_action = new
 	console_action.Grant(src)
+	rename_action = new
+	rename_action.Grant(src)
 	if(start)
 		enter_node(start)
 
@@ -31,6 +34,7 @@
 	leave_node()
 	QDEL_NULL(console)
 	QDEL_NULL(console_action)
+	QDEL_NULL(rename_action)
 	if(dive_body)
 		release_body()
 	return ..()
@@ -157,6 +161,26 @@
 	to_chat(src, span_userdanger("Целостность нарушена[reason ? ": [reason]" : ""]! ([max(0, round(integrity))]/[max_integrity])"))
 	if(integrity <= 0)
 		dissolve()
+
+/// Принудительно выбросить сущность из текущего узла (команда purge)
+/mob/camera/netrun_entity/proc/eject_from_node()
+	var/datum/component/netrun_node/old = host_node
+	var/datum/netrun_network/network = old?.network
+	var/list/candidates = list()
+	for(var/datum/component/netrun_node/candidate as anything in network?.nodes)
+		if(candidate != old && candidate.is_online())
+			candidates += candidate
+	if(!length(candidates))
+		var/datum/netrun_network/public = SSnetrun.get_network(NETRUN_LAN_PUBLIC)
+		for(var/datum/component/netrun_node/candidate as anything in public.nodes)
+			if(candidate.is_online())
+				candidates += candidate
+	to_chat(src, span_userdanger("Вас вычищают из узла [old?.address]!"))
+	if(length(candidates))
+		enter_node(pick(candidates))
+	else
+		leave_node()
+		update_vision()
 
 /mob/camera/netrun_entity/proc/host_lost()
 	var/datum/netrun_network/network = host_node?.network
@@ -356,3 +380,21 @@
 	var/mob/camera/netrun_entity/entity = owner
 	if(istype(entity))
 		entity.console.ui_interact(entity)
+
+/datum/action/innate/netrun_rename
+	name = "Переименовать"
+	desc = "Задать имя процесса."
+	button_icon_state = "repeat"
+	icon_icon = 'icons/mob/actions/actions_silicon.dmi'
+	background_icon_state = "bg_tech_blue"
+
+/datum/action/innate/netrun_rename/Activate()
+	var/mob/camera/netrun_entity/entity = owner
+	if(!istype(entity))
+		return
+	var/new_name = tgui_input_text(entity, "Имя процесса", "Переименование", entity.real_name, 42)
+	new_name = reject_bad_name(new_name, allow_numbers = TRUE)
+	if(!new_name)
+		return
+	entity.set_net_name(new_name)
+	to_chat(entity, span_notice("Имя изменено на [new_name]."))
