@@ -11,20 +11,59 @@ import {
 
 export const NodePanel = () => {
   const { act, data } = useBackend<NetrunData>();
-  const { selected, can_breach, breach, view } = data;
+  const { selected, can_breach, breach, networks } = data;
   if (!selected) {
     return (
-      <Section title="Узел" fill>
-        <Box color={THEME.muted}>Выберите узел на карте.</Box>
-        {view && view.access < 1 && can_breach && (
-          <Button
-            mt={1}
-            icon="key"
-            content={`Подобрать доступ к шлюзу ${view.name}`}
-            disabled={!!breach}
-            onClick={() => act('breach', { kind: 'network', id: view.id })}
-          />
-        )}
+      <Section title="Сети" fill scrollable>
+        <Box color={THEME.muted} mb={1}>
+          Выберите узел на карте или подберите доступ к сети.
+        </Box>
+        {networks
+          .filter((net) => net.id !== 'web')
+          .map((net) => (
+            <Box
+              key={net.id}
+              p={1}
+              mb={0.5}
+              style={{
+                background: THEME.bg,
+                border: `1px solid ${net.reachable ? net.color : THEME.line}`,
+                opacity: net.reachable ? 1 : 0.5,
+              }}
+            >
+              <Box>
+                <Box inline bold style={{ fontFamily: 'monospace', color: net.color }}>
+                  {net.code}
+                </Box>
+                {net.has_key && <Icon name="key" ml={1} color={THEME.good} />}
+                <Box inline ml={1} color={ACCESS_COLORS[net.access]}>
+                  {ACCESS_NAMES[net.access]}
+                </Box>
+              </Box>
+              <Box color={THEME.muted} fontSize="11px">
+                {net.name} · защита {net.security} · узлов {net.nodes}
+              </Box>
+              <Box mt={0.5}>
+                <Button
+                  compact
+                  icon="diagram-project"
+                  content="Открыть"
+                  disabled={!net.reachable}
+                  onClick={() => act('view_network', { id: net.id })}
+                />
+                {net.can_breach && (
+                  <Button
+                    compact
+                    icon="key"
+                    color="caution"
+                    content="Подобрать доступ"
+                    disabled={!!breach}
+                    onClick={() => act('breach', { kind: 'network', id: net.id })}
+                  />
+                )}
+              </Box>
+            </Box>
+          ))}
       </Section>
     );
   }

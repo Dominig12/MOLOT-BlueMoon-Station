@@ -9,6 +9,7 @@ export type NetNode = {
   access: number;
   entities: number;
   active: boolean;
+  uplink: string | null;
 };
 
 export type NetCommand = {
@@ -50,18 +51,22 @@ export type NetworkEntry = {
   id: string;
   name: string;
   short: string;
+  code: string;
   color: string;
   security: number;
   isolated: boolean;
   home: boolean;
   reachable: boolean;
   access: number;
+  has_key: boolean;
+  can_breach: boolean;
   nodes: number;
 };
 
 export type NetworkView = {
   id: string;
   name: string;
+  code: string;
   color: string;
   access: number;
   nodes: NetNode[];

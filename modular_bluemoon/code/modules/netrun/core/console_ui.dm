@@ -45,12 +45,15 @@
 			"id" = network.id,
 			"name" = network.name,
 			"short" = network.short_name,
+			"code" = network.code,
 			"color" = network.color,
 			"security" = network.security,
 			"isolated" = network.isolated,
 			"home" = (network in homes),
 			"reachable" = reachable,
 			"access" = network_level(network),
+			"has_key" = has_key(network),
+			"can_breach" = can_breach && reachable && network_level(network) < NETRUN_ACCESS_GUEST,
 			"nodes" = length(network.nodes),
 		))
 	if(web_browsing() && has_uplink() && SSntnet.is_enabled())
@@ -58,12 +61,15 @@
 			"id" = "web",
 			"name" = "NTnet — сайты",
 			"short" = "WEB",
+			"code" = "WEB",
 			"color" = "#5bc0de",
 			"security" = 0,
 			"isolated" = FALSE,
 			"home" = FALSE,
 			"reachable" = TRUE,
 			"access" = NETRUN_ACCESS_GUEST,
+			"has_key" = FALSE,
+			"can_breach" = FALSE,
 			"nodes" = length(SSntnet.catalog),
 		))
 	data["networks"] = networks
@@ -94,6 +100,7 @@
 		view = list(
 			"id" = viewed.id,
 			"name" = viewed.name,
+			"code" = viewed.code,
 			"color" = viewed.color,
 			"access" = level,
 			"nodes" = nodes,
@@ -400,9 +407,9 @@
 				for(var/network_id in SSnetrun.networks)
 					var/datum/netrun_network/network = SSnetrun.networks[network_id]
 					if(can_reach(network))
-						log_line("[network.id] — [network.name], узлов: [length(network.nodes)], доступ: [netrun_access_name(network_level(network))]")
+						log_line("[network.code] ([network.id]) — [network.name], узлов: [length(network.nodes)], доступ: [netrun_access_name(network_level(network))]")
 				return
-			var/datum/netrun_network/network = SSnetrun.networks[lowertext(argument)]
+			var/datum/netrun_network/network = SSnetrun.find_network(argument)
 			if(!network || !can_reach(network))
 				log_line("Сеть недоступна.", "bad")
 				return

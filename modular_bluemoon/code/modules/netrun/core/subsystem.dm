@@ -69,6 +69,19 @@ SUBSYSTEM_DEF(netrun)
 		if(!nodes_by_address[address])
 			return address
 
+/datum/controller/subsystem/netrun/proc/find_network(token)
+	if(!token)
+		return
+	token = trim("[token]")
+	var/datum/netrun_network/by_id = networks[lowertext(token)]
+	if(by_id)
+		return by_id
+	var/up = uppertext(token)
+	for(var/network_id in networks)
+		var/datum/netrun_network/net = networks[network_id]
+		if(net.code == up || uppertext(net.short_name) == up)
+			return net
+
 /datum/controller/subsystem/netrun/proc/find_node(address)
 	return nodes_by_address[uppertext(trim("[address]"))]
 

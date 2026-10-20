@@ -15,10 +15,13 @@
 	var/passcode
 	/// Цвет сети на карте терминала
 	var/color = "#4a9eff"
+	/// Короткий код сети для подключения (показывается в интерфейсе как адрес сети)
+	var/code
 
 /datum/netrun_network/New(new_id)
 	id = new_id
 	passcode = "[uppertext(copytext(md5("[new_id][world.time][rand(1, 999999)]"), 1, 17))]"
+	code = "NET-[uppertext(copytext(md5("[new_id][passcode]"), 1, 6))]"
 	switch(id)
 		if(NETRUN_LAN_PUBLIC)
 			name = "Общая сеть станции"

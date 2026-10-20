@@ -96,8 +96,27 @@
 	for(var/datum/netrun_file/file as anything in files)
 		. += file.size
 
+/// Узел-аплинк в подсети: APC отсека для обычных машин, иначе корень сети (null).
+/// Глубина дерева - 2: корень ЛВС -> APC отсека -> машины за ним.
+/datum/component/netrun_node/proc/uplink_node()
+	if(node_type == NETRUN_NODE_APC || node_type == NETRUN_NODE_GATEWAY)
+		return null
+	var/turf/T = get_turf(parent)
+	if(!T)
+		return null
+	var/area/A = get_area(parent)
+	var/area/root_area = A?.base_area || A
+	var/obj/machinery/power/apc/apc = root_area?.power_apc
+	if(!apc || apc == parent)
+		return null
+	var/datum/component/netrun_node/apc_node = apc.GetComponent(/datum/component/netrun_node)
+	if(apc_node && apc_node.network == network)
+		return apc_node
+	return null
+
 /datum/component/netrun_node/proc/ui_entry(datum/netrun_console/console)
 	var/turf/T = get_turf(parent)
+	var/datum/component/netrun_node/uplink = uplink_node()
 	return list(
 		"address" = address,
 		"name" = get_name(),
@@ -109,6 +128,7 @@
 		"access" = console.node_level(src),
 		"entities" = length(entities),
 		"active" = world.time - last_activity < 5 SECONDS,
+		"uplink" = uplink?.address,
 	)
 
 /// Найти узел на атоме или внутри него (для подключения деки и сканеров)
