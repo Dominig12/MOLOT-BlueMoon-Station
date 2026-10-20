@@ -5,7 +5,6 @@ import { backendReducer, backendUpdate } from '../../backend';
 import { debugReducer } from '../../debug';
 import { NetrunContent } from './Content';
 import { FilePanel } from './FilePanel';
-import { spreadNodes } from './mapLayout';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog } from './Panels';
@@ -44,7 +43,9 @@ const setup = (overrides: Partial<NetrunData> = {}) => {
       storage: { files: [], used: 0, capacity: 10 }, shard: null,
       breach: null, entity: null, chat: { handle: 'runner', messages: [] },
       web: null, windows: [], window: null,
-      map: { gateways: [], focus: null, radius: 40, nodes: [node, { ...node, address: 'BBBB:0002', x: 20 }] },
+      map: { gateways: [], focus: node.address, depth: 2, revision: 1,
+        nodes: [node, { ...node, address: 'BBBB:0002', x: 20 }],
+        edges: [{ id: 'apc-link', from: node.address, to: 'BBBB:0002', kind: 'apc' }] },
       selected_network: null, ping_route: null,
       cli: { verbs: [{ id: 'sel', args: '<адрес>', desc: 'Выбрать узел.' }] },
       ...overrides,
@@ -60,7 +61,8 @@ const sent = (topic, action: string) => topic.mock.calls
 describe('Netrun terminal panels', () => {
   test('map filters remove hidden nodes and keyboard targets without moving other nodes', () => {
     const camera = { ...node, address: 'CAM:0001', name: 'Камера лаборатории', type: 'camera', x: 20 };
-    const topic = setup({ map: { gateways: [], focus: null, radius: 40, nodes: [node, camera] } });
+    const topic = setup({ map: { gateways: [], focus: node.address, depth: 2, revision: 1,
+      nodes: [node, camera], edges: [{ id: 'camera-link', from: camera.address, to: node.address, kind: 'endpoint' }] } });
     const { getByLabelText, getByPlaceholderText, getByTitle, queryByTitle } = render(<StationMap />);
     const apcTitle = `${node.name} ${node.address} — Щитки APC`;
     const cameraTitle = `${camera.name} ${camera.address} — Камеры`;
@@ -82,19 +84,28 @@ describe('Netrun terminal panels', () => {
     expect(getByTitle(apcTitle).getAttribute('style')).toBe(originalStyle);
   });
 
-  test('dense maps separate nodes and preserve cached positions when devices arrive', () => {
-    const nodes = Array.from({ length: 300 }, (_, i) => ({ address: `${i}`, px: 0, py: 0 }));
-    spreadNodes(nodes, new Set(), 68);
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        expect(Math.hypot(nodes[i].px - nodes[j].px, nodes[i].py - nodes[j].py)).toBeGreaterThanOrEqual(67.999);
-      }
-    }
-    const cached = nodes.map((node) => ({ ...node }));
-    nodes.push({ address: 'new', px: 0, py: 0 });
-    spreadNodes(nodes, new Set(cached.map((node) => node.address)), 68);
-    expect(nodes.slice(0, -1)).toEqual(cached);
-    expect(nodes[nodes.length - 1]).not.toEqual({ address: 'new', px: 0, py: 0 });
+  test('map draws exactly the published links and one parent for an endpoint', () => {
+    const map = {
+      gateways: [{ id: 'engineering', code: 'NET-ENG', name: 'Инженерия', color: '#ffaa00', security: 2, access: 2, has_key: false, can_breach: false }],
+      focus: node.address, depth: 2, revision: 1,
+      nodes: [node, { ...node, address: 'APC-B' }, { ...node, address: 'CAM', type: 'camera', uplink: node.address }, { ...node, address: 'RELAY', type: 'gateway' }],
+      edges: [
+        { id: 'endpoint', from: 'CAM', to: node.address, kind: 'endpoint' as const },
+        { id: 'chain', from: node.address, to: 'APC-B', kind: 'apc' as const },
+        { id: 'relay', from: 'RELAY', to: 'APC-B', kind: 'relay' as const },
+      ],
+    };
+    const topic = setup({ map });
+    const { container, getByText, rerender } = render(<StationMap />);
+    expect(container.querySelectorAll('[data-net-edge]').length).toBe(3);
+    expect(container.querySelectorAll('[data-from="CAM"]').length).toBe(1);
+    expect(container.querySelector('[data-from="CAM"]').getAttribute('data-to')).toBe(node.address);
+    expect(container.querySelectorAll('svg text').length).toBe(0);
+    expect(getByText('NET-ENG')).toBeTruthy();
+    const before = container.querySelector('[data-net-node="CAM"]').getAttribute('style');
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, revision: 2, nodes: map.nodes.map((entry) => ({ ...entry, x: -9999, y: 9999, z: 4 })) } } })));
+    rerender(<StationMap />);
+    expect(container.querySelector('[data-net-node="CAM"]').getAttribute('style')).toBe(before);
   });
 
   test('node commands have natural height and dispatch the selected command', () => {
@@ -171,15 +182,17 @@ describe('Netrun terminal panels', () => {
 
   test('map keyboard navigation requires map focus and entity hops start at its host', () => {
     const topic = setup({
-      selected: { ...node, address: 'SELECTED', x: 0 },
-      entity: { name: 'Process', integrity: 100, max_integrity: 100, host: 'HOST', host_name: 'Host', diving: false },
-      map: { gateways: [], focus: null, radius: 40, nodes: [
-        { ...node, address: 'SELECTED', x: 0 },
-        { ...node, address: 'HOST', x: 10 },
-        { ...node, address: 'LOCKED', x: 11, access: 1 },
-        { ...node, address: 'OFFLINE', x: 12, online: false },
-        { ...node, address: 'TARGET', x: 13 },
-        { ...node, address: 'BEHIND', x: 9 },
+      selected: { ...node, address: 'Z-SELECTED' },
+      entity: { name: 'Process', integrity: 100, max_integrity: 100, host: 'A-HOST', host_name: 'Host', diving: false },
+      map: { gateways: [], focus: 'A-HOST', depth: 2, revision: 1, nodes: [
+        { ...node, address: 'Z-SELECTED' }, { ...node, address: 'A-HOST' },
+        { ...node, address: 'B-LOCKED', access: 1 }, { ...node, address: 'C-OFFLINE', online: false },
+        { ...node, address: 'D-TARGET' }, { ...node, address: 'E-NONNEIGHBOR' },
+      ], edges: [
+        { id: 'locked', from: 'A-HOST', to: 'B-LOCKED', kind: 'apc' },
+        { id: 'offline', from: 'A-HOST', to: 'C-OFFLINE', kind: 'apc' },
+        { id: 'target', from: 'A-HOST', to: 'D-TARGET', kind: 'apc' },
+        { id: 'indirect', from: 'B-LOCKED', to: 'E-NONNEIGHBOR', kind: 'apc' },
       ] },
     });
     const { getByLabelText, getByPlaceholderText } = render(<StationMap />);
@@ -187,7 +200,7 @@ describe('Netrun terminal panels', () => {
     expect(sent(topic, 'hop')).toEqual([]);
     const canvas = getByLabelText('Карта сети');
     fireEvent.keyDown(canvas, { key: 'd', shiftKey: true });
-    expect(sent(topic, 'hop')).toEqual([{ address: 'TARGET' }]);
+    expect(sent(topic, 'hop')).toEqual([{ address: 'D-TARGET' }]);
   });
 
   test('a rejected file creation and later polling preserve the entire draft', () => {

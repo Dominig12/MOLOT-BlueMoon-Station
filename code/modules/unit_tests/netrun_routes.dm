@@ -1,9 +1,13 @@
-/// Real department areas let LAN assignment and APC ancestry run through production code.
+/// Real areas and machinery exercise structural nearest-APC binding and security profiles.
 /area/engineering/netrun_route_test
 	area_flags = NONE
 	requires_power = FALSE
 
 /area/medical/netrun_route_test
+	area_flags = NONE
+	requires_power = FALSE
+
+/area/netrun_route_test
 	area_flags = NONE
 	requires_power = FALSE
 
@@ -73,6 +77,15 @@
 	SSnetworks.station_network.setting_disabled = original_disabled
 	return ..()
 
+/// Existing optical tests need real connectivity while retaining their public guest access setup.
+/datum/unit_test/proc/netrun_connected_test_area()
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, run_loc_floor_bottom_left.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	for(var/turf/spot as anything in block(run_loc_floor_bottom_left, run_loc_floor_top_right))
+		scene.take(spot, room)
+	scene.machine(/obj/machinery/power/apc, run_loc_floor_bottom_left)
+	return scene
+
 /// Nearby machines behind one real APC communicate without visiting either LAN gateway or NTnet.
 /datum/unit_test/netrun_route_same_apc/Run()
 	var/turf/origin = run_loc_floor_bottom_left
@@ -84,6 +97,7 @@
 	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, apc_spot)
 	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
 	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, target_spot)
+	SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/apc_node = apc.GetComponent(/datum/component/netrun_node)
@@ -104,7 +118,7 @@
 	command.execute(target_node, source.console)
 	TEST_ASSERT_EQUAL(json_encode(source.console.ping_route), json_encode(expected), "Ping highlighting must use the same APC route")
 
-/// A department LAN with two rooms needs its gateway, but still no NTnet relay.
+/// Neighboring APCs keep distinct security domains while their sector routes without NTnet.
 /datum/unit_test/netrun_route_different_apcs/Run()
 	var/turf/origin = run_loc_floor_bottom_left
 	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
@@ -112,49 +126,62 @@
 	var/area/second_room = scene.room(/area/engineering/netrun_route_test)
 	scene.take(origin, first_room)
 	var/turf/first_apc_spot = scene.take(get_step(origin, NORTH), first_room)
-	var/turf/target_spot = scene.take(get_step(origin, EAST), second_room)
+	var/turf/target_spot = scene.take(locate(origin.x + 4, origin.y, origin.z), second_room)
 	var/turf/second_apc_spot = scene.take(get_step(target_spot, NORTH), second_room)
 	var/obj/machinery/power/apc/first_apc = scene.machine(/obj/machinery/power/apc, first_apc_spot)
 	var/obj/machinery/power/apc/second_apc = scene.machine(/obj/machinery/power/apc, second_apc_spot)
 	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
 	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, target_spot)
+	SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/first_apc_node = first_apc.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/second_apc_node = second_apc.GetComponent(/datum/component/netrun_node)
-	TEST_ASSERT_EQUAL(source_node.network, target_node.network, "Two engineering rooms must classify into one real LAN")
+	TEST_ASSERT_NOTEQUAL(source_node.network, target_node.network, "Separate APC addresses must own separate security LANs even with the same engineering profile")
+	TEST_ASSERT_EQUAL(source_node.uplink_node(), first_apc_node, "The source must bind its nearest APC")
+	TEST_ASSERT_EQUAL(target_node.uplink_node(), second_apc_node, "The target must bind its nearest APC")
 	SSnetworks.station_network.setting_disabled = TRUE
 	var/datum/netrun_route/route = source.console.route_to(target_node)
 	allocated += route
 	var/list/expected = list(
 		list("kind" = "node", "ref" = source_node.address),
 		list("kind" = "node", "ref" = first_apc_node.address),
-		list("kind" = "gateway", "ref" = source_node.network.id),
 		list("kind" = "node", "ref" = second_apc_node.address),
 		list("kind" = "node", "ref" = target_node.address),
 	)
-	TEST_ASSERT_EQUAL(json_encode(route.hops), json_encode(expected), "Different APCs in the same LAN must meet at exactly one department gateway")
+	TEST_ASSERT_EQUAL(json_encode(route.hops), json_encode(expected), "Same-sector traffic must follow the actual APC edge without synthetic gateways or a relay")
+	TEST_ASSERT(source.console.can_route(target_node), "Neighboring APC security domains must remain physically reachable with NTnet disabled")
+	first_apc.set_machine_stat(BROKEN)
+	TEST_ASSERT(!source.console.can_route(target_node), "A failed intermediate APC must cut its endpoint off from the other APC")
+	TEST_ASSERT_EQUAL(source_node.uplink_node(), first_apc_node, "An offline APC must not cause an endpoint to escape to another APC")
 
-/// Real department classification and an operational relay produce the complete remote path.
+/// Crossing sectors requires the actual relays at both ends, including their APC attachments.
 /datum/unit_test/netrun_route_different_lans/Run()
 	var/turf/origin = run_loc_floor_bottom_left
 	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
 	var/area/engineering = scene.room(/area/engineering/netrun_route_test)
 	var/area/medical = scene.room(/area/medical/netrun_route_test)
+	var/list/levels = multiz_gravity_test_levels()
+	scene.mark_station(levels[1])
 	scene.take(origin, engineering)
 	var/turf/first_apc_spot = scene.take(get_step(origin, NORTH), engineering)
 	var/turf/relay_spot = scene.take(get_step(first_apc_spot, NORTH), engineering)
-	var/turf/target_spot = scene.take(get_step(origin, EAST), medical)
-	var/turf/second_apc_spot = scene.take(get_step(target_spot, NORTH), medical)
+	var/turf/target_spot = scene.take(locate(80, 80, levels[1]), medical, TRUE)
+	var/turf/second_apc_spot = scene.take(locate(81, 80, levels[1]), medical, TRUE)
+	var/turf/second_relay_spot = scene.take(locate(82, 80, levels[1]), medical, TRUE)
 	var/obj/machinery/power/apc/first_apc = scene.machine(/obj/machinery/power/apc, first_apc_spot)
 	var/obj/machinery/power/apc/second_apc = scene.machine(/obj/machinery/power/apc, second_apc_spot)
 	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
 	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, target_spot)
 	var/obj/machinery/ntnet_relay/relay = scene.machine(/obj/machinery/ntnet_relay, relay_spot)
+	var/obj/machinery/ntnet_relay/second_relay = scene.machine(/obj/machinery/ntnet_relay, second_relay_spot)
+	SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/first_apc_node = first_apc.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/second_apc_node = second_apc.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/relay_node = relay.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/second_relay_node = second_relay.GetComponent(/datum/component/netrun_node)
 	TEST_ASSERT_NOTEQUAL(source_node.network, target_node.network, "Engineering and medical must be distinct live LANs")
 	SSnetworks.station_network.setting_disabled = FALSE
 	TEST_ASSERT(relay.is_operational() && source.console.has_uplink(), "The actual relay fixture must provide NTnet on this Z")
@@ -163,14 +190,19 @@
 	var/list/expected = list(
 		list("kind" = "node", "ref" = source_node.address),
 		list("kind" = "node", "ref" = first_apc_node.address),
-		list("kind" = "gateway", "ref" = source_node.network.id),
-		list("kind" = "hub"),
-		list("kind" = "gateway", "ref" = target_node.network.id),
+		list("kind" = "node", "ref" = relay_node.address),
+		list("kind" = "node", "ref" = second_relay_node.address),
 		list("kind" = "node", "ref" = second_apc_node.address),
 		list("kind" = "node", "ref" = target_node.address),
 	)
-	TEST_ASSERT_EQUAL(json_encode(route.hops), json_encode(expected), "A remote LAN must traverse both gateways and one NTnet hub")
+	TEST_ASSERT_EQUAL(json_encode(route.hops), json_encode(expected), "A cross-sector route must contain both real relay nodes and no abstract hub")
 	TEST_ASSERT(route.latency > 0, "Remote communication must include relay latency")
+	second_relay.enabled = FALSE
+	TEST_ASSERT(!source.console.can_route(target_node), "A working relay only at the source must not reach a disconnected target sector")
+	second_relay.enabled = TRUE
+	relay.enabled = FALSE
+	TEST_ASSERT(!source.console.can_route(target_node), "A working relay only at the destination must not reach a disconnected source sector")
+	relay.enabled = TRUE
 	SSnetworks.station_network.setting_disabled = TRUE
 	TEST_ASSERT(!source.console.can_route(target_node), "Disabling NTnet must remove the remote LAN route")
 	var/datum/netrun_route/unreachable = source.console.route_to(target_node)
@@ -187,12 +219,14 @@
 	var/turf/target_spot = scene.take(get_step(origin, EAST), medical)
 	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
 	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, target_spot)
+	SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
 	SSnetworks.station_network.setting_disabled = TRUE
 	source.console.wireless = TRUE
-	TEST_ASSERT(!source.console.can_route(target_node), "A wireless client without relays must not inherit the neighboring LAN")
+	TEST_ASSERT(!source.console.can_route(target_node), "Two orphan endpoints must not gain a fictitious path from sharing a fallback LAN")
 	TEST_ASSERT(source.console.can_route(source_node), "A wireless client's own real endpoint must remain reachable without relays")
+	TEST_ASSERT_EQUAL(source.console.latency_to(source_node), 0, "The actual source endpoint must have zero loopback latency")
 	TEST_ASSERT_EQUAL(length(source.console.home_networks()), 0, "Loopback must not grant wireless access to the rest of the physical LAN")
 	source.console.set_jack(target_node)
 	TEST_ASSERT(source.console.jack_valid(), "The adjacent target must be a legitimate cable endpoint")
@@ -203,7 +237,7 @@
 	var/list/endpoint = route.hops[1]
 	TEST_ASSERT_EQUAL(endpoint["ref"], target_node.address, "The direct route must identify the cable target")
 
-/// Sharing a real APC across linked floors is still local; Z separation only changes latency.
+/// Linked floors form one sector and keep local graph connectivity with NTnet disabled.
 /datum/unit_test/netrun_route_multiz_same_apc/Run()
 	var/list/levels = multiz_gravity_test_levels()
 	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, levels[1])
@@ -215,10 +249,11 @@
 	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, apc_spot)
 	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, source_spot)
 	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, target_spot)
+	SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/apc_node = apc.GetComponent(/datum/component/netrun_node)
-	TEST_ASSERT_EQUAL(source_node.network, target_node.network, "A department LAN must retain its identity across station floors")
+	TEST_ASSERT_EQUAL(source_node.network, target_node.network, "A bound APC security domain must retain its identity across linked station floors")
 	TEST_ASSERT_EQUAL(target_node.uplink_node(), apc_node, "The upper room must use the same real APC")
 	SSnetworks.station_network.setting_disabled = TRUE
 	var/datum/netrun_route/route = source.console.route_to(target_node)
@@ -230,3 +265,4 @@
 	)
 	TEST_ASSERT_EQUAL(json_encode(route.hops), json_encode(expected), "Z separation must not introduce gateway or relay detours into a shared APC route")
 	TEST_ASSERT(route.latency > 0, "A local inter-floor connection must retain its nonzero physical latency")
+	TEST_ASSERT(source.console.can_route(target_node), "Linked floors must remain connected through the same actual APC without NTnet")

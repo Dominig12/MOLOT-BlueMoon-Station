@@ -17,6 +17,7 @@ SUBSYSTEM_DEF(netrun)
 	/// Общая лента недавних событий сети - её видят все раннеры на карте.
 	/// list(list("kind","from","to","t"))
 	var/list/events = list()
+	var/datum/netrun_topology/topology
 
 /datum/controller/subsystem/netrun/stat_entry(msg)
 	msg = "N:[length(nodes_by_address)] C:[length(consoles)] E:[length(entities)]"
@@ -54,10 +55,43 @@ SUBSYSTEM_DEF(netrun)
 		networks[id] = network
 	return network
 
+/// Allocation only: node lifecycle and bindings must never recursively build the graph.
+/datum/controller/subsystem/netrun/proc/get_topology()
+	if(!topology)
+		topology = new
+	return topology
+
+/datum/controller/subsystem/netrun/proc/ensure_topology()
+	var/datum/netrun_topology/result = get_topology()
+	if(result.dirty && !result.rebuilding)
+		result.rebuild()
+	return result
+
+/// Keys belong to a particular APC, even when multiple APCs serve the same native area.
+/datum/controller/subsystem/netrun/proc/get_apc_network(datum/component/netrun_node/apc_node)
+	if(QDELETED(apc_node) || apc_node.node_type != NETRUN_NODE_APC)
+		return null
+	var/id = "apc_[apc_node.address]"
+	var/datum/netrun_network/network = networks[id]
+	if(!network)
+		var/area/source_area
+		if(istype(apc_node.parent, /obj/machinery/power/apc))
+			var/obj/machinery/power/apc/apc = apc_node.parent
+			source_area = apc.area
+		if(!source_area)
+			source_area = get_area(apc_node.parent)
+		source_area = source_area?.base_area || source_area
+		network = new(id, source_area)
+		networks[id] = network
+	return network
+
 /// ЛВС отсека: по одной на APC-зону, свойства берутся из типа отсека.
 /datum/controller/subsystem/netrun/proc/get_area_network(area/root_area)
 	if(!root_area)
 		return
+	var/datum/component/netrun_node/apc_node = root_area.power_apc?.GetComponent(/datum/component/netrun_node)
+	if(apc_node)
+		return get_apc_network(apc_node)
 	if(!root_area.netrun_lan_id)
 		root_area.netrun_lan_id = "lan_[REF(root_area)]"
 	var/datum/netrun_network/network = networks[root_area.netrun_lan_id]

@@ -62,9 +62,9 @@
 
 /datum/netrun_console/circuit/home_networks()
 	. = list()
-	var/datum/netrun_network/local = netrun_network_for(get_turf(host))
-	if(local)
-		. += local
+	var/datum/component/netrun_node/source = route_source()
+	if(source?.network)
+		. += source.network
 
 /datum/netrun_console/circuit/user_access()
 	return list()

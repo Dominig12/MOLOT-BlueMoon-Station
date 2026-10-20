@@ -25,7 +25,7 @@
 	area = source_area
 	passcode = "[uppertext(copytext(md5("[new_id][world.time][rand(1, 999999)]"), 1, 17))]"
 	code = "NET-[uppertext(copytext(md5("[new_id][passcode]"), 1, 6))]"
-	if(new_id == NETRUN_LAN_PUBLIC)
+	if(new_id == NETRUN_LAN_PUBLIC || copytext(new_id, 1, 5) == "pub:")
 		name = "Общая сеть станции"
 		short_name = "ОБЩ"
 		security = 1
@@ -43,7 +43,14 @@
 	else
 		name = "Локальная сеть [new_id]"
 		short_name = "ЛВС"
+	if(area)
+		RegisterSignal(area, COMSIG_PARENT_QDELETING, PROC_REF(on_area_deleted))
 	add_log("Сеть инициализирована.")
+
+/datum/netrun_network/proc/on_area_deleted(datum/source)
+	SIGNAL_HANDLER
+	UnregisterSignal(source, COMSIG_PARENT_QDELETING)
+	area = null
 
 /// Свойства ЛВС выводятся из типа отсека, в котором стоит её APC.
 /datum/netrun_network/proc/apply_area_profile(area/A)
@@ -79,6 +86,9 @@
 		color = "#8b93a3"
 
 /datum/netrun_network/Destroy()
+	if(area)
+		UnregisterSignal(area, COMSIG_PARENT_QDELETING)
+	area = null
 	nodes.Cut()
 	SSnetrun.networks -= id
 	return ..()
@@ -113,20 +123,21 @@
 		. = max(., node.get_security())
 	return clamp(., 1, 5)
 
-/// ЛВС = отсек с APC. Каждый APC-отсек — отдельная локальная сеть, между ними переходят.
-/// Вне станции — изолированный внешний сегмент по Z. Отсеки без APC — общая сеть.
-/proc/netrun_network_for(turf/T)
+/// Unbound endpoints retain an authorization domain but gain no synthetic graph edges.
+/proc/netrun_fallback_network_for(turf/T)
 	if(!T)
 		return null
 	if(!is_station_level(T.z) && !is_mining_level(T.z))
 		return SSnetrun.get_network("ext[T.z]")
-	var/area/A = get_area(T)
-	if(!A)
-		return SSnetrun.get_network(NETRUN_LAN_PUBLIC)
-	var/area/root_area = A.base_area || A
-	if(!root_area.power_apc)
-		return SSnetrun.get_network(NETRUN_LAN_PUBLIC)
-	return SSnetrun.get_area_network(root_area)
+	return SSnetrun.get_network("pub:[netrun_sector_for(T)]")
+
+/// Compatibility for clients without their own endpoint. Bound nodes keep their own cached APC.
+/proc/netrun_network_for(turf/T)
+	if(!T)
+		return null
+	var/datum/netrun_topology/topology = SSnetrun.get_topology()
+	var/datum/component/netrun_node/apc = topology.nearest_apc(T)
+	return apc ? SSnetrun.get_apc_network(apc) : netrun_fallback_network_for(T)
 
 /// Доступы, которые несёт моб (ID в руке, на поясе/шее; у силиконов - всё)
 /proc/netrun_mob_access(mob/user)

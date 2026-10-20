@@ -105,6 +105,7 @@
 
 /// An explicitly watched source must survive processing without moving the resident process.
 /datum/unit_test/netrun_vision_explicit_stream_persists/Run()
+	netrun_connected_test_area()
 	var/obj/machinery/camera/host_camera = allocate(/obj/machinery/camera)
 	var/obj/machinery/camera/remote_camera = allocate(/obj/machinery/camera)
 	var/datum/component/netrun_node/host_node = host_camera.GetComponent(/datum/component/netrun_node)
@@ -130,6 +131,7 @@
 
 /// Changes in real equipment and organs invalidate an already selected source on the next tick.
 /datum/unit_test/netrun_vision_equipment_stream_invalidation/Run()
+	netrun_connected_test_area()
 	var/obj/machinery/camera/host_camera = allocate(/obj/machinery/camera)
 	var/datum/component/netrun_node/host_node = host_camera.GetComponent(/datum/component/netrun_node)
 	var/mob/living/carbon/human/wearer = allocate(/mob/living/carbon/human)
@@ -165,6 +167,7 @@
 
 /// The native remote-sight hook replaces a living viewer's own senses with the lens' senses.
 /datum/unit_test/netrun_vision_living_remote_eye/Run()
+	netrun_connected_test_area()
 	var/mob/living/carbon/human/viewer = allocate(/mob/living/carbon/human)
 	var/obj/item/organ/eyes/robotic/toggled/xray/viewer_eyes = allocate(/obj/item/organ/eyes/robotic/toggled/xray)
 	viewer_eyes.Insert(viewer, TRUE)
@@ -221,6 +224,7 @@
 
 /// Retiring another console must never release the viewer's currently owned optical session.
 /datum/unit_test/netrun_vision_console_session_ownership/Run()
+	netrun_connected_test_area()
 	var/obj/machinery/camera/host_camera = allocate(/obj/machinery/camera)
 	var/obj/machinery/camera/first_camera = allocate(/obj/machinery/camera)
 	var/obj/machinery/camera/second_camera = allocate(/obj/machinery/camera)

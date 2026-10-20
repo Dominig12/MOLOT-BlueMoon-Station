@@ -82,7 +82,10 @@
 
 /// Можно ли перепрыгнуть в узел
 /mob/camera/netrun_entity/proc/can_enter(datum/component/netrun_node/node)
-	return node && node != host_node && node.is_online() && console.node_level(node) >= NETRUN_ACCESS_USER
+	if(!node || node == host_node || !host_node)
+		return FALSE
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	return (node.address in graph.neighbors(host_node.address)) && netrun_link_available(host_node, node) && console.node_level(node) >= NETRUN_ACCESS_USER
 
 /mob/camera/netrun_entity/proc/hop(datum/component/netrun_node/node)
 	if(world.time < next_hop || !can_enter(node))
@@ -97,12 +100,14 @@
 	var/turf/here = get_turf(host_node.parent)
 	var/datum/component/netrun_node/best
 	var/best_dist = INFINITY
-	for(var/datum/component/netrun_node/node as anything in host_node.network.nodes)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	for(var/address in graph.neighbors(host_node.address))
+		var/datum/component/netrun_node/node = graph.nodes[address]
 		var/turf/there = get_turf(node.parent)
 		if(!there || there.z != here.z || there == here)
 			continue
 		var/dist = get_dist(here, there)
-		if(dist > 9 || dist >= best_dist || !(get_dir(here, there) & direct))
+		if(dist >= best_dist || !(get_dir(here, there) & direct))
 			continue
 		if(!can_enter(node))
 			continue
@@ -347,12 +352,7 @@
 		. += entity.host_node.network
 
 /datum/netrun_console/entity/has_uplink()
-	var/mob/camera/netrun_entity/entity = host
-	var/datum/netrun_network/network = entity?.host_node?.network
-	if(!network || network.isolated)
-		return FALSE
-	var/turf/T = get_turf(entity)
-	return T && SSnetrun.backbone_online(T.z)
+	return ..()
 
 /datum/netrun_console/entity/user_access()
 	return list()

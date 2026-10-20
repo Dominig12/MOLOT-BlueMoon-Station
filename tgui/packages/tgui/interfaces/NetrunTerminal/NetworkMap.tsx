@@ -2,814 +2,250 @@ import { KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input } from '../../components';
-import { spreadNodes } from './mapLayout';
+import {
+  createGraphLayoutCache,
+  graphAdjacency,
+  graphNeighborhood,
+  GraphPoint,
+  layoutGraph,
+} from './mapLayout';
 import {
   ACCESS_COLORS,
-  Gateway,
+  ACCESS_NAMES,
   NetNode,
   NetrunData,
-  NetworkEntry,
   NODE_ICONS,
   NODE_NAMES,
   THEME,
   Waypoint,
 } from './types';
 
-const WIDTH = 520;
-const HEIGHT = 360;
-const PAD = 24;
+type Placed = NetNode & GraphPoint;
 
-/** Обзор: NTnet в центре, локальные сети по кругу */
-export const TopologyMap = () => {
-  const { act, data } = useBackend<NetrunData>();
-  const { networks, view, uplink } = data;
-  const cx = WIDTH / 2;
-  const cy = HEIGHT / 2;
-  const radius = Math.min(WIDTH, HEIGHT) / 2 - 50;
-  const placed = networks.map((net, i) => {
-    const angle = (i / Math.max(networks.length, 1)) * Math.PI * 2 - Math.PI / 2;
-    return {
-      net,
-      x: cx + Math.cos(angle) * radius,
-      y: cy + Math.sin(angle) * radius,
-    };
-  });
-  return (
-    <svg
-      width="100%"
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-      style={{ background: THEME.bg, display: 'block' }}
-    >
-      <defs>
-        <radialGradient id="netrun-hub">
-          <stop offset="0%" stopColor={THEME.accent} stopOpacity={0.6} />
-          <stop offset="100%" stopColor={THEME.accent} stopOpacity={0} />
-        </radialGradient>
-      </defs>
-      {placed.map(({ net, x, y }) => (
-        <g key={`link-${net.id}`}>
-          <line
-            x1={cx}
-            y1={cy}
-            x2={x}
-            y2={y}
-            stroke={net.reachable ? net.color : THEME.line}
-            strokeOpacity={net.reachable ? 0.5 : 0.3}
-            strokeWidth={net.isolated ? 1 : 2}
-            strokeDasharray={net.isolated ? '4 4' : undefined}
-          />
-          {net.reachable && uplink && !net.isolated && (
-            <circle r={2.5} fill={net.color}>
-              <animateMotion
-                dur={`${2 + net.security * 0.4}s`}
-                repeatCount="indefinite"
-                path={`M${cx},${cy} L${x},${y}`}
-              />
-            </circle>
-          )}
-        </g>
-      ))}
-      <circle cx={cx} cy={cy} r={46} fill="url(#netrun-hub)" />
-      <circle
-        cx={cx}
-        cy={cy}
-        r={22}
-        fill={THEME.panel}
-        stroke={uplink ? THEME.accent : THEME.bad}
-        strokeWidth={2}
-      />
-      <text
-        x={cx}
-        y={cy + 4}
-        textAnchor="middle"
-        fill={uplink ? THEME.accent : THEME.bad}
-        fontSize={11}
-        fontFamily="monospace"
-      >
-        NTnet
-      </text>
-      {placed.map(({ net, x, y }) => (
-        <NetworkBubble
-          key={net.id}
-          net={net}
-          x={x}
-          y={y}
-          selected={view?.id === net.id}
-          onClick={() => act('view_network', { id: net.id })}
-        />
-      ))}
-    </svg>
-  );
+/** Only consecutive, visible graph edges may form an overlay route. */
+const routePath = (addresses: string[], points: Map<string, GraphPoint>, adjacency: Map<string, Set<string>>) => {
+  let path = '';
+  let previous: string | null = null;
+  for (const address of addresses) {
+    const point = points.get(address);
+    if (!point) { previous = null; continue; }
+    const from = previous && points.get(previous);
+    if (from && adjacency.get(previous)?.has(address)) {
+      path += `M ${from.px},${from.py} L ${point.px},${point.py} `;
+    }
+    previous = address;
+  }
+  return path;
 };
 
-const NetworkBubble = (props: {
-  net: NetworkEntry;
-  x: number;
-  y: number;
-  selected: boolean;
-  onClick: () => void;
-}) => {
-  const { net, x, y, selected, onClick } = props;
-  const size = 14 + Math.min(16, Math.sqrt(net.nodes) * 1.5);
-  const opened = net.access > 0;
-  return (
-    <g
-      onClick={net.reachable ? onClick : undefined}
-      style={{ cursor: net.reachable ? 'pointer' : 'default' }}
-      opacity={net.reachable ? 1 : 0.4}
-    >
-      {selected && (
-        <circle
-          cx={x}
-          cy={y}
-          r={size + 6}
-          fill="none"
-          stroke={net.color}
-          strokeWidth={1}
-          strokeDasharray="3 3"
-        />
-      )}
-      <circle
-        cx={x}
-        cy={y}
-        r={size}
-        fill={THEME.panel}
-        stroke={net.color}
-        strokeWidth={opened ? 3 : 1.5}
-      />
-      <text
-        x={x}
-        y={y + 4}
-        textAnchor="middle"
-        fill={net.color}
-        fontSize={11}
-        fontWeight="bold"
-        fontFamily="monospace"
-      >
-        {net.short}
-      </text>
-      <text
-        x={x}
-        y={y + size + 13}
-        textAnchor="middle"
-        fill={THEME.muted}
-        fontSize={9}
-        fontFamily="monospace"
-      >
-        {net.nodes} уз. · защ. {net.security}
-        {net.home ? ' · здесь' : ''}
-      </text>
-    </g>
-  );
-};
-
-/** Единое поле всей сети: гейтвеи подсетей, APC-подузлы и машины, с иконками-типами,
- * панорамированием, поиском/фильтром, вложенностью и WASD-навигацией. */
-const FIELD_W = 2000;
-const FIELD_H = 1300;
-const FIELD_MARGIN = 80;
-const MIN_GAP = 68;
-
-type Placed = NetNode & { px: number; py: number };
-type GwPos = { id: string; gx: number; gy: number };
-
+/** The backend publishes the actual wiring. Coordinates are graph positions,
+ * independent of station tiles, filtering and the current polling frame.
+ */
 export const StationMap = () => {
   const { act, data } = useBackend<NetrunData>();
-  const { selected, selected_network, jack, entity, breach } = data;
-  const route = data.ping_route;
-  const events = data.events;
-  const waypoint = data.waypoint;
-  const map = data.map;
+  const { selected, selected_network, jack, entity, breach, map } = data;
   const canvasRef = useRef<HTMLDivElement>(null);
-  const [pan, setPan] = useState({ x: -600, y: -360 });
+  const cache = useRef(createGraphLayoutCache());
+  const [pan, setPan] = useState({ x: -600, y: -240 });
   const [zoom, setZoom] = useState(0.7);
   const [query, setQuery] = useState('');
   const [focusNearby, setFocusNearby] = useState(false);
-  const coordinateFrame = useRef<{ minX: number; minY: number; scale: number; offX: number; offY: number } | null>(null);
-  const positions = useRef<Record<string, { x: number; y: number; px: number; py: number }>>({});
-  const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>(
-    {},
-  );
-  const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(
-    null,
-  );
-  // Сброс фильтров после завершения взлома
+  const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>({});
+  const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const prevBreach = useRef(false);
   useEffect(() => {
-    const now = !!breach;
-    if (prevBreach.current && !now) {
+    if (prevBreach.current && !breach) {
       setQuery('');
       setDisabledTypes({});
     }
-    prevBreach.current = now;
+    prevBreach.current = !!breach;
   }, [breach]);
 
-  if (!map) {
-    return null;
+  if (!map) { return null; }
+  if (!map.nodes.length) {
+    return <Box p={2} color={THEME.muted}>Нет доступных узлов для подключения.</Box>;
   }
-  const nodes = map.nodes;
-  if (!nodes.length && !map.gateways.length) {
-    return (
-      <Box p={2} color={THEME.muted} style={{ background: THEME.bg }}>
-        Сеть недоступна.
-      </Box>
-    );
-  }
-
-  const xs = nodes.map((n) => n.x);
-  const ys = nodes.map((n) => n.y);
-  const minX = xs.length ? Math.min(...xs) : 0;
-  const maxX = xs.length ? Math.max(...xs) : 1;
-  const minY = ys.length ? Math.min(...ys) : 0;
-  const maxY = ys.length ? Math.max(...ys) : 1;
-  const spanX = Math.max(maxX - minX, 1);
-  const spanY = Math.max(maxY - minY, 1);
-  const scale = Math.min(
-    (FIELD_W - FIELD_MARGIN * 2) / spanX,
-    (FIELD_H - FIELD_MARGIN * 2) / spanY,
-  );
-  const offX = (FIELD_W - spanX * scale) / 2;
-  const offY = (FIELD_H - spanY * scale) / 2;
-  // Keep the coordinate frame when a LAN is revealed or machines move. Panning,
-  // filtering and selection must not rearrange the rest of the station.
-  if (!coordinateFrame.current && nodes.length) {
-    coordinateFrame.current = { minX, minY, scale, offX, offY };
-  }
-  const frame = coordinateFrame.current ?? { minX, minY, scale, offX, offY };
-  const fixed = new Set<string>();
-  const placed: Placed[] = nodes.map((n) => {
-    const old = positions.current[n.address];
-    if (old && old.x === n.x && old.y === n.y) {
-      fixed.add(n.address);
-      return { ...n, px: old.px, py: old.py };
-    }
-    return {
-      ...n,
-      px: frame.offX + (n.x - frame.minX) * frame.scale,
-      py: FIELD_H - (frame.offY + (n.y - frame.minY) * frame.scale),
-    };
-  });
-  spreadNodes(placed, fixed, MIN_GAP);
-  for (const p of placed) {
-    positions.current[p.address] = { x: p.x, y: p.y, px: p.px, py: p.py };
-  }
-  const byAddr: Record<string, Placed> = {};
-  for (const p of placed) {
-    byAddr[p.address] = p;
-  }
-
-  // Позиция гейтвея = центр его узлов (или по кольцу, если узлов нет)
-  const gwPos: Record<string, GwPos> = {};
-  map.gateways.forEach((gw, i) => {
-    const own = placed.filter((p) => p.network === gw.id);
-    if (own.length) {
-      gwPos[gw.id] = {
-        id: gw.id,
-        gx: own.reduce((s, p) => s + p.px, 0) / own.length,
-        gy: own.reduce((s, p) => s + p.py, 0) / own.length - 40,
-      };
-    } else {
-      const ang = (i / Math.max(map.gateways.length, 1)) * Math.PI * 2;
-      gwPos[gw.id] = {
-        id: gw.id,
-        gx: FIELD_W / 2 + Math.cos(ang) * 200,
-        gy: FIELD_H / 2 + Math.sin(ang) * 200,
-      };
-    }
-  });
-  const hubX = FIELD_W / 2;
-  const hubY = FIELD_H / 2;
-
-  const types = Array.from(new Set(nodes.map((n) => n.type)));
-  const neighbors: Record<string, Set<string>> = {};
-  const connect = (a: string, b: string) => {
-    (neighbors[a] ??= new Set()).add(b);
-    (neighbors[b] ??= new Set()).add(a);
-  };
-  for (const p of placed) {
-    connect(p.address, p.uplink && byAddr[p.uplink] ? p.uplink : `gateway:${p.network}`);
-  }
-  for (const gateway of map.gateways) {
-    connect(`gateway:${gateway.id}`, 'hub');
-  }
-  const nearby = new Set<string>();
-  if (selected) {
-    nearby.add(selected.address);
-    let frontier = [selected.address];
-    for (let depth = 0; depth < 2; depth++) {
-      const next: string[] = [];
-      for (const address of frontier) {
-        for (const neighbor of neighbors[address] ?? []) {
-          if (!nearby.has(neighbor)) {
-            nearby.add(neighbor);
-            next.push(neighbor);
-          }
-        }
-      }
-      frontier = next;
-    }
-  }
+  const positions = layoutGraph(map.nodes, map.edges, cache.current);
+  const adjacency = graphAdjacency(map.nodes, map.edges);
+  const placed: Placed[] = map.nodes.map((node) => ({ ...node, ...positions.get(node.address) }));
+  const byAddress = new Map(placed.map((node) => [node.address, node]));
+  const gateways = new Map(map.gateways.map((gateway) => [gateway.id, gateway]));
+  const types = [...new Set(map.nodes.map((node) => node.type))];
+  const nearby = selected ? graphNeighborhood(adjacency, selected.address, 2) : new Set<string>();
   const q = query.trim().toLowerCase();
-  const visible = (n: NetNode) => {
-    if (focusNearby && selected && !nearby.has(n.address)) {
-      return false;
-    }
-    if (disabledTypes[n.type]) {
-      return false;
-    }
-    if (!q) {
-      return true;
-    }
-    return (
-      n.name.toLowerCase().includes(q) ||
-      n.address.toLowerCase().includes(q) ||
-      (NODE_NAMES[n.type] || n.type).toLowerCase().includes(q)
-    );
-  };
+  const visible = (node: NetNode) => !disabledTypes[node.type]
+    && (!focusNearby || !selected || nearby.has(node.address))
+    && (!q || [node.name, node.address, NODE_NAMES[node.type] || node.type, node.sector || '']
+      .some((value) => value.toLowerCase().includes(q)));
   const visibleNodes = placed.filter(visible);
+  const visibleIds = new Set(visibleNodes.map((node) => node.address));
+  const visiblePositions = new Map(visibleNodes.map((node) => [node.address, node]));
+  const pingPath = routePath((data.ping_route ?? []).filter((hop) => hop.kind === 'node').map((hop) => hop.ref), visiblePositions, adjacency);
+  const waypointPath = routePath(data.waypoint?.route ?? [], visiblePositions, adjacency);
 
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget) {
-      return;
-    }
-    const key = e.key.toLowerCase();
-    const dirs: Record<string, [number, number]> = {
-      w: [0, 1],
-      s: [0, -1],
-      a: [-1, 0],
-      d: [1, 0],
-    };
-    if (!dirs[key]) {
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    const [dx, dy] = dirs[key];
-    const hopping = e.shiftKey && !!entity;
-    const cur = hopping ? byAddr[entity.host ?? ''] : selected ? byAddr[selected.address] : placed[0];
-    if (!cur) {
-      return;
-    }
+  // LAN events may name a network, but its centroid is never a graph vertex.
+  const centroids = new Map<string, { px: number; py: number; count: number }>();
+  for (const node of visibleNodes) {
+    if (!node.network) { continue; }
+    const point = centroids.get(node.network) ?? { px: 0, py: 0, count: 0 };
+    point.px += node.px; point.py += node.py; point.count++;
+    centroids.set(node.network, point);
+  }
+  const eventPoint = (address: string | null): GraphPoint | null => {
+    if (!address) { return null; }
+    const node = visiblePositions.get(address);
+    if (node) { return node; }
+    const centroid = centroids.get(address);
+    return centroid ? { px: centroid.px / centroid.count, py: centroid.py / centroid.count } : null;
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) { return; }
+    const key = event.code?.startsWith('Key') ? event.code.slice(3).toLowerCase() : event.key.toLowerCase();
+    const directions: Record<string, [number, number]> = { w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] };
+    if (!directions[key]) { return; }
+    event.preventDefault(); event.stopPropagation();
+    const hopping = event.shiftKey && !!entity;
+    const current = byAddress.get(hopping ? entity.host : selected?.address ?? map.focus ?? map.nodes[0].address);
+    if (!current) { return; }
+    const [dx, dy] = directions[key];
+    const liveNeighbors = new Set(map.edges.filter((edge) => edge.online !== false && (edge.from === current.address || edge.to === current.address))
+      .map((edge) => edge.from === current.address ? edge.to : edge.from));
     let best: Placed | null = null;
     let bestScore = Infinity;
-    for (const p of placed) {
-      if (p.address === cur.address || !visible(p)) {
-        continue;
-      }
-      if (hopping && (!p.online || p.access < 2)) {
-        continue;
-      }
-      const vx = p.px - cur.px;
-      const vy = -(p.py - cur.py);
-      const along = vx * dx + vy * dy;
-      if (along <= 0) {
-        continue;
-      }
-      const off = Math.abs(vx * dy + vy * dx);
-      const score = off * 2 + Math.hypot(vx, vy);
-      if (score < bestScore) {
-        bestScore = score;
-        best = p;
-      }
+    for (const node of visibleNodes) {
+      if (node.address === current.address) { continue; }
+      if (hopping && (!liveNeighbors.has(node.address) || !node.online || node.access < 2)) { continue; }
+      const vx = node.px - current.px;
+      const vy = node.py - current.py;
+      if (vx * dx + vy * dy <= 0) { continue; }
+      const score = Math.abs(vx * dy - vy * dx) * 2 + Math.hypot(vx, vy);
+      if (score < bestScore) { best = node; bestScore = score; }
     }
-    if (!best) {
-      return;
-    }
-    if (hopping) {
-      act('hop', { address: best.address });
-    } else {
-      act('select', { address: best.address });
-    }
+    if (best) { act(hopping ? 'hop' : 'select', { address: best.address }); }
   };
 
   return (
     <Box style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
-      <Box
-        p={0.5}
-        style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}
-      >
-        <Input
-          width="140px"
-          placeholder="поиск узла…"
-          value={query}
-          onInput={(_e, v) => setQuery(v)}
-        />
-        <Button compact icon="bullseye" selected={focusNearby}
-          disabled={!selected} tooltip="Выбранный узел, его соседи и связи до двух переходов. Координаты сохраняются."
-          content="2 перехода" onClick={() => setFocusNearby(!focusNearby)} />
-        <Button compact icon="crosshairs" tooltip="Центрировать выбранный узел"
-          disabled={!selected} onClick={() => {
-            const p = selected && byAddr[selected.address];
-            if (p && canvasRef.current) {
-              setPan({ x: canvasRef.current.clientWidth / 2 - p.px * zoom, y: canvasRef.current.clientHeight / 2 - p.py * zoom });
-            }
-          }} />
-        <Button compact icon="expand" tooltip="Вместить видимые узлы"
+      <Box p={0.5} style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+        <Input width="140px" placeholder="поиск узла…" value={query} onInput={(_event, value) => setQuery(value)} />
+        <Button compact icon="bullseye" content="2 перехода" selected={focusNearby}
+          disabled={!selected} tooltip="Оставить выбранный узел и его окружение по реальным связям."
+          onClick={() => setFocusNearby(!focusNearby)} />
+        <Button compact icon="crosshairs" tooltip="Центрировать выбранный узел" disabled={!selected}
           onClick={() => {
-            const target = placed.filter(visible);
+            const point = selected && positions.get(selected.address);
             const canvas = canvasRef.current;
-            if (!target.length || !canvas) { return; }
-            const left = Math.min(...target.map((p) => p.px)) - 40;
-            const right = Math.max(...target.map((p) => p.px)) + 40;
-            const top = Math.min(...target.map((p) => p.py)) - 40;
-            const bottom = Math.max(...target.map((p) => p.py)) + 40;
-            const nextZoom = Math.min(2.2, Math.max(0.3, Math.min(canvas.clientWidth / (right - left), canvas.clientHeight / (bottom - top))));
-            setZoom(nextZoom);
-            setPan({ x: (canvas.clientWidth - (right + left) * nextZoom) / 2, y: (canvas.clientHeight - (bottom + top) * nextZoom) / 2 });
+            if (point && canvas) { setPan({ x: canvas.clientWidth / 2 - point.px * zoom, y: canvas.clientHeight / 2 - point.py * zoom }); }
           }} />
-        {types.map((t) => (
-          <Button
-            key={t}
-            compact
-            icon={NODE_ICONS[t] || 'circle'}
-            selected={!disabledTypes[t]}
-            aria-label={`Фильтр: ${NODE_NAMES[t] || t}`}
-            tooltip={NODE_NAMES[t] || t}
-            onClick={() =>
-              setDisabledTypes((current) => ({ ...current, [t]: !current[t] }))
-            }
-          />
-        ))}
-        <Box inline color={THEME.muted} fontSize="10px">
-          {visibleNodes.length}/{placed.length} ·{' '}
-          тащите поле мышью · WASD — переход{entity ? ', Shift+WASD — прыжок' : ''}
+        <Button compact icon="expand" tooltip="Вместить видимые узлы" onClick={() => {
+          const canvas = canvasRef.current;
+          if (!canvas || !visibleNodes.length) { return; }
+          const left = Math.min(...visibleNodes.map((node) => node.px)) - 70;
+          const right = Math.max(...visibleNodes.map((node) => node.px)) + 70;
+          const top = Math.min(...visibleNodes.map((node) => node.py)) - 50;
+          const bottom = Math.max(...visibleNodes.map((node) => node.py)) + 50;
+          const nextZoom = Math.min(2.2, Math.max(0.1, Math.min(canvas.clientWidth / (right - left), canvas.clientHeight / (bottom - top))));
+          setZoom(nextZoom);
+          setPan({ x: (canvas.clientWidth - (left + right) * nextZoom) / 2, y: (canvas.clientHeight - (top + bottom) * nextZoom) / 2 });
+        }} />
+        {types.map((type) => <Button key={type} compact icon={NODE_ICONS[type] || 'circle'}
+          selected={!disabledTypes[type]} aria-label={`Фильтр: ${NODE_NAMES[type] || type}`}
+          tooltip={NODE_NAMES[type] || type}
+          onClick={() => setDisabledTypes((current) => ({ ...current, [type]: !current[type] }))} />)}
+        <Box color={THEME.muted} fontSize="10px">
+          {visibleNodes.length}/{placed.length} · глубина {map.depth} перехода · WASD — выбор{entity ? ', Shift+WASD — соседний узел' : ''} · тащите поле мышью
         </Box>
-        {waypoint && <WaypointCompass wp={waypoint} onClear={() => act('clear_waypoint')} />}
       </Box>
-      <div
-        ref={canvasRef}
-        role="application"
-        aria-label="Карта сети"
-        tabIndex={0}
-        onKeyDown={onKeyDown}
-        onMouseDown={(e) => {
-          e.currentTarget.focus();
-          drag.current = { x: e.clientX, y: e.clientY, ox: pan.x, oy: pan.y };
+      <Box p={0.5} style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+        {map.gateways.map((gateway) => <Button key={gateway.id} compact content={gateway.code}
+          icon={gateway.has_key ? 'key' : gateway.access ? 'network-wired' : 'lock'}
+          selected={selected_network?.id === gateway.id}
+          tooltip={`${gateway.name} · ${ACCESS_NAMES[gateway.access]} · защита ${gateway.security}`}
+          style={{ color: gateway.color }} onClick={() => act('select_network', { id: gateway.id })} />)}
+        {data.waypoint && <WaypointRoute wp={data.waypoint} onClear={() => act('clear_waypoint')}
+          onNext={(address) => act('select', { address })} />}
+      </Box>
+      <div ref={canvasRef} role="application" aria-label="Карта сети" tabIndex={0} onKeyDown={onKeyDown}
+        onMouseDown={(event) => {
+          if (event.button !== 0) { return; }
+          event.currentTarget.focus();
+          drag.current = { x: event.clientX, y: event.clientY, ox: pan.x, oy: pan.y };
         }}
-        onMouseMove={(e) => {
-          if (!drag.current) {
-            return;
-          }
-          setPan({
-            x: drag.current.ox + (e.clientX - drag.current.x),
-            y: drag.current.oy + (e.clientY - drag.current.y),
-          });
+        onMouseMove={(event) => {
+          if (drag.current) { setPan({ x: drag.current.ox + event.clientX - drag.current.x, y: drag.current.oy + event.clientY - drag.current.y }); }
         }}
-        onMouseUp={() => {
-          drag.current = null;
-        }}
-        onMouseLeave={() => {
-          drag.current = null;
-        }}
-        onWheel={(e) => {
-          e.preventDefault();
-          const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-          const nextZoom = Math.min(2.2, Math.max(0.3, zoom * factor));
-          const rect = e.currentTarget.getBoundingClientRect();
-          const x = e.clientX - rect.left;
-          const y = e.clientY - rect.top;
+        onMouseUp={() => { drag.current = null; }} onMouseLeave={() => { drag.current = null; }}
+        onWheel={(event) => {
+          event.preventDefault();
+          const nextZoom = Math.min(2.2, Math.max(0.1, zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12)));
+          const rect = event.currentTarget.getBoundingClientRect();
+          const x = event.clientX - rect.left;
+          const y = event.clientY - rect.top;
           setPan({ x: x - (x - pan.x) * nextZoom / zoom, y: y - (y - pan.y) * nextZoom / zoom });
           setZoom(nextZoom);
         }}
-        style={{
-          position: 'relative',
-          height: '420px',
-          minHeight: '220px',
-          resize: 'vertical',
-          overflow: 'hidden',
-          cursor: 'grab',
-          outlineOffset: '-2px',
-        }}
-      >
-        <div
-          style={{
-            position: 'absolute',
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-            transformOrigin: '0 0',
-            width: `${FIELD_W}px`,
-            height: `${FIELD_H}px`,
-          }}
-        >
-          <svg
-            width={FIELD_W}
-            height={FIELD_H}
-            style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none' }}
-          >
-            {/* гейтвей -> хаб */}
-            {map.gateways.map((gw) => {
-              const g = gwPos[gw.id];
-              return (
-                <line
-                  key={`gh-${gw.id}`}
-                  x1={g.gx}
-                  y1={g.gy}
-                  x2={hubX}
-                  y2={hubY}
-                  stroke={gw.color}
-                  strokeOpacity={gw.access > 0 ? 0.5 : 0.2}
-                  strokeWidth={gw.access > 0 ? 2 : 1}
-                  strokeDasharray={gw.access > 0 ? undefined : '5 5'}
-                />
-              );
+        style={{ position: 'relative', height: '420px', minHeight: '220px', resize: 'vertical', overflow: 'hidden', cursor: 'grab', outlineOffset: '-2px' }}>
+        <div style={{ position: 'absolute', width: '2000px', height: '1300px', transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0' }}>
+          <svg width={2000} height={1300} style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none', overflow: 'visible' }}>
+            {map.edges.filter((edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to)).map((edge) => {
+              const from = positions.get(edge.from);
+              const to = positions.get(edge.to);
+              return <line key={edge.id} data-net-edge={edge.id} data-from={edge.from} data-to={edge.to} data-kind={edge.kind}
+                x1={from.px} y1={from.py} x2={to.px} y2={to.py}
+                stroke={edge.kind === 'relay' ? THEME.accent : edge.kind === 'apc' ? THEME.muted : THEME.line}
+                strokeOpacity={edge.online === false ? 0.2 : edge.kind === 'endpoint' ? 0.65 : 0.8}
+                strokeWidth={edge.kind === 'endpoint' ? 1 : 2} strokeDasharray={edge.online === false ? '3 6' : edge.kind === 'relay' ? '6 4' : undefined} />;
             })}
-            {/* узел -> аплинк (APC) или -> гейтвей */}
-            {placed.map((p) => {
-              if (!visible(p)) {
-                return null;
-              }
-              const up = p.uplink && byAddr[p.uplink] ? byAddr[p.uplink] : null;
-              const g = p.network ? gwPos[p.network] : null;
-              const tx = up ? up.px : g ? g.gx : hubX;
-              const ty = up ? up.py : g ? g.gy : hubY;
-              return (
-                <line
-                  key={`e-${p.address}`}
-                  x1={p.px}
-                  y1={p.py}
-                  x2={tx}
-                  y2={ty}
-                  stroke={THEME.line}
-                  strokeOpacity={p.active ? 0.5 : 0.18}
-                  strokeWidth={p.active ? 1.5 : 1}
-                />
-              );
+            {waypointPath && <path d={waypointPath} data-net-overlay="waypoint" fill="none" stroke="#d05090" strokeWidth={3} strokeDasharray="8 4" />}
+            {pingPath && <g data-net-overlay="ping">
+              <path d={pingPath} fill="none" stroke={THEME.warn} strokeWidth={2} strokeDasharray="4 4" />
+              <circle r={4} fill={THEME.warn}><animateMotion dur="1.2s" repeatCount="indefinite" path={pingPath} /></circle>
+            </g>}
+            {(data.events ?? []).map((event, index) => {
+              const to = eventPoint(event.to) ?? eventPoint(event.from);
+              if (!to) { return null; }
+              const from = eventPoint(event.from);
+              const color = event.kind === 'trace' ? THEME.bad : event.kind === 'command' ? THEME.accent : THEME.warn;
+              return <g key={index} opacity={Math.max(0, 1 - event.age / 4)}>
+                {from && (from.px !== to.px || from.py !== to.py) && <line x1={from.px} y1={from.py} x2={to.px} y2={to.py} stroke={color} strokeOpacity={0.4} />}
+                <circle cx={to.px} cy={to.py} r={6 + event.age * 7} fill="none" stroke={color} strokeWidth={2} />
+              </g>;
             })}
-            {/* хаб NTnet */}
-            <circle
-              cx={hubX}
-              cy={hubY}
-              r={16}
-              fill={THEME.panel}
-              stroke={THEME.accent}
-              strokeWidth={2}
-            />
-            <text
-              x={hubX}
-              y={hubY + 4}
-              textAnchor="middle"
-              fill={THEME.accent}
-              fontSize={10}
-              fontFamily="monospace"
-            >
-              NTnet
-            </text>
-            {route &&
-              (() => {
-                const pts = route
-                  .map((h) => {
-                    if (h.kind === 'hub') {
-                      return { x: hubX, y: hubY };
-                    }
-                    if (h.kind === 'gateway') {
-                      const g = h.ref ? gwPos[h.ref] : null;
-                      return g ? { x: g.gx, y: g.gy } : null;
-                    }
-                    const n = h.ref ? byAddr[h.ref] : null;
-                    return n ? { x: n.px, y: n.py } : null;
-                  })
-                  .filter((p): p is { x: number; y: number } => !!p);
-                if (pts.length < 2) {
-                  return null;
-                }
-                const d =
-                  `M ${pts[0].x} ${pts[0].y} ` +
-                  pts
-                    .slice(1)
-                    .map((p) => `L ${p.x} ${p.y}`)
-                    .join(' ');
-                return (
-                  <g>
-                    <path
-                      d={d}
-                      fill="none"
-                      stroke={THEME.warn}
-                      strokeWidth={2}
-                      strokeDasharray="4 4"
-                      opacity={0.9}
-                    />
-                    <circle r={4} fill={THEME.warn}>
-                      <animateMotion dur="1.2s" repeatCount="indefinite" path={d} />
-                    </circle>
-                  </g>
-                );
-              })()}
-            {events &&
-              events.map((ev, idx) => {
-                const EV_COLOR: Record<string, string> = {
-                  command: THEME.accent,
-                  intrusion: THEME.warn,
-                  breach: THEME.warn,
-                  trace: THEME.bad,
-                };
-                const point = (ref: string | null) => {
-                  if (!ref) {
-                    return { x: hubX, y: hubY };
-                  }
-                  const n = byAddr[ref];
-                  if (n) {
-                    return { x: n.px, y: n.py };
-                  }
-                  const g = gwPos[ref];
-                  return g ? { x: g.gx, y: g.gy } : null;
-                };
-                const to = point(ev.to) || point(ev.from);
-                if (!to) {
-                  return null;
-                }
-                const from = point(ev.from);
-                const fade = Math.max(0, 1 - ev.age / 4);
-                const color = EV_COLOR[ev.kind] || THEME.accent;
-                return (
-                  <g key={`ev-${idx}`} opacity={fade}>
-                    {from && (from.x !== to.x || from.y !== to.y) && (
-                      <line x1={from.x} y1={from.y} x2={to.x} y2={to.y}
-                        stroke={color} strokeOpacity={0.4 * fade} strokeWidth={1.5} />
-                    )}
-                    <circle cx={to.x} cy={to.y} r={6 + ev.age * 7} fill="none"
-                      stroke={color} strokeWidth={2} />
-                  </g>
-                );
-              })}
           </svg>
-          {map.gateways.map((gw) => (
-            <GatewayMarker
-              key={gw.id}
-              gw={gw}
-              pos={gwPos[gw.id]}
-              selected={selected_network?.id === gw.id}
-              onClick={() => act('select_network', { id: gw.id })}
-            />
-          ))}
-          {visibleNodes.map((p) => (
-            <NodeMarker
-              key={p.address}
-              node={p}
-              dim={false}
-              selected={selected?.address === p.address}
-              jacked={jack?.address === p.address}
-              color={
-                map.gateways.find((g) => g.id === p.network)?.color || THEME.accent
-              }
-              onClick={() => act('select', { address: p.address })}
-            />
-          ))}
+          {visibleNodes.map((node) => <NodeMarker key={node.address} node={node}
+            selected={selected?.address === node.address} jacked={jack?.address === node.address}
+            focused={map.focus === node.address} color={gateways.get(node.network)?.color || THEME.accent}
+            onClick={() => act('select', { address: node.address })} />)}
         </div>
       </div>
     </Box>
   );
 };
 
-const GatewayMarker = (props: {
-  gw: Gateway;
-  pos: GwPos;
-  selected: boolean;
-  onClick: () => void;
-}) => {
-  const { gw, pos, selected, onClick } = props;
-  const open = gw.access > 0;
+const NodeMarker = (props: { node: Placed; selected: boolean; jacked: boolean; focused: boolean; color: string; onClick: () => void }) => {
+  const { node, selected, jacked, focused, color, onClick } = props;
   return (
-    <div
-      onClick={onClick}
-      title={`${gw.name} — защита ${gw.security}`}
-      style={{
-        position: 'absolute',
-        left: `${pos.gx}px`,
-        top: `${pos.gy}px`,
-        transform: 'translate(-50%, -50%)',
-        textAlign: 'center',
-        cursor: 'pointer',
-        zIndex: 4,
-      }}
-    >
-      <div
-        style={{
-          width: '20px',
-          height: '20px',
-          margin: '0 auto',
-          background: THEME.panel,
-          border: `2px solid ${gw.color}`,
-          transform: 'rotate(45deg)',
-          boxShadow: selected ? `0 0 0 3px ${gw.color}` : undefined,
-          opacity: open ? 1 : 0.6,
-        }}
-      />
-      <Box
-        style={{
-          fontFamily: 'monospace',
-          fontSize: '10px',
-          color: gw.color,
-          whiteSpace: 'nowrap',
-          marginTop: '2px',
-        }}
-      >
-        {gw.code}
-        {!open && <Icon name="lock" ml={0.5} />}
-        {gw.has_key && <Icon name="key" ml={0.5} color={THEME.good} />}
-      </Box>
-    </div>
-  );
-};
-
-const NodeMarker = (props: {
-  node: Placed;
-  dim: boolean;
-  selected: boolean;
-  jacked: boolean;
-  color: string;
-  onClick: () => void;
-}) => {
-  const { node, dim, selected, jacked, color, onClick } = props;
-  const fill = node.online ? ACCESS_COLORS[node.access] : '#5a2a2a';
-  return (
-    <div
-      onClick={onClick}
-      title={`${node.name} ${node.address} — ${NODE_NAMES[node.type] || node.type}`}
-      style={{
-        position: 'absolute',
-        left: `${node.px}px`,
-        top: `${node.py}px`,
-        transform: 'translate(-50%, -50%)',
-        textAlign: 'center',
-        cursor: 'pointer',
-        opacity: dim ? 0.2 : 1,
-        zIndex: selected ? 3 : 1,
-      }}
-    >
-      <div
-        style={{
-          position: 'relative',
-          width: '16px',
-          height: '16px',
-          margin: '0 auto',
-          borderRadius: '50%',
-          background: fill,
-          border: `2px solid ${selected ? THEME.text : jacked ? THEME.good : THEME.bg}`,
-          boxShadow: node.entities > 0 ? '0 0 0 2px #d05090' : undefined,
-        }}
-      >
-        <Box
-          style={{
-            position: 'absolute',
-            left: '12px',
-            top: '-6px',
-            background: THEME.panel,
-            borderRadius: '50%',
-            width: '13px',
-            height: '13px',
-            lineHeight: '13px',
-            fontSize: '8px',
-            color: color,
-          }}
-        >
-          <Icon name={NODE_ICONS[node.type] || 'circle'} style={{ fontSize: '70%' }} />
+    <div onClick={onClick} data-net-node={node.address} title={`${node.name} ${node.address} — ${NODE_NAMES[node.type] || node.type}`}
+      style={{ position: 'absolute', left: `${node.px}px`, top: `${node.py}px`, transform: 'translate(-50%, -50%)', textAlign: 'center', cursor: 'pointer', zIndex: selected ? 3 : 1 }}>
+      <div style={{ position: 'relative', width: '18px', height: '18px', margin: '0 auto', borderRadius: node.type === 'apc' ? '3px' : '50%',
+        background: node.online ? ACCESS_COLORS[node.access] : '#5a2a2a',
+        border: `2px solid ${selected ? THEME.text : jacked ? THEME.good : focused ? THEME.accent : THEME.bg}`,
+        boxShadow: node.entities > 0 ? '0 0 0 2px #d05090' : undefined }}>
+        <Box style={{ position: 'absolute', left: '13px', top: '-8px', background: THEME.panel, borderRadius: '50%', width: '15px', height: '15px', lineHeight: '15px', fontSize: '9px', color }}>
+          <Icon name={NODE_ICONS[node.type] || 'circle'} style={{ fontSize: '80%' }} />
         </Box>
       </div>
-      <Box
-        style={{
-          fontSize: '9px',
-          fontFamily: 'monospace',
-          color: THEME.muted,
-          whiteSpace: 'nowrap',
-          marginTop: '1px',
-        }}
-      >
-        {node.name.length > 14 ? node.name.slice(0, 13) + '…' : node.name}
+      <Box style={{ fontSize: '9px', fontFamily: 'monospace', color: THEME.muted, whiteSpace: 'nowrap', marginTop: '2px' }}>
+        {node.name.length > 18 ? node.name.slice(0, 17) + '…' : node.name}
       </Box>
     </div>
   );
 };
 
-const WaypointCompass = (props: { wp: Waypoint; onClear: () => void }) => {
-  const { wp, onClear } = props;
-  if (wp.lost) {
-    return (
-      <Box inline ml={1} color={THEME.bad} fontSize="10px">
-        Пеленг потерян
-        <Button compact icon="xmark" ml={0.5} onClick={onClear} />
-      </Box>
-    );
-  }
-  // Станционные координаты: +y на север (вверх). 0° — север, по часовой на восток.
-  const angle = Math.atan2(wp.dx ?? 0, wp.dy ?? 0) * (180 / Math.PI);
-  return (
-    <Box
-      inline
-      ml={1}
-      p={0.5}
-      style={{ background: THEME.bg, border: `1px solid ${THEME.accent}`, borderRadius: '3px' }}
-    >
-      <svg width={22} height={22} style={{ verticalAlign: 'middle' }}>
-        <g transform={`translate(11 11) rotate(${angle})`}>
-          <polygon points="0,-8 4,6 0,3 -4,6" fill={THEME.accent} />
-        </g>
-      </svg>
-      <Box inline ml={0.5} fontSize="10px" color={THEME.text} style={{ fontFamily: 'monospace' }}>
-        {wp.name.length > 14 ? wp.name.slice(0, 13) + '…' : wp.name}
-        <Box inline ml={0.5} color={THEME.muted}>
-          {wp.same_z ? `${wp.dist} тайл.` : `Z${(wp.dz ?? 0) > 0 ? '+' : ''}${wp.dz}`}
-        </Box>
-      </Box>
-      <Button compact icon="xmark" ml={0.5} onClick={onClear} />
-    </Box>
-  );
-};
+const WaypointRoute = (props: { wp: Waypoint; onClear: () => void; onNext: (address: string) => void }) => (
+  <Box inline ml={1} color={props.wp.lost || !props.wp.reachable ? THEME.bad : THEME.accent} fontSize="10px">
+    <Icon name="route" mr={0.5} />{props.wp.name} · {props.wp.lost ? 'цель потеряна' : props.wp.reachable ? `${props.wp.hops} переходов` : 'нет маршрута'}
+    {props.wp.next && <Button compact ml={0.5} icon="arrow-right" content="Следующий узел" onClick={() => props.onNext(props.wp.next)} />}
+    <Button compact icon="xmark" ml={0.5} onClick={props.onClear} />
+  </Box>
+);

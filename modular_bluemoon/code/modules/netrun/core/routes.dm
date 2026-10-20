@@ -1,30 +1,92 @@
-/// Один результат маршрутизации используют задержка, Ping и подсветка карты.
+/// Ping, requests and the map consume the same physical node graph.
 /datum/netrun_route
 	var/list/hops = list()
 	var/latency = 0
-	var/name = "через реле NTnet"
+	var/name = "нет маршрута"
 
-/datum/component/netrun_node/proc/route_chain()
-	. = list(list("kind" = "node", "ref" = address))
-	var/datum/component/netrun_node/uplink = uplink_node()
-	if(uplink)
-		. += list(list("kind" = "node", "ref" = uplink.address))
-	if(network)
-		. += list(list("kind" = "gateway", "ref" = network.id))
+/proc/netrun_quantum_link(datum/component/netrun_node/first, datum/component/netrun_node/second)
+	return istype(first?.parent, /obj/machinery/ntnet_relay) && istype(second?.parent, /obj/machinery/ntnet_relay) && first.binding_sector != second.binding_sector
+
+/// A local reboot never causes structural rebinding; only forwarding stops.
+/proc/netrun_link_available(datum/component/netrun_node/first, datum/component/netrun_node/second, allow_offline_destination = FALSE)
+	if(QDELETED(first) || QDELETED(second) || !first.is_online() || (!allow_offline_destination && !second.is_online()))
+		return FALSE
+	if(netrun_quantum_link(first, second))
+		var/obj/machinery/ntnet_relay/from_relay = first.parent
+		var/obj/machinery/ntnet_relay/to_relay = second.parent
+		return !SSnetworks.station_network.setting_disabled && from_relay.is_operational() && to_relay.is_operational()
+	return TRUE
+
+/// Request-local BFS. UI serialization shares one snapshot; later requests
+/// revalidate live APC and relay availability instead of caching working routes.
+/datum/netrun_path_tree
+	var/datum/component/netrun_node/source
+	var/list/reached = list()
+	var/list/previous = list()
+	var/list/costs = list()
+	var/list/remote = list()
+
+/datum/netrun_path_tree/New(datum/netrun_topology/graph, datum/component/netrun_node/start)
+	source = start
+	if(QDELETED(start) || !graph.nodes[start.address])
+		return
+	var/list/queue = list(start.address)
+	reached[start.address] = TRUE
+	costs[start.address] = 0
+	for(var/i = 1, i <= length(queue), i++)
+		var/address = queue[i]
+		var/datum/component/netrun_node/current = graph.nodes[address]
+		// Offline destinations are leaves: they cannot forward traffic.
+		if(QDELETED(current) || !current.is_online())
+			continue
+		for(var/neighbor in graph.neighbors(address))
+			if(reached[neighbor])
+				continue
+			var/datum/component/netrun_node/next = graph.nodes[neighbor]
+			if(QDELETED(next))
+				continue
+			if(!netrun_link_available(current, next, TRUE))
+				continue
+			var/quantum = netrun_quantum_link(current, next)
+			if(quantum)
+				// Quantum relays connect sectors directly. They cannot provide a
+				// detour around a broken APC in the source sector via another Z.
+				if(remote[address] || next.binding_sector == start.binding_sector)
+					continue
+			reached[neighbor] = TRUE
+			previous[neighbor] = address
+			costs[neighbor] = costs[address] + (quantum ? 3 : 1)
+			remote[neighbor] = remote[address] || quantum
+			queue += neighbor
+
+/datum/netrun_path_tree/proc/addresses_to(address)
+	. = list()
+	if(!reached[address])
+		return
+	while(address)
+		.Insert(1, address)
+		address = previous[address]
 
 /datum/netrun_console/proc/route_source()
+	if(ui_routes)
+		return ui_routes.source
 	if(jack && jack_valid())
 		return refresh_route_node(jack)
-	return refresh_route_node(netrun_find_node(host))
+	var/datum/component/netrun_node/source = refresh_route_node(netrun_find_node(host))
+	if(source)
+		return source
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	return graph.nearest_apc(get_turf(host))
 
 /datum/netrun_console/entity/route_source()
+	if(ui_routes)
+		return ui_routes.source
 	var/mob/camera/netrun_entity/entity = host
 	return refresh_route_node(entity?.host_node)
 
-/// Nested items need an immediate topology check as well as the periodic subsystem sweep.
-/// Invalidate per-UI routing-derived access when a carrier crossed into another LAN.
+/// Nested items can cross an area with their carrier without receiving MOVED.
 /datum/netrun_console/proc/refresh_route_node(datum/component/netrun_node/node)
-	if(!node || QDELETED(node) || QDELETED(node.parent))
+	if(QDELETED(node) || QDELETED(node.parent))
 		return null
 	var/datum/netrun_network/previous = node.network
 	node.join_network()
@@ -32,56 +94,44 @@
 		network_level_cache?.Cut()
 	return node
 
+/datum/netrun_console/proc/path_tree()
+	if(ui_routes)
+		return ui_routes
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/start = route_source()
+	// A source can move its nested node while being resolved.
+	graph = SSnetrun.ensure_topology()
+	var/datum/netrun_path_tree/tree = new(graph, start)
+	var/turf/here = get_turf(host)
+	if(wireless && origin != NETRUN_ORIGIN_ENTITY && !jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z))))
+		tree.reached.Cut()
+		if(start && start == netrun_find_node(host))
+			tree.reached[start.address] = TRUE
+	return tree
+
+/datum/netrun_console/proc/release_path_tree(datum/netrun_path_tree/tree)
+	if(tree != ui_routes)
+		qdel(tree)
+
 /datum/netrun_console/proc/route_to(datum/component/netrun_node/node)
 	var/datum/netrun_route/route = new
-	if(!node || QDELETED(node) || !can_route(node))
-		route.name = "нет маршрута"
-		// An unavailable connection must never look like an instantaneous cable.
+	node = refresh_route_node(node)
+	if(!node)
+		return route
+	var/datum/netrun_path_tree/tree = path_tree()
+	var/list/addresses = tree.addresses_to(node.address)
+	if(!length(addresses))
 		route.latency = 3
+		release_path_tree(tree)
 		return route
-	var/datum/component/netrun_node/source = route_source()
-	if((node == jack && jack_valid()) || node == source)
+	for(var/address in addresses)
+		route.hops += list(list("kind" = "node", "ref" = address))
+	if(length(addresses) == 1)
 		route.name = "прямое подключение"
-		route.hops = list(list("kind" = "node", "ref" = node.address))
-		return route
-	var/turf/here = get_turf(host)
-	var/turf/there = get_turf(node.parent)
-	var/list/source_path = source ? source.route_chain() : list()
-	var/list/target_path = node.route_chain()
-	// A logical LAN (including its APC) can span linked floors. A different Z
-	// changes latency, not the common-ancestor route into an unnecessary NTnet hop.
-	var/local = node.network && (source?.network == node.network || (node.network in home_networks()))
-	if(local)
-		if(!length(source_path))
-			source_path = list(list("kind" = "gateway", "ref" = node.network.id))
-		// Путь обрезается по общему предку: общий APC не требует даже шлюза ЛВС.
-		var/source_join = 0
-		var/target_join = 0
-		for(var/i in 1 to length(source_path))
-			var/list/from_hop = source_path[i]
-			for(var/j in 1 to length(target_path))
-				var/list/to_hop = target_path[j]
-				if(from_hop["kind"] == to_hop["kind"] && from_hop["ref"] == to_hop["ref"])
-					source_join = i
-					target_join = j
-					break
-			if(source_join)
-				break
-		if(source_join)
-			route.hops = source_path.Copy(1, source_join + 1)
-			for(var/i = target_join - 1, i >= 1, i--)
-				route.hops += list(target_path[i])
-			route.name = source_join < length(source_path) ? "подсеть APC" : "локальная сеть"
-			var/local_latency = (here && there) ? (here.z == there.z ? clamp(round(get_dist(here, there) / 40), 0, 2) : 3) : 1
-			route.latency = local_latency + (wireless && origin != NETRUN_ORIGIN_ENTITY && !jack_valid() ? 1 : 0)
-			return route
-	route.hops = source_path.Copy()
-	route.hops += list(list("kind" = "hub"))
-	for(var/i = length(target_path), i >= 1, i--)
-		route.hops += list(target_path[i])
-	route.latency = 3
-	if(here && there)
-		route.latency += here.z == there.z ? clamp(round(get_dist(here, there) / 25), 0, 4) : 5
-	if(daemon_bonus("overclock"))
-		route.latency = max(0, round(route.latency / 3))
+	else
+		route.name = tree.remote[node.address] ? "через реле NTnet" : "цепочка APC"
+		route.latency = tree.costs[node.address] + (wireless && origin != NETRUN_ORIGIN_ENTITY && !jack_valid() ? 1 : 0)
+		if(daemon_bonus("overclock"))
+			route.latency = max(1, round(route.latency / 3))
+	release_path_tree(tree)
 	return route

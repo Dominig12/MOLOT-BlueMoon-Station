@@ -41,8 +41,10 @@
 	/// Маршрут последнего ping для подсветки на карте
 	var/list/ping_route
 	var/ping_at = 0
-	/// Радиус локальной подгрузки карты (тайлы от фокуса)
-	var/map_radius = 40
+	/// Neighborhood depth in real graph edges.
+	var/map_depth = 2
+	/// One consistent, request-local topology snapshot during ui_data serialization.
+	var/datum/netrun_path_tree/ui_routes
 	/// Пеленг: адрес целевого узла для навигации
 	var/waypoint_address
 	/// Открытые окна машин (адреса узлов) и активное окно
@@ -86,25 +88,35 @@
 	if(jack?.network && jack_valid())
 		. += jack.network
 	if(!wireless)
-		var/datum/netrun_network/local = netrun_network_for(get_turf(host))
-		if(local)
-			. |= local
+		var/datum/component/netrun_node/source = route_source()
+		if(source?.network)
+			. |= source.network
 
 /// Есть ли выход в NTnet
 /datum/netrun_console/proc/has_uplink()
-	var/turf/T = get_turf(host)
-	if(!T)
-		return FALSE
-	if(wireless && !is_station_level(T.z) && !is_mining_level(T.z))
-		return FALSE
-	return SSnetrun.backbone_online(T.z)
+	var/datum/netrun_path_tree/tree = path_tree()
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	. = FALSE
+	for(var/address in tree.reached)
+		var/datum/component/netrun_node/node = graph.nodes[address]
+		if(!istype(node?.parent, /obj/machinery/ntnet_relay) || !node.is_online())
+			continue
+		var/obj/machinery/ntnet_relay/relay = node.parent
+		if(relay.is_operational() && !SSnetworks.station_network.setting_disabled)
+			. = TRUE
+			break
+	release_path_tree(tree)
 
 /datum/netrun_console/proc/can_reach(datum/netrun_network/network)
 	if(!network)
 		return FALSE
-	if(network in home_networks())
-		return TRUE
-	return !network.isolated && has_uplink()
+	var/datum/netrun_path_tree/tree = path_tree()
+	. = FALSE
+	for(var/datum/component/netrun_node/node as anything in network.nodes)
+		if(tree.reached[node.address])
+			. = TRUE
+			break
+	release_path_tree(tree)
 
 /datum/netrun_console/proc/is_locked()
 	return world.time < lockout_until
@@ -170,7 +182,8 @@
 	var/net_level = network_level(node.network)
 	var/atom/target = node.parent
 	var/owner_level = target.netrun_owner_access(src)
-	if(net_level < NETRUN_ACCESS_GUEST && (!owner_level || !can_route(node)))
+	var/local_endpoint = node == route_source()
+	if(net_level < NETRUN_ACCESS_GUEST && !local_endpoint && (!owner_level || !can_route(node)))
 		return NETRUN_ACCESS_NONE
 	. = max(NETRUN_ACCESS_GUEST, owner_level, net_level, node_access[node.address] || 0, legit_node_level(node))
 	if(node == jack)
@@ -185,7 +198,7 @@
 /datum/netrun_console/proc/node_visible(datum/component/netrun_node/node)
 	if(!node?.network || !can_route(node))
 		return FALSE
-	return node_level(node) >= NETRUN_ACCESS_GUEST || (node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY))
+	return node_level(node) >= NETRUN_ACCESS_GUEST || (node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)) || daemon_bonus("mapper")
 
 /datum/netrun_console/proc/run_command(datum/component/netrun_node/node, command_id)
 	if(world.time < next_command)
@@ -256,10 +269,9 @@
 	node = refresh_route_node(node)
 	if(!node)
 		return FALSE
-	// Loopback reaches only this client's actual endpoint, not the whole LAN.
-	if(node == route_source())
-		return TRUE
-	return node.network && can_reach(node.network)
+	var/datum/netrun_path_tree/tree = path_tree()
+	. = !!tree.reached[node.address]
+	release_path_tree(tree)
 
 /// Ответ ping приходит после round-trip
 /datum/netrun_console/proc/ping_reply(address, lat, route_name)

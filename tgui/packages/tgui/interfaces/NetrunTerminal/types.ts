@@ -12,6 +12,7 @@ export type NetNode = {
   active: boolean;
   uplink: string | null;
   network?: string;
+  sector?: string;
 };
 
 export type NetCommand = {
@@ -160,11 +161,10 @@ export type Waypoint = {
   address: string;
   name: string;
   type?: string;
-  dx?: number;
-  dy?: number;
-  dz?: number;
-  dist?: number;
-  same_z?: boolean;
+  reachable: boolean;
+  hops: number;
+  route: string[];
+  next: string | null;
   lost?: boolean;
 };
 
@@ -186,11 +186,21 @@ export type Gateway = {
   can_breach: boolean;
 };
 
+export type NetEdge = {
+  id: string;
+  from: string;
+  to: string;
+  kind: 'endpoint' | 'apc' | 'relay';
+  online?: boolean;
+};
+
 export type NetMap = {
   gateways: Gateway[];
   nodes: NetNode[];
-  focus: { x: number; y: number; z: number } | null;
-  radius: number;
+  edges: NetEdge[];
+  focus: string | null;
+  depth: number;
+  revision: number;
 };
 
 export type SelectedNetwork = {

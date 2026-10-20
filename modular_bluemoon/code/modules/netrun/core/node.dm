@@ -18,6 +18,14 @@
 	var/offline_until = 0
 	/// Ограниченный журнал самого узла, сохраняется при переходе между ЛВС.
 	var/list/logs = list()
+	/// One structural APC attachment, independent of power and temporary online state.
+	var/datum/component/netrun_node/bound_apc
+	var/area/binding_area
+	var/binding_sector
+	var/binding_checked = FALSE
+	var/binding_infra_revision = -1
+	/// Infrastructure geometry changes invalidate the shared graph even inside one area.
+	var/turf/topology_turf
 
 /datum/component/netrun_node/Initialize(node_type, list/command_ids, security = 1, list/required_access, storage_capacity = 0)
 	if(!isatom(parent))
@@ -31,6 +39,12 @@
 		files = list()
 	address = SSnetrun.make_address()
 	SSnetrun.nodes_by_address[address] = src
+	topology_turf = get_turf(parent)
+	var/datum/netrun_topology/topology = SSnetrun.get_topology()
+	if(topology.is_infrastructure(src))
+		topology.infrastructure_changed()
+	else
+		topology.invalidate()
 	join_network()
 
 /datum/component/netrun_node/RegisterWithParent()
@@ -42,16 +56,29 @@
 	UnregisterSignal(parent, list(COMSIG_ATOM_EMP_ACT, COMSIG_MOVABLE_MOVED))
 
 /datum/component/netrun_node/Destroy()
+	var/datum/netrun_topology/topology = SSnetrun.get_topology()
+	SSnetrun.nodes_by_address -= address
+	topology.forget_node(src)
 	for(var/mob/camera/netrun_entity/entity as anything in entities)
 		entity.host_lost()
 	entities = null
 	leave_network()
-	SSnetrun.nodes_by_address -= address
+	bound_apc = null
+	binding_area = null
+	topology_turf = null
 	QDEL_LIST(files)
 	return ..()
 
 /datum/component/netrun_node/proc/join_network()
-	var/datum/netrun_network/new_net = netrun_network_for(get_turf(parent))
+	var/datum/netrun_topology/topology = SSnetrun.get_topology()
+	topology.refresh_node(src)
+	var/datum/netrun_network/new_net
+	if(node_type == NETRUN_NODE_APC)
+		new_net = SSnetrun.get_apc_network(src)
+	else if(bound_apc)
+		new_net = SSnetrun.get_apc_network(bound_apc)
+	else
+		new_net = netrun_fallback_network_for(get_turf(parent))
 	if(network == new_net)
 		return
 	leave_network()
@@ -122,23 +149,12 @@
 	for(var/datum/netrun_file/file as anything in files)
 		. += file.size
 
-/// Узел-аплинк в подсети: APC отсека для обычных машин, иначе корень сети (null).
-/// Глубина дерева - 2: корень ЛВС -> APC отсека -> машины за ним.
+/// Every endpoint, including a real relay, has at most one cached APC attachment.
 /datum/component/netrun_node/proc/uplink_node()
-	if(node_type == NETRUN_NODE_APC || node_type == NETRUN_NODE_GATEWAY)
+	if(node_type == NETRUN_NODE_APC)
 		return null
-	var/turf/T = get_turf(parent)
-	if(!T)
-		return null
-	var/area/A = get_area(parent)
-	var/area/root_area = A?.base_area || A
-	var/obj/machinery/power/apc/apc = root_area?.power_apc
-	if(!apc || apc == parent)
-		return null
-	var/datum/component/netrun_node/apc_node = apc.GetComponent(/datum/component/netrun_node)
-	if(apc_node && apc_node.network == network)
-		return apc_node
-	return null
+	join_network()
+	return bound_apc
 
 /datum/component/netrun_node/proc/ui_entry(datum/netrun_console/console)
 	var/turf/T = get_turf(parent)

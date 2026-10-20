@@ -5345,6 +5345,7 @@
 #include "modular_bluemoon\code\modules\netrun\core\files.dm"
 #include "modular_bluemoon\code\modules\netrun\core\network.dm"
 #include "modular_bluemoon\code\modules\netrun\core\node.dm"
+#include "modular_bluemoon\code\modules\netrun\core\topology.dm"
 #include "modular_bluemoon\code\modules\netrun\core\routes.dm"
 #include "modular_bluemoon\code\modules\netrun\core\storage.dm"
 #include "modular_bluemoon\code\modules\netrun\core\subsystem.dm"

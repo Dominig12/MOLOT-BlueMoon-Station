@@ -326,6 +326,7 @@
 #include "netrun.dm"
 #include "netrun_photos.dm"
 #include "netrun_routes.dm"
+#include "netrun_topology.dm"
 #include "nightshift.dm"
 #include "netrun_neural.dm"
 #include "netrun_vision.dm"
