@@ -129,6 +129,12 @@ export const NodePanel = () => {
       buttons={
         <Box inline>
           <Button
+            icon="location-arrow"
+            tooltip="Пеленг на узел — показать направление на карте"
+            selected={data.waypoint?.address === selected.address}
+            onClick={() => act('set_waypoint', { address: selected.address })}
+          />
+          <Button
             icon="window-maximize"
             tooltip="Открыть окном"
             onClick={() => act('window_open', { address: selected.address })}
@@ -269,7 +275,27 @@ export const fileIcon = (kind: string) => {
       return 'image';
     case 'techweb_link':
       return 'link';
+    case 'techweb':
+      return 'flask';
     default:
       return 'file-lines';
   }
+};
+
+/** Формат файла: расширение из имени, иначе метка по типу. */
+export const fileFormat = (name: string, kind: string) => {
+  const dot = name.lastIndexOf('.');
+  if (dot > 0 && dot < name.length - 1) {
+    return name.slice(dot + 1).toUpperCase();
+  }
+  const labels: Record<string, string> = {
+    key: 'KEY',
+    daemon: 'EXE',
+    seed: 'SEED',
+    photo: 'IMG',
+    techweb: 'WEB',
+    techweb_link: 'LINK',
+    text: 'TXT',
+  };
+  return labels[kind] || 'DAT';
 };

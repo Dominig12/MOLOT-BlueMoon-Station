@@ -23,7 +23,7 @@
 	if(!isatom(parent))
 		return COMPONENT_INCOMPATIBLE
 	src.node_type = node_type
-	src.command_ids = list("scan", "ping", "node_log") | (command_ids || list())
+	src.command_ids = list("scan", "ping", "node_log", "extract") | (command_ids || list())
 	base_security = security
 	src.required_access = required_access
 	src.storage_capacity = storage_capacity
@@ -51,13 +51,13 @@
 	return ..()
 
 /datum/component/netrun_node/proc/join_network()
-	var/lan = netrun_lan_for_turf(get_turf(parent))
-	if(network?.id == lan)
+	var/datum/netrun_network/new_net = netrun_network_for(get_turf(parent))
+	if(network == new_net)
 		return
 	leave_network()
-	if(!lan)
+	if(!new_net)
 		return
-	network = SSnetrun.get_network(lan)
+	network = new_net
 	network.nodes += src
 	add_log("Подключение к [network.code].")
 

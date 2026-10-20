@@ -90,35 +90,53 @@
 		data["map"] = null
 		data["selected_network"] = null
 		data["ping_route"] = null
+		data["events"] = null
+		data["waypoint"] = null
 		return data
 	data["web"] = null
 
-	// Единое поле: гейтвеи подсетей + узлы всех достижимых сетей. У закрытых подсетей
-	// видно только структуру (гейтвей и APC), машины раскрываются после доступа.
+	// Локальная подгрузка: только узлы в радиусе от фокуса (провод/выбор/носитель).
+	// Ветвление во все стороны — выбираешь крайний узел, фокус смещается, грузится дальше.
+	var/turf/focus = map_focus_turf()
+	var/radius = map_radius + (daemon_bonus("mapper") ? 20 : 0)
 	var/list/gateways = list()
 	var/list/map_nodes = list()
+	var/list/shown_networks = list()
 	for(var/network_id in SSnetrun.networks)
 		var/datum/netrun_network/network = SSnetrun.networks[network_id]
 		if(!can_reach(network))
 			continue
 		var/net_level = network_level(network)
-		gateways += list(list(
-			"id" = network.id,
-			"code" = network.code,
-			"name" = network.name,
-			"color" = network.color,
-			"security" = network.security,
-			"access" = net_level,
-			"has_key" = has_key(network),
-			"can_breach" = can_breach && net_level < NETRUN_ACCESS_GUEST,
-		))
+		var/reveal_all = daemon_bonus("mapper")
+		var/net_shown = FALSE
 		for(var/datum/component/netrun_node/snode as anything in network.nodes)
-			if(net_level < NETRUN_ACCESS_GUEST && !(snode.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)))
+			if(net_level < NETRUN_ACCESS_GUEST && !reveal_all && !(snode.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)))
+				continue
+			if(focus && !node_in_radius(snode, focus, radius))
 				continue
 			var/list/entry = snode.ui_entry(src)
 			entry["network"] = network.id
 			map_nodes += list(entry)
-	data["map"] = list("gateways" = gateways, "nodes" = map_nodes)
+			net_shown = TRUE
+		if(net_shown || !focus)
+			shown_networks[network.id] = TRUE
+			gateways += list(list(
+				"id" = network.id,
+				"code" = network.code,
+				"name" = network.name,
+				"color" = network.color,
+				"security" = network.security,
+				"access" = net_level,
+				"has_key" = has_key(network),
+				"can_breach" = can_breach && net_level < NETRUN_ACCESS_GUEST,
+			))
+	data["map"] = list(
+		"gateways" = gateways,
+		"nodes" = map_nodes,
+		"focus" = focus ? list("x" = focus.x, "y" = focus.y, "z" = focus.z) : null,
+		"radius" = radius,
+	)
+	data["waypoint"] = waypoint_payload(focus)
 	data["view"] = null
 
 	var/datum/component/netrun_node/node = selected_node()
@@ -167,6 +185,7 @@
 	data["windows"] = windows_payload()
 	data["window"] = active_window ? window_payload() : null
 	data["ping_route"] = (ping_route && world.time - ping_at < 6 SECONDS) ? ping_route : null
+	data["events"] = SSnetrun.recent_events()
 	return data
 
 /// Дополнительные кнопки носителя (выдернуть провод, вынуть шард, вернуться в тело...)
@@ -180,6 +199,53 @@
 /// Данные для режима сущности - переопределяется у консоли сущности
 /datum/netrun_console/proc/entity_data()
 	return null
+
+// MARK: Локальная карта и пеленг
+
+/// Точка, вокруг которой грузится карта: провод, выбранный узел или носитель.
+/datum/netrun_console/proc/map_focus_turf()
+	if(jack && jack_valid())
+		return get_turf(jack.parent)
+	var/datum/component/netrun_node/sel = selected_node()
+	if(sel && !QDELETED(sel.parent))
+		return get_turf(sel.parent)
+	return get_turf(host)
+
+/datum/netrun_console/entity/map_focus_turf()
+	var/mob/camera/netrun_entity/entity = host
+	if(entity?.host_node && !QDELETED(entity.host_node.parent))
+		return get_turf(entity.host_node.parent)
+	return ..()
+
+/datum/netrun_console/proc/node_in_radius(datum/component/netrun_node/node, turf/focus, radius)
+	var/turf/T = get_turf(node.parent)
+	if(!T)
+		return FALSE
+	if(T.z != focus.z)
+		return FALSE
+	return get_dist(T, focus) <= radius
+
+/// Пеленг к целевому узлу: направление и дистанция от фокуса (узлы как карта путешествия).
+/datum/netrun_console/proc/waypoint_payload(turf/focus)
+	if(!waypoint_address)
+		return null
+	var/datum/component/netrun_node/node = SSnetrun.find_node(waypoint_address)
+	if(!node || QDELETED(node.parent))
+		waypoint_address = null
+		return null
+	var/turf/T = get_turf(node.parent)
+	if(!T || !focus)
+		return list("address" = waypoint_address, "name" = node.get_name(), "lost" = TRUE)
+	return list(
+		"address" = waypoint_address,
+		"name" = node.get_name(),
+		"type" = node.node_type,
+		"dx" = T.x - focus.x,
+		"dy" = T.y - focus.y,
+		"dz" = T.z - focus.z,
+		"dist" = get_dist(T, focus),
+		"same_z" = T.z == focus.z,
+	)
 
 /datum/netrun_console/proc/storage_payload()
 	var/list/local = list()
@@ -257,6 +323,15 @@
 			if(network && can_reach(network))
 				selected_network = network.id
 				selected_address = null
+			return TRUE
+		if("set_waypoint")
+			var/datum/component/netrun_node/node = SSnetrun.find_node(params["address"])
+			if(node)
+				waypoint_address = node.address
+				log_line("Пеленг на [node.get_name()] [node.address].", "label")
+			return TRUE
+		if("clear_waypoint")
+			waypoint_address = null
 			return TRUE
 		if("select")
 			var/datum/component/netrun_node/node = SSnetrun.find_node(params["address"])

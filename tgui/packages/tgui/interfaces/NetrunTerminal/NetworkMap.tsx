@@ -12,6 +12,7 @@ import {
   NODE_ICONS,
   NODE_NAMES,
   THEME,
+  Waypoint,
 } from './types';
 
 const WIDTH = 520;
@@ -176,6 +177,8 @@ export const StationMap = () => {
   const { act, data } = useBackend<NetrunData>();
   const { selected, selected_network, jack, entity, breach } = data;
   const route = data.ping_route;
+  const events = data.events;
+  const waypoint = data.waypoint;
   const map = data.map;
   const canvasRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: -600, y: -360 });
@@ -431,6 +434,7 @@ export const StationMap = () => {
           {visibleNodes.length}/{placed.length} ·{' '}
           тащите поле мышью · WASD — переход{entity ? ', Shift+WASD — прыжок' : ''}
         </Box>
+        {waypoint && <WaypointCompass wp={waypoint} onClear={() => act('clear_waypoint')} />}
       </Box>
       <div
         ref={canvasRef}
@@ -589,6 +593,43 @@ export const StationMap = () => {
                   </g>
                 );
               })()}
+            {events &&
+              events.map((ev, idx) => {
+                const EV_COLOR: Record<string, string> = {
+                  command: THEME.accent,
+                  intrusion: THEME.warn,
+                  breach: THEME.warn,
+                  trace: THEME.bad,
+                };
+                const point = (ref: string | null) => {
+                  if (!ref) {
+                    return { x: hubX, y: hubY };
+                  }
+                  const n = byAddr[ref];
+                  if (n) {
+                    return { x: n.px, y: n.py };
+                  }
+                  const g = gwPos[ref];
+                  return g ? { x: g.gx, y: g.gy } : null;
+                };
+                const to = point(ev.to) || point(ev.from);
+                if (!to) {
+                  return null;
+                }
+                const from = point(ev.from);
+                const fade = Math.max(0, 1 - ev.age / 4);
+                const color = EV_COLOR[ev.kind] || THEME.accent;
+                return (
+                  <g key={`ev-${idx}`} opacity={fade}>
+                    {from && (from.x !== to.x || from.y !== to.y) && (
+                      <line x1={from.x} y1={from.y} x2={to.x} y2={to.y}
+                        stroke={color} strokeOpacity={0.4 * fade} strokeWidth={1.5} />
+                    )}
+                    <circle cx={to.x} cy={to.y} r={6 + ev.age * 7} fill="none"
+                      stroke={color} strokeWidth={2} />
+                  </g>
+                );
+              })}
           </svg>
           {map.gateways.map((gw) => (
             <GatewayMarker
@@ -735,5 +776,40 @@ const NodeMarker = (props: {
         {node.name.length > 14 ? node.name.slice(0, 13) + '…' : node.name}
       </Box>
     </div>
+  );
+};
+
+const WaypointCompass = (props: { wp: Waypoint; onClear: () => void }) => {
+  const { wp, onClear } = props;
+  if (wp.lost) {
+    return (
+      <Box inline ml={1} color={THEME.bad} fontSize="10px">
+        Пеленг потерян
+        <Button compact icon="xmark" ml={0.5} onClick={onClear} />
+      </Box>
+    );
+  }
+  // Станционные координаты: +y на север (вверх). 0° — север, по часовой на восток.
+  const angle = Math.atan2(wp.dx ?? 0, wp.dy ?? 0) * (180 / Math.PI);
+  return (
+    <Box
+      inline
+      ml={1}
+      p={0.5}
+      style={{ background: THEME.bg, border: `1px solid ${THEME.accent}`, borderRadius: '3px' }}
+    >
+      <svg width={22} height={22} style={{ verticalAlign: 'middle' }}>
+        <g transform={`translate(11 11) rotate(${angle})`}>
+          <polygon points="0,-8 4,6 0,3 -4,6" fill={THEME.accent} />
+        </g>
+      </svg>
+      <Box inline ml={0.5} fontSize="10px" color={THEME.text} style={{ fontFamily: 'monospace' }}>
+        {wp.name.length > 14 ? wp.name.slice(0, 13) + '…' : wp.name}
+        <Box inline ml={0.5} color={THEME.muted}>
+          {wp.same_z ? `${wp.dist} тайл.` : `Z${(wp.dz ?? 0) > 0 ? '+' : ''}${wp.dz}`}
+        </Box>
+      </Box>
+      <Button compact icon="xmark" ml={0.5} onClick={onClear} />
+    </Box>
   );
 };

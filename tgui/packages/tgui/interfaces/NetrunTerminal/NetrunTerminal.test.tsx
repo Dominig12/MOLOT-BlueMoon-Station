@@ -44,7 +44,7 @@ const setup = (overrides: Partial<NetrunData> = {}) => {
       storage: { files: [], used: 0, capacity: 10 }, shard: null,
       breach: null, entity: null, chat: { handle: 'runner', messages: [] },
       web: null, windows: [], window: null,
-      map: { gateways: [], nodes: [node, { ...node, address: 'BBBB:0002', x: 20 }] },
+      map: { gateways: [], focus: null, radius: 40, nodes: [node, { ...node, address: 'BBBB:0002', x: 20 }] },
       selected_network: null, ping_route: null,
       cli: { verbs: [{ id: 'sel', args: '<адрес>', desc: 'Выбрать узел.' }] },
       ...overrides,
@@ -60,7 +60,7 @@ const sent = (topic, action: string) => topic.mock.calls
 describe('Netrun terminal panels', () => {
   test('map filters remove hidden nodes and keyboard targets without moving other nodes', () => {
     const camera = { ...node, address: 'CAM:0001', name: 'Камера лаборатории', type: 'camera', x: 20 };
-    const topic = setup({ map: { gateways: [], nodes: [node, camera] } });
+    const topic = setup({ map: { gateways: [], focus: null, radius: 40, nodes: [node, camera] } });
     const { getByLabelText, getByPlaceholderText, getByTitle, queryByTitle } = render(<StationMap />);
     const apcTitle = `${node.name} ${node.address} — Щитки APC`;
     const cameraTitle = `${camera.name} ${camera.address} — Камеры`;
@@ -173,7 +173,7 @@ describe('Netrun terminal panels', () => {
     const topic = setup({
       selected: { ...node, address: 'SELECTED', x: 0 },
       entity: { name: 'Process', integrity: 100, max_integrity: 100, host: 'HOST', host_name: 'Host', diving: false },
-      map: { gateways: [], nodes: [
+      map: { gateways: [], focus: null, radius: 40, nodes: [
         { ...node, address: 'SELECTED', x: 0 },
         { ...node, address: 'HOST', x: 10 },
         { ...node, address: 'LOCKED', x: 11, access: 1 },

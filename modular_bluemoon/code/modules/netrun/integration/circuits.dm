@@ -62,9 +62,9 @@
 
 /datum/netrun_console/circuit/home_networks()
 	. = list()
-	var/lan = netrun_lan_for_turf(get_turf(host))
-	if(lan)
-		. += SSnetrun.get_network(lan)
+	var/datum/netrun_network/local = netrun_network_for(get_turf(host))
+	if(local)
+		. += local
 
 /datum/netrun_console/circuit/user_access()
 	return list()

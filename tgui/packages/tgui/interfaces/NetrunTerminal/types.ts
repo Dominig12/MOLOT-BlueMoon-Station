@@ -143,6 +143,8 @@ export type NetrunData = {
   map: NetMap | null;
   selected_network: SelectedNetwork | null;
   ping_route: PingHop[] | null;
+  events?: NetEvent[] | null;
+  waypoint?: Waypoint | null;
   file?: (NetFile & {
     content: string | null;
     image: string | null;
@@ -153,6 +155,25 @@ export type NetrunData = {
 };
 
 export type PingHop = { kind: 'node' | 'gateway' | 'hub'; ref?: string };
+
+export type Waypoint = {
+  address: string;
+  name: string;
+  type?: string;
+  dx?: number;
+  dy?: number;
+  dz?: number;
+  dist?: number;
+  same_z?: boolean;
+  lost?: boolean;
+};
+
+export type NetEvent = {
+  kind: 'command' | 'intrusion' | 'breach' | 'trace';
+  from: string | null;
+  to: string | null;
+  age: number;
+};
 
 export type Gateway = {
   id: string;
@@ -168,6 +189,8 @@ export type Gateway = {
 export type NetMap = {
   gateways: Gateway[];
   nodes: NetNode[];
+  focus: { x: number; y: number; z: number } | null;
+  radius: number;
 };
 
 export type SelectedNetwork = {

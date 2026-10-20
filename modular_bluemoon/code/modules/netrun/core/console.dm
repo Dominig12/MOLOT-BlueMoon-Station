@@ -41,6 +41,10 @@
 	/// Маршрут последнего ping для подсветки на карте
 	var/list/ping_route
 	var/ping_at = 0
+	/// Радиус локальной подгрузки карты (тайлы от фокуса)
+	var/map_radius = 40
+	/// Пеленг: адрес целевого узла для навигации
+	var/waypoint_address
 	/// Открытые окна машин (адреса узлов) и активное окно
 	var/list/windows = list()
 	var/active_window
@@ -82,9 +86,9 @@
 	if(jack?.network && jack_valid())
 		. += jack.network
 	if(!wireless)
-		var/lan = netrun_lan_for_turf(get_turf(host))
-		if(lan)
-			. |= SSnetrun.get_network(lan)
+		var/datum/netrun_network/local = netrun_network_for(get_turf(host))
+		if(local)
+			. |= local
 
 /// Есть ли выход в NTnet
 /datum/netrun_console/proc/has_uplink()
@@ -239,6 +243,7 @@
 		return FALSE
 	log_line(result, illegal ? "average" : "good")
 	node.add_log("[log_source()]: [command.name][illegal ? " (без авторизации)" : ""].")
+	SSnetrun.post_event(illegal ? "intrusion" : "command", node.network?.id, node.address)
 	var/atom/target = node.parent
 	log_game("NETRUN: [key_name(operator)] ([origin]) [command.id] -> [node.get_name()] [node.address][illegal ? " (взлом)" : ""] [AREACOORD(target)]")
 	node.network?.add_log("[log_source()] -> [node.address]: [command.name][illegal ? " (без авторизации)" : ""]", illegal && command.access >= NETRUN_ACCESS_ROOT)
@@ -294,6 +299,7 @@
 	active_window = null
 	var/where = get_area_name(host, TRUE) || "неизвестно"
 	log_line("ВАС ОТСЛЕДИЛИ. Соединение разорвано.", "bad")
+	SSnetrun.post_event("trace", null, selected_address)
 	SSnetrun.ntnet_log("Нарушитель отслежен: точка [origin], район: [where].", TRUE)
 	for(var/network_id in SSnetrun.networks)
 		var/datum/netrun_network/network = SSnetrun.networks[network_id]
@@ -311,7 +317,7 @@
 		else
 			add_trace(0.6 * breach.security * delta * (breach.target_kind == "network" ? 1.25 : 1))
 	else if(trace > 0 && world.time - last_illegal > 10 SECONDS)
-		trace = max(0, trace - NETRUN_TRACE_DECAY * delta)
+		trace = max(0, trace - NETRUN_TRACE_DECAY * delta * (1 + daemon_bonus("scrub")))
 	if(jack && !jack_valid())
 		log_line("Провод выдернут.", "average")
 		set_jack(null)
@@ -360,6 +366,7 @@
 		breach.deadline = world.time + 20 SECONDS
 		breach.buffer_size = min(breach.buffer_size, 7)
 		breach.generate()
+	SSnetrun.post_event("breach", kind == "network" ? id : null, kind == "network" ? null : id)
 	log_line("Запущен взлом: [target_name].", "average")
 	return TRUE
 

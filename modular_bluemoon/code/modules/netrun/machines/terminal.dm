@@ -71,17 +71,27 @@
 	use_power = IDLE_POWER_USE
 	idle_power_usage = 200
 	circuit = /obj/item/circuitboard/machine/netrun_server
-	/// Файлы, которые лежат на сервере с самого начала
+	/// Файлы, которые лежат на сервере с самого начала (имя = текст)
 	var/list/preload_files
+	/// Демоны, лежащие на сервере с самого начала (список id)
+	var/list/preload_daemons
+	/// Доступ, нужный для легального пользователя (по умолчанию - сетевой администратор)
+	var/list/server_access = list(ACCESS_NETWORK)
+	/// Защита узла сервера
+	var/server_security = 2
 
 /obj/machinery/netrun_server/Initialize(mapload)
 	. = ..()
 	var/capacity = 40
 	for(var/obj/item/stock_parts/matter_bin/bin in component_parts)
 		capacity += bin.rating * 10
-	var/datum/component/netrun_node/node = AddComponent(/datum/component/netrun_node, NETRUN_NODE_SERVER, list("purge", "issue_key", "reboot"), 2, list(ACCESS_NETWORK), capacity)
+	var/datum/component/netrun_node/node = AddComponent(/datum/component/netrun_node, NETRUN_NODE_SERVER, list("purge", "issue_key", "reboot"), server_security, server_access, capacity)
 	for(var/file_name in preload_files)
 		node.files += new /datum/netrun_file(file_name, NETRUN_FILE_TEXT, preload_files[file_name])
+	for(var/daemon_id in preload_daemons)
+		var/datum/netrun_file/daemon_file = netrun_daemon_file(daemon_id)
+		if(daemon_file)
+			node.files += daemon_file
 
 /obj/machinery/netrun_server/netrun_status()
 	var/datum/component/netrun_node/node = GetComponent(/datum/component/netrun_node)
@@ -108,3 +118,36 @@
 		/obj/item/stack/cable_coil = 2,
 		/obj/item/stock_parts/matter_bin = 2,
 		/obj/item/stock_parts/subspace/filter = 1)
+
+// MARK: Уникальные серверы-тайники вне станции
+//
+// Размещаются мапперами в руинах/обломках на внешних Z-уровнях. Их ЛВС изолирована -
+// подключиться можно только оказавшись там физически (деком/имплантом/сущностью).
+// Внутри - добываемые демоны и данные. Хорошо защищены.
+
+/obj/machinery/netrun_server/stash
+	name = "abandoned data cache"
+	desc = "Запылённая стойка данных неизвестного происхождения. Индикаторы ещё теплятся."
+	icon_state = "server"
+	server_security = 4
+	server_access = list(ACCESS_SYNDICATE)
+
+/obj/machinery/netrun_server/stash/breach_suite
+	name = "breach tools archive"
+	desc = "Стойка со скрытым архивом сетевых инструментов. Кто-то собирал её с умыслом."
+	preload_daemons = list("buffer", "icepick", "cloak")
+	preload_files = list("readme.txt" = "Инструменты для работы с чужими сетями. Буфер, анализатор защиты, маскировка следов. Используй с умом.")
+
+/obj/machinery/netrun_server/stash/recon
+	name = "signals cache"
+	desc = "Архив средств сетевой разведки."
+	server_security = 4
+	preload_daemons = list("mapper", "overclock", "scrub")
+	preload_files = list("ops.txt" = "Разведка топологии, разгон стека, заметание следов. Полевой набор.")
+
+/obj/machinery/netrun_server/stash/blackbox
+	name = "black archive"
+	desc = "Хорошо защищённая стойка. Снаружи ни одной маркировки."
+	server_security = 5
+	preload_daemons = list("skeleton", "icepick")
+	preload_files = list("warning.txt" = "Внутри - армейская отмычка. Одноразовый рывок до корня. Не для любителей.")

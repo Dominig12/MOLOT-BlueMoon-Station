@@ -40,7 +40,7 @@
 	size = 5 + (src.security >= 3) + (src.security >= 5)
 	buffer_size = 4 + round(src.security / 2) + console.buffer_bonus + console.daemon_bonus("buffer")
 	buffer_size = min(buffer_size, size * 2)
-	deadline = world.time + (45 SECONDS) - (src.security * 4 SECONDS)
+	deadline = world.time + (45 SECONDS) - (src.security * 4 SECONDS) + (console.daemon_bonus("extend") * (10 SECONDS))
 	if(target_kind == "network")
 		size++
 		deadline -= 5 SECONDS
@@ -112,6 +112,9 @@
 		lengths = list(min(5, buffer_size), min(6, buffer_size), min(5, buffer_size))
 	var/list/names = list("ДОСТУП", "ROOT", "ЗАМЕСТИ СЛЕДЫ")
 	var/list/rewards = list(NETRUN_ACCESS_USER, NETRUN_ACCESS_ROOT, 0)
+	if(target_kind == "node" && console.daemon_bonus("skeleton"))
+		names = list("ОТМЫЧКА", "ROOT", "ЗАМЕСТИ СЛЕДЫ")
+		rewards = list(NETRUN_ACCESS_ROOT, NETRUN_ACCESS_ROOT, 0)
 	for(var/i in 1 to 3)
 		var/len = min(lengths[i], buffer_size)
 		var/start = rand(1, buffer_size - len + 1)

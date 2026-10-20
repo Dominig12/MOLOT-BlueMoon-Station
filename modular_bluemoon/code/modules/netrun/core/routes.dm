@@ -82,4 +82,6 @@
 	route.latency = 3
 	if(here && there)
 		route.latency += here.z == there.z ? clamp(round(get_dist(here, there) / 25), 0, 4) : 5
+	if(daemon_bonus("overclock"))
+		route.latency = max(0, round(route.latency / 3))
 	return route

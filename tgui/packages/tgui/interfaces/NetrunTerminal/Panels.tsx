@@ -3,7 +3,7 @@ import { KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input, Section } from '../../components';
 import { FilePanel } from './FilePanel';
-import { fileIcon } from './NodePanel';
+import { fileFormat, fileIcon } from './NodePanel';
 import { NetFile, NetrunData, THEME } from './types';
 
 const KIND_COLORS: Record<string, string> = {
@@ -214,23 +214,39 @@ const FileList = (props: { files: NetFile[]; canUpload: boolean }) => {
     return <Box color={THEME.muted}>Пусто.</Box>;
   }
   return (
-    <>
+    <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
       {props.files.map((file) => (
-        <Box key={file.uid} mb={0.5} style={{ fontFamily: 'monospace' }}>
-          <Icon name={fileIcon(file.kind)} mr={1} />
-          <Button compact selected={file.selected} content={file.name} tooltip="Выбрать файл" onClick={() => act('file_select', { uid: file.uid })} />
-          <Box inline style={{ float: 'right' }}>
-            {file.kind === 'text' && (
-              <Button compact icon="eye" onClick={() => act('read', { uid: file.uid })} />
-            )}
-            {props.canUpload && (
-              <Button compact icon="upload" tooltip="Загрузить на узел" onClick={() => act('upload', { uid: file.uid })} />
-            )}
-            <Button compact icon="trash" tooltip="Удалить" onClick={() => act('delete_local', { uid: file.uid })} />
+        <Box
+          key={file.uid}
+          mb={0.5}
+          p={0.5}
+          style={{
+            fontFamily: 'monospace',
+            background: file.selected ? THEME.line : THEME.bg,
+            border: `1px solid ${THEME.line}`,
+            display: 'flex',
+            alignItems: 'center',
+            cursor: 'pointer',
+          }}
+          onClick={() => act('file_select', { uid: file.uid })}
+        >
+          <Icon name={fileIcon(file.kind)} mr={1} color={THEME.accent} />
+          <Box style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {file.name}
+            <Box inline ml={1} color={THEME.muted} fontSize="9px">
+              {fileFormat(file.name, file.kind)} · {file.size}
+            </Box>
           </Box>
+          {file.kind === 'text' && (
+            <Button compact icon="eye" tooltip="Открыть" onClick={(e) => { e.stopPropagation(); act('read', { uid: file.uid }); }} />
+          )}
+          {props.canUpload && (
+            <Button compact icon="upload" tooltip="Загрузить на узел" onClick={(e) => { e.stopPropagation(); act('upload', { uid: file.uid }); }} />
+          )}
+          <Button compact icon="trash" color="transparent" tooltip="Удалить" onClick={(e) => { e.stopPropagation(); act('delete_local', { uid: file.uid }); }} />
         </Box>
       ))}
-    </>
+    </div>
   );
 };
 

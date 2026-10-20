@@ -14,6 +14,9 @@ SUBSYSTEM_DEF(netrun)
 	var/list/commands
 	var/list/currentrun = list()
 	var/list/currentnodes = list()
+	/// Общая лента недавних событий сети - её видят все раннеры на карте.
+	/// list(list("kind","from","to","t"))
+	var/list/events = list()
 
 /datum/controller/subsystem/netrun/stat_entry(msg)
 	msg = "N:[length(nodes_by_address)] C:[length(consoles)] E:[length(entities)]"
@@ -50,6 +53,33 @@ SUBSYSTEM_DEF(netrun)
 		network = new(id)
 		networks[id] = network
 	return network
+
+/// ЛВС отсека: по одной на APC-зону, свойства берутся из типа отсека.
+/datum/controller/subsystem/netrun/proc/get_area_network(area/root_area)
+	if(!root_area)
+		return
+	if(!root_area.netrun_lan_id)
+		root_area.netrun_lan_id = "lan_[REF(root_area)]"
+	var/datum/netrun_network/network = networks[root_area.netrun_lan_id]
+	if(!network)
+		network = new(root_area.netrun_lan_id, root_area)
+		networks[network.id] = network
+	return network
+
+/// Зарегистрировать событие сети: его отрисуют карты всех активных раннеров.
+/datum/controller/subsystem/netrun/proc/post_event(kind, from_ref, to_ref)
+	events += list(list("kind" = kind, "from" = from_ref, "to" = to_ref, "t" = world.time))
+	if(length(events) > 40)
+		events.Cut(1, length(events) - 40 + 1)
+
+/// Недавние события (последние секунды) для интерфейса
+/datum/controller/subsystem/netrun/proc/recent_events()
+	. = list()
+	for(var/list/event as anything in events)
+		var/age = world.time - event["t"]
+		if(age > 4 SECONDS)
+			continue
+		. += list(list("kind" = event["kind"], "from" = event["from"], "to" = event["to"], "age" = round(age / (1 SECONDS), 0.1)))
 
 /datum/controller/subsystem/netrun/proc/get_command(id)
 	if(!commands)

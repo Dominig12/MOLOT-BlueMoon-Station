@@ -81,3 +81,78 @@
 	desc = "Шард с программой сокрытия активности сетевого клиента от систем трассировки."
 	icon_state = "datadisk2"
 	preload_daemons = list("cloak")
+
+// MARK: Расширенный пул программ
+
+/datum/netrun_daemon/extend
+	id = "extend"
+	name = "extend.exe"
+	desc = "Продлевает окно протокола взлома: +10 секунд на демона. Копии не усиливают эффект."
+	size = 2
+	bonus_kind = "extend"
+	bonus = 1
+
+/datum/netrun_daemon/overclock
+	id = "overclock"
+	name = "overclock.exe"
+	desc = "Разгоняет сетевой стек: удалённые операции идут почти без задержки маршрута."
+	size = 3
+	bonus_kind = "overclock"
+	bonus = 1
+
+/datum/netrun_daemon/scrub
+	id = "scrub"
+	name = "scrub.exe"
+	desc = "Ускоряет спад трассировки в простое вдвое. Копии не усиливают эффект."
+	size = 2
+	bonus_kind = "scrub"
+	bonus = 1
+
+/datum/netrun_daemon/mapper
+	id = "mapper"
+	name = "mapper.exe"
+	desc = "Разведка топологии: на карте видны машины и за закрытыми шлюзами подсетей."
+	size = 2
+	bonus_kind = "mapper"
+	bonus = 1
+
+/datum/netrun_daemon/skeleton
+	id = "skeleton"
+	name = "skeleton.exe"
+	desc = "Дорогой армейский ключ: один взлом узла сразу выдаёт ROOT вместо пользователя. Расходуется редко — держите на крайний случай."
+	size = 5
+	bonus_kind = "skeleton"
+	bonus = 1
+
+// Печатаемые/добываемые шарды с новыми программами
+/obj/item/netrun_shard/extend
+	name = "data shard (extend.exe)"
+	icon_state = "datadisk2"
+	preload_daemons = list("extend")
+
+/obj/item/netrun_shard/overclock
+	name = "data shard (overclock.exe)"
+	icon_state = "datadisk2"
+	preload_daemons = list("overclock")
+
+/obj/item/netrun_shard/scrub
+	name = "data shard (scrub.exe)"
+	icon_state = "datadisk2"
+	preload_daemons = list("scrub")
+
+/obj/item/netrun_shard/mapper
+	name = "data shard (mapper.exe)"
+	icon_state = "datadisk2"
+	preload_daemons = list("mapper")
+
+/obj/item/netrun_shard/skeleton
+	name = "data shard (skeleton.exe)"
+	desc = "Шард с редкой программой-отмычкой. Военного образца."
+	icon_state = "datadisk3"
+	preload_daemons = list("skeleton")
+
+/obj/item/netrun_shard/fullsuite
+	name = "data shard (full breach suite)"
+	desc = "Набор программ опытного сетевика: буфер, разведка, разгон и заметание следов."
+	icon_state = "datadisk3"
+	preload_daemons = list("buffer", "icepick", "cloak", "mapper", "overclock", "scrub")
