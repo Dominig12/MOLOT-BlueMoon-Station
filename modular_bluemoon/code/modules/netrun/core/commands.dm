@@ -121,23 +121,18 @@
 /datum/netrun_command/ping/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg)
 	if(!console.can_route(node))
 		return "[node.address]: нет маршрута."
-	var/lat = console.latency_to(node)
-	var/route_name = (node == console.jack) ? "прямое подключение" : (lat <= 2 ? "локальная сеть" : "через реле NTnet")
-	// Маршрут для подсветки на карте: узел -> APC -> гейтвей -> хаб
-	var/list/route = list(list("kind" = "node", "ref" = node.address))
-	var/datum/component/netrun_node/up = node.uplink_node()
-	if(up)
-		route += list(list("kind" = "node", "ref" = up.address))
-	if(node.network)
-		route += list(list("kind" = "gateway", "ref" = node.network.id))
-	route += list(list("kind" = "hub"))
-	console.ping_route = route
+	var/datum/netrun_route/route = console.route_to(node)
+	var/lat = route.latency
+	var/route_name = route.name
+	console.ping_route = route.hops.Copy()
+	var/hops = max(0, length(route.hops) - 1)
+	qdel(route)
 	console.ping_at = world.time
 	if(lat <= 0)
 		return "[node.address]: 0мс ([route_name])"
 	// Ответ приходит после того, как пакет дойдёт и вернётся
 	addtimer(CALLBACK(console, TYPE_PROC_REF(/datum/netrun_console, ping_reply), node.address, lat, route_name), lat * 2)
-	return "[node.address]: пакет отправлен, [length(route)] прыжков…"
+	return "[node.address]: пакет отправлен, [hops] прыжков…"
 
 /datum/netrun_command/reboot
 	id = "reboot"

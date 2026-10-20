@@ -5,6 +5,7 @@ import { backendReducer, backendUpdate } from '../../backend';
 import { debugReducer } from '../../debug';
 import { NetrunContent } from './Content';
 import { FilePanel } from './FilePanel';
+import { spreadNodes } from './mapLayout';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog } from './Panels';
@@ -57,6 +58,45 @@ const sent = (topic, action: string) => topic.mock.calls
   .map((call) => JSON.parse(call[0].payload));
 
 describe('Netrun terminal panels', () => {
+  test('map filters remove hidden nodes and keyboard targets without moving other nodes', () => {
+    const camera = { ...node, address: 'CAM:0001', name: 'Камера лаборатории', type: 'camera', x: 20 };
+    const topic = setup({ map: { gateways: [], nodes: [node, camera] } });
+    const { getByLabelText, getByPlaceholderText, getByTitle, queryByTitle } = render(<StationMap />);
+    const apcTitle = `${node.name} ${node.address} — Щитки APC`;
+    const cameraTitle = `${camera.name} ${camera.address} — Камеры`;
+    const originalStyle = getByTitle(apcTitle).getAttribute('style');
+    fireEvent.click(getByLabelText('Фильтр: Камеры'));
+    expect(queryByTitle(cameraTitle)).toBeNull();
+    expect(getByTitle(apcTitle).getAttribute('style')).toBe(originalStyle);
+    fireEvent.keyDown(getByLabelText('Карта сети'), { key: 'd' });
+    expect(sent(topic, 'select')).toEqual([]);
+    fireEvent.click(getByLabelText('Фильтр: Камеры'));
+    expect(getByTitle(cameraTitle)).toBeTruthy();
+    const input = getByPlaceholderText('поиск узла…');
+    fireEvent.input(input, { target: { value: 'лаборатории' } });
+    expect(queryByTitle(apcTitle)).toBeNull();
+    expect(getByTitle(cameraTitle)).toBeTruthy();
+    fireEvent.input(input, { target: { value: 'несуществующий узел' } });
+    expect(queryByTitle(cameraTitle)).toBeNull();
+    fireEvent.input(input, { target: { value: '' } });
+    expect(getByTitle(apcTitle).getAttribute('style')).toBe(originalStyle);
+  });
+
+  test('dense maps separate nodes and preserve cached positions when devices arrive', () => {
+    const nodes = Array.from({ length: 300 }, (_, i) => ({ address: `${i}`, px: 0, py: 0 }));
+    spreadNodes(nodes, new Set(), 68);
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        expect(Math.hypot(nodes[i].px - nodes[j].px, nodes[i].py - nodes[j].py)).toBeGreaterThanOrEqual(67.999);
+      }
+    }
+    const cached = nodes.map((node) => ({ ...node }));
+    nodes.push({ address: 'new', px: 0, py: 0 });
+    spreadNodes(nodes, new Set(cached.map((node) => node.address)), 68);
+    expect(nodes.slice(0, -1)).toEqual(cached);
+    expect(nodes[nodes.length - 1]).not.toEqual({ address: 'new', px: 0, py: 0 });
+  });
+
   test('node commands have natural height and dispatch the selected command', () => {
     const topic = setup();
     const { container, getByText } = render(<NodePanel />);

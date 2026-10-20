@@ -15,15 +15,39 @@
 
 /// Особые оконные действия машины: list(list("id","name","icon","access","danger","desc"))
 /atom/proc/netrun_window_actions(datum/netrun_console/console, datum/component/netrun_node/node)
-	return list()
+	if(!netrun_view_capable())
+		return list()
+	return list(
+		list("id" = "view_watch", "name" = "Смотреть", "icon" = "eye", "access" = NETRUN_ACCESS_USER, "desc" = "Подключиться к видеопотоку устройства."),
+		list("id" = "view_unwatch", "name" = "Отключить обзор", "icon" = "eye-slash", "access" = NETRUN_ACCESS_GUEST, "desc" = "Вернуть собственный обзор."),
+	)
 
 /// «Живой кадр» для окон-камер: список строк, что видно; null - не камера/нет доступа
 /atom/proc/netrun_window_feed(datum/netrun_console/console, datum/component/netrun_node/node)
-	return null
+	if(!netrun_view_capable() || console.node_level(node) < NETRUN_ACCESS_USER)
+		return null
+	var/atom/eye = node.is_online() && console.can_route(node) ? netrun_view_target() : null
+	if(!eye)
+		return list("Нет видеосигнала: проверьте питание, состояние оптики и прошивку.")
+	var/list/seen = list()
+	for(var/mob/living/person in view(7, eye))
+		if(person == eye)
+			continue
+		seen += "[person.name] — [person.stat == DEAD ? "не двигается" : "движется"]"
+	if(!length(seen))
+		seen += "В поле зрения пусто."
+	return seen
 
 /// Обработать оконное действие машины. Возврат - текст результата или null
 /atom/proc/netrun_window_act(datum/netrun_console/console, datum/component/netrun_node/node, action, list/params)
-	return
+	if(!netrun_view_capable())
+		return
+	switch(action)
+		if("view_watch")
+			return console.start_watch(node) ? "Видеопоток подключён." : "Видеопоток недоступен."
+		if("view_unwatch")
+			console.stop_watch()
+			return "Обзор возвращён."
 
 // MARK: Консоль: окна
 
@@ -137,55 +161,49 @@
 	if(illegal)
 		add_trace(4 * node.get_security())
 
-// MARK: Просмотр камеры
+// MARK: Видеопотоки
 
-/datum/netrun_console/proc/start_watch(datum/component/netrun_node/node, atom/eye_target)
-	if(!operator?.client)
-		return
+/// Revalidate the source on every tick, including worn optics and disabled implants.
+/datum/netrun_console/proc/watch_target()
+	if(QDELETED(watch_node) || QDELETED(operator) || watch_viewer != operator || is_locked())
+		return null
+	if(!watch_node.is_online() || !can_route(watch_node) || node_level(watch_node) < NETRUN_ACCESS_USER)
+		return null
+	var/atom/source = watch_node.parent
+	return source.netrun_view_target()
+
+/datum/netrun_console/proc/start_watch(datum/component/netrun_node/node)
+	if(!operator?.client || QDELETED(node))
+		return FALSE
 	stop_watch()
 	watch_viewer = operator
 	watch_node = node
-	operator.reset_perspective(eye_target)
-	log_line("Подключён видеопоток [node.address].", "good")
+	var/atom/eye = watch_target()
+	if(!eye)
+		stop_watch()
+		return FALSE
+	if(operator.netrun_watch_console && operator.netrun_watch_console != src)
+		operator.netrun_watch_console.stop_watch()
+	operator.netrun_watch_console = src
+	watch_eye = new(get_turf(eye), src)
+	operator.reset_perspective(watch_eye)
+	if(istype(operator, /mob/camera/netrun_entity))
+		var/mob/camera/netrun_entity/entity = operator
+		entity.update_vision()
+	return TRUE
 
 /datum/netrun_console/proc/stop_watch()
-	if(watch_viewer?.client)
-		watch_viewer.reset_perspective(null)
+	var/mob/previous_viewer = watch_viewer
+	var/owns_perspective = previous_viewer?.client?.eye == watch_eye && watch_eye
+	if(previous_viewer?.netrun_watch_console == src)
+		previous_viewer.netrun_watch_console = null
 	watch_viewer = null
 	watch_node = null
-
-// MARK: Камеры - окно и просмотр
-
-/obj/machinery/camera/netrun_window_feed(datum/netrun_console/console, datum/component/netrun_node/node)
-	if(console.node_level(node) < NETRUN_ACCESS_USER || !netrun_online())
-		return null
-	var/turf/T = get_turf(src)
-	if(!T)
-		return list("Нет сигнала.")
-	var/list/seen = list()
-	for(var/mob/living/L in view(7, T))
-		seen += "[L.name] — [L.stat == DEAD ? "не двигается" : "движется"]"
-	if(!length(seen))
-		seen += "В поле зрения пусто."
-	return seen
-
-/obj/machinery/camera/netrun_window_actions(datum/netrun_console/console, datum/component/netrun_node/node)
-	return list(
-		list("id" = "cam_watch", "name" = "Смотреть", "icon" = "eye", "access" = NETRUN_ACCESS_USER, "desc" = "Переключить обзор на эту камеру."),
-		list("id" = "cam_unwatch", "name" = "Отключить обзор", "icon" = "eye-slash", "access" = NETRUN_ACCESS_GUEST, "desc" = "Вернуть собственный обзор."),
-	)
-
-/obj/machinery/camera/netrun_window_act(datum/netrun_console/console, datum/component/netrun_node/node, action, list/params)
-	switch(action)
-		if("cam_watch")
-			if(console.node_level(node) < NETRUN_ACCESS_USER)
-				return "Недостаточно прав."
-			if(!status || !netrun_online())
-				return "Камера не ведёт запись."
-			console.start_watch(node, src)
-			return
-		if("cam_unwatch")
-			console.stop_watch()
-			return "Обзор возвращён."
+	QDEL_NULL(watch_eye)
+	if(owns_perspective && previous_viewer?.client)
+		previous_viewer.reset_perspective(null)
+		if(istype(previous_viewer, /mob/camera/netrun_entity))
+			var/mob/camera/netrun_entity/entity = previous_viewer
+			entity.update_vision()
 
 #undef NETRUN_MAX_WINDOWS

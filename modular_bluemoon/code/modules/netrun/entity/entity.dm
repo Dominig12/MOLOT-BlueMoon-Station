@@ -43,8 +43,8 @@
 	. = ..()
 	if(!client)
 		return
-	to_chat(src, span_notice("Вы — процесс в сети станции. Физически вы видите мир только через камеры, к которым у вас есть доступ: \
-		перейдите в узел-камеру. Говорить и слышать можно через интеркомы — включите микрофон или динамик. Стрелки — переход \
+	to_chat(src, span_notice("Вы — процесс в сети станции. Мир виден через доступную оптику: камеры, киберглаза и взломанные HUD-очки. \
+		В окне устройства включите «Смотреть». Говорить и слышать можно через интеркомы — включите микрофон или динамик. Стрелки — переход \
 		к ближайшему узлу, кнопка «Сеть» открывает карту, взлом и переходы."))
 	INVOKE_ASYNC(console, TYPE_PROC_REF(/datum, ui_interact), src)
 	update_vision()
@@ -128,28 +128,50 @@
 	update_vision()
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_TICK, delta)
 
-// MARK: Зрение - только через доступные камеры
+// MARK: Зрение через доступные оптические устройства
 
-/mob/camera/netrun_entity/proc/current_camera()
-	if(host_node?.node_type != NETRUN_NODE_CAMERA || !host_node.is_online())
+/mob/camera/netrun_entity/proc/vision_source()
+	// An explicitly opened stream takes priority over the entity's physical host.
+	var/datum/netrun_console/view_console = netrun_watch_console || console
+	if(view_console?.watch_target())
+		return view_console.watch_node.parent
+	if(QDELETED(host_node) || !host_node.is_online())
 		return null
-	if(console.node_level(host_node) < NETRUN_ACCESS_GUEST)
+	if(console.node_level(host_node) < NETRUN_ACCESS_USER)
 		return null
-	var/obj/machinery/camera/cam = host_node.parent
-	return cam.status ? cam : null
+	var/atom/source = host_node.parent
+	return source.netrun_view_target() ? source : null
+
+/mob/camera/netrun_entity/proc/current_vision_target()
+	var/atom/source = vision_source()
+	return source?.netrun_view_target()
 
 /mob/camera/netrun_entity/proc/update_vision()
 	if(!client)
 		return
-	var/obj/machinery/camera/cam = current_camera()
-	if(cam)
+	var/atom/source = vision_source()
+	var/atom/eye = source?.netrun_view_target()
+	if(eye)
+		var/datum/netrun_console/view_console = netrun_watch_console || console
+		if(view_console?.watch_target() && view_console.watch_eye)
+			eye = view_console.watch_eye
 		if(blinded)
 			clear_fullscreen("netrun_blind")
 			blinded = FALSE
-		if(client.eye != cam)
-			reset_perspective(cam)
-		see_in_dark = 7
+		if(client.eye != eye)
+			reset_perspective(eye)
+		var/list/settings = source.netrun_view_settings()
+		see_in_dark = settings["see_in_dark"]
+		sight = settings["sight"]
+		see_invisible = settings["see_invisible"]
+		clear_fullscreen("remote_view", 0)
+		var/atom/source_eye = source.netrun_view_target()
+		source_eye?.get_remote_view_fullscreens(src)
 	else
+		clear_fullscreen("remote_view", 0)
+		see_in_dark = initial(see_in_dark)
+		sight = initial(sight)
+		see_invisible = initial(see_invisible)
 		if(client.eye != src)
 			reset_perspective(null)
 		if(!blinded)

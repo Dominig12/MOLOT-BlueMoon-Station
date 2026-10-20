@@ -47,6 +47,8 @@
 	/// Просмотр камеры: кто смотрит и через какой узел
 	var/mob/watch_viewer
 	var/datum/component/netrun_node/watch_node
+	/// Native remote-sight adapter for physical viewers; entities apply the same settings themselves.
+	var/obj/effect/netrun_view_eye/watch_eye
 	/// Кеш на время одного ui_data: доступы оператора и уровни сетей
 	var/list/access_cache
 	var/list/network_level_cache
@@ -246,9 +248,11 @@
 
 /// Есть ли вообще маршрут к узлу (иначе узел отрезан - подключиться нельзя)
 /datum/netrun_console/proc/can_route(datum/component/netrun_node/node)
+	node = refresh_route_node(node)
 	if(!node)
 		return FALSE
-	if(node == jack && jack_valid())
+	// Loopback reaches only this client's actual endpoint, not the whole LAN.
+	if(node == route_source())
 		return TRUE
 	return node.network && can_reach(node.network)
 
@@ -262,21 +266,9 @@
 
 /// Задержка маршрута до узла в децисекундах: 0 - прямое/рядом, больше - дальше и через реле
 /datum/netrun_console/proc/latency_to(datum/component/netrun_node/node)
-	if(!node || (node == jack && jack_valid()))
-		return 0
-	var/turf/here = get_turf(host)
-	var/turf/there = get_turf(node.parent)
-	if(!here || !there)
-		return 2
-	var/wired = (node.network in home_networks()) && !wireless
-	if(wired)
-		return here.z == there.z ? clamp(round(get_dist(here, there) / 40), 0, 2) : 3
-	var/lat = 3 // прыжок через квантовое реле
-	if(here.z == there.z)
-		lat += clamp(round(get_dist(here, there) / 25), 0, 4)
-	else
-		lat += 5
-	return clamp(lat, 1, 15)
+	var/datum/netrun_route/route = route_to(node)
+	. = route.latency
+	qdel(route)
 
 /datum/netrun_console/proc/log_source()
 	if(operator && !wireless)
@@ -323,8 +315,14 @@
 	if(jack && !jack_valid())
 		log_line("Провод выдернут.", "average")
 		set_jack(null)
-	if(watch_node && (QDELETED(watch_node) || !watch_node.is_online() || watch_viewer != operator || is_locked() || !can_route(watch_node) || node_level(watch_node) < NETRUN_ACCESS_USER))
+	if(watch_node && !watch_target())
 		stop_watch()
+	else if(watch_eye && watch_viewer?.client?.eye != watch_eye)
+		stop_watch()
+	else if(watch_eye)
+		watch_eye.forceMove(get_turf(watch_target()))
+		if(isliving(watch_viewer))
+			watch_eye.update_remote_sight(watch_viewer)
 
 // MARK: Взлом
 

@@ -9,7 +9,8 @@
 /// Экранная панель нейролинка: связь, трассировка, выбранный узел, ход подбора доступа
 /datum/neural_interface_module/netrun
 	name = "NETLINK MODULE"
-	var/screen_loc = "RIGHT-8,CENTER+1.5"
+	// DATA starts at CENTER-2.5; place this 112px block beneath it with an 8px gap.
+	var/screen_loc = "LEFT+1.5,CENTER-6.25"
 	var/maptext_width = 225
 	var/maptext_height = 112
 	var/font_size = 12
@@ -41,28 +42,72 @@
 	return {"<span style='font-family: \"[font_family]\"; font-size: [font_size]pt; color: [color]; line-height: 0.8; -dm-text-outline: 1px black;'>[text]</span><br>"}
 
 /datum/neural_interface_module/netrun/proc/render()
+	return {"<table width='100%' height='100%' cellpadding='0' cellspacing='0'><tr><td valign='top' align='left'><div style='height:[maptext_height]px; overflow:hidden; text-align:left;'>[render_lines()]</div></td></tr></table>"}
+
+/datum/neural_interface_module/netrun/proc/render_lines()
 	var/write = line("├─ NETLINK", separator_color)
 	if(console.is_locked())
-		write += line("└ БЛОКИРОВКА: [round((console.lockout_until - world.time) / (1 SECONDS))]s", "#ef4444ff")
+		write += line("└ LOCKED: [round((console.lockout_until - world.time) / (1 SECONDS))]s", "#ef4444ff")
 		return write
 	var/uplink = console.has_uplink()
-	write += line("└ NTnet: [uplink ? "СВЯЗЬ" : "НЕТ СВЯЗИ"]", uplink ? "#10b981ff" : "#ef4444ff")
+	write += line("└ NTnet: [uplink ? "ONLINE" : "OFFLINE"]", uplink ? "#10b981ff" : "#ef4444ff")
 	var/filled = round(console.trace / 10)
 	var/trace_color = console.trace > 66 ? "#ef4444ff" : console.trace > 33 ? "#f59e0bff" : "#4ad1fa86"
 	write += line("└ TRACE \[[netrun_repeat("█", filled)][netrun_repeat("·", 10 - filled)]\] [round(console.trace)]%", trace_color)
 	var/datum/component/netrun_node/node = console.selected_node()
 	if(node)
-		write += line("└ ЦЕЛЬ: [node.address] [netrun_access_name(console.node_level(node))]", "#a78bffff")
+		write += line("└ TARGET: [node.address] [netrun_neural_access_name(console.node_level(node))]", "#a78bffff")
 	if(console.breach)
-		write += line("└ ПОДБОР: [length(console.breach.buffer)]/[console.breach.buffer_size] · [round(console.breach.time_left() / (1 SECONDS))]s", "#d8ff4a")
+		write += line("└ BREACH: [length(console.breach.buffer)]/[console.breach.buffer_size] · [round(console.breach.time_left() / (1 SECONDS))]s", "#d8ff4a")
 	if(length(console.listening))
-		write += line("└ ПОТОКИ: [length(console.listening)]", "#06b6d4ff")
+		write += line("└ STREAMS: [length(console.listening)]", "#06b6d4ff")
 	return write
 
 /proc/netrun_repeat(text, count)
 	. = ""
 	for(var/i in 1 to count)
 		. += text
+
+/// Display-only fallback for the HUD font. Source names, files and console logs stay intact.
+/// Cyrillic becomes readable Latin text; other unsupported characters use an explicit U+ code.
+/proc/netrun_neural_text(value, limit = 0)
+	var/static/list/cyrillic = list(
+		"а" = "a", "б" = "b", "в" = "v", "г" = "g", "д" = "d", "е" = "e", "ё" = "yo", "ж" = "zh",
+		"з" = "z", "и" = "i", "й" = "y", "к" = "k", "л" = "l", "м" = "m", "н" = "n", "о" = "o",
+		"п" = "p", "р" = "r", "с" = "s", "т" = "t", "у" = "u", "ф" = "f", "х" = "kh", "ц" = "ts",
+		"ч" = "ch", "ш" = "sh", "щ" = "shch", "ъ" = "'", "ы" = "y", "ь" = "'", "э" = "e", "ю" = "yu", "я" = "ya",
+	)
+	var/text = "[value]"
+	var/result = ""
+	for(var/i in 1 to length_char(text))
+		var/character = copytext_char(text, i, i + 1)
+		var/codepoint = text2ascii(character)
+		if(codepoint >= 32 && codepoint <= 126)
+			result += character
+		else if(character == "\n" || character == "\t")
+			result += character
+		else if(codepoint < 32 || codepoint == 127)
+			result += " "
+		else
+			var/replacement = cyrillic[lowertext(character)]
+			if(!isnull(replacement))
+				result += character == uppertext(character) ? uppertext(replacement) : replacement
+			else
+				result += "U+[uppertext(num2hex(codepoint, codepoint > 65535 ? 6 : 4))]"
+		if(limit && length(result) >= limit)
+			result = copytext(result, 1, limit + 1)
+			break
+	return html_encode(result)
+
+/proc/netrun_neural_access_name(level)
+	switch(level)
+		if(NETRUN_ACCESS_GUEST)
+			return "GUEST"
+		if(NETRUN_ACCESS_USER)
+			return "USER"
+		if(NETRUN_ACCESS_ROOT)
+			return "ROOT"
+	return "NONE"
 
 // MARK: Мониторы
 
@@ -83,15 +128,15 @@
 	var/datum/netrun_console/console = implant.console
 	var/uplink = console.has_uplink()
 	if(!isnull(last_uplink) && uplink != last_uplink)
-		owner.write_log(uplink ? "NTnet: связь восстановлена" : "NTnet: связь потеряна", uplink ? "SYNC" : "WARNING")
+		owner.write_log(uplink ? "NTnet: connection restored" : "NTnet: connection lost", uplink ? "SYNC" : "WARNING")
 	last_uplink = uplink
 	var/band = console.trace >= 80 ? 2 : console.trace >= 50 ? 1 : 0
 	if(band > last_trace_band)
-		owner.write_log("Трассировка [round(console.trace)]%", band == 2 ? "ALERT" : "WARNING")
+		owner.write_log("Trace [round(console.trace)]%", band == 2 ? "ALERT" : "WARNING")
 	last_trace_band = band
 	var/locked = console.is_locked()
 	if(locked && !last_locked)
-		owner.write_log("Точка доступа заблокирована", "ERROR")
+		owner.write_log("Access point locked", "ERROR")
 	last_locked = locked
 	return TRUE
 
@@ -139,7 +184,7 @@
 		shown++
 		var/image/overlay = image(icon = overlay_node)
 		overlay.color = netrun_access_color(level, node.is_online())
-		owner.write_image_data("\ref[node]:NETVISION", overlay, node.parent, "[node.address]\n[netrun_access_name(level)]", 1.5 SECONDS, 24, -6, 10)
+		owner.write_image_data("\ref[node]:NETVISION", overlay, node.parent, "[node.address]\n[netrun_neural_access_name(level)]", 1.5 SECONDS, 24, -6, 10)
 	return TRUE
 
 /proc/netrun_access_color(level, online = TRUE)
@@ -184,7 +229,7 @@
 		interface.modules[NETRUN_NEURAL_MODULE] = module
 	interface.add_monitor_by_type(NETRUN_NEURAL_SOURCE, /datum/neural_monitor/netrun_link, src)
 	interface.add_monitor_by_type(NETRUN_NEURAL_SOURCE, /datum/neural_monitor/netrun_vision, src)
-	interface.write_log("Нейролинк подключён", "MODULE")
+	interface.write_log("Netlink connected", "MODULE")
 
 /obj/item/organ/cyberimp/brain/netlink/proc/detach_interface()
 	if(!interface)
@@ -217,7 +262,7 @@
 			key = "WARNING"
 	// В поток логов уходит только первая строка - панель маленькая
 	var/first = splittext("[text]", "\n")[1]
-	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, html_encode(copytext_char(first, 1, 60)), key)
+	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, netrun_neural_text(first, 60), key)
 
 #undef NETRUN_NEURAL_SOURCE
 #undef NETRUN_NEURAL_MODULE

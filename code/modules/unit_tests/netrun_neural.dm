@@ -48,8 +48,14 @@
 	TEST_ASSERT(findtext(entry.plain, "Error &lt;broken&gt;"), "Console feedback was not delivered as escaped neural text")
 	entity.take_integrity(10, "test impact")
 	entry = log_module.logs[length(log_module.logs)]
-	TEST_ASSERT(findtext(entry.plain, "90/100"), "An integrity event did not update neural feedback")
+	TEST_ASSERT(findtext(entry.plain, "Integrity 90/100"), "An integrity event did not update English neural feedback")
 	var/datum/component/netrun_neural_feedback/feedback = entity.GetComponent(/datum/component/netrun_neural_feedback)
+	feedback.update_feedback()
+	TEST_ASSERT_EQUAL(data_module.get_data_entry_value("INTEGRITY"), "90/100", "The process HUD did not publish its English integrity key")
+	TEST_ASSERT_EQUAL(data_module.get_data_entry_value("HOST"), "none", "The process HUD did not publish its English host key")
+	entity.console.log_line("Трассировка <проверка>", "average")
+	entry = log_module.logs[length(log_module.logs)]
+	TEST_ASSERT(findtext(entry.plain, "Trassirovka &lt;proverka&gt;"), "Russian console feedback did not use a safe Latin display fallback")
 	qdel(entity.console)
 	entity.console = null
 	TEST_ASSERT(QDELETED(feedback), "Deleting a client leaked its neural feedback adapter")
@@ -62,8 +68,8 @@
 	var/datum/component/netrun_neural_adapter/adapter = interface.GetComponent(/datum/component/netrun_neural_adapter)
 	var/datum/component/netrun_node/node = adapter.endpoint.GetComponent(/datum/component/netrun_node)
 	var/obj/item/netrun_deck/deck = allocate(/obj/item/netrun_deck)
-	var/datum/netrun_file/selected = new("same.txt", NETRUN_FILE_TEXT, "<selected>")
-	var/datum/netrun_file/decoy = new("same.txt", NETRUN_FILE_TEXT, "wrong file")
+	var/datum/netrun_file/selected = new("файл.txt", NETRUN_FILE_TEXT, "Тест <selected>")
+	var/datum/netrun_file/decoy = new("файл.txt", NETRUN_FILE_TEXT, "wrong file")
 	deck.console.store_file(selected)
 	deck.console.store_file(decoy)
 	deck.console.selected_file_uid = selected.uid
@@ -72,11 +78,37 @@
 	notify.execute(node, deck.console)
 	var/datum/neural_interface_module/logs/log_module = interface.modules["log"]
 	var/datum/log_entry/entry = log_module.logs[length(log_module.logs)]
-	TEST_ASSERT(findtext(entry.plain, "&lt;selected&gt;"), "The neural command ignored the selected UID or failed to escape text")
+	TEST_ASSERT(findtext(entry.plain, "Test &lt;selected&gt;"), "The neural command ignored its selected UID or Latin display fallback")
+	TEST_ASSERT_EQUAL(selected.content, "Тест <selected>", "The display fallback changed the actual file")
+	var/datum/netrun_command/data = SSnetrun.get_command("neural_data")
+	data.execute(node, deck.console)
+	var/datum/neural_interface_module/data/data_module = interface.modules["data"]
+	TEST_ASSERT_EQUAL(data_module.get_data_entry_value("NET:fayl.txt"), "Test &lt;selected&gt;", "A remote data label or value contains unsupported text")
 	deck.console.selected_file_uid = null
 	var/count = length(log_module.logs)
 	TEST_ASSERT_NULL(notify.execute(node, deck.console), "The neural command silently fell back to a different file")
 	TEST_ASSERT_EQUAL(length(log_module.logs), count, "A failed notification wrote to the remote neural display")
+
+/// Font fallback is local to the HUD, keeps HTML inert and exposes unsupported code points.
+/datum/unit_test/netrun_neural_font_fallback/Run()
+	var/original = "Иван Петров <root> ☃"
+	TEST_ASSERT_EQUAL(netrun_neural_text(original), "Ivan Petrov &lt;root&gt; U+2603", "The HUD fallback did not preserve a readable, escaped ASCII representation")
+	TEST_ASSERT_EQUAL(original, "Иван Петров <root> ☃", "The display fallback changed its source text")
+	TEST_ASSERT_EQUAL(netrun_neural_text("<&", 1), "&lt;", "HUD truncation split an HTML escape")
+	TEST_ASSERT_EQUAL(netrun_neural_access_name(NETRUN_ACCESS_USER), "USER", "The neural HUD used a localized access label")
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
+	var/datum/component/netrun_neural_feedback/feedback = entity.GetComponent(/datum/component/netrun_neural_feedback)
+	var/datum/neural_interface_module/netrun/module = feedback.interface.modules[feedback.module_key]
+	var/datum/neural_interface_module/data/data_module = feedback.interface.modules["data"]
+	var/list/netlink_position = splittext(module.screen_loc, ",")
+	var/list/data_position = splittext(data_module.screen_loc, ",")
+	TEST_ASSERT_EQUAL(netlink_position[1], data_position[1], "NETLINK is no longer aligned with DATA")
+	var/netlink_y = text2num(replacetext(netlink_position[2], "CENTER", "")) * 32
+	var/data_y = text2num(replacetext(data_position[2], "CENTER", "")) * 32
+	TEST_ASSERT(netlink_y + module.maptext_height <= data_y - 8, "NETLINK overlaps the DATA module instead of sitting below it")
+	TEST_ASSERT(findtext(module.render(), "NTnet: OFFLINE"), "The panel's disconnected state is not in English")
+	entity.console.lockout_until = world.time + 10 SECONDS
+	TEST_ASSERT(findtext(module.render(), "LOCKED: 10s"), "The panel's lockout state is not in English")
 
 /// A personal AI has its own client without receiving unrestricted station access.
 /datum/unit_test/netrun_pai_client_permissions/Run()

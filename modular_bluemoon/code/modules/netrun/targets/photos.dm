@@ -1,5 +1,10 @@
 // MARK: Фотографии из видеопотока и печать на модульном компьютере
 
+/// Bound rendering work, while retaining the ordinary camera's full 7-turf radius.
+#define NETRUN_PHOTO_MAX_RADIUS 10
+/// One memory cell holds the rendered area of an 8x8-turf image.
+#define NETRUN_PHOTO_TILES_PER_CELL 64
+
 /obj/machinery/camera
 	var/netrun_next_photo = 0
 	var/netrun_photographing = FALSE
@@ -8,11 +13,18 @@
 	. = ..()
 	. += "cam_photo"
 
+/obj/machinery/camera/proc/netrun_photo_radius()
+	return clamp(round(view_range), 0, NETRUN_PHOTO_MAX_RADIUS)
+
+/obj/machinery/camera/proc/netrun_photo_storage_size()
+	var/side = netrun_photo_radius() * 2 + 1
+	return max(1, CEILING(side * side / NETRUN_PHOTO_TILES_PER_CELL, 1))
+
 /datum/netrun_command/cam_photo
 	id = "cam_photo"
 	name = "Сохранить кадр"
 	desc = "Снять настоящую фотографию видимой области камеры в файл памяти. Файл можно перенести на шард и распечатать."
-	help = "Нужны включённая камера и 3 свободные ячейки локальной памяти. Снимок охватывает область до 7×7 клеток с учётом видимости; между кадрами проходит не меньше 5 секунд."
+	help = "Кадр соответствует дальности и видимости камеры: обычный радиус 7 даёт 15×15 клеток. Радиус ограничен 10, память — одна ячейка на каждые начатые 64 клетки (обычный кадр — 4). Между кадрами проходит не меньше 5 секунд."
 	access = NETRUN_ACCESS_USER
 	icon = "camera"
 	trace = 2
@@ -23,15 +35,17 @@
 		return "Камера не передаёт изображение."
 	if(camera.netrun_photographing || world.time < camera.netrun_next_photo)
 		return "Камера ещё сохраняет предыдущий кадр."
-	var/photo_size = 3
+	var/photo_size = camera.netrun_photo_storage_size()
 	if(netrun_storage_used(console.storage) + photo_size > console.storage_capacity)
 		return "Для фотографии нужно [photo_size] ячейки свободной памяти."
 	camera.netrun_photographing = TRUE
 	camera.netrun_next_photo = world.time + 5 SECONDS
 	var/obj/item/camera/netrun_capture/capture = new(get_turf(camera))
-	// Штатный рендер фотографии обрезает изображение стенами и сохраняет видимые объекты.
-	var/radius = min(3, camera.view_range)
-	capture.captureimage(camera, null, FALSE, radius, radius)
+	// captureimage takes radii. Use the actual camera's cached LOS/XRay visibility,
+	// rather than the temporary renderer's generic photographer view.
+	var/radius = camera.netrun_photo_radius()
+	var/list/visible_turfs = camera.get_visible_turfs().Copy()
+	capture.captureimage(camera, null, FALSE, radius, radius, visible_turfs)
 	if(!QDELETED(camera))
 		camera.netrun_photographing = FALSE
 	var/datum/picture/picture = capture.result
@@ -79,3 +93,6 @@
 	new /obj/item/photo(holder.drop_location(), copy)
 	stored_paper--
 	return TRUE
+
+#undef NETRUN_PHOTO_MAX_RADIUS
+#undef NETRUN_PHOTO_TILES_PER_CELL

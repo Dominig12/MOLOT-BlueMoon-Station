@@ -2,6 +2,7 @@ import { KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input } from '../../components';
+import { spreadNodes } from './mapLayout';
 import {
   ACCESS_COLORS,
   Gateway,
@@ -171,47 +172,6 @@ const MIN_GAP = 68;
 type Placed = NetNode & { px: number; py: number };
 type GwPos = { id: string; gx: number; gy: number };
 
-const spread = (nodes: Placed[], fixed: Set<string>) => {
-  // Несколько проходов расталкивания, чтобы узлы не накладывались
-  for (let iter = 0; iter < 60; iter++) {
-    let moved = false;
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i];
-        const b = nodes[j];
-        if (fixed.has(a.address) && fixed.has(b.address)) {
-          continue;
-        }
-        let dx = b.px - a.px;
-        let dy = b.py - a.py;
-        let dist = Math.hypot(dx, dy);
-        if (dist < 0.01) {
-          dx = 1;
-          dy = 0.5;
-          dist = 0.5;
-        }
-        if (dist < MIN_GAP) {
-          const push = (MIN_GAP - dist) / 2;
-          const ux = dx / dist;
-          const uy = dy / dist;
-          if (!fixed.has(a.address)) {
-            a.px -= ux * push * (fixed.has(b.address) ? 2 : 1);
-            a.py -= uy * push * (fixed.has(b.address) ? 2 : 1);
-          }
-          if (!fixed.has(b.address)) {
-            b.px += ux * push * (fixed.has(a.address) ? 2 : 1);
-            b.py += uy * push * (fixed.has(a.address) ? 2 : 1);
-          }
-          moved = true;
-        }
-      }
-    }
-    if (!moved) {
-      break;
-    }
-  }
-};
-
 export const StationMap = () => {
   const { act, data } = useBackend<NetrunData>();
   const { selected, selected_network, jack, entity, breach } = data;
@@ -286,7 +246,7 @@ export const StationMap = () => {
       py: FIELD_H - (frame.offY + (n.y - frame.minY) * frame.scale),
     };
   });
-  spread(placed, fixed);
+  spreadNodes(placed, fixed, MIN_GAP);
   for (const p of placed) {
     positions.current[p.address] = { x: p.x, y: p.y, px: p.px, py: p.py };
   }
@@ -363,6 +323,7 @@ export const StationMap = () => {
       (NODE_NAMES[n.type] || n.type).toLowerCase().includes(q)
     );
   };
+  const visibleNodes = placed.filter(visible);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) {
@@ -459,13 +420,15 @@ export const StationMap = () => {
             compact
             icon={NODE_ICONS[t] || 'circle'}
             selected={!disabledTypes[t]}
+            aria-label={`Фильтр: ${NODE_NAMES[t] || t}`}
             tooltip={NODE_NAMES[t] || t}
             onClick={() =>
-              setDisabledTypes({ ...disabledTypes, [t]: !disabledTypes[t] })
+              setDisabledTypes((current) => ({ ...current, [t]: !current[t] }))
             }
           />
         ))}
         <Box inline color={THEME.muted} fontSize="10px">
+          {visibleNodes.length}/{placed.length} ·{' '}
           тащите поле мышью · WASD — переход{entity ? ', Shift+WASD — прыжок' : ''}
         </Box>
       </Box>
@@ -636,11 +599,11 @@ export const StationMap = () => {
               onClick={() => act('select_network', { id: gw.id })}
             />
           ))}
-          {placed.map((p) => (
+          {visibleNodes.map((p) => (
             <NodeMarker
               key={p.address}
               node={p}
-              dim={!visible(p)}
+              dim={false}
               selected={selected?.address === p.address}
               jacked={jack?.address === p.address}
               color={

@@ -41,15 +41,15 @@
 	return ..()
 
 /obj/effect/netrun_endpoint/neural/netrun_name()
-	return "[interface?.host_mob?.name || "неизвестно"] — нейроинтерфейс"
+	return "[interface?.host_mob?.name || "unknown"] - neural interface"
 
 /obj/effect/netrun_endpoint/neural/netrun_online(remote = TRUE)
 	return !QDELETED(interface) && interface.host_mob && interface.host_mob.netrun_online(remote)
 
 /obj/effect/netrun_endpoint/neural/netrun_status()
 	if(QDELETED(interface))
-		return list("Нейроинтерфейс отключён.")
-	return list("Носитель: [interface.host_mob.name]", "Экран: [interface.visible ? "включён" : "выключен"]", "Модулей: [length(interface.modules)], мониторов: [length(interface.monitors)]")
+		return list("Neural interface disconnected.")
+	return list("Host: [interface.host_mob.name]", "Display: [interface.visible ? "on" : "off"]", "Modules: [length(interface.modules)], monitors: [length(interface.monitors)]")
 
 /obj/effect/netrun_endpoint/neural/netrun_owner_access(datum/netrun_console/console)
 	if(QDELETED(interface))
@@ -75,12 +75,13 @@
 	var/datum/component/neural_interface/interface = get_interface(node)
 	if(!interface)
 		return
-	return "Модули: [jointext(interface.modules, ", ")].\nИсточники: [jointext(interface.sources, ", ")]."
+	return "Modules: [jointext(interface.modules, ", ")].\nSources: [jointext(interface.sources, ", ")]."
 
 /datum/netrun_command/neural/notify
 	id = "neural_notify"
 	name = "Послать уведомление"
 	desc = "Отправить выбранный локальный текстовый файл в журнал нейроинтерфейса (до 160 символов)."
+	help = "HUD использует латинское отображение: кириллица транслитерируется, остальные неподдерживаемые символы показываются кодами U+. Исходный файл не меняется."
 	trace = 4
 
 /datum/netrun_command/neural/notify/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
@@ -89,15 +90,16 @@
 	if(!interface)
 		return
 	if(!file)
-		console.log_line("Выберите локальный текстовый файл для отправки.", "bad")
+		console.log_line("Select a local text file to send.", "bad")
 		return
-	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, html_encode(copytext_char(file.content, 1, 161)), "DATA")
-	return "Уведомление доставлено: [file.name]."
+	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, netrun_neural_text(file.content, 160), "DATA")
+	return "Notification delivered: [file.name]."
 
 /datum/netrun_command/neural/data
 	id = "neural_data"
 	name = "Передать данные на экран"
 	desc = "Показать выбранный локальный текстовый файл в панели данных на 10 секунд."
+	help = "HUD использует латинское отображение имён и текста; исходный файл не меняется."
 	trace = 4
 
 /datum/netrun_command/neural/data/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
@@ -106,10 +108,10 @@
 	if(!interface)
 		return
 	if(!file)
-		console.log_line("Выберите локальный текстовый файл для отправки.", "bad")
+		console.log_line("Select a local text file to send.", "bad")
 		return
-	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_DATA, "NET:[html_encode(file.name)]", html_encode(copytext_char(file.content, 1, 257)), 10 SECONDS)
-	return "Данные доставлены: [file.name]."
+	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_DATA, "NET:[netrun_neural_text(file.name)]", netrun_neural_text(file.content, 256), 10 SECONDS)
+	return "Data delivered: [file.name]."
 
 /datum/netrun_command/neural/mark
 	id = "neural_mark"
@@ -132,8 +134,8 @@
 		return
 	var/image/marker = image('icons/effects/neural_interface_overlays.dmi', icon_state = "circle")
 	marker.color = "#4ac0ff"
-	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, "NET:[REF(console)]", marker, target, html_encode(target.name), 10 SECONDS)
-	return "Источник связи отмечен на нейроинтерфейсе."
+	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_IMAGE_DATA, "NET:[REF(console)]", marker, target, netrun_neural_text(target.name), 10 SECONDS)
+	return "Link source marked on the neural display."
 
 /datum/netrun_command/neural/toggle
 	id = "neural_toggle"
@@ -151,5 +153,5 @@
 		interface.hide()
 	else
 		interface.show()
-	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Удалённая команда: экран [interface.visible ? "включён" : "выключен"].", "WARNING")
-	return "Экран нейроинтерфейса [interface.visible ? "включён" : "выключен"]."
+	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Remote command: display [interface.visible ? "on" : "off"].", "WARNING")
+	return "Neural display [interface.visible ? "on" : "off"]."

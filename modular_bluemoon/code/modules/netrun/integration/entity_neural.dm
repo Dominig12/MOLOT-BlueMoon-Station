@@ -25,7 +25,7 @@
 	var/datum/neural_interface_module/netrun/module = new(interface, console)
 	module.visible = interface.visible
 	interface.modules[module_key] = module
-	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Сетевой интерфейс подключён.", "MODULE")
+	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Network interface connected.", "MODULE")
 
 /datum/component/netrun_neural_feedback/RegisterWithParent()
 	RegisterSignal(console, COMSIG_NETRUN_CONSOLE_EVENT, PROC_REF(on_console_event))
@@ -69,15 +69,15 @@
 /datum/component/netrun_neural_feedback/proc/on_console_event(datum/source, text, kind)
 	SIGNAL_HANDLER
 	var/category = kind == "bad" ? "ERROR" : kind == "average" ? "WARNING" : "DATA"
-	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, html_encode(copytext_char(splittext("[text]", "\n")[1], 1, 100)), category)
+	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, netrun_neural_text(splittext("[text]", "\n")[1], 100), category)
 
 /datum/component/netrun_neural_feedback/proc/on_node_changed(datum/source, datum/component/netrun_node/old_node, datum/component/netrun_node/new_node)
 	SIGNAL_HANDLER
-	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, new_node ? "Узел: [html_encode(new_node.get_name())] [new_node.address]" : "Связь с узлом потеряна.", new_node ? "SYNC" : "WARNING")
+	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, new_node ? "Node: [netrun_neural_text(new_node.get_name())] [new_node.address]" : "Host link lost.", new_node ? "SYNC" : "WARNING")
 
 /datum/component/netrun_neural_feedback/proc/on_integrity(datum/source, integrity, max_integrity, reason)
 	SIGNAL_HANDLER
-	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Целостность [max(0, round(integrity))]/[max_integrity][reason ? ": [html_encode(reason)]" : ""].", "ALERT")
+	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Integrity [max(0, round(integrity))]/[max_integrity][reason ? ": [netrun_neural_text(reason)]" : ""].", "ALERT")
 
 /datum/component/netrun_neural_feedback/proc/on_tick(datum/source, delta)
 	SIGNAL_HANDLER
@@ -91,17 +91,17 @@
 		return
 	var/uplink = console.has_uplink()
 	if(!isnull(last_uplink) && uplink != last_uplink)
-		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, uplink ? "NTnet: связь восстановлена." : "NTnet: связь потеряна.", uplink ? "SYNC" : "WARNING")
+		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, uplink ? "NTnet: connection restored." : "NTnet: connection lost.", uplink ? "SYNC" : "WARNING")
 	last_uplink = uplink
 	var/band = console.trace >= 80 ? 2 : console.trace >= 50 ? 1 : 0
 	if(band > last_trace_band)
-		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Трассировка [round(console.trace)]%.", band == 2 ? "ALERT" : "WARNING")
+		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Trace [round(console.trace)]%.", band == 2 ? "ALERT" : "WARNING")
 	last_trace_band = band
 	var/locked = console.is_locked()
 	if(locked && !last_locked)
-		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Сетевой клиент заблокирован.", "ERROR")
+		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Network client locked.", "ERROR")
 	last_locked = locked
 	if(istype(parent, /mob/camera/netrun_entity))
 		var/mob/camera/netrun_entity/entity = parent
-		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_DATA, "ЦЕЛОСТНОСТЬ", "[max(0, round(entity.integrity))]/[entity.max_integrity]", 2 SECONDS, 10)
-		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_DATA, "УЗЕЛ", html_encode(entity.host_node ? "[entity.host_node.get_name()] [entity.host_node.address]" : "нет"), 2 SECONDS, 5)
+		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_DATA, "INTEGRITY", "[max(0, round(entity.integrity))]/[entity.max_integrity]", 2 SECONDS, 10)
+		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_DATA, "HOST", netrun_neural_text(entity.host_node ? "[entity.host_node.get_name()] [entity.host_node.address]" : "none"), 2 SECONDS, 5)

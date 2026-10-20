@@ -9,6 +9,7 @@
 #define NETRUN_NODE_AIRLOCK "airlock"
 #define NETRUN_NODE_APC "apc"
 #define NETRUN_NODE_CAMERA "camera"
+#define NETRUN_NODE_OPTIC "optic"
 #define NETRUN_NODE_TURRET "turret"
 #define NETRUN_NODE_VENDOR "vendor"
 #define NETRUN_NODE_TERMINAL "terminal"
