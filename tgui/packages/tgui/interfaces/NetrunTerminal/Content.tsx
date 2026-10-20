@@ -5,7 +5,7 @@ import { Box, Icon, Stack, Tabs } from '../../components';
 import { MatrixPanel } from './Matrix';
 import { LanMap, TopologyMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
-import { ConsoleLog, EntityPanel, StoragePanel } from './Panels';
+import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
 import { ACCESS_COLORS, ACCESS_NAMES, NetrunData, THEME } from './types';
 
 const ORIGIN_NAMES: Record<string, string> = {
@@ -22,6 +22,7 @@ export const NetrunContent = () => {
   const { act, data } = useBackend<NetrunData>();
   const { view, networks, breach } = data;
   const [mode, setMode] = useState<'topology' | 'lan'>(view ? 'lan' : 'topology');
+  const [bottom, setBottom] = useState<'console' | 'chat'>('console');
   return (
     <Box
       style={{
@@ -92,9 +93,17 @@ export const NetrunContent = () => {
       </Stack>
       <Stack mt={1}>
         <Stack.Item grow basis={0}>
-          <ConsoleLog />
+          <Tabs>
+            <Tabs.Tab icon="terminal" selected={bottom === 'console'} onClick={() => setBottom('console')}>
+              Консоль
+            </Tabs.Tab>
+            <Tabs.Tab icon="comments" selected={bottom === 'chat'} onClick={() => setBottom('chat')}>
+              #noosphere
+            </Tabs.Tab>
+          </Tabs>
+          {bottom === 'console' ? <ConsoleLog /> : <NetChat />}
         </Stack.Item>
-        <Stack.Item basis="270px" style={{ height: '146px' }}>
+        <Stack.Item basis="270px" style={{ height: '180px' }}>
           <StoragePanel />
         </Stack.Item>
       </Stack>

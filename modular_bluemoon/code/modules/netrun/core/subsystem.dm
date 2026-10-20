@@ -1,7 +1,7 @@
 SUBSYSTEM_DEF(netrun)
 	name = "Netrun"
 	wait = 1 SECONDS
-	flags = SS_NO_INIT | SS_BACKGROUND
+	flags = SS_BACKGROUND
 	runlevels = RUNLEVEL_GAME | RUNLEVEL_POSTGAME
 
 	/// id = /datum/netrun_network
@@ -47,7 +47,16 @@ SUBSYSTEM_DEF(netrun)
 				continue
 			var/datum/netrun_command/command = new path
 			commands[command.id] = command
-	return commands[id]
+	return commands[netrun_command_base(id)]
+
+/// Команда может нести аргумент после «@» (например, слот органа): door_open, heart_stop@heart
+/proc/netrun_command_base(id)
+	var/at = findtext("[id]", "@")
+	return at ? copytext(id, 1, at) : id
+
+/proc/netrun_command_arg(id)
+	var/at = findtext("[id]", "@")
+	return at ? copytext(id, at + 1) : null
 
 /datum/controller/subsystem/netrun/proc/make_address()
 	var/static/list/hex = list("0","1","2","3","4","5","6","7","8","9","A","B","C","D","E","F")

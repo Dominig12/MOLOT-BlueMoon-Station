@@ -87,7 +87,7 @@
 		for(var/command_id in node.command_ids)
 			var/datum/netrun_command/command = SSnetrun.get_command(command_id)
 			if(command)
-				commands += list(command.ui_entry(node, src))
+				commands += list(command.ui_entry(node, src, command_id))
 		selected["commands"] = commands
 		var/atom/A = node.parent
 		selected["status"] = level >= NETRUN_ACCESS_USER ? A.netrun_status() : list()
@@ -113,6 +113,7 @@
 
 	data["breach"] = breach?.ui_payload()
 	data["entity"] = entity_data()
+	data["chat"] = chat_data()
 	return data
 
 /// Дополнительные кнопки носителя (выдернуть провод, вынуть шард, вернуться в тело...)
@@ -174,6 +175,14 @@
 			return TRUE
 		if("cli")
 			cli(params["text"])
+			return TRUE
+		if("chat_send")
+			chat_send(params["text"])
+			return TRUE
+		if("set_handle")
+			var/new_handle = reject_bad_name(params["handle"], allow_numbers = TRUE)
+			if(new_handle && origin != NETRUN_ORIGIN_ENTITY)
+				handle = copytext_char(new_handle, 1, 24)
 			return TRUE
 		else
 			return host_act(action, params, ui.user)

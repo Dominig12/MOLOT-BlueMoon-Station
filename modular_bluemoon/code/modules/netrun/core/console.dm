@@ -176,9 +176,9 @@
 		log_line("[node.address]: недостаточно прав для «[command.name]».", "bad")
 		return FALSE
 	var/illegal = legit_node_level(node) < command.access
-	log_line("> [command.id] @ [node.address]")
+	log_line("> [command_id] @ [node.address]")
 	node.touch()
-	var/result = command.execute(node, src)
+	var/result = command.execute(node, src, netrun_command_arg(command_id))
 	if(isnull(result))
 		return FALSE
 	log_line(result, illegal ? "average" : "good")
@@ -342,6 +342,7 @@
 
 /datum/netrun_console/proc/log_line(text, kind = "label")
 	log += list(list("time" = STATION_TIME_TIMESTAMP("hh:mm:ss", world.time), "text" = text, "kind" = kind))
+	host?.netrun_console_event(src, text, kind)
 	if(length(log) > NETRUN_MAX_CONSOLE_LOG)
 		log.Cut(1, length(log) - NETRUN_MAX_CONSOLE_LOG + 1)
 

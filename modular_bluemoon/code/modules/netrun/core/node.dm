@@ -86,7 +86,7 @@
 
 /datum/component/netrun_node/proc/get_name()
 	var/atom/A = parent
-	return "[A.name]"
+	return A.netrun_name()
 
 /datum/component/netrun_node/proc/touch()
 	last_activity = world.time
@@ -125,6 +125,10 @@
 
 // Хуки, которые машины переопределяют под себя
 
+/// Имя узла в интерфейсе сети (консоли показывают имя корпуса, а не внутренней платы)
+/atom/proc/netrun_name()
+	return name
+
 /// Отвечает ли атом на сетевые запросы. remote = запрос пришёл не по проводу
 /atom/proc/netrun_online(remote = TRUE)
 	return TRUE
@@ -135,6 +139,10 @@
 /// Строки состояния для панели узла
 /atom/proc/netrun_status()
 	return list()
+
+/// Событие в журнале консоли - носитель может продублировать его (например, в нейроинтерфейс)
+/atom/proc/netrun_console_event(datum/netrun_console/console, text, kind)
+	return
 
 /// Ответный удар по носителю консоли при полной трассировке
 /atom/proc/netrun_traced(datum/netrun_console/console)

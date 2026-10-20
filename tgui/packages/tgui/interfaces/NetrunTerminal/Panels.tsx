@@ -139,3 +139,61 @@ export const EntityPanel = () => {
     </Box>
   );
 };
+
+/** Канал #noosphere - общий чат сущностей и консолей (NTNRC) */
+export const NetChat = () => {
+  const { act, data } = useBackend<NetrunData>();
+  const { chat, uplink, entity } = data;
+  const scroller = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (scroller.current) {
+      scroller.current.scrollTop = scroller.current.scrollHeight;
+    }
+  }, [chat.messages.length]);
+  return (
+    <Box style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
+      <div
+        ref={scroller}
+        style={{
+          height: '120px',
+          overflowY: 'auto',
+          padding: '4px 6px',
+          fontFamily: 'monospace',
+          fontSize: '11px',
+        }}
+      >
+        {chat.messages.map((line, i) => (
+          <div
+            key={i}
+            style={{
+              color: line.includes(' -!- ') ? THEME.muted : THEME.text,
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {line}
+          </div>
+        ))}
+      </div>
+      <Box style={{ display: 'flex' }}>
+        {!entity && (
+          <Input
+            width="110px"
+            value={chat.handle}
+            onChange={(_e, value) => act('set_handle', { handle: value })}
+            style={{ fontFamily: 'monospace', background: THEME.panel }}
+          />
+        )}
+        <Box style={{ flexGrow: 1 }}>
+          <Input
+            fluid
+            selfClear
+            disabled={!uplink}
+            placeholder={uplink ? `${chat.handle} в #noosphere` : 'Нет связи с NTnet'}
+            onEnter={(_e, value) => act('chat_send', { text: value })}
+            style={{ fontFamily: 'monospace', background: THEME.panel }}
+          />
+        </Box>
+      </Box>
+    </Box>
+  );
+};

@@ -117,6 +117,7 @@ export type NetrunData = {
   shard: (Storage & { name: string }) | null;
   breach: MatrixState | null;
   entity: EntityState | null;
+  chat: { handle: string; messages: string[] };
 };
 
 export const ACCESS_NAMES = ['НЕТ', 'ГОСТЬ', 'ПОЛЬЗОВАТЕЛЬ', 'ROOT'];
@@ -131,6 +132,10 @@ export const NODE_ICONS: Record<string, string> = {
   terminal: 'desktop',
   server: 'server',
   circuit: 'microchip',
+  intercom: 'microphone',
+  implant: 'brain',
+  borg: 'robot',
+  ai: 'network-wired',
   gateway: 'network-wired',
 };
 
@@ -143,6 +148,10 @@ export const NODE_NAMES: Record<string, string> = {
   terminal: 'Терминалы',
   server: 'Серверы',
   circuit: 'Схемы',
+  intercom: 'Интеркомы',
+  implant: 'Импланты',
+  borg: 'Кибники',
+  ai: 'ИИ',
 };
 
 export const THEME = {

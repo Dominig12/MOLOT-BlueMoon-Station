@@ -14,6 +14,10 @@
 #define NETRUN_NODE_TERMINAL "terminal"
 #define NETRUN_NODE_SERVER "server"
 #define NETRUN_NODE_CIRCUIT "circuit"
+#define NETRUN_NODE_INTERCOM "intercom"
+#define NETRUN_NODE_IMPLANT "implant"
+#define NETRUN_NODE_BORG "borg"
+#define NETRUN_NODE_AI "ai"
 
 // Точки подключения консоли
 #define NETRUN_ORIGIN_TERMINAL "terminal"

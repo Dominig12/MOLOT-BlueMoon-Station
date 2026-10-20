@@ -15,15 +15,19 @@
 	var/works_offline = FALSE
 
 /// Выполнить команду. Возвращает текст результата или null при неудаче (причину пишет в консоль сам)
-/datum/netrun_command/proc/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+/datum/netrun_command/proc/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg)
 	return
 
-/datum/netrun_command/proc/ui_entry(datum/component/netrun_node/node, datum/netrun_console/console)
+/// Подпись кнопки - команды органов добавляют имя органа
+/datum/netrun_command/proc/display_name(datum/component/netrun_node/node, arg)
+	return name
+
+/datum/netrun_command/proc/ui_entry(datum/component/netrun_node/node, datum/netrun_console/console, full_id)
 	var/level = console.node_level(node)
 	var/legit = console.legit_node_level(node)
 	return list(
-		"id" = id,
-		"name" = name,
+		"id" = full_id || id,
+		"name" = display_name(node, netrun_command_arg(full_id)),
 		"desc" = desc,
 		"icon" = icon,
 		"danger" = danger,

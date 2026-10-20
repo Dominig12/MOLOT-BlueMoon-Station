@@ -196,8 +196,7 @@
 	if(!body?.mind || !start)
 		return
 	var/mob/camera/netrun_entity/entity = new(get_turf(start.parent), start)
-	entity.name = body.real_name
-	entity.real_name = body.real_name
+	entity.set_net_name(body.real_name, "Нетраннер")
 	entity.dive_body = body
 	entity.RegisterSignal(body, COMSIG_MOB_APPLY_DAMAGE, TYPE_PROC_REF(/mob/camera/netrun_entity, on_body_damage))
 	entity.RegisterSignal(body, COMSIG_LIVING_DEATH, TYPE_PROC_REF(/mob/camera/netrun_entity, on_body_death))
