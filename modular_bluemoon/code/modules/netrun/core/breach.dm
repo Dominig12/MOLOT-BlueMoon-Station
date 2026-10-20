@@ -15,6 +15,7 @@
 	var/target_kind
 	/// Адрес узла или id сети
 	var/target_id
+	var/datum/netrun_network/target_network
 	var/target_name
 	var/security = 1
 	var/size = 5
@@ -40,11 +41,26 @@
 	buffer_size = 4 + round(src.security / 2) + console.buffer_bonus + console.daemon_bonus("buffer")
 	buffer_size = min(buffer_size, size * 2)
 	deadline = world.time + (45 SECONDS) - (src.security * 4 SECONDS)
+	if(target_kind == "network")
+		size++
+		deadline -= 5 SECONDS
 	generate()
 
 /datum/netrun_breach/Destroy()
 	console = null
+	target_network = null
 	return ..()
+
+/datum/netrun_breach/proc/valid_target()
+	if(!console || console.is_locked())
+		return FALSE
+	if(target_kind == "network")
+		return console.can_reach(SSnetrun.networks[target_id])
+	var/datum/component/netrun_node/node = SSnetrun.find_node(target_id)
+	if(!node)
+		return FALSE
+	node.join_network()
+	return node.network == target_network && console.can_route(node) && node.is_online(node != console.jack) && console.node_level(node) >= NETRUN_ACCESS_GUEST
 
 /datum/netrun_breach/proc/cell(row, col)
 	return (row - 1) * size + col
@@ -59,6 +75,8 @@
 	var/list/codes = NETRUN_BREACH_CODES
 	matrix = list()
 	used = list()
+	daemons = list()
+	buffer = list()
 	for(var/i in 1 to size * size)
 		matrix += pick(codes)
 		used += FALSE
@@ -90,6 +108,8 @@
 
 	// Демоны - отрезки пути. Длины растут с защитой
 	var/list/lengths = list(2, security >= 2 ? 3 : 2, security >= 4 ? 4 : 3)
+	if(target_kind == "network")
+		lengths = list(min(5, buffer_size), min(6, buffer_size), min(5, buffer_size))
 	var/list/names = list("ДОСТУП", "ROOT", "ЗАМЕСТИ СЛЕДЫ")
 	var/list/rewards = list(NETRUN_ACCESS_USER, NETRUN_ACCESS_ROOT, 0)
 	for(var/i in 1 to 3)

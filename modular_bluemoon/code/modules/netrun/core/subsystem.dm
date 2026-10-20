@@ -13,6 +13,7 @@ SUBSYSTEM_DEF(netrun)
 	/// id = /datum/netrun_command
 	var/list/commands
 	var/list/currentrun = list()
+	var/list/currentnodes = list()
 
 /datum/controller/subsystem/netrun/stat_entry(msg)
 	msg = "N:[length(nodes_by_address)] C:[length(consoles)] E:[length(entities)]"
@@ -21,6 +22,17 @@ SUBSYSTEM_DEF(netrun)
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
 	if(!resumed)
 		currentrun = consoles.Copy()
+		currentnodes = nodes_by_address.Copy()
+	// Вложенный предмет не получает MOVED при перемещении носителя. Сверяем топологию
+	// независимо от открытых интерфейсов, не создавая сигнал на каждом контейнере.
+	while(length(currentnodes))
+		var/address = currentnodes[length(currentnodes)]
+		var/datum/component/netrun_node/node = currentnodes[address]
+		currentnodes.len--
+		if(!QDELETED(node))
+			node.join_network()
+		if(MC_TICK_CHECK)
+			return
 	var/delta = wait / (1 SECONDS)
 	while(length(currentrun))
 		var/datum/netrun_console/console = currentrun[length(currentrun)]

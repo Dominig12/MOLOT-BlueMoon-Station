@@ -323,7 +323,10 @@
 #include "multiz_ventcrawl.dm"
 #include "mod_suit_fixes.dm"
 #include "modular_map_loader.dm" //SPLURT EDIT
+#include "netrun.dm"
 #include "nightshift.dm"
+#include "netrun_neural.dm"
+#include "netrun_daemons.dm"
 #include "northstar.dm"
 #include "ntnet_responses.dm"
 // #include "ntnetwork_tests.dm"

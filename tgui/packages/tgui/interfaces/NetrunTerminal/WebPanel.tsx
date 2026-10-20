@@ -9,7 +9,7 @@ export const WebPanel = (props: { web: WebState }) => {
 
   if (!web.available) {
     return (
-      <Section title="NTnet — сайты" fill>
+      <Section title="NTnet — сайты">
         <Box color={THEME.muted} p={1}>
           Индекс сайтов недоступен. Нужна связь с NTnet; подождите обновления каталога.
         </Box>
@@ -21,8 +21,8 @@ export const WebPanel = (props: { web: WebState }) => {
     return (
       <Section
         title={web.site.domain}
-        fill
         scrollable
+        style={{ maxHeight: '620px', overflowY: 'auto' }}
         buttons={
           <Button icon="arrow-left" content="Назад" onClick={() => act('web_back')} />
         }
@@ -37,7 +37,7 @@ export const WebPanel = (props: { web: WebState }) => {
   }
 
   return (
-    <Section title="NTnet — сайты" fill scrollable>
+    <Section title="NTnet — сайты" scrollable style={{ maxHeight: '620px', overflowY: 'auto' }}>
       {web.sites.length === 0 && (
         <Box color={THEME.muted}>В индексе нет опубликованных сайтов.</Box>
       )}

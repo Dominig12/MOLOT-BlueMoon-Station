@@ -1,5 +1,6 @@
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, LabeledList, Section } from '../../components';
+import { CommandList } from './CommandList';
 import {
   ACCESS_COLORS,
   ACCESS_NAMES,
@@ -17,8 +18,8 @@ export const NodePanel = () => {
     return (
       <Section
         title={net.code}
-        fill
         scrollable
+        style={{ maxHeight: '620px', overflowY: 'auto' }}
         buttons={<Icon name="network-wired" />}
       >
         <LabeledList>
@@ -67,7 +68,7 @@ export const NodePanel = () => {
   }
   if (!selected) {
     return (
-      <Section title="Сети" fill scrollable>
+      <Section title="Сети" scrollable style={{ maxHeight: '620px', overflowY: 'auto' }}>
         <Box color={THEME.muted} mb={1}>
           Выберите узел на карте или подберите доступ к сети.
         </Box>
@@ -102,7 +103,7 @@ export const NodePanel = () => {
                   icon="diagram-project"
                   content="Открыть"
                   disabled={!net.reachable}
-                  onClick={() => act('view_network', { id: net.id })}
+                  onClick={() => act('select_network', { id: net.id })}
                 />
                 {net.can_breach && (
                   <Button
@@ -123,8 +124,8 @@ export const NodePanel = () => {
   return (
     <Section
       title={selected.name}
-      fill
       scrollable
+      style={{ maxHeight: '620px', overflowY: 'auto' }}
       buttons={
         <Box inline>
           <Button
@@ -161,6 +162,11 @@ export const NodePanel = () => {
           )}
         </LabeledList.Item>
       </LabeledList>
+      {selected.access < 1 && (
+        <Box mt={1} color={THEME.warn}>
+          Узел закрыт. Подберите доступ к узлу или его сети.
+        </Box>
+      )}
       {selected.status.length > 0 && (
         <Box
           mt={1}
@@ -173,21 +179,10 @@ export const NodePanel = () => {
         </Box>
       )}
       <Box mt={1}>
-        {selected.commands.map((cmd) => (
-          <Button
-            key={cmd.id}
-            icon={cmd.icon}
-            content={cmd.name}
-            color={cmd.danger ? 'bad' : cmd.illegal ? 'average' : 'default'}
-            disabled={!cmd.allowed}
-            tooltip={
-              (cmd.desc ? `${cmd.desc} ` : '') +
-              `Нужно: ${ACCESS_NAMES[cmd.access]}.` +
-              (cmd.allowed && cmd.trace ? ` Трассировка +${cmd.trace}%.` : '')
-            }
-            onClick={() => act('command', { id: cmd.id })}
-          />
-        ))}
+        <CommandList
+          commands={selected.commands}
+          onCommand={(id) => act('command', { id })}
+        />
       </Box>
       {data.entity && data.entity.host !== selected.address && (
         <Button
@@ -219,6 +214,12 @@ export const NodePanel = () => {
           {selected.files.map((file) => (
             <RemoteFile key={file.uid} file={file} root={selected.access >= 3} />
           ))}
+        </Box>
+      )}
+      {!!selected.logs?.length && (
+        <Box mt={1} p={1} style={{ background: THEME.bg, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: '160px', overflowY: 'auto' }}>
+          <Box color={THEME.muted} mb={0.5}>Журнал узла</Box>
+          {selected.logs.map((line, index) => <div key={index}>{line}</div>)}
         </Box>
       )}
     </Section>
@@ -264,6 +265,10 @@ export const fileIcon = (kind: string) => {
       return 'gear';
     case 'seed':
       return 'seedling';
+    case 'photo':
+      return 'image';
+    case 'techweb_link':
+      return 'link';
     default:
       return 'file-lines';
   }

@@ -4,6 +4,7 @@ export type NetNode = {
   type: string;
   x: number;
   y: number;
+  z?: number;
   security: number;
   online: boolean;
   access: number;
@@ -17,6 +18,7 @@ export type NetCommand = {
   id: string;
   name: string;
   desc: string;
+  help?: string;
   icon: string;
   danger: boolean;
   access: number;
@@ -31,6 +33,7 @@ export type NetFile = {
   kind: string;
   size: number;
   preview: string | null;
+  selected?: boolean;
 };
 
 export type Storage = {
@@ -44,6 +47,7 @@ export type SelectedNode = NetNode & {
   legit: number;
   commands: NetCommand[];
   status: string[];
+  logs?: string[];
   files?: NetFile[];
   storage?: { used: number; capacity: number };
 };
@@ -125,12 +129,27 @@ export type NetrunData = {
   entity: EntityState | null;
   chat: { handle: string; messages: string[] };
   web: WebState | null;
-  cli?: { verbs: { id: string; args: string; desc: string }[] };
+  cli?: {
+    verbs: {
+      id: string;
+      args: string;
+      desc: string;
+      category?: string;
+      completions?: string[];
+    }[];
+  };
   windows: WindowTab[];
   window: MachineWindow | null;
   map: NetMap | null;
   selected_network: SelectedNetwork | null;
   ping_route: PingHop[] | null;
+  file?: (NetFile & {
+    content: string | null;
+    image: string | null;
+    width?: number;
+    height?: number;
+    source: 'local' | 'shard';
+  }) | null;
 };
 
 export type PingHop = { kind: 'node' | 'gateway' | 'hub'; ref?: string };
@@ -186,11 +205,35 @@ export type MachineWindow = {
   type: string;
   online: boolean;
   access: number;
+  legit?: number;
+  security?: number;
+  can_breach?: boolean;
+  network?: {
+    id: string;
+    name: string;
+    code: string;
+    access: number;
+    can_breach: boolean;
+  };
   fields: string[];
   commands: NetCommand[];
   extra: WindowAction[];
   feed: string[] | null;
   watching: boolean;
+  logs?: string[];
+  remote?: {
+    interface: string;
+    data: Record<string, unknown>;
+    actions: {
+      id: string;
+      name: string;
+      desc?: string;
+      access: number;
+      allowed: boolean;
+      danger?: boolean;
+      params?: { id: string; name: string; type: 'text' | 'number'; value?: string; min?: number; max?: number }[];
+    }[];
+  } | null;
 };
 
 export type WebSite = { id: string; domain: string; title: string };
@@ -230,6 +273,9 @@ export const NODE_ICONS: Record<string, string> = {
   borg: 'robot',
   ai: 'network-wired',
   gateway: 'network-wired',
+  neural: 'brain',
+  pai: 'robot',
+  deck: 'keyboard',
 };
 
 export const NODE_NAMES: Record<string, string> = {
@@ -245,6 +291,10 @@ export const NODE_NAMES: Record<string, string> = {
   implant: 'Импланты',
   borg: 'Кибники',
   ai: 'ИИ',
+  gateway: 'Шлюзы сетей',
+  neural: 'Нейроинтерфейсы',
+  pai: 'пИИ',
+  deck: 'Кибердеки',
 };
 
 export const THEME = {

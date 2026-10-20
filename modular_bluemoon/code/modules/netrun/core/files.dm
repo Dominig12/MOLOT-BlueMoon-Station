@@ -7,6 +7,10 @@
 	var/size = 1
 	/// Для ключей - id сети, которую открывает ключ
 	var/network_id
+	/// Фото принадлежит этому файлу. Копии файлов получают независимый снимок.
+	var/datum/picture/picture
+	/// Переносимая привязка к живому техвебу, не удерживающая удалённую сеть.
+	var/datum/weakref/techweb_ref
 	var/static/next_uid = 0
 	var/uid
 
@@ -21,30 +25,69 @@
 	if(size)
 		src.size = size
 	else if(src.kind == NETRUN_FILE_TEXT)
-		src.size = max(1, round(length(src.content) / 500))
+		src.size = netrun_text_size(src.content)
 	src.network_id = network_id
 
 /datum/netrun_file/proc/copy()
-	return new /datum/netrun_file(name, kind, content, size, network_id)
+	var/datum/netrun_file/result = new(name, kind, content, size, network_id)
+	if(picture)
+		result.picture = picture.Copy()
+		result.picture.caption = picture.caption
+	result.techweb_ref = techweb_ref
+	return result
 
-/datum/netrun_file/proc/ui_entry()
+/datum/netrun_file/Destroy()
+	QDEL_NULL(picture)
+	techweb_ref = null
+	return ..()
+
+/datum/netrun_file/proc/ui_entry(selected_uid)
+	var/preview
+	switch(kind)
+		if(NETRUN_FILE_KEY)
+			preview = "[network_id]: [content]"
+		if(NETRUN_FILE_DAEMON)
+			var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(content)
+			preview = daemon?.desc
+		if(NETRUN_FILE_TEXT)
+			preview = copytext_char(content, 1, 200)
+		if(NETRUN_FILE_TECHWEB)
+			preview = "Дамп техвеба: [length(splittext(content, ";"))] технологий"
+		if(NETRUN_FILE_TECHWEB_LINK)
+			preview = "Привязка: [content][techweb_ref?.resolve() ? "" : " (сеть недоступна)"]"
+		if(NETRUN_FILE_PHOTO)
+			preview = picture ? "Фотография [picture.psize_x]×[picture.psize_y]" : "Нет изображения"
 	return list(
 		"uid" = uid,
 		"name" = name,
 		"kind" = kind,
 		"size" = size,
-		"preview" = kind == NETRUN_FILE_TEXT ? copytext_char(content, 1, 200) : (kind == NETRUN_FILE_TECHWEB ? "дамп техвеба: [length(splittext(content, ";"))] узлов" : null),
+		"preview" = preview,
+		"selected" = uid == selected_uid,
 	)
+
+/// Чтение использует штатный просмотр фото; текст всегда экранируется как обычный текст.
+/datum/netrun_file/proc/show(mob/user)
+	if(!user?.client)
+		return
+	if(kind == NETRUN_FILE_PHOTO && picture)
+		var/obj/item/photo/preview = new(null, picture)
+		preview.show(user)
+		qdel(preview)
+		return
+	var/text = content
+	if(kind == NETRUN_FILE_TECHWEB_LINK)
+		text = "Привязка к исследовательской сети: [content].\n[techweb_ref?.resolve() ? "Сеть доступна для подключения машин." : "Исходная сеть больше не существует."]"
+	else if(kind != NETRUN_FILE_TEXT && kind != NETRUN_FILE_TECHWEB && kind != NETRUN_FILE_KEY)
+		return
+	var/datum/browser/popup = new(user, "netrun_file_[uid]", html_encode(name), 450, 500)
+	popup.set_content("<tt>[replacetext(html_encode(text), "\n", "<br>")]</tt>")
+	popup.open()
 
 /// Программы-демоны, влияющие на взлом
 /proc/netrun_daemon_file(id)
-	switch(id)
-		if("buffer")
-			return new /datum/netrun_file("buffer.exe", NETRUN_FILE_DAEMON, "buffer", 2)
-		if("icepick")
-			return new /datum/netrun_file("icepick.exe", NETRUN_FILE_DAEMON, "icepick", 3)
-		if("cloak")
-			return new /datum/netrun_file("cloak.exe", NETRUN_FILE_DAEMON, "cloak", 3)
+	var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(id)
+	return daemon?.create_file()
 
 /// Шард данных: маленький переносной носитель
 /obj/item/netrun_shard

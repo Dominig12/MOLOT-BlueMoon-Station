@@ -171,7 +171,7 @@ const MIN_GAP = 68;
 type Placed = NetNode & { px: number; py: number };
 type GwPos = { id: string; gx: number; gy: number };
 
-const spread = (nodes: Placed[]) => {
+const spread = (nodes: Placed[], fixed: Set<string>) => {
   // Несколько проходов расталкивания, чтобы узлы не накладывались
   for (let iter = 0; iter < 60; iter++) {
     let moved = false;
@@ -179,22 +179,29 @@ const spread = (nodes: Placed[]) => {
       for (let j = i + 1; j < nodes.length; j++) {
         const a = nodes[i];
         const b = nodes[j];
+        if (fixed.has(a.address) && fixed.has(b.address)) {
+          continue;
+        }
         let dx = b.px - a.px;
         let dy = b.py - a.py;
         let dist = Math.hypot(dx, dy);
         if (dist < 0.01) {
-          dx = Math.random() - 0.5;
-          dy = Math.random() - 0.5;
+          dx = 1;
+          dy = 0.5;
           dist = 0.5;
         }
         if (dist < MIN_GAP) {
           const push = (MIN_GAP - dist) / 2;
           const ux = dx / dist;
           const uy = dy / dist;
-          a.px -= ux * push;
-          a.py -= uy * push;
-          b.px += ux * push;
-          b.py += uy * push;
+          if (!fixed.has(a.address)) {
+            a.px -= ux * push * (fixed.has(b.address) ? 2 : 1);
+            a.py -= uy * push * (fixed.has(b.address) ? 2 : 1);
+          }
+          if (!fixed.has(b.address)) {
+            b.px += ux * push * (fixed.has(a.address) ? 2 : 1);
+            b.py += uy * push * (fixed.has(a.address) ? 2 : 1);
+          }
           moved = true;
         }
       }
@@ -214,6 +221,9 @@ export const StationMap = () => {
   const [pan, setPan] = useState({ x: -600, y: -360 });
   const [zoom, setZoom] = useState(0.7);
   const [query, setQuery] = useState('');
+  const [focusNearby, setFocusNearby] = useState(false);
+  const coordinateFrame = useRef<{ minX: number; minY: number; scale: number; offX: number; offY: number } | null>(null);
+  const positions = useRef<Record<string, { x: number; y: number; px: number; py: number }>>({});
   const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>(
     {},
   );
@@ -257,12 +267,29 @@ export const StationMap = () => {
   );
   const offX = (FIELD_W - spanX * scale) / 2;
   const offY = (FIELD_H - spanY * scale) / 2;
-  const placed: Placed[] = nodes.map((n) => ({
-    ...n,
-    px: offX + (n.x - minX) * scale,
-    py: FIELD_H - (offY + (n.y - minY) * scale),
-  }));
-  spread(placed);
+  // Keep the coordinate frame when a LAN is revealed or machines move. Panning,
+  // filtering and selection must not rearrange the rest of the station.
+  if (!coordinateFrame.current && nodes.length) {
+    coordinateFrame.current = { minX, minY, scale, offX, offY };
+  }
+  const frame = coordinateFrame.current ?? { minX, minY, scale, offX, offY };
+  const fixed = new Set<string>();
+  const placed: Placed[] = nodes.map((n) => {
+    const old = positions.current[n.address];
+    if (old && old.x === n.x && old.y === n.y) {
+      fixed.add(n.address);
+      return { ...n, px: old.px, py: old.py };
+    }
+    return {
+      ...n,
+      px: frame.offX + (n.x - frame.minX) * frame.scale,
+      py: FIELD_H - (frame.offY + (n.y - frame.minY) * frame.scale),
+    };
+  });
+  spread(placed, fixed);
+  for (const p of placed) {
+    positions.current[p.address] = { x: p.x, y: p.y, px: p.px, py: p.py };
+  }
   const byAddr: Record<string, Placed> = {};
   for (const p of placed) {
     byAddr[p.address] = p;
@@ -291,8 +318,39 @@ export const StationMap = () => {
   const hubY = FIELD_H / 2;
 
   const types = Array.from(new Set(nodes.map((n) => n.type)));
+  const neighbors: Record<string, Set<string>> = {};
+  const connect = (a: string, b: string) => {
+    (neighbors[a] ??= new Set()).add(b);
+    (neighbors[b] ??= new Set()).add(a);
+  };
+  for (const p of placed) {
+    connect(p.address, p.uplink && byAddr[p.uplink] ? p.uplink : `gateway:${p.network}`);
+  }
+  for (const gateway of map.gateways) {
+    connect(`gateway:${gateway.id}`, 'hub');
+  }
+  const nearby = new Set<string>();
+  if (selected) {
+    nearby.add(selected.address);
+    let frontier = [selected.address];
+    for (let depth = 0; depth < 2; depth++) {
+      const next: string[] = [];
+      for (const address of frontier) {
+        for (const neighbor of neighbors[address] ?? []) {
+          if (!nearby.has(neighbor)) {
+            nearby.add(neighbor);
+            next.push(neighbor);
+          }
+        }
+      }
+      frontier = next;
+    }
+  }
   const q = query.trim().toLowerCase();
   const visible = (n: NetNode) => {
+    if (focusNearby && selected && !nearby.has(n.address)) {
+      return false;
+    }
     if (disabledTypes[n.type]) {
       return false;
     }
@@ -307,6 +365,9 @@ export const StationMap = () => {
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) {
+      return;
+    }
     const key = e.key.toLowerCase();
     const dirs: Record<string, [number, number]> = {
       w: [0, 1],
@@ -318,8 +379,10 @@ export const StationMap = () => {
       return;
     }
     e.preventDefault();
+    e.stopPropagation();
     const [dx, dy] = dirs[key];
-    const cur = selected ? byAddr[selected.address] : placed[0];
+    const hopping = e.shiftKey && !!entity;
+    const cur = hopping ? byAddr[entity.host ?? ''] : selected ? byAddr[selected.address] : placed[0];
     if (!cur) {
       return;
     }
@@ -327,6 +390,9 @@ export const StationMap = () => {
     let bestScore = Infinity;
     for (const p of placed) {
       if (p.address === cur.address || !visible(p)) {
+        continue;
+      }
+      if (hopping && (!p.online || p.access < 2)) {
         continue;
       }
       const vx = p.px - cur.px;
@@ -345,7 +411,7 @@ export const StationMap = () => {
     if (!best) {
       return;
     }
-    if (e.shiftKey && entity) {
+    if (hopping) {
       act('hop', { address: best.address });
     } else {
       act('select', { address: best.address });
@@ -364,6 +430,29 @@ export const StationMap = () => {
           value={query}
           onInput={(_e, v) => setQuery(v)}
         />
+        <Button compact icon="bullseye" selected={focusNearby}
+          disabled={!selected} tooltip="Выбранный узел, его соседи и связи до двух переходов. Координаты сохраняются."
+          content="2 перехода" onClick={() => setFocusNearby(!focusNearby)} />
+        <Button compact icon="crosshairs" tooltip="Центрировать выбранный узел"
+          disabled={!selected} onClick={() => {
+            const p = selected && byAddr[selected.address];
+            if (p && canvasRef.current) {
+              setPan({ x: canvasRef.current.clientWidth / 2 - p.px * zoom, y: canvasRef.current.clientHeight / 2 - p.py * zoom });
+            }
+          }} />
+        <Button compact icon="expand" tooltip="Вместить видимые узлы"
+          onClick={() => {
+            const target = placed.filter(visible);
+            const canvas = canvasRef.current;
+            if (!target.length || !canvas) { return; }
+            const left = Math.min(...target.map((p) => p.px)) - 40;
+            const right = Math.max(...target.map((p) => p.px)) + 40;
+            const top = Math.min(...target.map((p) => p.py)) - 40;
+            const bottom = Math.max(...target.map((p) => p.py)) + 40;
+            const nextZoom = Math.min(2.2, Math.max(0.3, Math.min(canvas.clientWidth / (right - left), canvas.clientHeight / (bottom - top))));
+            setZoom(nextZoom);
+            setPan({ x: (canvas.clientWidth - (right + left) * nextZoom) / 2, y: (canvas.clientHeight - (bottom + top) * nextZoom) / 2 });
+          }} />
         {types.map((t) => (
           <Button
             key={t}
@@ -382,9 +471,12 @@ export const StationMap = () => {
       </Box>
       <div
         ref={canvasRef}
+        role="application"
+        aria-label="Карта сети"
         tabIndex={0}
         onKeyDown={onKeyDown}
         onMouseDown={(e) => {
+          e.currentTarget.focus();
           drag.current = { x: e.clientX, y: e.clientY, ox: pan.x, oy: pan.y };
         }}
         onMouseMove={(e) => {
@@ -405,7 +497,12 @@ export const StationMap = () => {
         onWheel={(e) => {
           e.preventDefault();
           const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-          setZoom((z) => Math.min(2.2, Math.max(0.3, z * factor)));
+          const nextZoom = Math.min(2.2, Math.max(0.3, zoom * factor));
+          const rect = e.currentTarget.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+          setPan({ x: x - (x - pan.x) * nextZoom / zoom, y: y - (y - pan.y) * nextZoom / zoom });
+          setZoom(nextZoom);
         }}
         style={{
           position: 'relative',
@@ -414,7 +511,7 @@ export const StationMap = () => {
           resize: 'vertical',
           overflow: 'hidden',
           cursor: 'grab',
-          outline: 'none',
+          outlineOffset: '-2px',
         }}
       >
         <div
@@ -660,7 +757,7 @@ const NodeMarker = (props: {
             color: color,
           }}
         >
-          <Icon name={NODE_ICONS[node.type] || 'circle'} size={0.7} />
+          <Icon name={NODE_ICONS[node.type] || 'circle'} style={{ fontSize: '70%' }} />
         </Box>
       </div>
       <Box

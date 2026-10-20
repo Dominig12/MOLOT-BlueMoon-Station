@@ -77,7 +77,7 @@
 /// Сети, в которых консоль находится физически
 /datum/netrun_console/proc/home_networks()
 	. = list()
-	if(jack?.network)
+	if(jack?.network && jack_valid())
 		. += jack.network
 	if(!wireless)
 		var/lan = netrun_lan_for_turf(get_turf(host))
@@ -135,8 +135,10 @@
 	if(!node.network)
 		return NETRUN_ACCESS_NONE
 	. = legit_network_level(node.network) ? NETRUN_ACCESS_GUEST : NETRUN_ACCESS_NONE
+	var/atom/target = node.parent
+	. = max(., target.netrun_owner_access(src))
 	if(has_key(node.network))
-		. = NETRUN_ACCESS_USER
+		. = max(., NETRUN_ACCESS_USER)
 	var/list/access = user_access()
 	if(!length(access))
 		return
@@ -160,9 +162,11 @@
 	if(!node?.network || is_locked())
 		return NETRUN_ACCESS_NONE
 	var/net_level = network_level(node.network)
-	if(net_level < NETRUN_ACCESS_GUEST)
+	var/atom/target = node.parent
+	var/owner_level = target.netrun_owner_access(src)
+	if(net_level < NETRUN_ACCESS_GUEST && (!owner_level || !can_route(node)))
 		return NETRUN_ACCESS_NONE
-	. = max(NETRUN_ACCESS_GUEST, net_level, node_access[node.address] || 0, legit_node_level(node))
+	. = max(NETRUN_ACCESS_GUEST, owner_level, net_level, node_access[node.address] || 0, legit_node_level(node))
 	if(node == jack)
 		. = max(., NETRUN_ACCESS_GUEST)
 
@@ -170,6 +174,12 @@
 
 /datum/netrun_console/proc/selected_node()
 	return SSnetrun.find_node(selected_address)
+
+/// Закрытая сеть публикует лишь шлюз и APC. Владелец видит собственное устройство.
+/datum/netrun_console/proc/node_visible(datum/component/netrun_node/node)
+	if(!node?.network || !can_route(node))
+		return FALSE
+	return node_level(node) >= NETRUN_ACCESS_GUEST || (node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY))
 
 /datum/netrun_console/proc/run_command(datum/component/netrun_node/node, command_id)
 	if(world.time < next_command)
@@ -199,37 +209,46 @@
 	var/lat = command.ignores_latency ? 0 : latency_to(node)
 	if(lat <= 0)
 		log_line("> [command_id] @ [node.address]")
-		do_command(node, command, command_id, illegal)
+		return do_command(node, command, command_id, illegal, node.network, operator, selected_file_uid || "none")
 	else
 		log_line("> [command_id] @ [node.address] (отправка, ~[lat * 100]мс)")
 		next_command = world.time + max(0.5 SECONDS, lat)
-		addtimer(CALLBACK(src, PROC_REF(do_command), node, command, command_id, illegal), lat)
+		addtimer(CALLBACK(src, PROC_REF(do_command), node, command, command_id, illegal, node.network, operator, selected_file_uid || "none"), lat)
 	return TRUE
 
 /// Собственно выполнение команды - может вызываться с задержкой маршрута
-/datum/netrun_console/proc/do_command(datum/component/netrun_node/node, datum/netrun_command/command, command_id, illegal)
+/datum/netrun_console/proc/do_command(datum/component/netrun_node/node, datum/netrun_command/command, command_id, illegal, datum/netrun_network/sent_network, mob/sender, file_uid)
 	if(QDELETED(src) || QDELETED(node) || !command)
 		return
+	node.join_network()
 	if(is_locked())
-		return
+		return FALSE
+	if(sender != operator || !can_route(node) || node.network != sent_network || !(command_id in node.all_command_ids()) || node_level(node) < command.access)
+		log_line("[node.address]: запрос отменён — маршрут, оператор или права изменились.", "bad")
+		return FALSE
 	if(!command.works_offline && !node.is_online(node != jack))
 		log_line("[node.address]: узел не отвечает.", "bad")
-		return
-	var/result = command.execute(node, src, netrun_command_arg(command_id))
+		return FALSE
+	illegal = legit_node_level(node) < command.access
+	var/datum/netrun_request/request = new(file_uid)
+	var/result = world.PushUsr(operator, CALLBACK(command, TYPE_PROC_REF(/datum/netrun_command, execute), node, src, netrun_command_arg(command_id), request))
+	qdel(request)
 	if(isnull(result))
-		return
+		return FALSE
 	log_line(result, illegal ? "average" : "good")
+	node.add_log("[log_source()]: [command.name][illegal ? " (без авторизации)" : ""].")
 	var/atom/target = node.parent
 	log_game("NETRUN: [key_name(operator)] ([origin]) [command.id] -> [node.get_name()] [node.address][illegal ? " (взлом)" : ""] [AREACOORD(target)]")
 	node.network?.add_log("[log_source()] -> [node.address]: [command.name][illegal ? " (без авторизации)" : ""]", illegal && command.access >= NETRUN_ACCESS_ROOT)
 	if(illegal)
 		add_trace(command.trace * node.get_security())
+	return TRUE
 
 /// Есть ли вообще маршрут к узлу (иначе узел отрезан - подключиться нельзя)
 /datum/netrun_console/proc/can_route(datum/component/netrun_node/node)
 	if(!node)
 		return FALSE
-	if(node == jack)
+	if(node == jack && jack_valid())
 		return TRUE
 	return node.network && can_reach(node.network)
 
@@ -243,7 +262,7 @@
 
 /// Задержка маршрута до узла в децисекундах: 0 - прямое/рядом, больше - дальше и через реле
 /datum/netrun_console/proc/latency_to(datum/component/netrun_node/node)
-	if(!node || node == jack)
+	if(!node || (node == jack && jack_valid()))
 		return 0
 	var/turf/here = get_turf(host)
 	var/turf/there = get_turf(node.parent)
@@ -292,16 +311,19 @@
 
 /datum/netrun_console/proc/process_tick(delta)
 	if(breach)
-		if(breach.time_left() <= 0)
+		if(!breach.valid_target())
+			log_line("Взлом отменён: цель недоступна или переменила сеть.", "bad")
+			QDEL_NULL(breach)
+		else if(breach.time_left() <= 0)
 			breach.finish()
 		else
-			add_trace(0.6 * breach.security * delta)
+			add_trace(0.6 * breach.security * delta * (breach.target_kind == "network" ? 1.25 : 1))
 	else if(trace > 0 && world.time - last_illegal > 10 SECONDS)
 		trace = max(0, trace - NETRUN_TRACE_DECAY * delta)
 	if(jack && !jack_valid())
 		log_line("Провод выдернут.", "average")
 		set_jack(null)
-	if(watch_node && (QDELETED(watch_node) || !watch_node.is_online() || watch_viewer != operator || is_locked()))
+	if(watch_node && (QDELETED(watch_node) || !watch_node.is_online() || watch_viewer != operator || is_locked() || !can_route(watch_node) || node_level(watch_node) < NETRUN_ACCESS_USER))
 		stop_watch()
 
 // MARK: Взлом
@@ -315,7 +337,7 @@
 		var/datum/netrun_network/network = SSnetrun.networks[id]
 		if(!network || !can_reach(network))
 			return FALSE
-		security = network.security
+		security = network.breach_security()
 		target_name = "шлюз [network.short_name]"
 	else
 		var/datum/component/netrun_node/node = SSnetrun.find_node(id)
@@ -323,13 +345,33 @@
 			return FALSE
 		security = node.get_security() - (node == jack ? 1 : 0)
 		target_name = "[node.get_name()] [node.address]"
+		if(kind == "firmware")
+			var/datum/netrun_api/api = SSnetrun.get_api(node.parent)
+			if(!api?.allow_emag || node_level(node) < NETRUN_ACCESS_ROOT || !daemon_bonus("icepick"))
+				return FALSE
+			security = 5
+			target_name = "прошивка [target_name]"
 		node.touch()
 	breach = new(src, kind, id, target_name, security)
+	if(kind != "network")
+		var/datum/component/netrun_node/target = SSnetrun.find_node(id)
+		breach.target_network = target.network
+	if(kind == "firmware")
+		breach.security = 5
+		breach.size = 7
+		breach.deadline = world.time + 20 SECONDS
+		breach.buffer_size = min(breach.buffer_size, 7)
+		breach.generate()
 	log_line("Запущен взлом: [target_name].", "average")
 	return TRUE
 
 /datum/netrun_console/proc/breach_finished(datum/netrun_breach/finished)
 	if(finished != breach)
+		return
+	if(!finished.valid_target())
+		breach = null
+		log_line("Взлом отменён: соединение с целью потеряно.", "bad")
+		qdel(finished)
 		return
 	var/reward = NETRUN_ACCESS_NONE
 	var/clean = FALSE
@@ -341,6 +383,15 @@
 		else
 			clean = TRUE
 	breach = null
+	if(finished.target_kind == "firmware")
+		var/datum/component/netrun_node/node = SSnetrun.find_node(finished.target_id)
+		if(reward >= NETRUN_ACCESS_ROOT && node && can_route(node) && node.is_online(node != jack) && node_level(node) >= NETRUN_ACCESS_ROOT && daemon_bonus("icepick"))
+			apply_firmware_bypass(node)
+		else
+			log_line("Взлом прошивки не завершён или соединение потеряно.", "bad")
+			add_trace(25)
+		qdel(finished)
+		return
 	if(finished.target_kind == "network")
 		reward = min(reward, NETRUN_ACCESS_GUEST)
 	if(!reward && !clean)
@@ -387,13 +438,16 @@
 
 /// Бонус от установленных демонов (каждый тип считается один раз)
 /datum/netrun_console/proc/daemon_bonus(id)
+	. = 0
 	for(var/datum/netrun_file/file as anything in all_files())
-		if(file.kind == NETRUN_FILE_DAEMON && file.content == id)
-			return 1
-	return 0
+		if(file.kind != NETRUN_FILE_DAEMON)
+			continue
+		var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(file.content)
+		if(daemon && daemon.bonus_kind == id)
+			. = max(., daemon.bonus)
 
 /datum/netrun_console/proc/effective_trace_mult()
-	return trace_mult * (daemon_bonus("cloak") ? 0.7 : 1)
+	return trace_mult * max(0.1, 1 - daemon_bonus("cloak"))
 
 // MARK: Провод
 
@@ -411,13 +465,16 @@
 	set_jack(null)
 
 /datum/netrun_console/proc/jack_valid()
-	return jack && get_dist(get_turf(host), get_turf(jack.parent)) <= 1
+	var/turf/source_turf = get_turf(host)
+	var/turf/target_turf = get_turf(jack?.parent)
+	return source_turf && target_turf && source_turf.z == target_turf.z && get_dist(source_turf, target_turf) <= 1
 
 // MARK: Журнал
 
 /datum/netrun_console/proc/log_line(text, kind = "label")
 	log += list(list("time" = STATION_TIME_TIMESTAMP("hh:mm:ss", world.time), "text" = text, "kind" = kind))
 	host?.netrun_console_event(src, text, kind)
+	SEND_SIGNAL(src, COMSIG_NETRUN_CONSOLE_EVENT, text, kind)
 	if(length(log) > NETRUN_MAX_CONSOLE_LOG)
 		log.Cut(1, length(log) - NETRUN_MAX_CONSOLE_LOG + 1)
 

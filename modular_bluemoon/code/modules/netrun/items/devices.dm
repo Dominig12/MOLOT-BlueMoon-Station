@@ -21,6 +21,7 @@
 	console.buffer_bonus = buffer_bonus
 	console.storage_capacity = storage_capacity
 	console.tgui_title = "Кибердека"
+	AddComponent(/datum/component/netrun_access_device, console, NETRUN_NODE_DECK)
 
 /obj/item/netrun_deck/Destroy()
 	QDEL_NULL(console)
@@ -103,6 +104,7 @@
 	console.storage_capacity = 6
 	console.state_override = GLOB.conscious_state
 	console.tgui_title = "Нейролинк"
+	AddComponent(/datum/component/netrun_access_device, console, NETRUN_NODE_IMPLANT)
 
 /obj/item/organ/cyberimp/brain/netlink/Destroy()
 	QDEL_NULL(console)

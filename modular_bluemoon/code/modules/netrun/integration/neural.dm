@@ -16,23 +16,23 @@
 	var/font_family = "TinyUnicode"
 	var/separator_color = "#6b7280"
 	var/atom/movable/screen/text/panel_view
-	var/obj/item/organ/cyberimp/brain/netlink/implant
+	var/datum/netrun_console/console
 
-/datum/neural_interface_module/netrun/New(datum/component/neural_interface/new_owner, obj/item/organ/cyberimp/brain/netlink/implant)
+/datum/neural_interface_module/netrun/New(datum/component/neural_interface/new_owner, datum/netrun_console/console)
 	. = ..()
-	src.implant = implant
+	src.console = console
 	panel_view = ScreenText(null, "", screen_loc, maptext_height, maptext_width)
 
 /datum/neural_interface_module/netrun/Destroy(force, ...)
 	. = ..()
 	QDEL_NULL(panel_view)
-	implant = null
+	console = null
 
 /datum/neural_interface_module/netrun/UpdateVision(mob/user)
 	if(!user?.client)
 		return
 	user.client.screen -= panel_view
-	if(!visible || QDELETED(implant) || !implant.console)
+	if(!visible || QDELETED(console))
 		return
 	panel_view.maptext = render()
 	user.client.screen += panel_view
@@ -41,7 +41,6 @@
 	return {"<span style='font-family: \"[font_family]\"; font-size: [font_size]pt; color: [color]; line-height: 0.8; -dm-text-outline: 1px black;'>[text]</span><br>"}
 
 /datum/neural_interface_module/netrun/proc/render()
-	var/datum/netrun_console/console = implant.console
 	var/write = line("├─ NETLINK", separator_color)
 	if(console.is_locked())
 		write += line("└ БЛОКИРОВКА: [round((console.lockout_until - world.time) / (1 SECONDS))]s", "#ef4444ff")
@@ -179,7 +178,7 @@
 	RegisterSignal(interface, COMSIG_PARENT_QDELETING, PROC_REF(on_interface_qdel), override = TRUE)
 	interface.AddSource(NETRUN_NEURAL_SOURCE)
 	if(!interface.modules[NETRUN_NEURAL_MODULE])
-		var/datum/neural_interface_module/netrun/module = new(interface, src)
+		var/datum/neural_interface_module/netrun/module = new(interface, console)
 		if(!interface.visible)
 			module.visible = FALSE
 		interface.modules[NETRUN_NEURAL_MODULE] = module
@@ -218,7 +217,7 @@
 			key = "WARNING"
 	// В поток логов уходит только первая строка - панель маленькая
 	var/first = splittext("[text]", "\n")[1]
-	interface.write_log(copytext_char(first, 1, 60), key)
+	SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, html_encode(copytext_char(first, 1, 60)), key)
 
 #undef NETRUN_NEURAL_SOURCE
 #undef NETRUN_NEURAL_MODULE

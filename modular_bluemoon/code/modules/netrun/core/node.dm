@@ -16,12 +16,14 @@
 	var/list/mob/camera/netrun_entity/entities
 	/// Узел оглушён ЭМИ или командой и до этого времени не отвечает
 	var/offline_until = 0
+	/// Ограниченный журнал самого узла, сохраняется при переходе между ЛВС.
+	var/list/logs = list()
 
 /datum/component/netrun_node/Initialize(node_type, list/command_ids, security = 1, list/required_access, storage_capacity = 0)
 	if(!isatom(parent))
 		return COMPONENT_INCOMPATIBLE
 	src.node_type = node_type
-	src.command_ids = list("scan", "ping") + (command_ids || list())
+	src.command_ids = list("scan", "ping", "node_log") | (command_ids || list())
 	base_security = security
 	src.required_access = required_access
 	src.storage_capacity = storage_capacity
@@ -57,10 +59,12 @@
 		return
 	network = SSnetrun.get_network(lan)
 	network.nodes += src
+	add_log("Подключение к [network.code].")
 
 /datum/component/netrun_node/proc/leave_network()
 	if(!network)
 		return
+	network.add_log("Узел [address] отключён.")
 	network.nodes -= src
 	network = null
 
@@ -91,10 +95,27 @@
 /datum/component/netrun_node/proc/touch()
 	last_activity = world.time
 
+/datum/component/netrun_node/proc/add_log(text)
+	logs += "[STATION_TIME_TIMESTAMP("hh:mm:ss", world.time)] [text]"
+	if(length(logs) > NETRUN_MAX_LOG)
+		logs.Cut(1, length(logs) - NETRUN_MAX_LOG + 1)
+
 /// Все команды узла: базовые плюс зависящие от компонентов атома
 /datum/component/netrun_node/proc/all_command_ids()
 	var/atom/A = parent
-	return command_ids + A.netrun_extra_commands()
+	. = command_ids.Copy()
+	. |= A.netrun_extra_commands()
+	var/datum/netrun_api/api = SSnetrun.get_api(A)
+	if(api?.allow_emag)
+		. |= "firmware"
+
+/// Одинаковый набор действий для карточки, вкладки и других клиентов.
+/datum/component/netrun_node/proc/command_entries(datum/netrun_console/console)
+	. = list()
+	for(var/command_id in all_command_ids())
+		var/datum/netrun_command/command = SSnetrun.get_command(command_id)
+		if(command)
+			. += list(command.ui_entry(src, console, command_id))
 
 /datum/component/netrun_node/proc/used_storage()
 	. = 0
@@ -128,6 +149,7 @@
 		"type" = node_type,
 		"x" = T ? T.x : 0,
 		"y" = T ? T.y : 0,
+		"z" = T ? T.z : 0,
 		"security" = get_security(),
 		"online" = is_online(),
 		"access" = console.node_level(src),

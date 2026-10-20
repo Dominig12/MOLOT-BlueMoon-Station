@@ -1,5 +1,7 @@
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Section } from '../../components';
+import { CommandList } from './CommandList';
+import { RemotePanel } from './RemotePanel';
 import {
   ACCESS_COLORS,
   ACCESS_NAMES,
@@ -11,13 +13,13 @@ import {
 
 /** Окно машины: состояние, команды-запросы и особые действия (часть под взломом) */
 export const WindowPanel = (props: { window: MachineWindow }) => {
-  const { act } = useBackend<NetrunData>();
+  const { act, data } = useBackend<NetrunData>();
   const { window: w } = props;
   return (
     <Section
       title={w.title}
-      fill
       scrollable
+      style={{ minHeight: '240px', maxHeight: '620px', overflowY: 'auto' }}
       buttons={
         <Box inline>
           <Icon name={NODE_ICONS[w.type] || 'window-maximize'} mr={1} />
@@ -31,6 +33,38 @@ export const WindowPanel = (props: { window: MachineWindow }) => {
       {!w.online && (
         <Box color={THEME.bad} mb={1}>
           Узел не отвечает.
+        </Box>
+      )}
+      <Box color={THEME.muted} mb={1} style={{ fontFamily: 'monospace' }}>
+        {w.address}
+        {w.network ? ` · ${w.network.code}` : ''}
+        {w.security !== undefined ? ` · защита ${w.security}` : ''}
+      </Box>
+      {w.access < 1 && (
+        <Box color={THEME.warn} mb={1}>
+          Доступ к узлу закрыт. Подберите доступ, чтобы читать состояние и выполнять запросы.
+        </Box>
+      )}
+      {(w.can_breach || w.network?.can_breach) && (
+        <Box mb={1}>
+          {w.can_breach && (
+            <Button
+              icon="key"
+              color="caution"
+              content="Подобрать доступ к узлу"
+              disabled={!!data.breach || !w.online || data.locked > 0}
+              onClick={() => act('breach', { kind: 'node', id: w.address })}
+            />
+          )}
+          {w.network?.can_breach && (
+            <Button
+              icon="network-wired"
+              color="caution"
+              content={`Подобрать доступ к ${w.network.code}`}
+              disabled={!!data.breach || data.locked > 0}
+              onClick={() => act('breach', { kind: 'network', id: w.network?.id })}
+            />
+          )}
         </Box>
       )}
       {w.feed && (
@@ -82,21 +116,17 @@ export const WindowPanel = (props: { window: MachineWindow }) => {
       <Box color={THEME.muted} fontSize="11px" mb={0.5}>
         Запросы
       </Box>
-      {w.commands.map((cmd) => (
-        <Button
-          key={cmd.id}
-          icon={cmd.icon}
-          content={cmd.name}
-          color={cmd.danger ? 'bad' : cmd.illegal ? 'average' : undefined}
-          disabled={!cmd.allowed}
-          tooltip={
-            (cmd.desc ? `${cmd.desc} ` : '') +
-            `Нужно: ${ACCESS_NAMES[cmd.access]}.` +
-            (cmd.allowed && cmd.trace ? ` Трассировка +${cmd.trace}%.` : '')
-          }
-          onClick={() => act('window_act', { address: w.address, waction: cmd.id })}
-        />
-      ))}
+      <CommandList
+        commands={w.commands}
+        onCommand={(id) => act('window_act', { address: w.address, waction: id })}
+      />
+      {w.remote && <RemotePanel key={w.address} address={w.address} remote={w.remote} />}
+      {!!w.logs?.length && (
+        <Box mt={1} p={1} style={{ background: THEME.bg, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: '160px', overflowY: 'auto' }}>
+          <Box color={THEME.muted} mb={0.5}>Журнал узла</Box>
+          {w.logs.map((line, index) => <div key={index}>{line}</div>)}
+        </Box>
+      )}
     </Section>
   );
 };

@@ -2,6 +2,7 @@ import { KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input, Section } from '../../components';
+import { FilePanel } from './FilePanel';
 import { fileIcon } from './NodePanel';
 import { NetFile, NetrunData, THEME } from './types';
 
@@ -34,14 +35,16 @@ export const ConsoleLog = () => {
   const [value, setValue] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const [histIdx, setHistIdx] = useState<number | null>(null);
+  const [draft, setDraft] = useState('');
   useEffect(() => {
     if (scroller.current) {
       scroller.current.scrollTop = scroller.current.scrollHeight;
     }
   }, [data.log.length]);
 
-  const verbs = (data.cli?.verbs ?? []).map((v) => v.id);
-  const addresses = (data.view?.nodes ?? []).map((n) => n.address);
+  const entries = data.cli?.verbs ?? [];
+  const verbs = entries.map((v) => v.id);
+  const addresses = (data.map?.nodes ?? data.view?.nodes ?? []).map((n) => n.address);
   const codes = data.networks.map((n) => n.code);
 
   const submit = () => {
@@ -55,14 +58,25 @@ export const ConsoleLog = () => {
       return next.slice(-20);
     });
     setHistIdx(null);
+    setDraft('');
     setValue('');
   };
 
   const complete = () => {
     const tokens = value.split(' ');
     const last = tokens[tokens.length - 1];
-    const pool = tokens.length <= 1 ? verbs : [...addresses, ...codes];
-    const hits = pool.filter((p) => p.toLowerCase().startsWith(last.toLowerCase()));
+    const verb = tokens[0].toLowerCase();
+    const registered = entries.find((entry) => entry.id === verb)?.completions;
+    const commands = (data.window?.commands ?? data.selected?.commands ?? []).map((c) => c.id);
+    const files = [...data.storage.files, ...(data.shard?.files ?? [])].map((f) => f.name);
+    const fallback = verb === 'run' ? commands
+      : verb === 'help' ? [...verbs, ...commands]
+      : verb === 'rm' ? files
+      : verb === 'net' ? codes
+      : ['sel', 'ping', 'open'].includes(verb) ? addresses
+      : verb === 'breach' ? [...addresses, ...codes] : [];
+    const pool = tokens.length <= 1 ? verbs : [...(registered ?? []), ...fallback];
+    const hits = Array.from(new Set(pool)).filter((p) => p.toLowerCase().startsWith(last.toLowerCase()));
     if (!hits.length) {
       return;
     }
@@ -85,6 +99,9 @@ export const ConsoleLog = () => {
         if (!history.length) {
           break;
         }
+        if (histIdx === null) {
+          setDraft(value);
+        }
         const idx = histIdx === null ? history.length - 1 : Math.max(0, histIdx - 1);
         setHistIdx(idx);
         setValue(history[idx]);
@@ -98,7 +115,7 @@ export const ConsoleLog = () => {
         const idx = histIdx + 1;
         if (idx >= history.length) {
           setHistIdx(null);
-          setValue('');
+          setValue(draft);
         } else {
           setHistIdx(idx);
           setValue(history[idx]);
@@ -114,6 +131,10 @@ export const ConsoleLog = () => {
 
   return (
     <Box style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
+      <Box color={THEME.muted} p={0.5} fontSize="10px">
+        <Button compact icon="question" content="help" onClick={() => act('cli', { text: 'help' })} />
+        {' '}help &lt;команда&gt; — подробная справка · ↑/↓ история · Tab дополнение
+      </Box>
       <div
         ref={scroller}
         style={{
@@ -164,7 +185,7 @@ export const StoragePanel = () => {
   const { storage, shard, selected } = data;
   const canUpload = !!selected?.files && selected.access >= 2;
   return (
-    <Section title={`Память ${storage.used}/${storage.capacity}`} fill scrollable>
+    <Section title={`Память ${storage.used}/${storage.capacity}`} scrollable style={{ maxHeight: '540px', overflowY: 'auto' }}>
       <FileList files={storage.files} canUpload={canUpload} />
       {shard && (
         <Box mt={1}>
@@ -182,6 +203,7 @@ export const StoragePanel = () => {
           ))}
         </Box>
       )}
+      <FilePanel />
     </Section>
   );
 };
@@ -196,7 +218,7 @@ const FileList = (props: { files: NetFile[]; canUpload: boolean }) => {
       {props.files.map((file) => (
         <Box key={file.uid} mb={0.5} style={{ fontFamily: 'monospace' }}>
           <Icon name={fileIcon(file.kind)} mr={1} />
-          {file.name}
+          <Button compact selected={file.selected} content={file.name} tooltip="Выбрать файл" onClick={() => act('file_select', { uid: file.uid })} />
           <Box inline style={{ float: 'right' }}>
             {file.kind === 'text' && (
               <Button compact icon="eye" onClick={() => act('read', { uid: file.uid })} />

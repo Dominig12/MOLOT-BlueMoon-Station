@@ -3,7 +3,7 @@
 	display_name = "Сетевая инфраструктура"
 	description = "Проводные терминалы, серверы данных и инструменты для работы с локальными сетями станции."
 	prereq_ids = list("comptech", "datatheory")
-	design_ids = list("netrun_terminal", "netrun_server", "netrun_shard", "netrun_deck")
+	design_ids = list("netrun_terminal", "netrun_server", "netrun_shard", "netrun_deck", "netrun_daemon_buffer")
 	research_costs = list(TECHWEB_POINT_TYPE_GENERIC = 2000)
 
 /datum/techweb_node/netrunning_neural
@@ -11,7 +11,7 @@
 	display_name = "Нейросетевые интерфейсы"
 	description = "Прямое подключение нервной системы к сети и выращивание самообучающихся сетевых процессов."
 	prereq_ids = list("netrunning", "cyber_implants")
-	design_ids = list("ci-netlink", "netrun_seed", "netrun_deck_advanced")
+	design_ids = list("ci-netlink", "netrun_seed", "netrun_deck_advanced", "netrun_daemon_icepick", "netrun_daemon_cloak")
 	research_costs = list(TECHWEB_POINT_TYPE_GENERIC = 4000)
 
 /datum/design/board/netrun_terminal
@@ -78,5 +78,35 @@
 	build_type = PROTOLATHE
 	materials = list(/datum/material/glass = 1000, /datum/material/gold = 1000, /datum/material/diamond = 500, /datum/material/bluespace = 500)
 	build_path = /obj/item/netrun_seed
+	category = list("Computer Parts")
+	departmental_flags = DEPARTMENTAL_FLAG_SCIENCE
+
+/datum/design/netrun_daemon_buffer
+	name = "Buffer Expansion Daemon"
+	desc = "Шард с buffer.exe: дополнительная ячейка буфера протокола взлома."
+	id = "netrun_daemon_buffer"
+	build_type = PROTOLATHE
+	materials = list(/datum/material/glass = 500, /datum/material/silver = 150, /datum/material/gold = 200)
+	build_path = /obj/item/netrun_shard/buffer
+	category = list("Computer Parts")
+	departmental_flags = DEPARTMENTAL_FLAG_ENGINEERING | DEPARTMENTAL_FLAG_SCIENCE
+
+/datum/design/netrun_daemon_icepick
+	name = "ICE Analysis Daemon"
+	desc = "Шард с icepick.exe: анализ защиты и атака сетевой прошивки."
+	id = "netrun_daemon_icepick"
+	build_type = PROTOLATHE
+	materials = list(/datum/material/glass = 600, /datum/material/gold = 500, /datum/material/diamond = 100)
+	build_path = /obj/item/netrun_shard/icepick
+	category = list("Computer Parts")
+	departmental_flags = DEPARTMENTAL_FLAG_SCIENCE
+
+/datum/design/netrun_daemon_cloak
+	name = "Trace Suppression Daemon"
+	desc = "Шард с cloak.exe: снижение прироста трассировки на 30%."
+	id = "netrun_daemon_cloak"
+	build_type = PROTOLATHE
+	materials = list(/datum/material/glass = 600, /datum/material/silver = 200, /datum/material/gold = 400, /datum/material/bluespace = 100)
+	build_path = /obj/item/netrun_shard/cloak
 	category = list("Computer Parts")
 	departmental_flags = DEPARTMENTAL_FLAG_SCIENCE

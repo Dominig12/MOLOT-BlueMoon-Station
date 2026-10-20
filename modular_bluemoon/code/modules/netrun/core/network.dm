@@ -102,6 +102,13 @@
 	for(var/datum/component/netrun_node/node as anything in nodes)
 		.[node.node_type] = (.[node.node_type] || 0) + 1
 
+/// Ключ всей сети ценнее доступа к одному устройству: шлюз учитывает сильнейшего участника.
+/datum/netrun_network/proc/breach_security()
+	. = security
+	for(var/datum/component/netrun_node/node as anything in nodes)
+		. = max(., node.get_security())
+	return clamp(., 1, 5)
+
 /// В какую ЛВС попадает машина, стоящая в этой зоне
 /proc/netrun_lan_for_turf(turf/T)
 	if(!T)
@@ -128,7 +135,7 @@
 	. = list()
 	if(!user)
 		return
-	if(issilicon(user) || IsAdminGhost(user))
+	if((issilicon(user) && !ispAI(user)) || IsAdminGhost(user))
 		return get_all_accesses()
 	if(ishuman(user))
 		var/mob/living/carbon/human/H = user

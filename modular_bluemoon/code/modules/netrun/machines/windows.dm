@@ -29,13 +29,15 @@
 
 /datum/netrun_console/proc/open_window(address)
 	var/datum/component/netrun_node/node = SSnetrun.find_node(address)
-	if(!node || node_level(node) < NETRUN_ACCESS_GUEST || !can_route(node))
+	if(!node || !node_visible(node))
 		return FALSE
 	if(!(address in windows))
 		if(length(windows) >= NETRUN_MAX_WINDOWS)
 			windows.Cut(1, 2)
 		windows += address
 	active_window = address
+	selected_address = address
+	selected_network = null
 	return TRUE
 
 /datum/netrun_console/proc/close_window(address)
@@ -44,6 +46,8 @@
 		stop_watch()
 	if(active_window == address)
 		active_window = length(windows) ? windows[length(windows)] : null
+		selected_address = active_window
+		selected_network = null
 
 /datum/netrun_console/proc/window_payload()
 	var/datum/component/netrun_node/node = SSnetrun.find_node(active_window)
@@ -51,28 +55,28 @@
 		active_window = null
 		return null
 	var/level = node_level(node)
-	if(level < NETRUN_ACCESS_GUEST)
-		return null
 	var/atom/A = node.parent
-	var/list/commands = list()
-	for(var/command_id in node.all_command_ids())
-		var/datum/netrun_command/command = SSnetrun.get_command(command_id)
-		if(command)
-			commands += list(command.ui_entry(node, src, command_id))
 	var/list/extra = list()
 	for(var/list/entry as anything in A.netrun_window_actions(src, node))
-		entry["allowed"] = level >= (entry["access"] || NETRUN_ACCESS_GUEST)
+		entry["allowed"] = level >= (entry["access"] || NETRUN_ACCESS_GUEST) && can_route(node) && node.is_online() && !is_locked()
 		extra += list(entry)
+	var/datum/netrun_network/network = node.network
 	return list(
 		"address" = node.address,
 		"title" = node.get_name(),
 		"type" = node.node_type,
 		"online" = node.is_online(),
 		"access" = level,
+		"legit" = legit_node_level(node),
+		"security" = node.get_security(),
+		"can_breach" = can_breach && level >= NETRUN_ACCESS_GUEST && level < NETRUN_ACCESS_ROOT && can_route(node),
+		"network" = network ? list("id" = network.id, "name" = network.name, "code" = network.code, "access" = network_level(network), "can_breach" = can_breach && can_reach(network) && network_level(network) < NETRUN_ACCESS_GUEST) : null,
 		"fields" = level >= NETRUN_ACCESS_USER ? A.netrun_window_fields(src, node) : list(),
-		"commands" = commands,
+		"commands" = node.command_entries(src),
+		"logs" = level >= NETRUN_ACCESS_USER ? node.logs.Copy() : list(),
+		"remote" = remote_payload(node),
 		"extra" = extra,
-		"feed" = A.netrun_window_feed(src, node),
+		"feed" = level >= NETRUN_ACCESS_USER ? A.netrun_window_feed(src, node) : null,
 		"watching" = watch_node == node,
 	)
 
@@ -80,7 +84,7 @@
 	. = list()
 	for(var/address in windows.Copy())
 		var/datum/component/netrun_node/node = SSnetrun.find_node(address)
-		if(!node || node_level(node) < NETRUN_ACCESS_GUEST)
+		if(!node)
 			windows -= address
 			if(active_window == address)
 				active_window = null
@@ -89,17 +93,49 @@
 
 /datum/netrun_console/proc/window_act(address, action, list/params)
 	var/datum/component/netrun_node/node = SSnetrun.find_node(address)
-	if(!node || node_level(node) < NETRUN_ACCESS_GUEST)
+	if(!node || node_level(node) < NETRUN_ACCESS_GUEST || !can_route(node) || is_locked())
 		return
 	// Команда узла - обычный сетевой запрос с задержкой и трассировкой
 	if(action in node.all_command_ids())
 		run_command(node, action)
 		return
 	// Оконное действие машины
+	if(world.time < next_command || !node.is_online())
+		return
+	var/list/entry = window_action(node, action)
+	if(!entry || node_level(node) < (entry["access"] || NETRUN_ACCESS_GUEST))
+		log_line("Действие окна не разрешено.", "bad")
+		return
+	var/lat = latency_to(node)
+	next_command = world.time + max(0.5 SECONDS, lat)
+	addtimer(CALLBACK(src, PROC_REF(do_window_act), node, action, params.Copy(), node.network, operator), max(1, lat))
+	log_line("[node.address]: запрос «[entry["name"]]» отправлен, ~[lat * 100] мс.")
+
+/datum/netrun_console/proc/window_action(datum/component/netrun_node/node, action)
 	var/atom/A = node.parent
-	var/result = A.netrun_window_act(src, node, action, params)
+	for(var/list/entry as anything in A.netrun_window_actions(src, node))
+		if(entry["id"] == action)
+			return entry
+
+/datum/netrun_console/proc/do_window_act(datum/component/netrun_node/node, action, list/params, datum/netrun_network/sent_network, mob/sender)
+	if(!QDELETED(node))
+		node.join_network()
+	if(QDELETED(node) || is_locked() || !can_route(node) || !node.is_online() || node.network != sent_network || sender != operator)
+		log_line("Запрос окна отменён: связь изменилась.", "bad")
+		return
+	var/list/entry = window_action(node, action)
+	var/required = entry?["access"] || NETRUN_ACCESS_GUEST
+	if(!entry || node_level(node) < required)
+		return
+	var/atom/A = node.parent
+	var/result = world.PushUsr(operator, CALLBACK(A, TYPE_PROC_REF(/atom, netrun_window_act), src, node, action, params))
 	if(!isnull(result))
 		log_line(result)
+	var/illegal = legit_node_level(node) < required
+	node.add_log("[log_source()]: [entry["name"]][illegal ? " (без авторизации)" : ""].")
+	node.network?.add_log("[log_source()] -> [node.address]: [entry["name"]]", illegal)
+	if(illegal)
+		add_trace(4 * node.get_security())
 
 // MARK: Просмотр камеры
 

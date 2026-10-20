@@ -61,14 +61,15 @@
 		total += amount
 	if(!total)
 		return "В банке сети нечего сливать."
-	server.stored_research.remove_point_list(stolen)
 	var/list/report = list()
 	for(var/point_type in stolen)
 		report += "[point_type]: [stolen[point_type]]"
 	var/datum/netrun_file/file = new("rnd_[server.server_id].dat", NETRUN_FILE_TEXT, "Выгрузка исследований с сервера [server.network_id]:\n[jointext(report, "\n")]", 2)
 	if(!console.store_file(file))
 		qdel(file)
-		console.log_line("Нет места в хранилище - данные не сохранены, но очки уже списаны.", "bad")
+		return "Нет места в хранилище. Очки не списаны."
+	server.stored_research.remove_point_list(stolen)
+	console.selected_file_uid = file.uid
 	return "Слито очков: [total]. Данные записаны в хранилище."
 
 /datum/netrun_command/rnd_choke
@@ -134,27 +135,26 @@
 	if(!console.store_file(file))
 		qdel(file)
 		return "Нет места в хранилище."
+	console.selected_file_uid = file.uid
 	return "Снят дамп техвеба: [length(ids)] узлов в [file.name]."
 
 /datum/netrun_command/rnd_push
 	id = "rnd_push"
 	name = "Залить техвеб"
 	desc = "Разблокировать на этом сервере узлы из сохранённого дампа техвеба."
+	help = "Сначала выберите файл дампа техвеба в памяти или на шарде. Импорт добавляет ещё неизвестные технологии в текущую сеть сервера; файл остаётся на носителе. Файл привязки .link используется отдельной командой «Привязать из файла»."
 	access = NETRUN_ACCESS_ROOT
 	icon = "upload"
 	trace = 11
 	danger = TRUE
 
-/datum/netrun_command/rnd_push/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+/datum/netrun_command/rnd_push/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
 	var/obj/machinery/rnd/server/server = node.parent
 	if(!server.stored_research)
 		return "Техвеб не подключён."
-	var/datum/netrun_file/source
-	for(var/datum/netrun_file/file as anything in console.all_files())
-		if(file.kind == NETRUN_FILE_TECHWEB)
-			source = file
+	var/datum/netrun_file/source = console.selected_local_file(NETRUN_FILE_TECHWEB, request)
 	if(!source)
-		return "В хранилище нет дампа техвеба."
+		return "Выберите дамп техвеба в памяти или на шарде."
 	var/count = 0
 	for(var/node_id in splittext(source.content, ";"))
 		if(!SSresearch.techweb_nodes[node_id])

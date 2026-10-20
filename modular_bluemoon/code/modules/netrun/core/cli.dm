@@ -46,6 +46,7 @@
 		return
 	log_line("$ [text]", "label")
 	var/list/words = splittext(text, " ")
+	words -= ""
 	var/verb_name = lowertext(words[1])
 	var/list/registry = SSnetrun.get_cli_commands()
 	var/datum/netrun_cli_command/command = registry[verb_name]
@@ -54,12 +55,12 @@
 		return
 	command.execute(src, words, text)
 
-/// Список команд для автодополнения в tgui
+/// Список команд и актуальных аргументов для автодополнения в tgui
 /datum/netrun_console/proc/cli_verbs()
 	. = list()
 	for(var/verb_name in SSnetrun.get_cli_commands())
 		var/datum/netrun_cli_command/command = SSnetrun.cli_commands[verb_name]
-		. += list(list("id" = command.id, "args" = command.args, "desc" = command.desc))
+		. += list(list("id" = command.id, "args" = command.args, "desc" = command.desc, "category" = command.category, "completions" = command.completions(src, "")))
 
 // MARK: help
 
@@ -76,7 +77,15 @@
 	if(length(words) > 1)
 		var/datum/netrun_cli_command/target = registry[lowertext(words[2])]
 		if(!target)
-			console.log_line("Нет такой команды.", "bad")
+			var/datum/component/netrun_node/node = console.selected_node()
+			var/full_id = lowertext(words[2])
+			var/datum/netrun_command/request = SSnetrun.get_command(full_id)
+			if(node && request && full_id in node.all_command_ids())
+				console.log_line("run [full_id] — [request.display_name(node, netrun_command_arg(full_id))]", "label")
+				for(var/line in splittext(request.help_text(node, console, full_id), "\n"))
+					console.log_line(line)
+				return
+			console.log_line("Нет такой команды. help run — запросы выбранного узла.", "bad")
 			return
 		for(var/line in target.detailed_help(console))
 			console.log_line(line)
@@ -91,6 +100,14 @@
 		for(var/datum/netrun_cli_command/command as anything in by_cat[category])
 			console.log_line("  [command.id] [command.args] — [command.desc]")
 	console.log_line("help <команда> — подробно.", "label")
+
+/datum/netrun_cli_command/help/completions(datum/netrun_console/console, partial)
+	. = list()
+	for(var/verb_name in SSnetrun.get_cli_commands())
+		. += verb_name
+	var/datum/component/netrun_node/node = console.selected_node()
+	if(node)
+		. |= node.all_command_ids()
 
 // MARK: Навигация
 
@@ -112,6 +129,9 @@
 		console.log_line("Сеть недоступна.", "bad")
 		return
 	console.viewed_network_id = network.id
+	console.selected_network = network.id
+	console.selected_address = null
+	console.active_window = null
 	console.log_line("Открыта сеть [network.code].")
 
 /datum/netrun_cli_command/net/completions(datum/netrun_console/console, partial)
@@ -129,11 +149,21 @@
 
 /datum/netrun_cli_command/sel/execute(datum/netrun_console/console, list/words, raw)
 	var/datum/component/netrun_node/node = SSnetrun.find_node(length(words) > 1 ? words[2] : null)
-	if(!node || console.node_level(node) < NETRUN_ACCESS_GUEST)
+	if(!node || !console.node_visible(node))
 		console.log_line("Узел не найден или нет доступа.", "bad")
 		return
 	console.selected_address = node.address
+	console.selected_network = null
+	console.active_window = null
+	console.viewed_network_id = null
 	console.log_line("Выбран [node.get_name()] [node.address].")
+
+/datum/netrun_cli_command/sel/completions(datum/netrun_console/console, partial)
+	. = list()
+	for(var/address in SSnetrun.nodes_by_address)
+		var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
+		if(console.can_route(node) && (console.network_level(node.network) >= NETRUN_ACCESS_GUEST || node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)))
+			. += node.address
 
 /datum/netrun_cli_command/nodes
 	id = "nodes"
@@ -141,12 +171,63 @@
 	category = "Навигация"
 
 /datum/netrun_cli_command/nodes/execute(datum/netrun_console/console, list/words, raw)
-	var/datum/netrun_network/network = SSnetrun.networks[console.viewed_network_id]
+	var/datum/netrun_network/network = SSnetrun.networks[console.selected_network || console.viewed_network_id]
+	if(!network)
+		var/datum/component/netrun_node/node = console.selected_node()
+		network = node?.network || console.jack?.network
 	if(!network || console.network_level(network) < NETRUN_ACCESS_GUEST)
 		console.log_line("Нет открытой сети.", "bad")
 		return
 	for(var/datum/component/netrun_node/node as anything in network.nodes)
 		console.log_line("[node.address] [node.get_name()] ([node.node_type], [netrun_access_name(console.node_level(node))])")
+
+/datum/netrun_cli_command/open
+	id = "open"
+	args = "\[адрес\]"
+	desc = "Открыть выбранный узел или указанный адрес во вкладке."
+	category = "Навигация"
+
+/datum/netrun_cli_command/open/execute(datum/netrun_console/console, list/words, raw)
+	var/datum/component/netrun_node/node = length(words) > 1 ? SSnetrun.find_node(words[2]) : console.selected_node()
+	if(!node || !console.open_window(node.address))
+		console.log_line("Узел не найден или недоступен.", "bad")
+
+/datum/netrun_cli_command/open/completions(datum/netrun_console/console, partial)
+	var/list/registry = SSnetrun.get_cli_commands()
+	var/datum/netrun_cli_command/command = registry["sel"]
+	return command.completions(console, partial)
+
+/datum/netrun_cli_command/close
+	id = "close"
+	args = "\[адрес\]"
+	desc = "Закрыть активную вкладку или вкладку указанного узла."
+	category = "Навигация"
+
+/datum/netrun_cli_command/close/execute(datum/netrun_console/console, list/words, raw)
+	var/address = length(words) > 1 ? uppertext(words[2]) : console.active_window
+	if(!(address in console.windows))
+		console.log_line("Такая вкладка не открыта.", "bad")
+		return
+	console.close_window(address)
+
+/datum/netrun_cli_command/close/completions(datum/netrun_console/console, partial)
+	return console.windows.Copy()
+
+/datum/netrun_cli_command/info
+	id = "info"
+	desc = "Связь, точка подключения, трассировка и выбранный узел."
+	category = "Общие"
+
+/datum/netrun_cli_command/info/execute(datum/netrun_console/console, list/words, raw)
+	console.log_line("Точка: [console.name] ([console.origin]); [console.wireless ? "беспроводная связь" : "проводная связь"].", "label")
+	console.log_line("NTnet: [console.has_uplink() ? "связь есть" : "нет связи"]. Трассировка: [round(console.trace, 0.1)]%.")
+	if(console.is_locked())
+		console.log_line("Блокировка: [round((console.lockout_until - world.time) / (1 SECONDS))] с.", "bad")
+	var/datum/component/netrun_node/node = console.selected_node()
+	if(node)
+		console.log_line("Цель: [node.get_name()] [node.address], доступ [netrun_access_name(console.node_level(node))], сеть [node.network?.code].")
+	else
+		console.log_line("Узел не выбран. sel <адрес> — выбрать, net — список кодов сетей.")
 
 // MARK: Действия с узлами
 
@@ -162,10 +243,10 @@
 	if(!node)
 		. += "  (узел не выбран)"
 		return
-	for(var/command_id in node.command_ids)
+	for(var/command_id in node.all_command_ids())
 		var/datum/netrun_command/command = SSnetrun.get_command(command_id)
 		if(command)
-			. += "  [command.id] — [command.desc || command.name]"
+			. += "  [command_id] — [command.desc || command.name] ([netrun_access_name(command.access)])"
 
 /datum/netrun_cli_command/run/execute(datum/netrun_console/console, list/words, raw)
 	if(length(words) < 2)
@@ -176,8 +257,9 @@
 /datum/netrun_cli_command/run/completions(datum/netrun_console/console, partial)
 	. = list()
 	var/datum/component/netrun_node/node = console.selected_node()
-	for(var/command_id in node?.command_ids)
-		. += command_id
+	if(node)
+		for(var/command_id in node.all_command_ids())
+			. += command_id
 
 /datum/netrun_cli_command/scan
 	id = "scan"
@@ -197,6 +279,11 @@
 	var/datum/component/netrun_node/node = length(words) > 1 ? SSnetrun.find_node(words[2]) : console.selected_node()
 	console.run_command(node, "ping")
 
+/datum/netrun_cli_command/ping/completions(datum/netrun_console/console, partial)
+	var/list/registry = SSnetrun.get_cli_commands()
+	var/datum/netrun_cli_command/command = registry["sel"]
+	return command.completions(console, partial)
+
 /datum/netrun_cli_command/breach
 	id = "breach"
 	args = "\[адрес|код сети\]"
@@ -210,6 +297,15 @@
 		console.start_breach("network", network.id)
 	else
 		console.start_breach("node", token || console.selected_address)
+
+/datum/netrun_cli_command/breach/completions(datum/netrun_console/console, partial)
+	var/list/registry = SSnetrun.get_cli_commands()
+	var/datum/netrun_cli_command/command = registry["sel"]
+	. = command.completions(console, partial)
+	for(var/network_id in SSnetrun.networks)
+		var/datum/netrun_network/network = SSnetrun.networks[network_id]
+		if(console.can_reach(network))
+			. += network.code
 
 // MARK: Память
 
@@ -236,6 +332,39 @@
 	if(console.shard)
 		console.log_line("Шард [console.shard.name]: [netrun_storage_used(console.shard.files)]/[console.shard.capacity]")
 
+/datum/netrun_cli_command/daemons
+	id = "daemons"
+	args = "\[id\]"
+	desc = "Каталог программ, их эффекты и наличие в памяти или на шарде."
+	category = "Память"
+
+/datum/netrun_cli_command/daemons/detailed_help(datum/netrun_console/console)
+	. = ..()
+	. += "Демоны работают автоматически из локальной памяти или подключённого шарда. Копии не складываются."
+	for(var/list/definition as anything in SSnetrun.daemon_definitions())
+		. += "  [definition["id"]] — [definition["name"]]: [definition["desc"]]"
+
+/datum/netrun_cli_command/daemons/execute(datum/netrun_console/console, list/words, raw)
+	var/filter = length(words) > 1 ? lowertext(words[2]) : null
+	if(filter && !SSnetrun.get_daemon(filter))
+		console.log_line("Программа не найдена. daemons — каталог.", "bad")
+		return
+	for(var/list/definition as anything in SSnetrun.daemon_definitions())
+		if(filter && definition["id"] != filter)
+			continue
+		var/installed = FALSE
+		for(var/datum/netrun_file/file as anything in console.all_files())
+			if(file.kind == NETRUN_FILE_DAEMON && file.content == definition["id"])
+				installed = TRUE
+				break
+		console.log_line("[definition["id"]] — [definition["name"]] ([definition["size"]] памяти): [installed ? "активна" : "не установлена"].", installed ? "good" : "label")
+		console.log_line("  [definition["desc"]]")
+
+/datum/netrun_cli_command/daemons/completions(datum/netrun_console/console, partial)
+	. = list()
+	for(var/list/definition as anything in SSnetrun.daemon_definitions())
+		. += definition["id"]
+
 /datum/netrun_cli_command/rm
 	id = "rm"
 	args = "<имя>"
@@ -246,7 +375,7 @@
 	if(length(words) < 2)
 		console.log_line("Укажите имя файла.", "bad")
 		return
-	var/wanted = lowertext(words[2])
+	var/wanted = lowertext(trim(copytext(raw, length(words[1]) + 2)))
 	for(var/datum/netrun_file/file as anything in console.all_files())
 		if(lowertext(file.name) == wanted)
 			console.delete_local_file(file)

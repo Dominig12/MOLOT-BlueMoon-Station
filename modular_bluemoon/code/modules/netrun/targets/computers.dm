@@ -2,17 +2,16 @@
 //
 // Консоли и ноутбуки становятся узлами: их видно в сети, можно снять состояние, посмотреть
 // запущенные программы и, с достаточным доступом, закрыть программу или выключить машину.
-// Карманные устройства (КПК/планшеты) в граф не добавляются, чтобы не захламлять карту -
-// с ними работают через программу NetCommander и мессенджер.
+// Карманные устройства тоже доступны как узлы; исключение — виртуальный КПК сущности.
 
 /obj/item/modular_computer
 	/// Регистрировать ли устройство как узел сети
-	var/netrun_nodeable = FALSE
+	var/netrun_nodeable = TRUE
 
 /obj/item/modular_computer/Initialize(mapload)
 	. = ..()
 	if(netrun_nodeable)
-		AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list("pc_programs", "pc_print", "pc_terminate", "pc_shutdown"), 1)
+		AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list("pc_programs", "pc_print", "pc_terminate", "pc_shutdown"), 1, list())
 
 /obj/item/modular_computer/netrun_online(remote = TRUE)
 	return enabled
@@ -45,6 +44,9 @@
 
 // Виртуальный КПК сущности узлом быть не должен
 /obj/item/modular_computer/pda/netrun
+	netrun_nodeable = FALSE
+
+/obj/item/modular_computer/pda/silicon/pai
 	netrun_nodeable = FALSE
 
 // MARK: Команды
@@ -90,6 +92,8 @@
 /datum/netrun_command/pc_shutdown
 	id = "pc_shutdown"
 	name = "Выключить устройство"
+	desc = "Завершить работу выбранного модульного компьютера и его программ."
+	help = "Устройство отключается штатным способом. После выключения оно перестанет отвечать как сетевой узел; для запуска нужен физический доступ к кнопке питания."
 	access = NETRUN_ACCESS_ROOT
 	icon = "power-off"
 	trace = 6
@@ -106,22 +110,27 @@
 /datum/netrun_command/pc_print
 	id = "pc_print"
 	name = "Печать файла"
-	desc = "Распечатать текстовый файл из хранилища на принтере устройства."
+	desc = "Распечатать выбранный текст или фотографию из памяти либо шарда на принтере устройства."
+	help = "Сначала выберите файл в хранилище терминала. Нужен установленный исправный принтер и бумага; каждый лист или снимок расходует один лист. Результат появляется возле компьютера."
 	access = NETRUN_ACCESS_USER
 	icon = "print"
 	trace = 3
 
-/datum/netrun_command/pc_print/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+/datum/netrun_command/pc_print/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
 	var/obj/item/modular_computer/computer = node.parent
 	var/obj/item/computer_hardware/printer/printer = computer.all_components[MC_PRINT]
 	if(!printer)
 		return "В устройстве нет принтера."
-	var/datum/netrun_file/doc
-	for(var/datum/netrun_file/file as anything in console.all_files())
-		if(file.kind == NETRUN_FILE_TEXT)
-			doc = file
+	var/datum/netrun_file/doc = console.selected_local_file(null, request)
 	if(!doc)
-		return "В хранилище нет текстового файла."
-	if(!printer.print_text(doc.content, doc.name))
+		return "Выберите текстовый файл или фотографию в памяти либо на шарде."
+	var/printed = FALSE
+	if(doc.kind == NETRUN_FILE_TEXT)
+		printed = printer.print_text(replacetext(html_encode(doc.content), "\n", "<br>"), doc.name)
+	else if(doc.kind == NETRUN_FILE_PHOTO && doc.picture)
+		printed = printer.print_picture(doc.picture, doc.name)
+	else
+		return "Этот тип файла нельзя напечатать."
+	if(!printed)
 		return "Печать не удалась (нет бумаги или принтер неисправен)."
 	return "Отправлено на печать: [doc.name]."

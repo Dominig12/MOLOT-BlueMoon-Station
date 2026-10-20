@@ -3,6 +3,8 @@
 	var/id
 	var/name = "команда"
 	var/desc = ""
+	/// Дополнительная справка команды; общие правила выводятся автоматически.
+	var/help = ""
 	/// Минимальный уровень доступа
 	var/access = NETRUN_ACCESS_USER
 	/// Трассировка за нелегальный вызов (умножается на защиту узла)
@@ -17,8 +19,15 @@
 	var/ignores_latency = FALSE
 
 /// Выполнить команду. Возвращает текст результата или null при неудаче (причину пишет в консоль сам)
-/datum/netrun_command/proc/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg)
+/datum/netrun_command/proc/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
 	return
+
+/// Неизменяемые параметры конкретного пакета, отдельные от текущего выбора интерфейса.
+/datum/netrun_request
+	var/file_uid
+
+/datum/netrun_request/New(file_uid)
+	src.file_uid = file_uid
 
 /// Подпись кнопки - команды органов добавляют имя органа
 /datum/netrun_command/proc/display_name(datum/component/netrun_node/node, arg)
@@ -31,13 +40,54 @@
 		"id" = full_id || id,
 		"name" = display_name(node, netrun_command_arg(full_id)),
 		"desc" = desc,
+		"help" = help_text(node, console, full_id),
 		"icon" = icon,
 		"danger" = danger,
 		"access" = access,
-		"allowed" = level >= access,
+		"allowed" = level >= access && console.can_route(node) && (works_offline || node.is_online(node != console.jack)) && !console.is_locked(),
 		"illegal" = legit < access,
 		"trace" = legit < access ? round(trace * node.get_security() * console.effective_trace_mult()) : 0,
 	)
+
+/datum/netrun_command/proc/help_text(datum/component/netrun_node/node, datum/netrun_console/console, full_id)
+	var/list/lines = list("[full_id || id] — [name]", desc, "Доступ: [netrun_access_name(access)].")
+	if(length(help))
+		lines += help
+	if(node && console)
+		lines += "Трассировка без авторизации: +[round(trace * node.get_security() * console.effective_trace_mult(), 0.1)]%."
+		lines += ignores_latency ? "Выполняется без задержки маршрута." : "Доставка запроса: ~[console.latency_to(node) * 100] мс; маршрут и доступ проверяются при доставке."
+	lines += works_offline ? "Допускается запрос к отключённому узлу." : "Требуется работающий узел."
+	return jointext(lines, "\n")
+
+/datum/netrun_command/node_log
+	id = "node_log"
+	name = "Журнал узла"
+	desc = "Прочитать последние сетевые события этой машины."
+	help = "Журнал следует за устройством при смене отсека. Содержит подключения, запросы, файловые операции и события защиты."
+	access = NETRUN_ACCESS_USER
+	trace = 2
+	icon = "list"
+	works_offline = TRUE
+
+/datum/netrun_command/node_log/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	return length(node.logs) ? jointext(node.logs, "\n") : "Журнал пуст."
+
+/datum/netrun_command/firmware
+	id = "firmware"
+	name = "Обход ограничений"
+	desc = "Запустить отдельный сложный взлом защиты прошивки устройства."
+	help = "Нужны ROOT, icepick.exe и второй Breach Protocol повышенной сложности. Только собранный демон ROOT применяет штатный emag_act машины; доступ ROOT сам по себе ограничений не снимает. Неудача оставляет следы."
+	access = NETRUN_ACCESS_ROOT
+	trace = 0
+	icon = "microchip"
+	danger = TRUE
+
+/datum/netrun_command/firmware/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	if(!console.daemon_bonus("icepick"))
+		return "Для атаки прошивки нужен icepick.exe в памяти."
+	if(!console.start_breach("firmware", node.address))
+		return "Нельзя начать взлом прошивки: проверьте соединение и активный взлом."
+	return "Запущен подбор защиты прошивки."
 
 // MARK: Общие команды
 

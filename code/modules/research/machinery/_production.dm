@@ -301,8 +301,8 @@
 	. = ..()
 	if(.)
 		return
-	var/mob/living/user = usr
-	if(!istype(user))
+	var/mob/user = usr
+	if(!isliving(user) && !(istype(state, /datum/ui_state/netrun_request) && state.can_use_topic(src, user) == UI_INTERACTIVE))
 		return
 	if(!user.can_use_production_topic(src, action))
 		if(COOLDOWN_FINISHED(src, cooldown_say))

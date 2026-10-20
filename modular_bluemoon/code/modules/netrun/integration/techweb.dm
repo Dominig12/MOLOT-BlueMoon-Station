@@ -1,7 +1,7 @@
 // MARK: Привязка техвеба к машинам (через /datum/component/techweb_holder)
 //
 // Любая машина-узел с компонентом techweb_holder может быть источником (скопировать её
-// исследовательскую сеть в буфер) и приёмником (привязать к сохранённой сети). Так можно,
+// исследовательскую сеть в файл) и приёмником (привязать к выбранному файлу). Так можно,
 // например, увести станционный техвеб с РнД-консоли и подцепить к нему автономный сервер.
 
 /// Команды появляются у любого узла, чей атом держит techweb_holder
@@ -13,14 +13,6 @@
 	if(netrun_has_techweb())
 		. += list("web_copy", "web_bind")
 
-/datum/netrun_console
-	/// Буфер привязки: сохранённая исследовательская сеть
-	var/datum/weakref/techweb_buffer
-
-/datum/netrun_console/proc/buffered_techweb()
-	var/datum/techweb/web = techweb_buffer?.resolve()
-	return web
-
 /proc/netrun_atom_techweb(atom/A)
 	var/datum/component/techweb_holder/holder = A.GetComponent(/datum/component/techweb_holder)
 	return holder?.linked_techweb
@@ -31,7 +23,7 @@
 /datum/netrun_command/web_copy
 	id = "web_copy"
 	name = "Скопировать привязку"
-	desc = "Сохранить исследовательскую сеть этой машины в буфер привязки."
+	desc = "Сохранить доступ к исследовательской сети отдельным переносимым файлом."
 	access = NETRUN_ACCESS_USER
 	icon = "clone"
 	trace = 5
@@ -40,26 +32,38 @@
 	var/datum/techweb/web = netrun_node_techweb(node)
 	if(!web)
 		return "Машина не подключена к исследовательской сети."
-	console.techweb_buffer = WEAKREF(web)
-	return "Привязка сохранена в буфер: [web.organization]."
+	var/datum/netrun_file/file = new(netrun_file_name("[web.organization].link", "research.link"), NETRUN_FILE_TECHWEB_LINK, web.organization, 1)
+	file.techweb_ref = WEAKREF(web)
+	if(!console.store_file(file))
+		qdel(file)
+		return "Нет места для файла привязки."
+	console.selected_file_uid = file.uid
+	return "Привязка сохранена в [file.name]. Файл можно скопировать на шард и перенести."
 
 /datum/netrun_command/web_bind
 	id = "web_bind"
-	name = "Привязать из буфера"
-	desc = "Подключить машину к сохранённой в буфере исследовательской сети."
+	name = "Привязать из файла"
+	desc = "Подключить машину к сети из выбранного файла привязки в памяти или на шарде."
 	access = NETRUN_ACCESS_ROOT
 	icon = "link"
 	trace = 10
 	danger = TRUE
 
-/datum/netrun_command/web_bind/execute(datum/component/netrun_node/node, datum/netrun_console/console)
-	var/datum/techweb/web = console.buffered_techweb()
+/datum/netrun_command/web_bind/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
+	var/datum/netrun_file/file = console.selected_local_file(NETRUN_FILE_TECHWEB_LINK, request)
+	if(!file)
+		return "Выберите файл привязки исследовательской сети в памяти или на шарде."
+	var/datum/techweb/web = file.techweb_ref?.resolve()
 	if(!web)
-		return "Буфер привязки пуст — сначала «Скопировать привязку»."
+		return "Сеть из выбранного файла больше не существует."
 	var/atom/A = node.parent
+	if(!A.netrun_has_techweb())
+		return "Машина не поддерживает исследовательскую сеть."
 	if(netrun_node_techweb(node) == web)
 		return "Машина уже привязана к этой сети."
 	SEND_SIGNAL(A, COMSIG_ATOM_SET_TECHWEB, web)
+	if(netrun_node_techweb(node) != web)
+		return "Машина не приняла привязку."
 	return "Машина привязана к сети [web.organization]."
 
 // MARK: Узлы у исследовательских машин

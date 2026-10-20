@@ -33,6 +33,7 @@
 	data["log"] = log
 	data["jack"] = jack ? list("address" = jack.address, "name" = jack.get_name()) : null
 	data["host_actions"] = host_actions()
+	data["file"] = file_payload()
 
 	var/list/networks = list()
 	var/list/homes = home_networks()
@@ -122,17 +123,13 @@
 
 	var/datum/component/netrun_node/node = selected_node()
 	var/list/selected = null
-	if(node && node_level(node) >= NETRUN_ACCESS_GUEST)
+	if(node && node_visible(node))
 		var/level = node_level(node)
 		selected = node.ui_entry(src)
 		selected["network"] = node.network?.short_name
 		selected["legit"] = legit_node_level(node)
-		var/list/commands = list()
-		for(var/command_id in node.all_command_ids())
-			var/datum/netrun_command/command = SSnetrun.get_command(command_id)
-			if(command)
-				commands += list(command.ui_entry(node, src, command_id))
-		selected["commands"] = commands
+		selected["commands"] = node.command_entries(src)
+		selected["logs"] = level >= NETRUN_ACCESS_USER ? node.logs.Copy() : list()
 		var/atom/A = node.parent
 		selected["status"] = level >= NETRUN_ACCESS_USER ? A.netrun_status() : list()
 		if(node.files && level >= NETRUN_ACCESS_USER)
@@ -187,7 +184,7 @@
 /datum/netrun_console/proc/storage_payload()
 	var/list/local = list()
 	for(var/datum/netrun_file/file as anything in storage)
-		local += list(file.ui_entry())
+		local += list(file.ui_entry(selected_file_uid))
 	return list("files" = local, "used" = netrun_storage_used(storage), "capacity" = storage_capacity)
 
 /datum/netrun_console/proc/shard_payload()
@@ -195,7 +192,7 @@
 		return null
 	var/list/shard_files = list()
 	for(var/datum/netrun_file/file as anything in shard.files)
-		shard_files += list(file.ui_entry())
+		shard_files += list(file.ui_entry(selected_file_uid))
 	return list("name" = shard.name, "files" = shard_files, "used" = netrun_storage_used(shard.files), "capacity" = shard.capacity)
 
 // MARK: Мост «сайты NTnet в терминале» (только чтение, данные из SSntnet)
@@ -245,6 +242,8 @@
 	if(.)
 		return
 	operator = ui.user
+	if(file_act(action, params, ui.user))
+		return TRUE
 	switch(action)
 		if("view_network")
 			active_window = null
@@ -261,7 +260,7 @@
 			return TRUE
 		if("select")
 			var/datum/component/netrun_node/node = SSnetrun.find_node(params["address"])
-			if(node && node_level(node) >= NETRUN_ACCESS_GUEST)
+			if(node && node_visible(node))
 				selected_address = node.address
 				selected_network = null
 			return TRUE
@@ -274,6 +273,11 @@
 		if("window_focus")
 			if(params["address"] in windows)
 				active_window = params["address"]
+				selected_address = active_window
+				selected_network = null
+			return TRUE
+		if("remote_act")
+			remote_request(params["address"], params["request"], params["arguments"])
 			return TRUE
 		if("window_act")
 			window_act(params["address"], params["waction"], params)
@@ -374,8 +378,9 @@
 		if(file.uid == uid)
 			return file
 
-/datum/netrun_console/proc/transfer_from_node(uid, to_shard)
-	var/datum/component/netrun_node/node = selected_node()
+/datum/netrun_console/proc/transfer_from_node(uid, to_shard, datum/component/netrun_node/node, delivered = FALSE)
+	if(!delivered)
+		return queue_file_request("download", selected_node(), uid, to_shard)
 	if(!node?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != jack) || !can_route(node))
 		return
 	var/datum/netrun_file/file = remote_file(node, uid)
@@ -387,14 +392,16 @@
 		log_line("Недостаточно места.", "bad")
 		return
 	node.touch()
+	node.add_log("[log_source()]: скачан [file.name].")
 	log_line("Скачано: [file.name].", "good")
 	var/illegal = legit_node_level(node) < NETRUN_ACCESS_USER
 	node.network?.add_log("[log_source()] скачал [file.name] с [node.address][illegal ? " (без авторизации)" : ""]", illegal)
 	if(illegal)
 		add_trace(4 * node.get_security())
 
-/datum/netrun_console/proc/transfer_to_node(uid)
-	var/datum/component/netrun_node/node = selected_node()
+/datum/netrun_console/proc/transfer_to_node(uid, datum/component/netrun_node/node, delivered = FALSE)
+	if(!delivered)
+		return queue_file_request("upload", selected_node(), uid)
 	if(!node?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != jack) || !can_route(node))
 		return
 	var/datum/netrun_file/file = find_local_file(uid)
@@ -405,37 +412,73 @@
 		return
 	node.files += file.copy()
 	node.touch()
+	node.add_log("[log_source()]: загружен [file.name].")
 	log_line("Загружено: [file.name].", "good")
 	var/illegal = legit_node_level(node) < NETRUN_ACCESS_USER
 	node.network?.add_log("[log_source()] загрузил [file.name] на [node.address]")
 	if(illegal)
 		add_trace(3 * node.get_security())
 
-/datum/netrun_console/proc/delete_from_node(uid)
-	var/datum/component/netrun_node/node = selected_node()
-	if(!node?.files || node_level(node) < NETRUN_ACCESS_ROOT || !node.is_online(node != jack))
+/datum/netrun_console/proc/delete_from_node(uid, datum/component/netrun_node/node, delivered = FALSE)
+	if(!delivered)
+		return queue_file_request("delete", selected_node(), uid)
+	if(!node?.files || node_level(node) < NETRUN_ACCESS_ROOT || !node.is_online(node != jack) || !can_route(node))
 		return
 	var/datum/netrun_file/file = remote_file(node, uid)
 	if(!file)
 		return
 	node.files -= file
 	log_line("Удалено с узла: [file.name].", "average")
+	node.add_log("[log_source()]: удалён [file.name].")
 	node.network?.add_log("[log_source()] удалил [file.name] с [node.address]")
 	if(legit_node_level(node) < NETRUN_ACCESS_ROOT)
 		add_trace(5 * node.get_security())
 	qdel(file)
 
+/// Один путь доставки файлов для кнопок, CLI и будущих клиентов.
+/datum/netrun_console/proc/queue_file_request(action, datum/component/netrun_node/node, uid, to_shard = FALSE)
+	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
+	if(!node?.files || !can_route(node) || node_level(node) < required || !node.is_online(node != jack) || is_locked() || world.time < next_command)
+		return FALSE
+	var/lat = latency_to(node)
+	next_command = world.time + max(lat, 0.5 SECONDS)
+	if(!lat)
+		return deliver_file_request(action, node, uid, to_shard, node.network, operator)
+	log_line("[node.address]: файловый запрос отправлен, ~[lat * 100] мс.")
+	addtimer(CALLBACK(src, PROC_REF(deliver_file_request), action, node, uid, to_shard, node.network, operator), lat)
+	return TRUE
+
+/datum/netrun_console/proc/deliver_file_request(action, datum/component/netrun_node/node, uid, to_shard, datum/netrun_network/sent_network, mob/sender)
+	if(QDELETED(node))
+		return FALSE
+	node.join_network()
+	if(sender != operator || node.network != sent_network || is_locked() || !can_route(node) || !node.is_online(node != jack))
+		log_line("Файловый запрос отменён: соединение изменилось.", "bad")
+		return FALSE
+	switch(action)
+		if("download")
+			transfer_from_node(uid, to_shard, node, TRUE)
+		if("upload")
+			transfer_to_node(uid, node, TRUE)
+		if("delete")
+			delete_from_node(uid, node, TRUE)
+		if("read")
+			if(node_level(node) < NETRUN_ACCESS_USER)
+				return FALSE
+			var/datum/netrun_file/file = remote_file(node, uid)
+			if(!file)
+				return FALSE
+			file.show(operator)
+			node.add_log("[log_source()]: прочитан [file.name].")
+			if(legit_node_level(node) < NETRUN_ACCESS_USER)
+				add_trace(2 * node.get_security())
+	return TRUE
+
 /datum/netrun_console/proc/read_file(mob/user, uid)
 	var/datum/netrun_file/file = find_local_file(uid)
 	if(!file)
-		file = remote_file(selected_node(), uid)
-		if(file && node_level(selected_node()) < NETRUN_ACCESS_USER)
-			return
-	if(!file || file.kind != NETRUN_FILE_TEXT)
-		return
-	var/datum/browser/popup = new(user, "netrun_file_[file.uid]", file.name, 450, 500)
-	popup.set_content("<tt>[replacetext(html_encode(file.content), "\n", "<br>")]</tt>")
-	popup.open()
+		return queue_file_request("read", selected_node(), uid)
+	file?.show(user)
 
 // MARK: Командная строка
 

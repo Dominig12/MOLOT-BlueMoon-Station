@@ -18,6 +18,9 @@
 #define NETRUN_NODE_IMPLANT "implant"
 #define NETRUN_NODE_BORG "borg"
 #define NETRUN_NODE_AI "ai"
+#define NETRUN_NODE_NEURAL "neural"
+#define NETRUN_NODE_PAI "pai"
+#define NETRUN_NODE_DECK "deck"
 
 // Точки подключения консоли
 #define NETRUN_ORIGIN_TERMINAL "terminal"
@@ -26,6 +29,7 @@
 #define NETRUN_ORIGIN_NTOS "ntos"
 #define NETRUN_ORIGIN_ENTITY "entity"
 #define NETRUN_ORIGIN_CIRCUIT "circuit"
+#define NETRUN_ORIGIN_PAI "pai"
 
 // Сети
 #define NETRUN_GLOBAL_ID "ntnet"
@@ -43,6 +47,14 @@
 #define NETRUN_FILE_DAEMON "daemon"
 #define NETRUN_FILE_SEED "seed"
 #define NETRUN_FILE_TECHWEB "techweb"
+#define NETRUN_FILE_TECHWEB_LINK "techweb_link"
+#define NETRUN_FILE_PHOTO "photo"
+
+/// События расширений: источник сигнала — сущность или её консоль.
+#define COMSIG_NETRUN_ENTITY_NODE_CHANGED "netrun_entity_node_changed"
+#define COMSIG_NETRUN_ENTITY_TICK "netrun_entity_tick"
+#define COMSIG_NETRUN_ENTITY_INTEGRITY "netrun_entity_integrity"
+#define COMSIG_NETRUN_CONSOLE_EVENT "netrun_console_event"
 
 #define NETRUN_TRACE_MAX 100
 /// Сколько трассировки спадает за секунду простоя

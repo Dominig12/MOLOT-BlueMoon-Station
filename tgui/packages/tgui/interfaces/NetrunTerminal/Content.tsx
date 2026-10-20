@@ -17,6 +17,8 @@ const ORIGIN_NAMES: Record<string, string> = {
   ntos: 'NTOS-клиент',
   entity: 'Резидентный процесс',
   circuit: 'Схема',
+  pai: 'пИИ',
+  neural: 'Нейроинтерфейс',
 };
 
 /** Общее содержимое окна - используется и терминалом, и NTOS-программой */
@@ -76,25 +78,27 @@ export const NetrunContent = () => {
           ))}
         </Tabs>
       )}
-      {machineWindow ? (
+      {breach && <MatrixPanel state={breach} />}
+      {!breach && machineWindow && (
         <Box style={{ minHeight: '360px' }}>
           <WindowPanel window={machineWindow} />
         </Box>
-      ) : web ? (
+      )}
+      {!breach && !machineWindow && web && (
         <Box style={{ minHeight: '360px' }}>
           <WebPanel web={web} />
         </Box>
-      ) : (
-      <Stack>
-        <Stack.Item grow basis={0}>
-          {breach ? <MatrixPanel state={breach} /> : <StationMap />}
-        </Stack.Item>
-        <Stack.Item>
+      )}
+      <div style={{ display: breach || machineWindow || web ? 'none' : 'flex', flexWrap: 'wrap', alignItems: 'stretch', gap: '6px' }}>
+        <div style={{ flex: '2 1 440px', minWidth: 0 }}>
+          <StationMap />
+        </div>
           <div
             style={{
               width: '280px',
-              minWidth: '210px',
+              minWidth: '240px',
               maxWidth: '520px',
+              flex: '1 1 280px',
               minHeight: '360px',
               resize: 'horizontal',
               overflow: 'auto',
@@ -102,11 +106,9 @@ export const NetrunContent = () => {
           >
             <NodePanel />
           </div>
-        </Stack.Item>
-      </Stack>
-      )}
-      <Stack mt={1}>
-        <Stack.Item grow basis={0}>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+        <div style={{ flex: '2 1 440px', minWidth: 0 }}>
           <Tabs>
             <Tabs.Tab icon="terminal" selected={bottom === 'console'} onClick={() => setBottom('console')}>
               Консоль
@@ -115,12 +117,13 @@ export const NetrunContent = () => {
               #noosphere
             </Tabs.Tab>
           </Tabs>
-          {bottom === 'console' ? <ConsoleLog /> : <NetChat />}
-        </Stack.Item>
-        <Stack.Item basis="270px" style={{ height: '180px' }}>
+          <div style={{ display: bottom === 'console' ? 'block' : 'none' }}><ConsoleLog /></div>
+          <div style={{ display: bottom === 'chat' ? 'block' : 'none' }}><NetChat /></div>
+        </div>
+        <div style={{ flex: '1 1 270px', minWidth: '240px' }}>
           <StoragePanel />
-        </Stack.Item>
-      </Stack>
+        </div>
+      </div>
       <Legend />
     </Box>
   );
@@ -131,7 +134,7 @@ const Header = () => {
   const { origin, uplink, trace, locked, wireless, jack } = data;
   const traceColor = trace > 66 ? THEME.bad : trace > 33 ? THEME.warn : THEME.accent;
   return (
-    <Stack align="center" mb={1} style={{ fontFamily: 'monospace' }}>
+    <Stack align="center" mb={1} style={{ fontFamily: 'monospace', flexWrap: 'wrap', rowGap: '4px' }}>
       <Stack.Item>
         <Icon name={wireless ? 'wifi' : 'ethernet'} color={uplink ? THEME.accent : THEME.bad} mr={1} />
         {ORIGIN_NAMES[origin] || origin}
@@ -145,7 +148,7 @@ const Header = () => {
           {jack.name}
         </Stack.Item>
       )}
-      <Stack.Item grow ml={2}>
+      <Stack.Item grow ml={2} style={{ minWidth: '180px' }}>
         {locked > 0 ? (
           <Box color={THEME.bad} bold>
             БЛОКИРОВКА {locked}s

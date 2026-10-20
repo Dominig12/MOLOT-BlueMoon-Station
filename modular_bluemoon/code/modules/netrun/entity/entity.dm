@@ -69,13 +69,16 @@
 	console.selected_address = node.address
 	node.touch()
 	update_vision()
+	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_NODE_CHANGED, null, node)
 	return TRUE
 
 /mob/camera/netrun_entity/proc/leave_node()
 	if(!host_node)
 		return
+	var/datum/component/netrun_node/old = host_node
 	LAZYREMOVE(host_node.entities, src)
 	host_node = null
+	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_NODE_CHANGED, old, null)
 
 /// Можно ли перепрыгнуть в узел
 /mob/camera/netrun_entity/proc/can_enter(datum/component/netrun_node/node)
@@ -123,6 +126,7 @@
 	if(dive_body)
 		dive_body.SetUnconscious(5 SECONDS)
 	update_vision()
+	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_TICK, delta)
 
 // MARK: Зрение - только через доступные камеры
 
@@ -158,6 +162,7 @@
 	if(QDELETED(src))
 		return
 	integrity -= amount
+	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_INTEGRITY, integrity, max_integrity, reason)
 	to_chat(src, span_userdanger("Целостность нарушена[reason ? ": [reason]" : ""]! ([max(0, round(integrity))]/[max_integrity])"))
 	if(integrity <= 0)
 		dissolve()
