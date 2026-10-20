@@ -285,3 +285,86 @@
 
 	TEST_ASSERT(blocker.was_hit, "Elapsed-time catch-up must preserve collision with every crossed dense object")
 	TEST_ASSERT(QDELETED(projectile), "A catch-up projectile must finish its impact instead of remaining suspended with debt")
+
+/obj/item/projectile/unit_test_speed_change
+	var/processed_pixel_steps = 0
+	var/speed_change_factor = 1
+
+/obj/item/projectile/unit_test_speed_change/pixel_move(times, hitscanning = FALSE, seconds_equivalent = world.tick_lag * 0.1, trajectory_multiplier = 1, allow_animation = TRUE)
+	if(speed_change_factor == 1)
+		processed_pixel_steps += times
+		return times
+	pixels_per_second *= speed_change_factor
+	speed_change_factor = 1
+	processed_pixel_steps++
+	return 1
+
+/// Смена скорости посреди догоняющего прохода не выходит за предел пикселей на проход и сохраняет остаток как долг.
+/datum/unit_test/projectile_speed_change_respects_pass_cap/Run()
+	for(var/factor in list(0.5, 2.9))
+		var/obj/item/projectile/unit_test_speed_change/projectile = allocate(/obj/item/projectile/unit_test_speed_change, run_loc_floor_bottom_left)
+		projectile.pixel_increment_amount = SSprojectiles.global_pixel_increment_amount
+		projectile.pixels_per_second = TILES_TO_PIXELS(1)
+		projectile.trajectory = new(run_loc_floor_bottom_left.x, run_loc_floor_bottom_left.y, run_loc_floor_bottom_left.z, 0, 0, EAST, projectile.pixel_increment_amount)
+		projectile.fired = TRUE
+		projectile.speed_change_factor = factor
+		projectile.process(60)
+		var/traced = projectile.processed_pixel_steps * projectile.pixel_increment_amount
+		TEST_ASSERT(traced <= SSprojectiles.max_pixels_per_process, "Смена скорости x[factor] не позволяет пройти [traced] пикселей за один проход.")
+		var/expected_total = projectile.pixel_increment_amount + (TILES_TO_PIXELS(60) - projectile.pixel_increment_amount) * factor
+		TEST_ASSERT(abs(traced + projectile.pixels_tick_leftover - expected_total) < 0.01, "Смена скорости x[factor] пересчитывает долг, а не теряет его: [traced] + [projectile.pixels_tick_leftover] вместо [expected_total].")
+
+/// Выпускает снаряд из клетки стрелка в цель и ведёт его до попадания.
+/datum/unit_test/proc/shoot_test_projectile(atom/target, mob/living/shooter, damage = 5)
+	var/obj/item/projectile/shot = allocate(/obj/item/projectile, get_turf(shooter))
+	shot.damage = damage
+	shot.def_zone = BODY_ZONE_CHEST
+	shot.firer = shooter
+	shot.preparePixelProjectile(target, shooter)
+	shot.fire()
+	for(var/flight_step in 1 to 10)
+		if(QDELETED(shot))
+			break
+		shot.process(1)
+	return shot
+
+/datum/unit_test/bullet_act_signal_reaches_mob
+	var/target_type = /mob/living/simple_animal/hostile
+	var/list/bullet_hits
+	var/living_hits = 0
+
+/datum/unit_test/bullet_act_signal_reaches_mob/proc/on_bullet_act(mob/living/source, obj/item/projectile/projectile, def_zone)
+	SIGNAL_HANDLER
+	bullet_hits += list(list(projectile, def_zone, source.health))
+
+/datum/unit_test/bullet_act_signal_reaches_mob/proc/on_living_hit(mob/living/source)
+	SIGNAL_HANDLER
+	living_hits++
+
+/// Выпущенный снаряд доставляет мобу COMSIG_ATOM_BULLET_ACT ровно один раз, с зоной попадания и до урона.
+/datum/unit_test/bullet_act_signal_reaches_mob/Run()
+	var/turf/start = run_loc_floor_bottom_left
+	var/mob/living/carbon/human/shooter = allocate(/mob/living/carbon/human, start)
+	var/mob/living/target = allocate(target_type, locate(start.x + 2, start.y, start.z))
+	var/health_before = target.health
+	bullet_hits = list()
+	RegisterSignal(target, COMSIG_ATOM_BULLET_ACT, PROC_REF(on_bullet_act))
+	RegisterSignal(target, COMSIG_LIVING_HIT_BY_PROJECTILE, PROC_REF(on_living_hit))
+	var/obj/item/projectile/shot = shoot_test_projectile(target, shooter)
+	UnregisterSignal(target, list(COMSIG_ATOM_BULLET_ACT, COMSIG_LIVING_HIT_BY_PROJECTILE))
+
+	TEST_ASSERT(QDELETED(shot), "Снаряд долетел до [target_type] и попал.")
+	TEST_ASSERT(target.health < health_before, "Попадание ранит [target_type].")
+	TEST_ASSERT_EQUAL(length(bullet_hits), 1, "[target_type] получает COMSIG_ATOM_BULLET_ACT один раз за попадание.")
+	var/list/hit = bullet_hits[1]
+	TEST_ASSERT_EQUAL(hit[1], shot, "Сигнал несёт попавший снаряд.")
+	TEST_ASSERT_EQUAL(hit[2], BODY_ZONE_CHEST, "Сигнал несёт зону попадания.")
+	TEST_ASSERT(abs(hit[3] - health_before) < 0.1, "Сигнал приходит до урона: здоровье [hit[3]] вместо [health_before].")
+	if(ishuman(target))
+		TEST_ASSERT_EQUAL(living_hits, 1, "COMSIG_LIVING_HIT_BY_PROJECTILE по человеку приходит один раз.")
+
+/datum/unit_test/bullet_act_signal_reaches_mob/human
+	target_type = /mob/living/carbon/human
+
+/datum/unit_test/bullet_act_signal_reaches_mob/cyborg
+	target_type = /mob/living/silicon/robot

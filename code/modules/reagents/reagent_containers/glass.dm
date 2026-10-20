@@ -342,7 +342,7 @@
 	flags_inv = HIDEHAIR
 	slot_flags = ITEM_SLOT_HEAD
 	resistance_flags = NONE
-	armor = list(MELEE = 10, BULLET = 0, LASER = 0, ENERGY = 0, BOMB = 0, BIO = 0, RAD = 0, FIRE = 75, ACID = 50) //Weak melee protection, because you can wear it on your head
+	armor_type = /datum/armor/bucket //Weak melee protection, because you can wear it on your head
 	slot_equipment_priority = list( \
 		ITEM_SLOT_BACK, ITEM_SLOT_ID,\
 		ITEM_SLOT_UNDERWEAR,\
@@ -513,7 +513,7 @@
 			to_chat(user, "<span class='notice'>Вы стали перемалывать...</span>")
 			if((do_after(user, 25, target = src)) && grinded)
 				user.adjustStaminaLoss(20)
-				if(grinded.juice_results) //prioritize juicing
+				if(grinded.juice_results && !grinded.prefer_grind) //prioritize juicing
 					grinded.on_juice()
 					reagents.add_reagent_list(grinded.juice_results)
 					to_chat(user, "<span class='notice'>Вы выдавили [grinded] в жидкую форму.</span>")

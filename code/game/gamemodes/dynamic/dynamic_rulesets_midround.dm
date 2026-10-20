@@ -349,16 +349,17 @@
 /datum/dynamic_ruleset/midround/crew_conversion/trim_candidates()
 	. = ..()
 	for(var/mob/living/player in living_players.Copy())
-		if(issilicon(player))
+		if(!can_convert(player))
 			living_players -= player
-		else if(is_centcom_level(player.z))
-			living_players -= player
-		else if(player.mind && (player.mind.special_role || player.mind.antag_datums?.len > 0))
-			living_players -= player
+
+/datum/dynamic_ruleset/midround/crew_conversion/proc/can_convert(mob/living/player)
+	if(issilicon(player) || is_centcom_level(player.z) || player.stat != CONSCIOUS)
+		return FALSE
+	return !(player.mind && (player.mind.special_role || player.mind.antag_datums?.len > 0))
 
 /datum/dynamic_ruleset/midround/crew_conversion/ready(forced = FALSE)
 	if(required_candidates > living_players.len)
-		ready_failure_reason = "подходящих членов экипажа [living_players.len] из [required_candidates] (преференс midround, роль, бан и возраст)"
+		ready_failure_reason = "подходящих членов экипажа [living_players.len] из [required_candidates] (преференс midround, роль, бан, возраст и сознание)"
 		return FALSE
 	. = ..()
 	if(.)
@@ -389,17 +390,27 @@
 	antag_datum = /datum/antagonist/heretic
 	antag_flag = "heretic mid"
 	antag_flag_override = ROLE_HERETIC
-	protected_roles = list("NanoTrasen Representative", "Internal Affairs Agent", "Blueshield", "Peacekeeper", "Brig Physician", "Security Officer", "Warden", "Detective", "Head of Security","Bridge Officer", "Captain", "Prisoner", "Head of Personnel", "Quartermaster", "Chief Engineer", "Chief Medical Officer", "Research Director")
+	protected_roles = list("Vanguard Operative", "NanoTrasen Representative", "Internal Affairs Agent", "Blueshield", "Peacekeeper", "Brig Physician", "Security Officer", "Warden", "Detective", "Head of Security","Bridge Officer", "Captain", "Prisoner", "Head of Personnel", "Quartermaster", "Chief Engineer", "Chief Medical Officer", "Research Director")
 	required_round_type = list(ROUNDTYPE_DYNAMIC_HARD, ROUNDTYPE_DYNAMIC_MEDIUM)
-	weight = 4
+	weight = 8
 	family = "heretic" // с латеджойн-контрабандистом: не подряд
-	requirements = list(101,101,101,50,40,20,20,15,10,10)
+	requirements = list(101,10,10,10,10,10,10,10,10,10)
 	// Мидраунд-еретик просыпается с нулём знаний и до первых жертв полчаса-час тихо фармит
 	// влияния: по базовой цене конверсии (10) он опустошал антаг-кошелёк, а intensity 15
 	// держала клапан нагрузки и глушила другие антаг-инжекции при нулевом движе. Разгон
 	// к концу раунда докрутит множитель активности, базово же он легче агента (8).
 	cost = 6
 	intensity = 8
+
+/datum/dynamic_ruleset/midround/crew_conversion/heretic/can_convert(mob/living/player)
+	return ..() && !HAS_TRAIT(player, TRAIT_MINDSHIELD)
+
+/datum/dynamic_ruleset/midround/crew_conversion/heretic/ready(forced = FALSE)
+	var/block_reason = heretic_injection_block_reason(length(mode.current_players[CURRENT_LIVING_PLAYERS]))
+	if(!forced && block_reason)
+		ready_failure_reason = block_reason
+		return FALSE
+	return ..()
 
 /// Тихий генлинг среди экипажа: мидраунд-зеркало латеджойн-варианта.
 /datum/dynamic_ruleset/midround/crew_conversion/changeling
@@ -1618,82 +1629,3 @@
 
 /datum/dynamic_ruleset/midround/warmongers/director_execution_detail(assigned_this_attempt)
 	return "исполнение подтверждено; роли назначит запущенное событие после ответа станции"
-
-// BLUEMOON ADD START
-
-//////////////////////////////////////////////
-//                                          //
-//            BLOODSUCKERS                  //
-//                                          //
-//////////////////////////////////////////////
-
-/datum/dynamic_ruleset/midround/bloodsuckers
-	name = "Bloodsuckers"
-	// Кровососы сломаны и ждут починки/упрощения: естественно не выдаются ни в одном типе раунда.
-	// Прежний хак (только team-based) заменён честным выключателем - ручной форс админом работает.
-	admin_only = TRUE
-	antag_flag = "Bloodsucker Mid"
-	antag_flag_override = ROLE_BLOODSUCKER
-	antag_datum = /datum/antagonist/bloodsucker
-	protected_roles = list("Prisoner", "NanoTrasen Representative", "Internal Affairs Agent", "Security Officer", "Blueshield", "Peacekeeper", "Brig Physician", "Warden", "Detective", "Head of Security","Bridge Officer", "Captain")
-	restricted_roles = list("AI", "Cyborg", "Positronic Brain")
-	enemy_roles = list("Blueshield", "Peacekeeper", "Brig Physician", "Security Officer", "Warden", "Detective", "Head of Security","Bridge Officer", "Captain") //BLUEMOON CHANGES
-	required_enemies = list(3,3,3,3,3,3,3,3,3,3)
-	required_candidates = 1
-	required_round_type = list(ROUNDTYPE_DYNAMIC_LIGHT, ROUNDTYPE_DYNAMIC_MEDIUM, ROUNDTYPE_DYNAMIC_HARD, ROUNDTYPE_DYNAMIC_TEAMBASED)
-	weight = 6
-	cost = 8
-	intensity = 15
-	family = "bloodsuckers"
-	scaling_cost = 10
-	requirements = list(101,101,60,50,40,30,20,15,10,10)
-	antag_cap = list("denominator" = 39, "offset" = 1)
-
-/datum/dynamic_ruleset/midround/bloodsuckers/trim_candidates()
-	. = ..()
-	candidates = living_players
-	for(var/mob/living/player in candidates.Copy())
-		if(issilicon(player)) // никаких боргов
-			candidates -= player
-		else if(is_centcom_level(player.z))  // никаких ЦКшников
-			candidates -= player
-		else if(player.mind && (player.mind.special_role || player.mind.antag_datums?.len > 0)) // никаких мульти-антагонистов
-			candidates -= player
-		else if(HAS_TRAIT(player, TRAIT_MINDSHIELD)) // никаких кровососов с защитой разума
-			candidates -= player
-		else if(player.mob_weight > MOB_WEIGHT_HEAVY) // никаких сверхтяжёлых кровососов
-			candidates -= player
-		else if(HAS_TRAIT(player, TRAIT_ROBOTIC_ORGANISM)) // никаких роботов-вампиров из далекого космоса
-			candidates -= player
-
-/datum/dynamic_ruleset/midround/bloodsuckers/ready(forced = FALSE)
-	var/needed = get_antag_cap(length(living_players)) * (scaled_times + 1)
-	if(length(candidates) < needed)
-		ready_failure_reason = "подходящих членов экипажа [length(candidates)] из [needed] для кровососов"
-		return FALSE
-	return ..()
-
-/datum/dynamic_ruleset/midround/bloodsuckers/director_preflight()
-	. = director_preflight_candidates()
-	if(.)
-		var/needed = get_antag_cap(length(living_players)) * (scaled_times + 1)
-		director_preflight_detail = "подходящих членов экипажа: [length(candidates)], требуется: [needed]"
-
-/datum/dynamic_ruleset/midround/bloodsuckers/pre_execute(population)
-	. = ..()
-	// BLUEMOON ADD START - если нет кандидатов и не выданы все роли, иначе выдаст рантайм
-	// candidates ссылается на living_players (trim_candidates) - прунинг чистит оба списка.
-	prune_stale_living_players()
-	if(candidates.len <= 0)
-		message_admins("Рулсет [name] не был активирован по причине отсутствия кандидатов.")
-		return FALSE
-	// BLUEMOON ADD END
-	var/num_bloodsuckers = get_antag_cap(population) * (scaled_times + 1)
-	for (var/i = 1 to num_bloodsuckers)
-		if(!candidates.len)
-			break
-		var/mob/M = pick_n_take(candidates)
-		assigned += M.mind
-		M.mind.restricted_roles = restricted_roles
-		M.mind.special_role = antag_flag
-	return TRUE

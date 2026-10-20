@@ -281,7 +281,7 @@
 	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/head.dmi'
 	icon_state = "ipai"
 	item_state = "ipai"
-	armor = list(MELEE = 0, BULLET = 0, LASER = 0,ENERGY = 0, BOMB = 0, BIO = 0, RAD = 0, FIRE = 0, ACID = 0, WOUND = 0)
+	armor_type = /datum/armor/none
 	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/head.dmi'
 	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/head.dmi'
 	clothing_flags = ALLOWINTERNALS
@@ -308,7 +308,7 @@
 	icon_state = "pz_grenadierhelmet"
 	item_state = "pz_grenadierhelmet"
 	mutantrace_variation = STYLE_DIGITIGRADE | STYLE_NO_ANTHRO_ICON
-	armor = null
+	armor_type = /datum/armor/none
 	flags_inv = HIDEHAIR|HIDEEARS
 	var/adjusted = FALSE
 
@@ -388,6 +388,7 @@
 ///////////////////////////////////////////////
 
 /obj/item/clothing/head/helmet/sec/empire_head
+	armor_type = /datum/armor/empire_head
 	name = "Katzen Steel Helmet"
 	desc = "Полиморфический шлем. На внутренней стороне этикетка - Furui.tm, свыше присутствуют застёжки для высвобождения ушей."
 	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/head.dmi'
@@ -397,7 +398,6 @@
 	mutantrace_variation = STYLE_DIGITIGRADE | STYLE_NO_ANTHRO_ICON
 	icon_state = "empire_head"
 	item_state = "empire_head"
-	armor = list(MELEE = 20, BULLET = 5, LASER = 10,ENERGY = 0, BOMB = 40, BIO = 0, RAD = 0, FIRE = 5, ACID = 0, WOUND = 20)
 	flags_inv = HIDEHAIR|HIDEEARS
 	var/adjusted = FALSE
 	var/list/poly_colors = list("#2A2A2A","#A52F29")
@@ -415,33 +415,16 @@
 
 ///////////////////////////////////////////////
 
-/obj/item/clothing/head/officerian_cap
-	name = "Officerian Cap"
-	desc = "Головной убор ветеранов и действующих офицеров"
-	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/head.dmi'
-	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/head.dmi'
-	mutantrace_variation = STYLE_DIGITIGRADE | STYLE_NO_ANTHRO_ICON
-	icon_state = "officerian_cap"
-	item_state = "officerian_cap"
-	var/list/poly_colors = list("#2A2A2A","#303030","#575757","#d4d4d4")
-
-/obj/item/clothing/head/officerian_cap/ComponentInitialize()
-	. = ..()
-	AddElement(/datum/element/polychromic, list("#2A2A2A","#303030","#575757","#d4d4d4"), 4)
-
-///////////////////////////////////////////////
-
 /obj/item/clothing/head/helmet/sec/gosei
+	armor_type = /datum/armor/none
 	name = "Gosei.H.mk27"
 	desc = "Безымянный шлем покрывающий лицо, предназначенный для защиты от внешних био-химических угроз, оснащённый внутривстроенным интерфейсом, съёмными батарейками, IFF опознавательными знаками"
 	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/head.dmi'
 	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/head.dmi'
 	icon_state = "gosei"
 	item_state = "gosei"
-	armor = list(MELEE = 0, BULLET = 0, LASER = 0,ENERGY = 0, BOMB = 0, BIO = 0, RAD = 0, FIRE = 0, ACID = 0, WOUND = 0)
 	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/head.dmi'
 	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/head.dmi'
-	clothing_flags = ALLOWINTERNALS
 	flags_inv = HIDEEARS|HIDEFACE|HIDEHAIR|HIDEFACIALHAIR
 	unique_reskin = null
 
@@ -471,6 +454,19 @@
 	righthand_file = 'modular_bluemoon/fluffs/icons/mob/inhands/clothing_left.dmi'
 	clothing_flags = ALLOWINTERNALS
 	flags_inv = HIDEEARS|HIDEFACE|HIDEHAIR|HIDEFACIALHAIR
+	unique_reskin = null
+
+/obj/item/clothing/head/donator/bm/opssrt
+	name = "OPS-SRT Helmet"
+	desc = "Given to those, who served well"
+	icon_state = "opssrt"
+	item_state = "opssrt"
+	icon = 'modular_bluemoon/icons/obj/clothing/hats.dmi'
+	mob_overlay_icon = 'modular_bluemoon/icons/mob/clothing/hats.dmi'
+	lefthand_file = 'modular_bluemoon/icons/mob/inhands/clothing_lefthand.dmi'
+	righthand_file = 'modular_bluemoon/icons/mob/inhands/clothing_righthand.dmi'
+	clothing_flags = ALLOWINTERNALS
+	flags_inv = HIDEEARS|HIDEHAIR|HIDEFACIALHAIR
 	unique_reskin = null
 
 ///////////////////////////////////////////////
@@ -584,21 +580,21 @@
 	item_state = "stupid_cap"
 
 /obj/item/modkit/concord_riot_helmet_kit
-	name = "Concord light riot helmet Kit"
-	desc = "A modkit for making a riot helmet into a Concord light riot helmet."
+	name = "Concord Riot Helmet Kit"
+	desc = "A modkit for making a riot helmet into a Concord Riot Helmet."
 	icon_state = "riot-helmet_kit"
 	product = /obj/item/clothing/head/helmet/riot/concord_riot_helmet
 	fromitem = list(/obj/item/clothing/head/helmet/riot)
 
 /obj/item/clothing/head/helmet/riot/concord_riot_helmet
 	DONATE_ITEM_TOOLTIP_PARENT
-	name = "Concord light riot helmet"
-	desc = "Котелок для защиты пустой и не очень балды от летящих в неё камней, бит, клинков и прочей гадости, с которой только можно столкнуться при подавлении беспорядков. Прочное забрало-визор обеспечивает защиту глупой головы владельца не только от внешних факторов, не только подавляет лучи глупенькости из миниатюрного мозга, но ещё и излучает ауру стиля, на зависть окружающим."
+	name = "Concord Riot Helmet"
+	desc = "Настоящий тактический комплекс, установленный в скромном корпусе. Не смотря на то, что шлем призван защищать голову, в первую очередь помогает избежать получения урона - встроенные системы этого шлема не только расширяют угол обзора владельца, но и заранее просчитывают траектории летящих предметов, и, в идеале - может сам нивелировать урон, используя внутреннюю систему физического противодействия, уменьшая урон по голове и следующие из него травмы шейных отделов позвонка. Вопреки укоренившемуся мнению, такой шлем почти не используется расой производителем, преимущественно уходя на экспорт."
 	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/head.dmi'
-	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/large-worn-icons/32x64/head.dmi'
-	anthro_mob_worn_overlay = 'modular_bluemoon/fluffs/icons/mob/large-worn-icons/32x64/head.dmi'
+	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/head.dmi'
+	anthro_mob_worn_overlay = 'modular_bluemoon/fluffs/icons/mob/clothing/head.dmi'
 	icon_state = "lapkee-helmet"
-	flags_inv = HIDEEARS|HIDEFACE|HIDESNOUT
+	flags_inv = HIDEFACE|HIDESNOUT
 	visor_flags_inv = HIDEFACE|HIDESNOUT
 
 /obj/item/clothing/head/donator/bm/custom_helmet
@@ -843,7 +839,7 @@
 	item_state = "desert_ranger"
 	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/head.dmi'
 	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/head.dmi'
-	flags_inv = HIDEFACIALHAIR|HIDEFACE|HIDEEYES|HIDEEARS|HIDEHAIR
+	flags_inv = HIDEFACIALHAIR|HIDEFACE|HIDEEYES|HIDEEARS|HIDEHAIR|HIDESNOUT
 
 /obj/item/clothing/head/helmet/alt/kumiko_ncr_bulletproof_helmet
 	name = "Custom NCR ranger helmet"
@@ -852,4 +848,4 @@
 	item_state = "rangercustom"
 	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/head.dmi'
 	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/head.dmi'
-	flags_inv = HIDEFACIALHAIR|HIDEFACE|HIDEEYES|HIDEEARS|HIDEHAIR
+	flags_inv = HIDEFACIALHAIR|HIDEFACE|HIDEEYES|HIDEEARS|HIDEHAIR|HIDESNOUT

@@ -5,7 +5,7 @@
 	permeability_coefficient = 0.9
 	block_priority = BLOCK_PRIORITY_UNIFORM
 	slot_flags = ITEM_SLOT_ICLOTHING
-	armor = list(MELEE = 0, BULLET = 0, LASER = 0,ENERGY = 0, BOMB = 0, BIO = 0, RAD = 0, FIRE = 0, ACID = 0, WOUND = 5)
+	armor_type = /datum/armor/under
 	equip_sound = 'sound/items/equip/jumpsuit_equip.ogg'
 	drop_sound = 'sound/items/handling/cloth_drop.ogg'
 	pickup_sound = 'sound/items/handling/cloth_pickup.ogg'
@@ -294,12 +294,14 @@
 		to_chat(usr, "На униформе нет сенсоров.")
 		return FALSE
 
-	var/list/modes = list("Off", "Binary vitals", "Exact vitals", "Tracking beacon")
-	var/switchMode = input("Выберите режим сенсоров:", "Режим сенсоров униформы", modes[sensor_mode + 1]) in modes
+	var/list/modes = list("Выключены", "Бинарные показатели", "Точные показатели", "Маяк слежения")
+	var/switch_mode = tgui_input_list(usr, "Выберите режим сенсоров:", "Режим сенсоров униформы", modes, modes[sensor_mode + 1])
+	if(!switch_mode)
+		return
 	if(get_dist(usr, src) > 1)
 		to_chat(usr, "<span class='warning'>Вы отошли слишком далеко!</span>")
 		return
-	sensor_mode_intended = modes.Find(switchMode) - 1
+	sensor_mode_intended = modes.Find(switch_mode) - 1
 
 	if (src.loc == usr)
 		switch(sensor_mode_intended)
@@ -333,10 +335,7 @@
 		if(H.w_uniform == src)
 			H.update_suit_sensors()
 
-
-/obj/item/clothing/under/CtrlClick(mob/user)
-	. = ..()
-
+/obj/item/clothing/under/proc/set_to_maximum_sensor(mob/user)
 	if (!(item_flags & IN_INVENTORY))
 		return
 
@@ -344,32 +343,36 @@
 		return
 
 	if(src.has_sensor == BROKEN_SENSORS)
-		to_chat(usr, "Сенсоры вышли из строя!")
+		to_chat(user, "Сенсоры вышли из строя!")
 		return FALSE
 	if(src.sensor_flags & SENSOR_LOCKED)
-		to_chat(usr, "Настройки заблокированы.")
+		to_chat(user, "Настройки заблокированы.")
 		return FALSE
 	if(has_sensor <= NO_SENSORS)
-		to_chat(usr, "На униформе нет сенсоров.")
+		to_chat(user, "На униформе нет сенсоров.")
 		return
 
 	sensor_mode_intended = SENSOR_COORDS
 
 	switch(src.has_sensor)
 		if(DAMAGED_SENSORS_LIVING)
-			to_chat(usr, "<span class='warning'>Сенсоры и маячок слежения вашей униформы сломались. Сообщается только смерть владельца.</span>")
+			to_chat(user, span_warning("Сенсоры и маячок слежения вашей униформы сломались. Сообщается только смерть владельца."))
 			sensor_mode = SENSOR_LIVING
 		if(DAMAGED_SENSORS_VITALS)
-			to_chat(usr, "<span class='warning'>Маячок слежения вашей униформы сломался. Сообщается только состояние жизненных показателей.</span>")
+			to_chat(user, span_warning("Маячок слежения вашей униформы сломался. Сообщается только состояние жизненных показателей."))
 			sensor_mode = SENSOR_VITALS
 		if(HAS_SENSORS)
-			to_chat(usr, "<span class='notice'>Ваша униформа теперь сообщает точное состояние жизненных показателей и координатную позицию.</span>")
+			to_chat(user, span_notice("Ваша униформа теперь сообщает точное состояние жизненных показателей и координатную позицию."))
 			sensor_mode = sensor_mode_intended
 
 	if(ishuman(user))
 		var/mob/living/carbon/human/H = user
 		if(H.w_uniform == src)
 			H.update_suit_sensors()
+
+/obj/item/clothing/under/CtrlClick(mob/user)
+	. = ..()
+	set_to_maximum_sensor(user)
 
 /obj/item/clothing/under/AltClick(mob/user)
 	. = ..()

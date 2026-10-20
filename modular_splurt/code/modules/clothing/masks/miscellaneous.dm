@@ -39,8 +39,7 @@
 	clothing_flags = THICKMATERIAL | BLOCK_GAS_SMOKE_EFFECT | ALLOWINTERNALS
 	mutantrace_variation = STYLE_MUZZLE
 	visor_flags_inv = 0
-	flavor_adjust = FALSE
-	armor = list("melee" = 5, "bullet" = 0, "laser" = 5,"energy" = 5, "bomb" = 0, "bio" = 100, "rad" = 100, "fire" = 100, "acid" = 100)
+	armor_type = /datum/armor/cbrn_engineering
 	is_edible = 0
 
 /obj/item/clothing/mask/gas/sechailer/mopp
@@ -53,7 +52,7 @@
 	anthro_mob_worn_overlay = 'modular_splurt/icons/mob/clothing/mask_muzzle.dmi' // BLUEMOON COMMENTING OUT using own states modular_bluemoon\icons\mob\clothing\mask_muzzled.dmi
 	gas_transfer_coefficient = 0.01
 	permeability_coefficient = 0.01
-	armor = list("melee" = 10, "bullet" = 5, "laser" = 10,"energy" = 10, "bomb" = 10, "bio" = 100, "rad" = 100, "fire" = 40, "acid" = 100)
+	armor_type = /datum/armor/full_and_goner_and_sechailer_mopp
 	resistance_flags = ACID_PROOF | FIRE_PROOF
 	rad_flags = RAD_PROTECT_CONTENTS | RAD_NO_CONTAMINATE
 	aggressiveness = 1
@@ -71,23 +70,22 @@
 		)
 	)
 
-/obj/item/clothing/mask/gas/sechailer/mopp/adjustmask(mob/living/user, just_flavor = FALSE)
+/obj/item/clothing/mask/gas/sechailer/mopp/adjustmask(mob/living/user)
 	. = ..()
-	if(!just_flavor)
-		var/base = current_skin ? unique_reskin[current_skin]["icon_state"] : initial(icon_state)
-		if(mask_adjusted)
-			icon_state = base + "_up"
-		else
-			icon_state = base
-		// Обновляем моб оверлей
-		if(ismob(loc))
-			var/mob/M = loc
-			M.update_inv_wear_mask()
+	var/base = current_skin ? unique_reskin[current_skin]["icon_state"] : initial(icon_state)
+	if(mask_adjusted)
+		icon_state = base + "_up"
+	else
+		icon_state = base
+	// Обновляем моб оверлей
+	if(ismob(loc))
+		var/mob/M = loc
+		M.update_inv_wear_mask()
 
 /obj/item/clothing/mask/gas/sechailer/mopp/advance
 	name = "advance MOPP gas mask"
 	desc = "Mission Oriented Protective Posture. A heavy duty gas mask design to be worn in hazardous combat environments. Actually works like a gas mask as well as can be connected to internal air supply. Used by CentCom Staff and ERT teams."
-	armor = list("melee" = 20, "bullet" = 10, "laser" = 20,"energy" = 20, "bomb" = 20, "bio" = 110, "rad" = 110, "fire" = 50, "acid" = 110)
+	armor_type = /datum/armor/mask_advance
 
 //broken huds for loot
 
@@ -107,7 +105,7 @@
 /obj/item/clothing/glasses/brokenhud/security/night
 	name = "broken night vision security HUD"
 	desc = "An advanced heads-up display which provides id data and vision in complete darkness. However the electronics seem to no longer work."
-	icon_state = "securityhudnight"
+	icon_state = "hudnight_off"
 	glass_colour_type = /datum/client_colour/glass_colour/green
 
 /obj/item/clothing/glasses/brokenhud/health
@@ -119,7 +117,7 @@
 /obj/item/clothing/glasses/brokenhud/health/night
 	name = "broken night vision health scanner HUD"
 	desc = "An advanced medical heads-up display that allows doctors to find patients in complete darkness. However the electronics seem to no longer work"
-	icon_state = "healthhudnight"
+	icon_state = "hudnight_off"
 	item_state = "glasses"
 	glass_colour_type = /datum/client_colour/glass_colour/green
 

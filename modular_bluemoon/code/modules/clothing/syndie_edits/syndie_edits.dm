@@ -42,8 +42,6 @@
 /obj/item/clothing/mask/gas/syndicate/ds
 	name = "balaclava"
 	desc = "A fancy balaclava, while it doesn't muffle your voice, it's fireproof and has a miniature rebreather for internals. Comfy to boot!"
-	icon = 'icons/obj/clothing/masks.dmi'
-	mob_overlay_icon = 'icons/mob/clothing/mask.dmi'
 	icon_state = "balaclava_ds"
 	flags_inv = HIDEHAIR|HIDEFACE|HIDEEARS|HIDEFACIALHAIR
 
@@ -53,8 +51,6 @@
 	actions_types = list(/datum/action/item_action/adjust)
 	icon_state = "half_mask"
 	flags_inv = HIDEFACE|HIDEFACIALHAIR
-	icon = 'icons/obj/clothing/masks.dmi'
-	mob_overlay_icon = 'icons/mob/clothing/mask.dmi'
 
 /obj/item/clothing/shoes/combat
 	icon = 'icons/obj/clothing/shoes.dmi'
@@ -199,7 +195,7 @@
 	mob_overlay_icon = 'icons/mob/clothing/suit.dmi'
 	icon_state = "coatsyndie"
 	item_state = "coatwinter"
-	armor = list(MELEE = 25, BULLET = 15, LASER = 30, ENERGY = 40, BOMB = 25, BIO = 0, RAD = 0, FIRE = 50, ACID = 45, WOUND = 10)
+	armor_type = /datum/armor/suit_syndicate
 	hoodtype = /obj/item/clothing/head/hooded/winterhood/syndicate
 
 /obj/item/clothing/suit/hooded/wintercoat/syndicate/Initialize(mapload)
@@ -223,7 +219,7 @@
 	icon = 'icons/obj/clothing/hats.dmi'
 	mob_overlay_icon = 'icons/mob/clothing/head.dmi'
 	icon_state = "hood_syndie"
-	armor = list(MELEE = 35, BULLET = 30, LASER = 30, ENERGY = 40, BOMB = 25, BIO = 0, RAD = 0, FIRE = 50, ACID = 50, WOUND = 10)
+	armor_type = /datum/armor/security_and_syndicate_basic
 
 /obj/item/clothing/suit/armor/vest/infiltrator/gorlex_harness
 	name = "Engine Technician Harness"

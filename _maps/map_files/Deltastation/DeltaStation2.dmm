@@ -3434,15 +3434,6 @@
 	heat_capacity = 1e+006
 	},
 /area/maintenance/port/fore)
-"arI" = (
-/obj/structure/cable/white{
-	icon_state = "4-8"
-	},
-/obj/structure/cable/white{
-	icon_state = "4-8"
-	},
-/turf/open/floor/plating,
-/area/maintenance/port/fore)
 "arK" = (
 /obj/effect/decal/cleanable/dirt,
 /obj/machinery/space_heater,
@@ -8783,9 +8774,6 @@
 /turf/open/floor/plasteel,
 /area/hallway/primary/fore)
 "bjU" = (
-/obj/structure/cable/white{
-	icon_state = "1-2"
-	},
 /obj/structure/cable/white{
 	icon_state = "1-2"
 	},
@@ -16292,9 +16280,6 @@
 /obj/structure/cable{
 	icon_state = "0-4"
 	},
-/obj/structure/cable{
-	icon_state = "0-4"
-	},
 /turf/open/floor/plating/airless,
 /area/space/nearstation)
 "clZ" = (
@@ -23179,18 +23164,14 @@
 /turf/open/floor/plasteel,
 /area/science/research)
 "dcE" = (
-/obj/structure/table/reinforced,
-/obj/item/stock_parts/matter_bin{
-	pixel_x = 3;
-	pixel_y = 3
-	},
-/obj/item/stock_parts/matter_bin,
-/obj/item/stock_parts/micro_laser,
 /obj/machinery/airalarm{
 	dir = 4;
 	pixel_x = -23
 	},
 /obj/effect/turf_decal/stripes/yellow/line{
+	dir = 4
+	},
+/obj/machinery/computer/shuttle_flight/exploration{
 	dir = 4
 	},
 /turf/open/floor/plasteel,
@@ -35310,8 +35291,7 @@
 	dir = 1
 	},
 /obj/machinery/door/airlock/external{
-	name = "External Airlock";
-	req_access_txt = "13"
+	name = "Igla dock"
 	},
 /obj/effect/mapping_helpers/airlock/cyclelink_helper,
 /obj/machinery/door/firedoor,
@@ -35992,8 +35972,7 @@
 	dir = 1
 	},
 /obj/machinery/door/airlock/external{
-	name = "External Airlock";
-	req_access_txt = "13"
+	name = "Igla dock"
 	},
 /obj/effect/turf_decal/stripes/yellow/line,
 /obj/effect/turf_decal/stripes/yellow/line{
@@ -60291,9 +60270,6 @@
 /obj/structure/cable/white{
 	icon_state = "2-4"
 	},
-/obj/structure/cable/white{
-	icon_state = "2-4"
-	},
 /obj/machinery/atmospherics/pipe/simple/supply/hidden/layer2{
 	dir = 4
 	},
@@ -66305,6 +66281,12 @@
 	},
 /turf/open/floor/plasteel/grimy,
 /area/service/chapel/office)
+"kMA" = (
+/obj/docking_port/stationary/exploration{
+	dir = 2
+	},
+/turf/open/space,
+/area/space)
 "kMO" = (
 /obj/effect/decal/cleanable/dirt,
 /obj/structure/toilet/secret/low_loot{
@@ -72967,7 +72949,7 @@
 "mfM" = (
 /obj/effect/turf_decal/stripes/yellow/line,
 /obj/effect/turf_decal/bot/yellow,
-/obj/machinery/bountyvend/plus,
+/obj/machinery/bountyvend,
 /turf/open/floor/plasteel,
 /area/command/gateway)
 "mfR" = (
@@ -73411,7 +73393,6 @@
 /obj/item/gun/energy/modular_laser_rifle/carbine,
 /obj/item/gun/energy/modular_laser_rifle/carbine,
 /obj/item/gun/energy/modular_laser_rifle/carbine,
-/obj/item/storage/firstaid,
 /obj/item/storage/firstaid/brute,
 /obj/item/storage/firstaid/toxin,
 /obj/item/storage/firstaid/fire,
@@ -73419,6 +73400,11 @@
 /obj/item/ammo_box/magazine/wt550m9/wttx,
 /obj/item/ammo_box/magazine/wt550m9/wttx,
 /obj/effect/turf_decal/tile/red/fourcorners,
+/obj/item/stack/sheet/plasteel/fifty,
+/obj/item/stack/sheet/plasteel/fifty,
+/obj/item/storage/firstaid/regular,
+/obj/item/stack/sheet/rglass/fifty,
+/obj/item/stack/sheet/rglass/fifty,
 /turf/open/floor/plasteel/dark,
 /area/ai_monitored/security/armory)
 "mjL" = (
@@ -74545,21 +74531,6 @@
 	},
 /turf/open/floor/plasteel/grimy,
 /area/command/bridge)
-"mxo" = (
-/obj/structure/cable{
-	icon_state = "2-8"
-	},
-/obj/structure/cable{
-	icon_state = "1-2"
-	},
-/obj/structure/cable{
-	icon_state = "1-2"
-	},
-/obj/effect/turf_decal/stripes/yellow/line{
-	dir = 8
-	},
-/turf/open/floor/plasteel,
-/area/engineering/atmospherics_engine)
 "mxv" = (
 /obj/structure/cable/white{
 	icon_state = "4-8"
@@ -74588,9 +74559,6 @@
 	req_access_txt = "47"
 	},
 /obj/effect/decal/cleanable/dirt,
-/obj/structure/cable/white{
-	icon_state = "1-2"
-	},
 /obj/effect/turf_decal/stripes/yellow/line,
 /obj/effect/turf_decal/stripes/yellow/line{
 	dir = 1
@@ -84950,34 +84918,6 @@
 	},
 /turf/open/floor/plasteel/dark,
 /area/ai_monitored/command/storage/eva)
-"oLd" = (
-/obj/structure/cable/white{
-	icon_state = "4-8"
-	},
-/obj/structure/cable/white{
-	icon_state = "4-8"
-	},
-/obj/structure/disposalpipe/segment{
-	dir = 4
-	},
-/obj/effect/turf_decal/tile/neutral{
-	dir = 1
-	},
-/obj/effect/turf_decal/tile/neutral,
-/obj/effect/turf_decal/tile/neutral{
-	dir = 4
-	},
-/obj/effect/turf_decal/tile/neutral{
-	dir = 8
-	},
-/obj/machinery/atmospherics/pipe/simple/scrubbers/hidden/layer4{
-	dir = 4
-	},
-/obj/machinery/atmospherics/pipe/simple/supply/hidden/layer2{
-	dir = 4
-	},
-/turf/open/floor/plasteel,
-/area/engineering/break_room)
 "oLg" = (
 /obj/machinery/vending/cart,
 /obj/machinery/computer/security/telescreen/entertainment{
@@ -85263,22 +85203,6 @@
 	},
 /turf/open/floor/plasteel/white,
 /area/medical/medbay/central)
-"oOE" = (
-/obj/effect/decal/cleanable/dirt,
-/obj/structure/cable/white{
-	icon_state = "4-8"
-	},
-/obj/structure/cable/white{
-	icon_state = "4-8"
-	},
-/obj/machinery/atmospherics/pipe/simple/supply/hidden/layer2{
-	dir = 4
-	},
-/obj/structure/disposalpipe/segment{
-	dir = 4
-	},
-/turf/open/floor/plating,
-/area/maintenance/starboard/fore)
 "oOO" = (
 /obj/machinery/door/firedoor,
 /obj/machinery/atmospherics/pipe/simple/scrubbers/hidden/layer4,
@@ -96917,24 +96841,6 @@
 	},
 /turf/open/floor/plasteel,
 /area/maintenance/port/aft)
-"rod" = (
-/obj/structure/cable/white{
-	icon_state = "4-8"
-	},
-/obj/structure/cable/white{
-	icon_state = "4-8"
-	},
-/obj/structure/disposalpipe/segment{
-	dir = 4
-	},
-/obj/machinery/atmospherics/pipe/simple/supply/hidden/layer2{
-	dir = 4
-	},
-/obj/machinery/atmospherics/pipe/simple/scrubbers/hidden/layer4{
-	dir = 4
-	},
-/turf/open/floor/plating,
-/area/maintenance/port/fore)
 "rol" = (
 /obj/structure/table/reinforced,
 /obj/item/assembly/timer,
@@ -117611,9 +117517,6 @@
 /obj/structure/cable/white{
 	icon_state = "2-8"
 	},
-/obj/structure/cable/white{
-	icon_state = "2-8"
-	},
 /obj/effect/landmark/navigate_destination/det,
 /obj/structure/table/wood,
 /obj/item/paper_bin,
@@ -126181,9 +126084,6 @@
 /area/hallway/primary/central)
 "xye" = (
 /obj/effect/decal/cleanable/dirt,
-/obj/structure/cable/white{
-	icon_state = "4-8"
-	},
 /obj/structure/cable/white{
 	icon_state = "4-8"
 	},
@@ -155263,7 +155163,7 @@ xfU
 mvS
 leQ
 jnw
-oLd
+kFp
 aHZ
 uoM
 sQd
@@ -156764,7 +156664,7 @@ nKC
 sVs
 gfX
 uuq
-mxo
+uuq
 qjJ
 eFY
 eFY
@@ -161150,7 +161050,7 @@ sNp
 rjQ
 jRQ
 qOV
-rod
+sjH
 mLR
 mLR
 mLR
@@ -164609,10 +164509,10 @@ pIV
 rnF
 wDZ
 mjH
-aad
-ajr
 aaa
-ajr
+aaa
+aaa
+aaa
 aaa
 aaa
 aaa
@@ -164867,9 +164767,9 @@ jQJ
 ikw
 mjH
 aaa
-aad
+nph
 aaa
-ajr
+aaa
 aaa
 aaa
 aaa
@@ -165124,9 +165024,9 @@ nio
 oxf
 mjH
 aaa
-aad
 aaa
-aad
+aaa
+aaa
 aaa
 aaa
 aaa
@@ -165380,10 +165280,10 @@ sTX
 dHV
 oxf
 mjH
-aad
-ajr
+nph
 aaa
-ajr
+aaa
+aaa
 aaa
 aaa
 aaa
@@ -165637,10 +165537,10 @@ irs
 llf
 gKv
 oTr
-aad
-ajr
-aad
-ajr
+aaa
+aaa
+aaa
+aaa
 aaa
 aaa
 aaa
@@ -165894,10 +165794,10 @@ oTr
 oTr
 oTr
 oTr
-aad
-aad
+nph
 aaa
-ajr
+aaa
+aaa
 aaa
 aaa
 aaa
@@ -166151,12 +166051,12 @@ eeG
 eft
 egg
 egD
-abj
-abj
+kMA
+nph
 aaa
-aad
 aaa
-ajr
+aaa
+aaa
 aaa
 aaa
 aaa
@@ -166408,12 +166308,12 @@ edY
 edY
 edY
 egE
-aad
-aad
+nph
+nph
 aaa
-ajr
-aad
-ajr
+aaa
+aaa
+aaa
 aaa
 aaa
 aaa
@@ -166523,7 +166423,7 @@ aoh
 euT
 aqj
 vtY
-arI
+arD
 mTK
 pRL
 vkp
@@ -166665,12 +166565,12 @@ eeH
 pNr
 egh
 egE
-aad
-ajr
-aad
-ajr
+nph
 aaa
-ajr
+aaa
+aaa
+aaa
+aaa
 aaa
 aaa
 aaa
@@ -166922,10 +166822,10 @@ kew
 oXR
 egi
 eeb
-aad
-aad
 aaa
-ajr
+aaa
+aaa
+aaa
 aaa
 aaa
 aaa
@@ -167180,9 +167080,9 @@ efw
 egj
 egF
 aaa
-aad
+nph
 aaa
-aad
+aaa
 aaa
 aaa
 aaa
@@ -167436,10 +167336,10 @@ jBu
 pgH
 egk
 egG
-aad
-aad
 aaa
-ajr
+aaa
+aaa
+aaa
 aaa
 aaa
 aaa
@@ -167693,10 +167593,10 @@ gjk
 fmS
 egl
 egE
-aad
-ajr
-aad
-ajr
+aaa
+aaa
+aaa
+aaa
 aaa
 aaa
 aaa
@@ -173721,7 +173621,7 @@ apw
 apv
 asa
 atw
-oOE
+pSw
 uqS
 lMD
 fSj

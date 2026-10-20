@@ -270,7 +270,7 @@
 	name = "Lotos skirt"
 	desc = "Black kitten`s black dress"
 	mutantrace_variation = STYLE_DIGITIGRADE | STYLE_NO_ANTHRO_ICON
-	armor = list(MELEE = 0, BULLET = 0, LASER = 0,ENERGY = 0, BOMB = 0, BIO = 0, RAD = 0, FIRE = 50, ACID = 50, WOUND = 0)
+	armor_type = /datum/armor/clothing_and_general_objects
 	always_reskinnable = TRUE
 	icon_state = "Lotos"
 	unique_reskin = list(
@@ -837,6 +837,32 @@
 	. = ..()
 	AddElement(/datum/element/polychromic, list("#FFFFFF", "#dbdbdb", "#dbdbdb", "#dbdbdb", "#dbdbdb"), 5)
 
+/obj/item/clothing/under/donator/opssrtclothes
+	name = "OPS-SRT clothes"
+	icon_state = "opssrtclothes"
+	item_state = "opssrtclothes"
+	icon = 'modular_bluemoon/icons/obj/clothing/uniforms.dmi'
+	mob_overlay_icon = 'modular_bluemoon/icons/mob/clothing/uniforms.dmi'
+	anthro_mob_worn_overlay = 'modular_bluemoon/icons/mob/clothing/uniforms_digi.dmi'
+	lefthand_file = 'modular_bluemoon/icons/mob/inhands/clothing_lefthand.dmi'
+	righthand_file = 'modular_bluemoon/icons/mob/inhands/clothing_righthand.dmi'
+	mutantrace_variation = STYLE_DIGITIGRADE
+
+/obj/item/clothing/under/donator/saibasan
+	name = "Cybersun Surplus"
+	icon_state = "saibasan"
+	item_state = "saibasan"
+	icon = 'modular_bluemoon/icons/obj/clothing/uniforms.dmi'
+	mob_overlay_icon = 'modular_bluemoon/icons/mob/clothing/uniforms.dmi'
+	lefthand_file = 'modular_bluemoon/icons/mob/inhands/clothing_lefthand.dmi'
+	righthand_file = 'modular_bluemoon/icons/mob/inhands/clothing_righthand.dmi'
+	mutantrace_variation = STYLE_DIGITIGRADE|STYLE_NO_ANTHRO_ICON
+	var/list/poly_colors = list("#FFFFFF", "#dbdbdb", "#dbdbdb",)
+
+/obj/item/clothing/under/donator/saibasan/ComponentInitialize()
+	. = ..()
+	AddElement(/datum/element/polychromic, list("#FFFFFF", "#dbdbdb", "#dbdbdb"), 3)
+
 /obj/item/clothing/under/poly_unia
 	name = "Poly Pants"
 	desc = "Brought by Gosei, too lazy for digi version, suck it Catcrins!"
@@ -1044,16 +1070,47 @@
 /obj/item/clothing/under/donator/bm/longshirt
 	name = "Long Shirt"
 	desc = "Just a long shirt, no more"
-	icon_state = "longshirt"
-	item_state = "longshirt"
-	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/under.dmi'
-	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/under.dmi'
-	anthro_mob_worn_overlay = 'modular_bluemoon/fluffs/icons/mob/clothing/under_digi.dmi'
-	mutantrace_variation = STYLE_DIGITIGRADE
+	icon_state = "longshirt_0"
 	fitted = NO_FEMALE_UNIFORM
-	body_parts_covered = NONE
-	can_adjust = TRUE
-	alternate_worn_layer = GLOVES_LAYER
+	body_parts_covered = CHEST|GROIN|ARMS
+	always_reskinnable = TRUE
+	can_adjust = FALSE
+	unique_reskin = list(
+		"Buttoned" = list("icon_state" = "longshirt_0"),
+		"Decollete" = list("icon_state" = "longshirt_1"),
+		"Unbuttoned" = list("icon_state" = "longshirt_2"),
+		"Spread out" = list("icon_state" = "longshirt_3"),
+	)
+
+/obj/item/clothing/under/donator/bm/longshirt/reskin_obj(mob/user)
+	switch(current_skin)
+		if("Buttoned")
+			body_parts_covered = CHEST|GROIN|ARMS
+		if("Decollete")
+			body_parts_covered = ARMS
+		if("Unbuttoned")
+			body_parts_covered = ARMS
+		if("Spread out")
+			body_parts_covered = ARMS
+	user.update_inv_w_uniform()
+	user.update_body(TRUE)
+
+/obj/item/clothing/under/donator/bm/longshirt/set_to_maximum_sensor(user)
+	return
+
+/obj/item/clothing/under/donator/bm/longshirt/CtrlClick(mob/user)
+	. = ..()
+	if (!(item_flags & IN_INVENTORY))
+		return
+
+	if(!isliving(user) || !user.canUseTopic(src, BE_CLOSE, ismonkey(user)))
+		return
+
+	var/desired_layer = tgui_input_number(user, "Выставить слой одежды", "Слой отображения", UNIFORM_LAYER, UNDERWEAR_LAYER, HEAD_LAYER)
+	if(!desired_layer)
+		return
+	alternate_worn_layer = desired_layer
+	user.update_inv_w_uniform()
 
 /obj/item/clothing/under/donator/bm/fulted_plate_armor
 	name = "Fluted Plate Armor"
@@ -1162,4 +1219,13 @@
 	anthro_mob_worn_overlay = 'modular_bluemoon/fluffs/icons/mob/clothing/under_digi.dmi'
 	mutantrace_variation = STYLE_DIGITIGRADE
 
+	can_adjust = FALSE
+
+/obj/item/clothing/under/donator/bm/mall_cop_chic
+	name = "Mall Cop Chic"
+	desc = "Pants from a secondhand shop that someone resewed, added straps from an old backpack, and called it 'style.' Someone clearly wanted to look like an elite mercenary, but it turned out like a shopping mall security guard. They cover your ass. Thx for that."
+	icon_state = "mall_cop_chic"
+	item_state = "mall_cop_chic"
+	icon = 'modular_bluemoon/fluffs/icons/obj/clothing/under.dmi'
+	mob_overlay_icon = 'modular_bluemoon/fluffs/icons/mob/clothing/under.dmi'
 	can_adjust = FALSE

@@ -24,7 +24,7 @@
 	resistance_flags = FIRE_PROOF | ACID_PROOF
 	flags_1 = HEAR_1
 	max_integrity = 300
-	armor = list(MELEE = 20, BULLET = 10, LASER = 0, ENERGY = 0, BOMB = 10, BIO = 0, RAD = 0, FIRE = 100, ACID = 100)
+	armor_type = /datum/armor/mecha
 	movedelay = 1 SECONDS
 	/// Cooldown between in-place rotations. Kept shorter than movedelay so turning stays responsive and isn't blocked by inability to move, but slow enough not to spin on the spot.
 	var/turn_delay = 0.4 SECONDS
@@ -397,15 +397,15 @@
 	var/integrity = obj_integrity*100/max_integrity
 	switch(integrity)
 		if(85 to 100)
-			. += "Он полностью цел."
+			. += span_notice("В идеальном состоянии.")
 		if(65 to 85)
-			. += "Он слегка повреждён."
+			. += span_notice("Видны лёгкие вмятины.")
 		if(45 to 65)
-			. += "Он сильно повреждён."
+			. += span_danger("Выглядит сильно повреждённым.")
 		if(25 to 45)
-			. += "Он находится в критическом состоянии."
+			. += span_danger("Целостность в критическом состоянии.")
 		else
-			. += "Он разваливается на части."
+			. += span_warning("Мех разваливается на части!")
 	var/hide_weapon = locate(/obj/item/mecha_parts/concealed_weapon_bay) in contents
 	var/hidden_weapon = hide_weapon ? (locate(/obj/item/mecha_parts/mecha_equipment/weapon) in equipment) : null
 	var/list/visible_equipment = equipment - hidden_weapon
@@ -423,9 +423,12 @@
 				var/mob/living/carbon/human/H = user
 				for(var/O in H.held_items)
 					if(istype(O, /obj/item/gun))
-						. += "<span class='warning'>Похоже, вы можете попасть в пилота, если прицелитесь в центр или выше.</span>"
+						. += span_warning("Похоже, вы можете попасть в пилота, если прицелитесь в центр или выше.")
 						break //in case user is holding two guns
-	. += "<span class='notice'>Для обслуживания используйте отвёртку, чтобы открыть техническую панель. Ломом можно извлечь батарею или экипировку при открытой панели.</span>"
+	. += span_notice("Используйте отвёртку, чтобы открыть панель техобслуживания. Ломом можно извлечь батарею или экипировку при открытой панели.")
+
+/obj/vehicle/sealed/mecha/generate_integrity_message()
+	return
 
 //processing internal damage, temperature, air regulation, alert updates, lights power use.
 /obj/vehicle/sealed/mecha/process()

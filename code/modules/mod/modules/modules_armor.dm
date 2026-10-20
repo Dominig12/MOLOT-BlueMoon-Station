@@ -4,7 +4,6 @@
 	desc = "Незавершенная плитка дополнительной брони, защищающая владельца от указанного на этикетке типа повреждений. Стоит понимать, что \
 	каждая такая плитка имеет вес и, следовательно, повышает энергопотребление из-за нагрузки на сервоприводы."
 	module_type = MODULE_ARMOR
-	var/datum/armor/additional_armor = new()
 	var/armor_module_type //MELEE, BULLET, LASER
 	var/armor_bonus = 15
 	var/need_sheets = 10
@@ -17,6 +16,7 @@
 	. = ..()
 	material_to_armor_list = list(
 		/obj/item/stack/sheet/durathread::name 			 = MELEE,
+		/obj/item/stack/sheet/animalhide/goliath_hide::name = MELEE,
 		/obj/item/stack/sheet/plasteel::name 			 = BULLET,
 		/obj/item/stack/sheet/mineral/titanium::name 	 = LASER,
 		/obj/item/stack/sheet/mineral/diamond::name		 = ENERGY,
@@ -38,30 +38,29 @@
 	. = ..()
 	if(armor_module_type)
 		return
-	. += span_boldnotice("Сейчас доступны варианты:")
+	. += span_boldnotice("<hr><center>Доступные варианты армирования</center>")
+	. += "Пригодные для защиты от угроз материалы:"
+	var/list/armor_vars = list()
 	for(var/material in material_to_armor_list)
-		. += (span_alert("Материал --[(material)]-- позволяет сделать защиту от:") + span_revenminor("[material_to_armor_list[material]]"))
+		var/material_name = span_alert("[capitalize(vocabulary_to_ru(GLOB.mat_ru_nominative, material))]")
+		var/armor_name = span_revenminor("[vocabulary_to_ru(GLOB.armor_rating_genitive_ru, material_to_armor_list[material])]")
+		armor_vars += "<div style='margin-top:4px;'>– [material_name] поможет от [armor_name].</div>"
+	. += armor_vars.Join()
 
 /obj/item/mod/module/armor/proc/add_armor_bonus()
 	if(!mod.theme.compatible_with_armor_modules)
 		on_uninstall()
 		return
-	for(var/index in mod.mod_parts)
-		if(index == MOD_PART_CELL)
-			continue
-		var/obj/item/clothing/mod_part/part = mod.mod_parts[index]
+	for(var/obj/item/clothing/mod_part/part as anything in mod.get_mod_parts(include_cell = FALSE))
 		var/datum/armor/part_armor = part.get_armor()
-		part.set_armor(part_armor.generate_new_with_modifiers(list("[armor_module_type]" = armor_bonus)))
+		part.set_armor(part_armor.modifyRating(arglist(list("[armor_module_type]" = armor_bonus))))
 	mod.slowdown_active += slowdown_bonus
 	mod.slowdown_inactive += slowdown_bonus
 
 /obj/item/mod/module/armor/proc/remove_armor_bonus()
-	for(var/index in mod.mod_parts)
-		if(index == MOD_PART_CELL)
-			continue
-		var/obj/item/clothing/mod_part/part = mod.mod_parts[index]
+	for(var/obj/item/clothing/mod_part/part as anything in mod.get_mod_parts(include_cell = FALSE))
 		var/datum/armor/part_armor = part.get_armor()
-		part.set_armor(part_armor.generate_new_with_modifiers(list("[armor_module_type]" = -armor_bonus)))
+		part.set_armor(part_armor.modifyRating(arglist(list("[armor_module_type]" = -armor_bonus))))
 	mod.slowdown_active -= slowdown_bonus
 	mod.slowdown_inactive -= slowdown_bonus
 

@@ -1,10 +1,16 @@
+#define HERETIC_DEMON_REMAINS_VOLUME 50
+#define HERETIC_DEMON_REMAINS_TIME (1.2 SECONDS)
+#define HERETIC_ARMSY_DEATH_SOUND 'modular_bluemoon/sound/heretic/demons/armsy_death.ogg'
+#define HERETIC_ARMSY_DEATH_VOLUME 70
+#define HERETIC_ARMSY_DEATH_EXTRARANGE 10
+
 /mob/living/simple_animal/hostile/eldritch
-	name = "Demon"
-	real_name = "Demon"
+	name = "demon"
+	real_name = "demon"
 	desc = ""
 	gender = NEUTER
 	mob_biotypes = NONE
-	speak_emote = list("screams")
+	speak_emote = list("кричит")
 	response_help_continuous = "thinks better of touching"
 	response_help_simple = "think better of touching"
 	response_disarm_continuous = "flails at"
@@ -12,7 +18,7 @@
 	response_harm_continuous = "reaps"
 	response_harm_simple = "tears"
 	speak_chance = 1
-	icon = 'icons/mob/eldritch_mobs.dmi'
+	icon = 'modular_bluemoon/icons/mob/heretic_demons.dmi'
 	speed = 0
 	a_intent = INTENT_HARM
 	stop_automated_movement = 1
@@ -21,7 +27,7 @@
 	//на ai_controller - см. hostile_adapter/MIGRATION_EXCEPTIONS.md и пин
 	//ai_eldritch_stays_player_vessel.
 	AIStatus = AI_OFF
-	attack_sound = 'sound/weapons/punch1.ogg'
+	attack_sound = HERETIC_DEMON_FLESH_SFX
 	see_in_dark = 7
 	lighting_alpha = LIGHTING_PLANE_ALPHA_MOSTLY_INVISIBLE
 	damage_coeff = list(BRUTE = 1, BURN = 1, TOX = 0, CLONE = 0, STAMINA = 0, OXY = 0)
@@ -32,15 +38,33 @@
 	movement_type = GROUND
 	pressure_resistance = 100
 	del_on_death = TRUE
-	deathmessage = "implodes into itself"
+	deathmessage = "распадается и исчезает."
 	faction = list("heretics")
 	simple_mob_flags = SILENCE_RANGED_MESSAGE
 	///Innate spells that are supposed to be added when a beast is created
 	var/list/spells_to_add
+	/// Одноразовый распад в heretic_demons.dmi: тело удаляется сразу, видимую гибель играет эффект.
+	var/remains_state
+	var/remains_sound
+	var/remains_volume = HERETIC_DEMON_REMAINS_VOLUME
 
 /mob/living/simple_animal/hostile/eldritch/Initialize(mapload)
 	. = ..()
 	add_spells()
+
+/mob/living/simple_animal/hostile/eldritch/death(gibbed)
+	if(!gibbed)
+		leave_remains()
+	return ..()
+
+/mob/living/simple_animal/hostile/eldritch/proc/leave_remains()
+	if(!remains_state || !isturf(loc))
+		return null
+	var/obj/effect/temp_visual/heretic_demon_remains/remains = new(loc, remains_state, dir)
+	remains.transform = transform
+	if(remains_sound)
+		playsound(loc, remains_sound, remains_volume, TRUE)
+	return remains
 
 /**
   * Add_spells
@@ -52,9 +76,10 @@
 		AddSpell(new spell())
 
 /mob/living/simple_animal/hostile/eldritch/raw_prophet
-	name = "Raw Prophet"
-	real_name = "Raw Prophet"
-	desc = "Abomination made from severed limbs."
+	name = "raw prophet"
+	real_name = "raw prophet"
+	desc = "Чудовище, сшитое из отрубленных конечностей."
+	icon = 'modular_bluemoon/icons/mob/heretic_demons.dmi'
 	icon_state = "raw_prophet"
 	status_flags = CANPUSH
 	icon_living = "raw_prophet"
@@ -63,7 +88,10 @@
 	maxHealth = 50
 	health = 50
 	sight = SEE_MOBS|SEE_OBJS|SEE_TURFS
-	spells_to_add = list(/obj/effect/proc_holder/spell/targeted/ethereal_jaunt/shift/ash/long,/obj/effect/proc_holder/spell/pointed/manse_link,/obj/effect/proc_holder/spell/targeted/telepathy/eldritch,/obj/effect/proc_holder/spell/pointed/trigger/blind/eldritch)
+	deathmessage = "расходится по швам, и сшитые руки осыпаются грудой мёртвой плоти."
+	remains_state = "raw_prophet_dead"
+	remains_sound = 'modular_bluemoon/sound/heretic/flesh_latch_tear.ogg'
+	spells_to_add = list(/obj/effect/proc_holder/spell/targeted/ethereal_jaunt/shift/flesh/long,/obj/effect/proc_holder/spell/pointed/manse_link,/obj/effect/proc_holder/spell/targeted/telepathy/eldritch,/obj/effect/proc_holder/spell/pointed/trigger/blind/eldritch)
 
 	var/list/linked_mobs = list()
 
@@ -85,7 +113,7 @@
 	if(linked_mobs[mob_linked])
 		return FALSE
 
-	to_chat(mob_linked, "<span class='notice'>You feel something new enter your sphere of mind, you hear whispers of people far away, screeches of horror and a humming of welcome to [src]'s Mansus Link.</span>")
+	to_chat(mob_linked, span_notice("В ваш разум проникает чужое присутствие. Далёкий шёпот и крики ужаса сливаются в приветствие: [src] связывает вас с Мансусом."))
 	var/datum/action/innate/mansus_speech/action = new(src)
 	linked_mobs[mob_linked] = action
 	action.Grant(mob_linked)
@@ -99,21 +127,31 @@
 	var/datum/action/innate/mansus_speech/action = linked_mobs[mob_linked]
 	action.Remove(mob_linked)
 	qdel(action)
-	to_chat(mob_linked, "<span class='notice'>Your mind shatters as the [src]'s Mansus Link leaves your mind.</span>")
+	to_chat(mob_linked, span_notice("Связь с Мансусом обрывается. Голос [src] исчезает из вашего разума."))
 	mob_linked.emote("realagony")
 	//micro stun
 	mob_linked.AdjustParalyzed(0.5 SECONDS)
 	linked_mobs -= mob_linked
 
 /mob/living/simple_animal/hostile/eldritch/raw_prophet/death(gibbed)
-	for(var/linked_mob in linked_mobs)
+	for(var/linked_mob in linked_mobs.Copy())
 		unlink_mob(linked_mob)
 	return ..()
 
+/mob/living/simple_animal/hostile/eldritch/raw_prophet/Destroy()
+	for(var/linked_mob in linked_mobs.Copy())
+		unlink_mob(linked_mob)
+	return ..()
+
+/mob/living/simple_animal/hostile/eldritch/raw_prophet/Logout()
+	client?.change_view(world.view)
+	return ..()
+
 /mob/living/simple_animal/hostile/eldritch/armsy
-	name = "Terror of the Night"
-	real_name = "Armsy"
-	desc = "Abomination made from severed limbs."
+	name = "terror of the night"
+	real_name = "many-armed horror"
+	desc = "Чудовище, сшитое из отрубленных конечностей."
+	icon = 'modular_bluemoon/icons/mob/heretic_demons.dmi'
 	icon_state = "armsy_start"
 	icon_living = "armsy_start"
 	maxHealth = 400
@@ -127,6 +165,9 @@
 	sight = SEE_MOBS
 	spells_to_add = list(/obj/effect/proc_holder/spell/targeted/worm_contract)
 	ranged = TRUE
+	attack_sound = HERETIC_ARMSY_BITE_SFX
+	deathmessage = "лопается, и кольца тела расползаются клубками жил."
+	remains_state = "armsy_dead"
 	///Previous segment in the chain
 	var/mob/living/simple_animal/hostile/eldritch/armsy/back
 	///Next segment in the chain
@@ -139,47 +180,27 @@
 	var/stacks_to_grow = 2
 	///Currently eaten arms
 	var/current_stacks = 0
+	///Фазы волны сокращения: середина берёт свою по номеру от головы, соседи отстают на треть цикла
+	var/static/list/mid_phases = list("armsy_mid_a", "armsy_mid_b", "armsy_mid_c")
 
 //I tried Initalize but it didnt work, like at all. This proc just wouldnt fire if it was Initalize instead of New
 /mob/living/simple_animal/hostile/eldritch/armsy/Initialize(mapload,spawn_more = TRUE,len = 6)
 	. = ..()
-	if(len < 3)
-		stack_trace("Eldritch Armsy created with invalid len ([len]). Reverting to 3.")
-		len = 3 //code breaks below 3, let's just not allow it.
 	oldloc = loc
-	RegisterSignal(src,COMSIG_MOVABLE_MOVED, PROC_REF(update_chain_links))
+	RegisterSignal(src, COMSIG_MOVABLE_MOVED, PROC_REF(update_chain_links))
+	RegisterSignal(src, COMSIG_PARENT_PREQDELETED, PROC_REF(release_body))
 	if(!spawn_more)
 		return
 	allow_pulling = TRUE
-	///next link
-	var/mob/living/simple_animal/hostile/eldritch/armsy/next
-	///previous link
-	var/mob/living/simple_animal/hostile/eldritch/armsy/prev
-	///current link
-	var/mob/living/simple_animal/hostile/eldritch/armsy/current
-	for(var/i in 0 to len)
-		prev = current
-		//i tried using switch, but byond is really fucky and it didnt work as intended. Im sorry
-		if(i == 0)
-			current = new type(drop_location(),FALSE)
-			current.icon_state = "armsy_mid"
-			current.icon_living = "armsy_mid"
-			current.front = src
-			current.toggle_ai(AI_OFF)
-			back = current
-		else if(i < len)
-			current = new type(drop_location(),FALSE)
-			prev.back = current
-			prev.icon_state = "armsy_mid"
-			prev.icon_living = "armsy_mid"
-			prev.front = next
-			prev.toggle_ai(AI_OFF)
-		else
-			prev.icon_state = "armsy_end"
-			prev.icon_living = "armsy_end"
-			prev.front = next
-			prev.toggle_ai(AI_OFF)
-		next = prev
+	len = clamp(len, 3, 12)
+	var/mob/living/simple_animal/hostile/eldritch/armsy/previous = src
+	for(var/index in 2 to len)
+		var/mob/living/simple_animal/hostile/eldritch/armsy/segment = new type(drop_location(), FALSE)
+		previous.back = segment
+		segment.front = previous
+		segment.icon_state = index == len ? "armsy_end" : mid_phases[(index - 1) % length(mid_phases) + 1]
+		segment.icon_living = segment.icon_state
+		previous = segment
 
 //we are literally a vessel of otherworldly destruction, we bring our own gravity unto this plane
 /mob/living/simple_animal/hostile/eldritch/armsy/has_gravity(turf/T)
@@ -218,6 +239,31 @@
 	var/obj/effect/decal/cleanable/blood/gibs/decal = new chosen_decal(drop_location())
 	decal.setDir(dir)
 
+/mob/living/simple_animal/hostile/eldritch/armsy/proc/release_body()
+	SIGNAL_HANDLER
+	var/list/released = list()
+	// transfer_to() обращается к языкам старого тела до отметки QDELING.
+	for(var/mob/living/inside in contents.Copy())
+		inside.forceMove(drop_location())
+		inside.remove_status_effect(STATUS_EFFECT_STASIS, STASIS_ASCENSION_EFFECT)
+		if(mind && !inside.mind)
+			mind.transfer_to(inside, TRUE)
+		released += inside
+	if(stat == DEAD && length(released))
+		var/list/worm_shape = flesh_shape()
+		for(var/mob/living/inside as anything in released)
+			heretic_flesh_expel_fx(inside, worm_shape)
+
+/mob/living/simple_animal/hostile/eldritch/armsy/death(gibbed)
+	if(!gibbed)
+		for(var/mob/living/simple_animal/hostile/eldritch/armsy/segment = back, segment, segment = segment.back)
+			segment.leave_remains()
+		if(front)
+			playsound(src, 'modular_bluemoon/sound/heretic/flesh_latch_tear.ogg', HERETIC_DEMON_REMAINS_VOLUME, TRUE)
+		else
+			playsound(src, HERETIC_ARMSY_DEATH_SOUND, HERETIC_ARMSY_DEATH_VOLUME, FALSE, HERETIC_ARMSY_DEATH_EXTRARANGE)
+	return ..()
+
 /mob/living/simple_animal/hostile/eldritch/armsy/Destroy()
 	if(front)
 		front.icon_state = "armsy_end"
@@ -228,7 +274,9 @@
 	return ..()
 
 /mob/living/simple_animal/hostile/eldritch/armsy/BiologicalLife(delta_time, times_fired)
-	adjustBruteLoss(-2)
+	. = ..()
+	if(stat != DEAD)
+		adjustBruteLoss(-delta_time)
 
 /mob/living/simple_animal/hostile/eldritch/armsy/proc/heal()
 	if(health == maxHealth)
@@ -238,18 +286,45 @@
 		else
 			current_stacks++
 			if(current_stacks >= stacks_to_grow)
-				var/mob/living/simple_animal/hostile/eldritch/armsy/prev = new type(drop_location(),spawn_more = FALSE)
-				icon_state = "armsy_mid"
-				icon_living =  "armsy_mid"
-				back = prev
-				prev.icon_state = "armsy_end"
-				prev.icon_living = "armsy_end"
-				prev.front = src
-				prev.toggle_ai(AI_OFF)
-				current_stacks = 0
+				grow_tail()
 
 	adjustBruteLoss(-maxHealth * 0.5, FALSE)
 	adjustFireLoss(-maxHealth * 0.5 ,FALSE)
+
+/mob/living/simple_animal/hostile/eldritch/armsy/proc/grow_tail()
+	var/mob/living/simple_animal/hostile/eldritch/armsy/head = src
+	var/index = 0
+	while(head.front)
+		head = head.front
+		index++
+	if(head.get_length() >= HERETIC_FLESH_WORM_MAX_LENGTH)
+		return null
+	var/mob/living/simple_animal/hostile/eldritch/armsy/segment = new type(drop_location(), FALSE)
+	icon_state = front ? mid_phases[index % length(mid_phases) + 1] : "armsy_start"
+	icon_living = icon_state
+	back = segment
+	segment.icon_state = "armsy_end"
+	segment.icon_living = "armsy_end"
+	segment.front = src
+	segment.toggle_ai(AI_OFF)
+	current_stacks = 0
+	return segment
+
+/mob/living/simple_animal/hostile/eldritch/armsy/proc/get_tail()
+	var/mob/living/simple_animal/hostile/eldritch/armsy/tail = src
+	while(tail.back)
+		tail = tail.back
+	return tail
+
+/mob/living/simple_animal/hostile/eldritch/armsy/proc/chain_health()
+	for(var/mob/living/simple_animal/hostile/eldritch/armsy/segment = src, segment, segment = segment.back)
+		. += segment.health
+
+/mob/living/simple_animal/hostile/eldritch/armsy/proc/heal_chain(amount)
+	for(var/mob/living/simple_animal/hostile/eldritch/armsy/segment = src, segment && amount > 0, segment = segment.back)
+		var/healed = min(amount, segment.maxHealth - segment.health)
+		segment.adjustHealth(-healed)
+		amount -= healed
 
 
 /mob/living/simple_animal/hostile/eldritch/armsy/Shoot(atom/targeted_atom)
@@ -258,7 +333,9 @@
 
 
 /mob/living/simple_animal/hostile/eldritch/armsy/AttackingTarget()
-	if(istype(target,/obj/item/bodypart/r_arm) || istype(target,/obj/item/bodypart/l_arm))
+	if(QDELETED(target))
+		return
+	if(Adjacent(target) && (istype(target,/obj/item/bodypart/r_arm) || istype(target,/obj/item/bodypart/l_arm)))
 		qdel(target)
 		heal()
 		return
@@ -293,12 +370,13 @@
 	return ..()
 
 /mob/living/simple_animal/hostile/eldritch/armsy/prime
-	name = "Lord of the Night"
-	real_name = "Master of Decay"
+	name = "lord of the night"
+	real_name = "lord of decay"
 	maxHealth = 800
 	health = 800
 	melee_damage_lower = 20
 	melee_damage_upper = 25
+	var/feeding = FALSE
 
 /mob/living/simple_animal/hostile/eldritch/armsy/prime/Initialize(mapload,spawn_more = TRUE,len = 9)
 	. = ..()
@@ -306,56 +384,79 @@
 	matrix_transformation.Scale(1.4,1.4)
 	transform = matrix_transformation
 
-/mob/living/simple_animal/hostile/eldritch/armsy/primeproc/heal()
-	if(health == maxHealth)
-		if(back)
-			back.heal()
-			return
-		else
-			current_stacks++
-			if(current_stacks >= stacks_to_grow)
-				var/mob/living/simple_animal/hostile/eldritch/armsy/prev = new type(drop_location(),spawn_more = FALSE)
-				icon_state = "armsy_mid"
-				icon_living =  "armsy_mid"
-				back = prev
-				prev.icon_state = "armsy_end"
-				prev.icon_living = "armsy_end"
-				prev.front = src
-				prev.toggle_ai(AI_OFF)
-				current_stacks = 0
-				var/matrix/matrix_transformation = matrix()
-				matrix_transformation.Scale(1.4,1.4)
-				transform = matrix_transformation
+/mob/living/simple_animal/hostile/eldritch/armsy/prime/AttackingTarget()
+	if(feeding)
+		return
+	if(can_devour(target))
+		INVOKE_ASYNC(src, PROC_REF(devour), target)
+		return
+	return ..()
 
-	adjustBruteLoss(-maxHealth * 0.5, FALSE)
-	adjustFireLoss(-maxHealth * 0.5 ,FALSE)
+/mob/living/simple_animal/hostile/eldritch/armsy/prime/proc/can_devour(atom/food)
+	if(QDELETED(food) || front || stat == DEAD || !ishuman(food) || !isturf(food.loc) || !Adjacent(food))
+		return FALSE
+	var/mob/living/carbon/human/corpse = food
+	if(corpse.stat != DEAD || IS_HERETIC(corpse) || IS_HERETIC_MONSTER(corpse))
+		return FALSE
+	var/datum/antagonist/heretic/heretic = IS_HERETIC(src)
+	var/datum/eldritch_knowledge/final_eldritch/flesh_final/finale = heretic?.get_knowledge(/datum/eldritch_knowledge/final_eldritch/flesh_final)
+	return finale?.applied_body == src
+
+/mob/living/simple_animal/hostile/eldritch/armsy/prime/proc/devour(mob/living/carbon/human/corpse)
+	feeding = TRUE
+	visible_message(span_danger("[src] вгрызается в [corpse]!"), span_notice("Вы начинаете пожирать [corpse]."))
+	playsound(src, 'modular_bluemoon/sound/heretic/flesh_screech.ogg', 50, TRUE)
+	// Рывки головы стартуют таймером: сбой рисования не оставит червя навсегда занятым трапезой.
+	addtimer(CALLBACK(src, PROC_REF(start_feast), WEAKREF(corpse)), world.tick_lag)
+	var/fed = do_after(src, HERETIC_FLESH_WORM_FEED_TIME, corpse, extra_checks = CALLBACK(src, PROC_REF(unhurt_while_feeding), list(chain_health())))
+	feeding = FALSE
+	stop_feast()
+	if(!fed || !can_devour(corpse))
+		return FALSE
+	var/turf/gore_spot = get_turf(corpse)
+	visible_message(span_danger("[src] пожирает [corpse]!"), span_notice("Вы пожираете [corpse]."))
+	playsound(src, HERETIC_FLESH_ABSORB_SFX, HERETIC_DEMON_REMAINS_VOLUME, TRUE)
+	log_combat(src, corpse, "devoured")
+	corpse.gib(no_bodyparts = TRUE, drop_items = TRUE)
+	heal_chain(HERETIC_FLESH_WORM_FEED_HEAL)
+	var/mob/living/simple_animal/hostile/eldritch/armsy/tail = get_tail()
+	tail.grow_tail()
+	feast_gulp(gore_spot)
+	return TRUE
+
+/mob/living/simple_animal/hostile/eldritch/armsy/prime/proc/unhurt_while_feeding(list/last_health)
+	var/current_health = chain_health()
+	if(current_health < last_health[1])
+		return FALSE
+	last_health[1] = current_health
+	return TRUE
 
 
 /mob/living/simple_animal/hostile/eldritch/rust_spirit
-	name = "Rust Walker"
-	real_name = "Rusty"
-	desc = "Incomprehensible abomination actively seeping life out of it's surrounding."
-	icon_state = "rust_walker_s"
+	name = "rust walker"
+	real_name = "rust walker"
+	desc = "Непостижимое чудовище, вытягивающее жизнь из всего вокруг."
+	icon_state = "rust_walker"
 	status_flags = CANPUSH
-	icon_living = "rust_walker_s"
+	icon_living = "rust_walker"
 	maxHealth = 200
 	health = 200
 	melee_damage_lower = 25
 	melee_damage_upper = 35
 	sight = SEE_TURFS
+	attack_sound = HERETIC_DEMON_RUST_SFX
+	deathmessage = "трескается, и ржавая скорлупа осыпается трухой."
+	remains_state = "rust_walker_dead"
+	remains_sound = 'modular_bluemoon/sound/heretic/rust_heart_break_1.ogg'
 	spells_to_add = list(/obj/effect/proc_holder/spell/aoe_turf/rust_conversion/small,/obj/effect/proc_holder/spell/aimed/rust_wave/short)
-
-/mob/living/simple_animal/hostile/eldritch/rust_spirit/setDir(newdir, ismousemovement)
-    . = ..()
-    if(newdir == NORTH)
-        icon_state = "rust_walker_n"
-    else if(newdir == SOUTH)
-        icon_state = "rust_walker_s"
-    update_icon()
+	var/step_volume = 30
+	var/step_sound_toggle = FALSE
 
 /mob/living/simple_animal/hostile/eldritch/rust_spirit/Moved()
 	. = ..()
-	playsound(src, 'sound/effects/footstep/rustystep1.ogg', 100, TRUE)
+	step_sound_toggle = !step_sound_toggle
+	if(step_sound_toggle)
+		playsound(src, 'sound/effects/footstep/rustystep1.ogg', step_volume, TRUE, SHORT_RANGE_SOUND_EXTRARANGE)
 
 /mob/living/simple_animal/hostile/eldritch/rust_spirit/Life()
 	if(stat == DEAD)
@@ -367,9 +468,10 @@
 	return ..()
 
 /mob/living/simple_animal/hostile/eldritch/ash_spirit
-	name = "Ash Man"
-	real_name = "Ashy"
-	desc = "Incomprehensible abomination actively seeping life out of it's surrounding."
+	name = "ash spirit"
+	real_name = "ash spirit"
+	desc = "Непостижимое чудовище, вытягивающее жизнь из всего вокруг."
+	icon = 'modular_bluemoon/icons/mob/heretic_demons.dmi'
 	icon_state = "ash_walker"
 	status_flags = CANPUSH
 	icon_living = "ash_walker"
@@ -378,12 +480,17 @@
 	melee_damage_lower = 15
 	melee_damage_upper = 20
 	sight = SEE_TURFS
+	attack_sound = HERETIC_ASH_GRASP_SFX
+	deathmessage = "вспыхивает изнутри и осыпается пеплом."
+	remains_state = "ash_walker_dead"
+	remains_sound = 'modular_bluemoon/sound/heretic/ash_crumble.ogg'
 	spells_to_add = list(/obj/effect/proc_holder/spell/targeted/ethereal_jaunt/shift/ash,/obj/effect/proc_holder/spell/pointed/cleave/long,/obj/effect/proc_holder/spell/aoe_turf/fire_cascade)
 
 /mob/living/simple_animal/hostile/eldritch/stalker
-	name = "Flesh Stalker"
-	real_name = "Flesh Stalker"
-	desc = "Abomination made from severed limbs."
+	name = "flesh stalker"
+	real_name = "flesh stalker"
+	desc = "Чудовище, сшитое из отрубленных конечностей."
+	icon = 'modular_bluemoon/icons/mob/heretic_demons.dmi'
 	icon_state = "stalker"
 	status_flags = CANPUSH
 	icon_living = "stalker"
@@ -392,4 +499,56 @@
 	melee_damage_lower = 15
 	melee_damage_upper = 20
 	sight = SEE_MOBS
-	spells_to_add = list(/obj/effect/proc_holder/spell/targeted/ethereal_jaunt/shift/ash,/obj/effect/proc_holder/spell/targeted/shapeshift/eldritch,/obj/effect/proc_holder/spell/targeted/emplosion/eldritch)
+	deathmessage = "рвётся по швам и стекает на пол лужей сукровицы."
+	remains_state = "stalker_dead"
+	remains_sound = 'modular_bluemoon/sound/heretic/flesh_latch_tear.ogg'
+	spells_to_add = list(/obj/effect/proc_holder/spell/targeted/ethereal_jaunt/shift/flesh,/obj/effect/proc_holder/spell/targeted/shapeshift/eldritch,/obj/effect/proc_holder/spell/targeted/emplosion/eldritch)
+
+/obj/effect/temp_visual/heretic_demon_remains
+	icon = 'modular_bluemoon/icons/mob/heretic_demons.dmi'
+	duration = HERETIC_DEMON_REMAINS_TIME
+	randomdir = FALSE
+
+/obj/effect/temp_visual/heretic_demon_remains/Initialize(mapload, new_state, new_dir)
+	icon_state = new_state
+	if(new_dir)
+		setDir(new_dir)
+	return ..()
+
+/datum/sound_effect/heretic_flesh_absorb
+	key = HERETIC_FLESH_ABSORB_SFX
+	file_paths = list(
+		'modular_bluemoon/sound/heretic/flesh_absorb_1.ogg',
+		'modular_bluemoon/sound/heretic/flesh_absorb_2.ogg',
+		'modular_bluemoon/sound/heretic/flesh_absorb_3.ogg',
+	)
+
+/datum/sound_effect/heretic_demon_flesh
+	key = HERETIC_DEMON_FLESH_SFX
+	file_paths = list(
+		'modular_bluemoon/sound/heretic/flesh_stitch_1.ogg',
+		'modular_bluemoon/sound/heretic/flesh_stitch_2.ogg',
+		'modular_bluemoon/sound/heretic/flesh_latch_tear.ogg',
+	)
+
+/datum/sound_effect/heretic_armsy_bite
+	key = HERETIC_ARMSY_BITE_SFX
+	file_paths = list(
+		'modular_bluemoon/sound/heretic/demons/armsy_bite_1.ogg',
+		'modular_bluemoon/sound/heretic/demons/armsy_bite_2.ogg',
+		'modular_bluemoon/sound/heretic/demons/armsy_bite_3.ogg',
+	)
+
+/datum/sound_effect/heretic_demon_rust
+	key = HERETIC_DEMON_RUST_SFX
+	file_paths = list(
+		'modular_bluemoon/sound/heretic/rust_grasp_1.ogg',
+		'modular_bluemoon/sound/heretic/rust_grasp_2.ogg',
+		'modular_bluemoon/sound/heretic/rust_grasp_3.ogg',
+	)
+
+#undef HERETIC_DEMON_REMAINS_VOLUME
+#undef HERETIC_DEMON_REMAINS_TIME
+#undef HERETIC_ARMSY_DEATH_SOUND
+#undef HERETIC_ARMSY_DEATH_VOLUME
+#undef HERETIC_ARMSY_DEATH_EXTRARANGE

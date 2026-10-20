@@ -7,7 +7,7 @@
 
 	density = TRUE
 	max_integrity = 300
-	armor = list(MELEE = 0, BULLET = 0, LASER = 0, ENERGY = 100, BOMB = 0, BIO = 100, RAD = 100, FIRE = 80, ACID = 30)
+	armor_type = /datum/armor/thermal_devices
 	layer = OBJ_LAYER
 	plane = GAME_PLANE
 	circuit = /obj/item/circuitboard/machine/thermomachine
@@ -59,11 +59,12 @@
 
 /obj/machinery/atmospherics/components/unary/thermomachine/examine(mob/user)
 	. = ..()
-	. += "<span class='notice'>Термостат настроен на [target_temperature]K ([target_temperature-T0C]C).</span>"
-	if(in_range(user, src) || isobserver(user))
-		. += "<span class='notice'>Статус-дисплей сообщает: \n\
-		- Теплоёмкость работы с газами: <b>[heat_capacity] J/K</b>. \n\
-		- Диапазон T: <b>[min_temperature]K - [max_temperature]K ([min_temperature-T0C]C - [max_temperature-T0C]C)</b>.</span>"
+	. += span_notice("Термостат настроен на [target_temperature]K ([target_temperature-T0C]C).")
+
+/obj/machinery/atmospherics/components/unary/thermomachine/examine_display_content(mob/user)
+	. += "\
+	– Теплоёмкость работы с газами: <b>[heat_capacity] J/K</b>. \n\
+	– Диапазон T: <b>[min_temperature]K - [max_temperature]K ([min_temperature-T0C]C - [max_temperature-T0C]C)</b>."
 
 /obj/machinery/atmospherics/components/unary/thermomachine/process_atmos()
 	..()

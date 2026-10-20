@@ -6,36 +6,20 @@
 	flags_inv = HIDEEYES|HIDEFACE|HIDEFACIALHAIR|HIDESNOUT
 	w_class = WEIGHT_CLASS_NORMAL
 	item_state = "gas_alt"
-	armor = list(MELEE = 0, BULLET = 0, LASER = 0,ENERGY = 0, BOMB = 0, BIO = 100, RAD = 0, FIRE = 0, ACID = 0)
+	armor_type = /datum/armor/bio100
 	gas_transfer_coefficient = 0.01
 	permeability_coefficient = 0.01
 	flags_cover = MASKCOVERSEYES | MASKCOVERSMOUTH
 	resistance_flags = NONE
 	mutantrace_variation = STYLE_MUZZLE
 	visor_flags_inv = HIDEFACE
-	var/flavor_adjust = TRUE //can it do the heehoo alt click to hide/show identity
-
-/obj/item/clothing/mask/gas/examine(mob/user)
-	. = ..()
-	if(flavor_adjust)
-		. += "<span class='info'>Alt-click to toggle identity concealment. It's currently <b>[flags_inv & HIDEFACE ? "on" : "off"]</b>.</span>"
-
-/obj/item/clothing/mask/gas/AltClick(mob/user)
-	if(face_hide_capable)
-		if(!user.canUseTopic(src, BE_CLOSE, ismonkey(user)))
-			return ..()
-		toggle_face_hiding(user)
-		return TRUE
-	. = ..()
-	if(flavor_adjust && adjustmask(user, TRUE))
-		return TRUE
 
 /obj/item/clothing/mask/gas/atmos
 	name = "Atmospheric Gas Mask"
 	desc = "Improved gas mask utilized by atmospheric technicians. It's flameproof!"
 	icon_state = "gas_atmos"
 	item_state = "gas_atmos"
-	armor = list(MELEE = 0, BULLET = 0, LASER = 0,ENERGY = 0, BOMB = 0, BIO = 100, RAD = 0, FIRE = 100, ACID = 10)
+	armor_type = /datum/armor/mask_atmos
 	resistance_flags = FIRE_PROOF
 
 /obj/item/clothing/mask/gas/atmos/captain
@@ -56,7 +40,6 @@
 	desc = "A face-covering mask that can be connected to an air supply. This one doesn't obscure your face however." //More accurate
 	icon_state = "gas_clear"
 	flags_inv = 0
-	flavor_adjust = FALSE
 
 /obj/item/clothing/mask/gas/glass/alt
 	icon_state = "gas_alt2"
@@ -71,20 +54,17 @@
 	custom_materials = list(/datum/material/iron=4000, /datum/material/glass=2000)
 	flash_protect = 2
 	tint = 2
-	armor = list(MELEE = 10, BULLET = 0, LASER = 0,ENERGY = 0, BOMB = 0, BIO = 0, RAD = 0, FIRE = 100, ACID = 55)
+	armor_type = /datum/armor/mask_welding
 	actions_types = list(/datum/action/item_action/toggle)
 	flags_inv = HIDEEYES|HIDEFACE //BM Changes
 	flags_cover = MASKCOVERSEYES
 	visor_flags_inv = HIDEEYES
 	visor_flags_cover = MASKCOVERSEYES
 	resistance_flags = FIRE_PROOF
-	flavor_adjust = FALSE
 	can_toggle = TRUE
 
 /obj/item/clothing/mask/gas/welding/attack_self(mob/user)
 	weldingvisortoggle(user)
-
-/obj/item/clothing/mask/gas/welding/up
 
 /obj/item/clothing/mask/gas/welding/up/Initialize(mapload)
 	. = ..()
@@ -98,7 +78,7 @@
 	desc = "A modernised version of the classic design, this mask will not only filter out toxins but it can also be connected to an air supply."
 	icon_state = "plaguedoctor"
 	item_state = "gas_mask"
-	armor = list(MELEE = 0, BULLET = 0, LASER = 5, ENERGY = 5, BOMB = 0, BIO = 100, RAD = 0, FIRE = 0, ACID = 0)
+	armor_type = /datum/armor/plaguedoctor
 
 /obj/item/clothing/mask/gas/plaguedoctor/jason
 	name = "Jason Mask"
@@ -284,6 +264,7 @@
 /obj/item/clothing/mask/gas/owl_mask
 	name = "owl mask"
 	desc = "Twoooo!"
+	icon = 'icons/obj/clothing/masks/animal.dmi'
 	icon_state = "owl"
 	clothing_flags = ALLOWINTERNALS
 	flags_cover = MASKCOVERSEYES
@@ -299,44 +280,23 @@
 	desc = "A creepy wooden mask. Surprisingly expressive for a poorly carved bit of wood."
 	icon_state = "tiki_eyebrow"
 	item_state = "tiki_eyebrow"
+	icon = 'icons/obj/clothing/masks/tiki.dmi'
 	custom_materials = list(/datum/material/wood = MINERAL_MATERIAL_AMOUNT * 1.25)
 	resistance_flags = FLAMMABLE
 	max_integrity = 100
 	actions_types = list(/datum/action/item_action/adjust)
 	dog_fashion = null
-	var/list/tikimask_designs = list()
-
-
-/obj/item/clothing/mask/gas/tiki_mask/Initialize(mapload)
-	.=..()
-	tikimask_designs = list(
-		"Original Tiki" = image(icon = src.icon, icon_state = "tiki_eyebrow"),
-		"Happy Tiki" = image(icon = src.icon, icon_state = "tiki_happy"),
-		"Confused Tiki" = image(icon = src.icon, icon_state = "tiki_confused"),
-		"Angry Tiki" = image(icon = src.icon, icon_state = "tiki_angry")
-		)
-
-/obj/item/clothing/mask/gas/tiki_mask/ui_action_click(mob/user)
-
-	var/mob/M = usr
-	var/static/list/options = list("Original Tiki" = "tiki_eyebrow", "Happy Tiki" = "tiki_happy", "Confused Tiki" = "tiki_confused",
-							"Angry Tiki" = "tiki_angry")
-
-	var/choice = show_radial_menu(user,src, tikimask_designs, custom_check = FALSE, radius = 36, require_near = TRUE)
-
-	if(src && choice && !M.stat && in_range(M,src))
-		icon_state = options[choice]
-		user.update_inv_wear_mask()
-		for(var/X in actions)
-			var/datum/action/A = X
-			A.UpdateButtons()
-		to_chat(M, "The Tiki Mask has now changed into the [choice] Mask!")
-		return TRUE
+	unique_reskin = list(
+		"Original Tiki" = list(RESKIN_ICON_STATE = "tiki_eyebrow"),
+		"Happy Tiki" = list(RESKIN_ICON_STATE = "tiki_happy"),
+		"Confused Tiki" = list(RESKIN_ICON_STATE = "tiki_confused"),
+		"Angry Tiki" = list(RESKIN_ICON_STATE = "tiki_angry"),
+	)
 
 /obj/item/clothing/mask/gas/tiki_mask/yalp_elor
 	icon_state = "tiki_yalp"
 	item_state = "tiki_yalp"
-	actions_types = list()
+	unique_reskin = null
 
 /obj/item/clothing/mask/gas/hunter
 	name = "bounty hunting mask"
@@ -365,13 +325,4 @@
 	name = "Ranger Gasmask"
 	desc = "A specialized gas mask for special police units. It is a fairly good individual means of protection for the respiratory system, eyes, and face from toxic substances, radioactive dust, and combustion products."
 	icon_state = "ranger_gasmask"
-	mutantrace_variation = STYLE_DIGITIGRADE|STYLE_NO_ANTHRO_ICON
-
-/obj/item/clothing/mask/gas/syndicate/wypmc_gasmask
-	name = "Arctic PMC gasmask"
-	desc = "A specialized gas mask for special police units. It is a fairly good individual means of protection for the respiratory system, eyes, and face from toxic substances, radioactive dust, and combustion products."
-	icon = 'icons/obj/clothing/masks.dmi'
-	mob_overlay_icon = 'modular_bluemoon/icons/mob/clothing/masks.dmi'
-	icon_state = "wypmcgasmask"
-	item_state = "wypmcgasmask"
 	mutantrace_variation = STYLE_DIGITIGRADE|STYLE_NO_ANTHRO_ICON

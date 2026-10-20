@@ -174,10 +174,11 @@
 
 /obj/machinery/sleeper/examine(mob/user)
 	. = ..()
-	. += "<span class='notice'>Alt-click для того, чтобы [state_open ? "закрыть" : "открыть"].</span>"
-	if(in_range(user, src) || isobserver(user))
-		. += "<span class='notice'>Статус-дисплей сообщает: \n\
-		- Эффективность дозировок: <b>[efficiency*100]%</b>.</span>"
+	. += span_notice("Alt-click для того, чтобы [state_open ? "закрыть" : "открыть"].")
+
+/obj/machinery/sleeper/examine_display_content(mob/user)
+	. += "\
+	– Эффективность дозировок: <b>[efficiency*100]%</b>."
 
 /obj/machinery/sleeper/process()
 	if(!occupant)
@@ -298,11 +299,12 @@
 /obj/machinery/sleeper/syndie
 	icon_state = "sleeper_s"
 	controls_inside = TRUE
+	circuit = /obj/item/circuitboard/machine/sleeper/syndie
 
 /obj/machinery/sleeper/syndie/Initialize(mapload)
 	. = ..()
 	component_parts = list()
-	component_parts += new /obj/item/circuitboard/machine/sleeper/syndie(null)
+	component_parts += circuit
 	component_parts += new /obj/item/stock_parts/matter_bin/super(null)
 	component_parts += new /obj/item/stock_parts/manipulator/pico(null)
 	component_parts += new /obj/item/stack/sheet/glass(null)
@@ -313,7 +315,7 @@
 /obj/machinery/sleeper/syndie/fullupgrade/Initialize(mapload)
 	. = ..()
 	component_parts = list()
-	component_parts += new /obj/item/circuitboard/machine/sleeper/syndie(null)
+	component_parts += circuit
 	component_parts += new /obj/item/stock_parts/matter_bin/bluespace(null)
 	component_parts += new /obj/item/stock_parts/manipulator/femto(null)
 	component_parts += new /obj/item/stack/sheet/glass(null)

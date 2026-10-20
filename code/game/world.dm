@@ -72,11 +72,14 @@ GLOBAL_LIST(topic_status_cache)
 		GLOB.restart_counter = text2num(trim(file2text(RESTART_COUNTER_PATH)))
 		fdel(RESTART_COUNTER_PATH)
 
+	fdel(PERSONAL_MUSIC_BOX_UPLOAD_DIR)
+
 	if(NO_INIT_PARAMETER in params)
 		return
 
 	LoadBans()
 	initialize_global_loadout_items()
+	initialize_global_whitelist_cache()
 	reload_custom_roundstart_items_list()//Cit change - loads donator items. Remind me to remove when I port over bay's loadout system
 
 	// Читается до Master.Initialize(): инициализация подсистем сама начинает переписывать

@@ -462,6 +462,8 @@
 		data = list("misc" = 1)
 	data["misc"]++
 	var/datum/antagonist/heretic/heretic = IS_HERETIC(M)
+	if(data["misc"] >= 10 && M.remove_status_effect(STATUS_EFFECT_NECROPOLIS_CURSE))
+		to_chat(M, span_notice("Святая вода рассеяла проклятие и преследующие вас тени."))
 	if(!iscultist(M, FALSE, TRUE) && !is_servant_of_ratvar(M) && !heretic && (HAS_TRAIT(M, TRAIT_HALLOWED) || M.mind?.isholy))
 		return ..()
 	if(iscultist(M, FALSE, TRUE))
@@ -2923,35 +2925,41 @@
 		)
 	)
 
-/datum/reagent/consumable/semen/reaction_turf(turf/location, reac_volume)
+/datum/reagent/consumable/semen/reaction_turf(turf/location, reac_volume, show_message, from_gas, from_liquid)
 	..()
+	// TODO: капли для всех жидкостей (отдельные объекты); убирание реагентов из holder'а (учитывай генерацию жидкости для разливания)
 	if(!istype(location))
 		return
 
 	if(istype(src, /datum/reagent/consumable/semen/femcum)) //let it be here
 		var/obj/effect/decal/cleanable/semen/femcum/F = (locate(/obj/effect/decal/cleanable/semen/femcum) in location) || new(location)
-		if(F.reagents?.add_reagent(type, volume, data))
-			F.cap_liquid_reagents() //BLUEMOON: puddle-created decals cap at LIQUID_DECAL_CAP
+		if(F.reagents?.add_reagent(type, reac_volume, data))
+			if(from_liquid)
+				F.cap_liquid_reagents() //BLUEMOON: puddle-created decals cap at LIQUID_DECAL_CAP
 			F.update_icon()
-			return
+		return
 
-	var/obj/effect/decal/cleanable/semen/S = locate(/obj/effect/decal/cleanable/semen) in location
-	if(S && !istype(S, /obj/effect/decal/cleanable/semen/femcum))
-		if(S.reagents?.add_reagent(type, volume, data))
-			S.cap_liquid_reagents() //BLUEMOON: puddle-created decals cap at LIQUID_DECAL_CAP
+	var/obj/effect/decal/cleanable/semen/S
+	for(S in location)
+		if(istype(S, /obj/effect/decal/cleanable/semen/femcum))
+			continue
+		if(S.reagents?.add_reagent(type, reac_volume, data))
+			if(from_liquid)
+				S.cap_liquid_reagents() //BLUEMOON: puddle-created decals cap at LIQUID_DECAL_CAP
 			S.update_icon()
 			return
 
 	var/obj/effect/decal/cleanable/semendrip/drip = (locate(/obj/effect/decal/cleanable/semendrip) in location) || new(location)
-	if(drip.reagents?.add_reagent(type, volume, data))
-		drip.cap_liquid_reagents() //BLUEMOON: puddle-created decals cap at LIQUID_DECAL_CAP
+	if(drip.reagents?.add_reagent(type, reac_volume, data))
+		if(from_liquid)
+			drip.cap_liquid_reagents() //BLUEMOON: puddle-created decals cap at LIQUID_DECAL_CAP
 		drip.update_icon()
 		if(drip.reagents.total_volume >= LIQUID_DECAL_CAP)
 			S = new(location)
 			drip.reagents.trans_to(S, drip.reagents.total_volume)
+			S.transfer_blood_dna(drip.blood_DNA)
 			S.update_icon()
 			qdel(drip)
-		return
 
 /datum/reagent/consumable/semen/reaction_mob(mob/living/M, method, reac_volume, affected_bodypart) //splashing or ingesting
 	. = ..()
@@ -3125,16 +3133,23 @@
 	taste_description = "Ag'hsj'saje'sh"
 //	chemical_flags = REAGENT_ALL_PROCESS (BLUEMOON REMOVAL - роботы не должны получать эффекты реагента)
 	color = "#1f8016"
+	var/last_effect_time = -1
 
 /datum/reagent/eldritch/on_mob_life(mob/living/carbon/M)
+	if(last_effect_time == world.time)
+		holder.remove_reagent(type, 1)
+		return TRUE
+	// Метка на обеих эссенциях исключает двойной эффект даже на последней единице одной из них.
+	for(var/datum/reagent/eldritch/essence in holder.reagent_list)
+		essence.last_effect_time = world.time
 	if(IS_HERETIC(M))
 		M.drowsyness = max(M.drowsyness-10, 0)
 		M.AdjustAllImmobility(-80, FALSE)
 		M.adjustStaminaLoss(-30, FALSE)
 		M.adjustToxLoss(-6, FALSE, TRUE)
 		M.adjustOxyLoss(-6, FALSE)
-		M.adjustBruteLoss(-6, FALSE)
-		M.adjustFireLoss(-6, FALSE)
+		M.adjustBruteLoss(-6, FALSE, only_organic = !(chemical_flags & REAGENT_ROBOTIC_PROCESS))
+		M.adjustFireLoss(-6, FALSE, only_organic = !(chemical_flags & REAGENT_ROBOTIC_PROCESS))
 		if(ishuman(M) && M.blood_volume < BLOOD_VOLUME_NORMAL)
 			M.adjust_integration_blood(6)
 	else

@@ -32,10 +32,6 @@
 	glass_colour_type = /datum/client_colour/glass_colour/red
 	alternate_worn_layer = ABOVE_HEAD_LAYER
 
-/obj/item/clothing/glasses/night/blackops/update_icon_state()
-	. = ..()
-	icon_state = length(color_cutoffs) ? initial(icon_state) : "night_off"
-
 /obj/item/clothing/suit/blackops
 	name = "Black operative special armor"
 	desc = "Почему нам всегда приходится убирать дерьмо, с которым не могут справиться пехотинцы?"
@@ -44,7 +40,7 @@
 	icon_state = "blackops"
 	item_state = "blackops"
 	allowed = list(/obj/item/tank/internals/emergency_oxygen, /obj/item/tank/internals/plasmaman)
-	armor = list(MELEE = 30, BULLET = 40, LASER = 5, ENERGY = 0, BOMB = 20, BIO = 15, RAD = 5, FIRE = 5, ACID = 20)
+	armor_type = /datum/armor/blackops
 	brc_mitigation_bonus = 15  // BLUEMOON ADD
 	mutantrace_variation = STYLE_DIGITIGRADE|STYLE_NO_ANTHRO_ICON
 
