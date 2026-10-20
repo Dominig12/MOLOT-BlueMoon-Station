@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useBackend } from '../../backend';
 import { Box, Icon, Stack, Tabs } from '../../components';
 import { MatrixPanel } from './Matrix';
-import { LanMap, TopologyMap } from './NetworkMap';
+import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
 import { ACCESS_COLORS, ACCESS_NAMES, NetrunData, THEME } from './types';
@@ -22,8 +22,8 @@ const ORIGIN_NAMES: Record<string, string> = {
 /** Общее содержимое окна - используется и терминалом, и NTOS-программой */
 export const NetrunContent = () => {
   const { act, data } = useBackend<NetrunData>();
-  const { view, networks, breach, web, windows, window: machineWindow } = data;
-  const [mode, setMode] = useState<'topology' | 'lan'>(view ? 'lan' : 'topology');
+  const { breach, web, windows, window: machineWindow } = data;
+  const webAvailable = data.networks.some((n) => n.id === 'web');
   const [bottom, setBottom] = useState<'console' | 'chat'>('console');
   return (
     <Box
@@ -39,31 +39,20 @@ export const NetrunContent = () => {
       <Tabs>
         <Tabs.Tab
           icon="diagram-project"
-          selected={mode === 'topology'}
-          onClick={() => setMode('topology')}
+          selected={!web}
+          onClick={() => act('view_network', { id: 'map' })}
         >
-          Топология
+          Сеть
         </Tabs.Tab>
-        {networks
-          .filter((net) => net.reachable)
-          .map((net) => (
-            <Tabs.Tab
-              key={net.id}
-              selected={
-                net.id === 'web'
-                  ? !!web
-                  : mode === 'lan' && !web && view?.id === net.id
-              }
-              color={net.access > 0 ? undefined : 'grey'}
-              onClick={() => {
-                act('view_network', { id: net.id });
-                setMode('lan');
-              }}
-            >
-              <span style={{ color: net.color }}>{net.short}</span>
-              {net.home && <Icon name="location-dot" ml={0.5} />}
-            </Tabs.Tab>
-          ))}
+        {webAvailable && (
+          <Tabs.Tab
+            icon="globe"
+            selected={!!web}
+            onClick={() => act('view_network', { id: 'web' })}
+          >
+            WEB
+          </Tabs.Tab>
+        )}
       </Tabs>
       {windows.length > 0 && (
         <Tabs>
@@ -98,31 +87,7 @@ export const NetrunContent = () => {
       ) : (
       <Stack>
         <Stack.Item grow basis={0}>
-          {breach ? (
-            <MatrixPanel state={breach} />
-          ) : mode === 'topology' ? (
-            <TopologyMap />
-          ) : (
-            <LanMap />
-          )}
-          {!breach && mode === 'lan' && view && view.log.length > 0 && (
-            <Box
-              mt={0.5}
-              p={0.5}
-              style={{
-                background: THEME.bg,
-                fontFamily: 'monospace',
-                fontSize: '10px',
-                maxHeight: '70px',
-                overflowY: 'auto',
-                color: THEME.muted,
-              }}
-            >
-              {view.log.map((line, i) => (
-                <div key={i}>{line}</div>
-              ))}
-            </Box>
-          )}
+          {breach ? <MatrixPanel state={breach} /> : <StationMap />}
         </Stack.Item>
         <Stack.Item basis="270px" style={{ minHeight: '360px' }}>
           <NodePanel />

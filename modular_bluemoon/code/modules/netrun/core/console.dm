@@ -36,6 +36,8 @@
 	/// Мост «сайты в терминале»: выбранный сайт NTnet и страница
 	var/web_site_id
 	var/web_slug
+	/// Выбранный на карте гейтвей подсети
+	var/selected_network
 	/// Открытые окна машин (адреса узлов) и активное окно
 	var/list/windows = list()
 	var/active_window

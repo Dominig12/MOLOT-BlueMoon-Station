@@ -10,6 +10,7 @@ export type NetNode = {
   entities: number;
   active: boolean;
   uplink: string | null;
+  network?: string;
 };
 
 export type NetCommand = {
@@ -127,6 +128,36 @@ export type NetrunData = {
   cli?: { verbs: { id: string; args: string; desc: string }[] };
   windows: WindowTab[];
   window: MachineWindow | null;
+  map: NetMap | null;
+  selected_network: SelectedNetwork | null;
+};
+
+export type Gateway = {
+  id: string;
+  code: string;
+  name: string;
+  color: string;
+  security: number;
+  access: number;
+  has_key: boolean;
+  can_breach: boolean;
+};
+
+export type NetMap = {
+  gateways: Gateway[];
+  nodes: NetNode[];
+};
+
+export type SelectedNetwork = {
+  id: string;
+  code: string;
+  name: string;
+  color: string;
+  security: number;
+  access: number;
+  has_key: boolean;
+  can_breach: boolean;
+  log: string[];
 };
 
 export type WindowTab = {

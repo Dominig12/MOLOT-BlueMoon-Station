@@ -86,30 +86,38 @@
 		data["cli"] = list("verbs" = cli_verbs())
 		data["windows"] = windows_payload()
 		data["window"] = active_window ? window_payload() : null
+		data["map"] = null
+		data["selected_network"] = null
 		return data
 	data["web"] = null
 
-	var/datum/netrun_network/viewed = SSnetrun.networks[viewed_network_id]
-	if(!viewed && length(homes))
-		viewed = homes[1]
-		viewed_network_id = viewed.id
-	var/list/view = null
-	if(viewed)
-		var/level = network_level(viewed)
-		var/list/nodes = list()
-		if(level >= NETRUN_ACCESS_GUEST)
-			for(var/datum/component/netrun_node/node as anything in viewed.nodes)
-				nodes += list(node.ui_entry(src))
-		view = list(
-			"id" = viewed.id,
-			"name" = viewed.name,
-			"code" = viewed.code,
-			"color" = viewed.color,
-			"access" = level,
-			"nodes" = nodes,
-			"log" = level >= NETRUN_ACCESS_USER ? viewed.logs.Copy(max(1, length(viewed.logs) - 14)) : list(),
-		)
-	data["view"] = view
+	// Единое поле: гейтвеи подсетей + узлы всех достижимых сетей. У закрытых подсетей
+	// видно только структуру (гейтвей и APC), машины раскрываются после доступа.
+	var/list/gateways = list()
+	var/list/map_nodes = list()
+	for(var/network_id in SSnetrun.networks)
+		var/datum/netrun_network/network = SSnetrun.networks[network_id]
+		if(!can_reach(network))
+			continue
+		var/net_level = network_level(network)
+		gateways += list(list(
+			"id" = network.id,
+			"code" = network.code,
+			"name" = network.name,
+			"color" = network.color,
+			"security" = network.security,
+			"access" = net_level,
+			"has_key" = has_key(network),
+			"can_breach" = can_breach && net_level < NETRUN_ACCESS_GUEST,
+		))
+		for(var/datum/component/netrun_node/snode as anything in network.nodes)
+			if(net_level < NETRUN_ACCESS_GUEST && !(snode.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)))
+				continue
+			var/list/entry = snode.ui_entry(src)
+			entry["network"] = network.id
+			map_nodes += list(entry)
+	data["map"] = list("gateways" = gateways, "nodes" = map_nodes)
+	data["view"] = null
 
 	var/datum/component/netrun_node/node = selected_node()
 	var/list/selected = null
@@ -133,6 +141,23 @@
 			selected["files"] = files
 			selected["storage"] = list("used" = node.used_storage(), "capacity" = node.storage_capacity)
 	data["selected"] = selected
+
+	var/datum/netrun_network/selnet = SSnetrun.networks[selected_network]
+	if(selnet)
+		var/snlevel = network_level(selnet)
+		data["selected_network"] = list(
+			"id" = selnet.id,
+			"code" = selnet.code,
+			"name" = selnet.name,
+			"color" = selnet.color,
+			"security" = selnet.security,
+			"access" = snlevel,
+			"has_key" = has_key(selnet),
+			"can_breach" = can_breach && snlevel < NETRUN_ACCESS_GUEST,
+			"log" = snlevel >= NETRUN_ACCESS_USER ? selnet.logs.Copy(max(1, length(selnet.logs) - 14)) : list(),
+		)
+	else
+		data["selected_network"] = null
 
 	data["storage"] = storage_payload()
 	data["shard"] = shard_payload()
@@ -221,18 +246,22 @@
 	switch(action)
 		if("view_network")
 			active_window = null
-			if(params["id"] == "web")
-				if(web_browsing())
-					viewed_network_id = "web"
-				return TRUE
+			if(params["id"] == "web" && web_browsing())
+				viewed_network_id = "web"
+			else
+				viewed_network_id = null
+			return TRUE
+		if("select_network")
 			var/datum/netrun_network/network = SSnetrun.networks[params["id"]]
 			if(network && can_reach(network))
-				viewed_network_id = network.id
+				selected_network = network.id
+				selected_address = null
 			return TRUE
 		if("select")
 			var/datum/component/netrun_node/node = SSnetrun.find_node(params["address"])
 			if(node && node_level(node) >= NETRUN_ACCESS_GUEST)
 				selected_address = node.address
+				selected_network = null
 			return TRUE
 		if("window_open")
 			open_window(params["address"])

@@ -1,9 +1,10 @@
-import { KeyboardEvent, useRef, useState } from 'react';
+import { KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input } from '../../components';
 import {
   ACCESS_COLORS,
+  Gateway,
   NetNode,
   NetrunData,
   NetworkEntry,
@@ -160,81 +161,136 @@ const NetworkBubble = (props: {
   );
 };
 
-/** Поле узлов ЛВС: панорамирование, иконки-типы, поиск/фильтр, вложенность, WASD */
-const CONTENT_W = 900;
-const CONTENT_H = 560;
-const MARGIN = 60;
+/** Единое поле всей сети: гейтвеи подсетей, APC-подузлы и машины, с иконками-типами,
+ * панорамированием, поиском/фильтром, вложенностью и WASD-навигацией. */
+const FIELD_W = 1400;
+const FIELD_H = 900;
+const FIELD_MARGIN = 80;
+const MIN_GAP = 46;
 
 type Placed = NetNode & { px: number; py: number };
+type GwPos = { id: string; gx: number; gy: number };
 
-export const LanMap = () => {
+const spread = (nodes: Placed[]) => {
+  // Несколько проходов расталкивания, чтобы узлы не накладывались
+  for (let iter = 0; iter < 60; iter++) {
+    let moved = false;
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i];
+        const b = nodes[j];
+        let dx = b.px - a.px;
+        let dy = b.py - a.py;
+        let dist = Math.hypot(dx, dy);
+        if (dist < 0.01) {
+          dx = Math.random() - 0.5;
+          dy = Math.random() - 0.5;
+          dist = 0.5;
+        }
+        if (dist < MIN_GAP) {
+          const push = (MIN_GAP - dist) / 2;
+          const ux = dx / dist;
+          const uy = dy / dist;
+          a.px -= ux * push;
+          a.py -= uy * push;
+          b.px += ux * push;
+          b.py += uy * push;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) {
+      break;
+    }
+  }
+};
+
+export const StationMap = () => {
   const { act, data } = useBackend<NetrunData>();
-  const { view, selected, jack, entity } = data;
+  const { selected, selected_network, jack, entity, breach } = data;
+  const map = data.map;
   const canvasRef = useRef<HTMLDivElement>(null);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [pan, setPan] = useState({ x: -300, y: -160 });
   const [query, setQuery] = useState('');
   const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>(
     {},
   );
-  const [focusAddr, setFocusAddr] = useState<string | null>(null);
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(
     null,
   );
+  // Сброс фильтров после завершения взлома
+  const prevBreach = useRef(false);
+  useEffect(() => {
+    const now = !!breach;
+    if (prevBreach.current && !now) {
+      setQuery('');
+      setDisabledTypes({});
+    }
+    prevBreach.current = now;
+  }, [breach]);
 
-  if (!view) {
+  if (!map) {
     return null;
   }
-  if (view.access < 1) {
-    return (
-      <Box
-        p={2}
-        textAlign="center"
-        color={THEME.muted}
-        style={{ background: THEME.bg, fontFamily: 'monospace' }}
-      >
-        Шлюз сети {view.name} закрыт. Нужен гостевой доступ.
-      </Box>
-    );
-  }
-  const nodes = view.nodes;
-  if (!nodes.length) {
+  const nodes = map.nodes;
+  if (!nodes.length && !map.gateways.length) {
     return (
       <Box p={2} color={THEME.muted} style={{ background: THEME.bg }}>
-        В сети нет узлов.
+        Сеть недоступна.
       </Box>
     );
   }
 
-  // Относительные координаты станции -> поле CONTENT, Y вверх
   const xs = nodes.map((n) => n.x);
   const ys = nodes.map((n) => n.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
+  const minX = xs.length ? Math.min(...xs) : 0;
+  const maxX = xs.length ? Math.max(...xs) : 1;
+  const minY = ys.length ? Math.min(...ys) : 0;
+  const maxY = ys.length ? Math.max(...ys) : 1;
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
   const scale = Math.min(
-    (CONTENT_W - MARGIN * 2) / spanX,
-    (CONTENT_H - MARGIN * 2) / spanY,
+    (FIELD_W - FIELD_MARGIN * 2) / spanX,
+    (FIELD_H - FIELD_MARGIN * 2) / spanY,
   );
-  const offX = (CONTENT_W - spanX * scale) / 2;
-  const offY = (CONTENT_H - spanY * scale) / 2;
+  const offX = (FIELD_W - spanX * scale) / 2;
+  const offY = (FIELD_H - spanY * scale) / 2;
   const placed: Placed[] = nodes.map((n) => ({
     ...n,
     px: offX + (n.x - minX) * scale,
-    py: CONTENT_H - (offY + (n.y - minY) * scale),
+    py: FIELD_H - (offY + (n.y - minY) * scale),
   }));
+  spread(placed);
   const byAddr: Record<string, Placed> = {};
   for (const p of placed) {
     byAddr[p.address] = p;
   }
-  const cx = placed.reduce((s, p) => s + p.px, 0) / placed.length;
-  const cy = placed.reduce((s, p) => s + p.py, 0) / placed.length;
+
+  // Позиция гейтвея = центр его узлов (или по кольцу, если узлов нет)
+  const gwPos: Record<string, GwPos> = {};
+  map.gateways.forEach((gw, i) => {
+    const own = placed.filter((p) => p.network === gw.id);
+    if (own.length) {
+      gwPos[gw.id] = {
+        id: gw.id,
+        gx: own.reduce((s, p) => s + p.px, 0) / own.length,
+        gy: own.reduce((s, p) => s + p.py, 0) / own.length - 40,
+      };
+    } else {
+      const ang = (i / Math.max(map.gateways.length, 1)) * Math.PI * 2;
+      gwPos[gw.id] = {
+        id: gw.id,
+        gx: FIELD_W / 2 + Math.cos(ang) * 200,
+        gy: FIELD_H / 2 + Math.sin(ang) * 200,
+      };
+    }
+  });
+  const hubX = FIELD_W / 2;
+  const hubY = FIELD_H / 2;
 
   const types = Array.from(new Set(nodes.map((n) => n.type)));
   const q = query.trim().toLowerCase();
-  const matches = (n: NetNode) => {
+  const visible = (n: NetNode) => {
     if (disabledTypes[n.type]) {
       return false;
     }
@@ -247,33 +303,6 @@ export const LanMap = () => {
       (NODE_NAMES[n.type] || n.type).toLowerCase().includes(q)
     );
   };
-
-  // Набор «родственных» узлов при фокусе: сам, его аплинк, дети и соседи (до 2 вложений)
-  const related = (addr: string): Set<string> => {
-    const set = new Set<string>();
-    const f = byAddr[addr];
-    if (!f) {
-      return set;
-    }
-    set.add(f.address);
-    if (f.uplink) {
-      set.add(f.uplink);
-      const up = byAddr[f.uplink];
-      if (up?.uplink) {
-        set.add(up.uplink);
-      }
-    }
-    for (const p of placed) {
-      if (p.uplink === f.address || (f.uplink && p.uplink === f.uplink)) {
-        set.add(p.address);
-      }
-    }
-    return set;
-  };
-  const focusSet = focusAddr ? related(focusAddr) : null;
-
-  const visible = (n: NetNode) =>
-    matches(n) && (!focusSet || focusSet.has(n.address));
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const key = e.key.toLowerCase();
@@ -298,8 +327,8 @@ export const LanMap = () => {
       if (p.address === cur.address || !visible(p)) {
         continue;
       }
-      const vx = p.x - cur.x;
-      const vy = p.y - cur.y;
+      const vx = p.px - cur.px;
+      const vy = -(p.py - cur.py);
       const along = vx * dx + vy * dy;
       if (along <= 0) {
         continue;
@@ -327,11 +356,8 @@ export const LanMap = () => {
         p={0.5}
         style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}
       >
-        <Box inline bold style={{ fontFamily: 'monospace', color: view.color }}>
-          {view.code}
-        </Box>
         <Input
-          width="130px"
+          width="140px"
           placeholder="поиск узла…"
           value={query}
           onInput={(_e, v) => setQuery(v)}
@@ -348,16 +374,8 @@ export const LanMap = () => {
             }
           />
         ))}
-        {focusAddr && (
-          <Button
-            compact
-            icon="expand"
-            content="вся сеть"
-            onClick={() => setFocusAddr(null)}
-          />
-        )}
         <Box inline color={THEME.muted} fontSize="10px">
-          WASD — переход{entity ? ', Shift+WASD — прыжок' : ''}
+          тащите поле мышью · WASD — переход{entity ? ', Shift+WASD — прыжок' : ''}
         </Box>
       </Box>
       <div
@@ -384,7 +402,7 @@ export const LanMap = () => {
         }}
         style={{
           position: 'relative',
-          height: '320px',
+          height: '360px',
           overflow: 'hidden',
           cursor: 'grab',
           outline: 'none',
@@ -394,32 +412,41 @@ export const LanMap = () => {
           style={{
             position: 'absolute',
             transform: `translate(${pan.x}px, ${pan.y}px)`,
-            width: `${CONTENT_W}px`,
-            height: `${CONTENT_H}px`,
+            width: `${FIELD_W}px`,
+            height: `${FIELD_H}px`,
           }}
         >
           <svg
-            width={CONTENT_W}
-            height={CONTENT_H}
+            width={FIELD_W}
+            height={FIELD_H}
             style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none' }}
           >
-            <rect
-              x={cx - 8}
-              y={cy - 8}
-              width={16}
-              height={16}
-              fill={THEME.panel}
-              stroke={view.color}
-              strokeWidth={2}
-              transform={`rotate(45 ${cx} ${cy})`}
-            />
+            {/* гейтвей -> хаб */}
+            {map.gateways.map((gw) => {
+              const g = gwPos[gw.id];
+              return (
+                <line
+                  key={`gh-${gw.id}`}
+                  x1={g.gx}
+                  y1={g.gy}
+                  x2={hubX}
+                  y2={hubY}
+                  stroke={gw.color}
+                  strokeOpacity={gw.access > 0 ? 0.5 : 0.2}
+                  strokeWidth={gw.access > 0 ? 2 : 1}
+                  strokeDasharray={gw.access > 0 ? undefined : '5 5'}
+                />
+              );
+            })}
+            {/* узел -> аплинк (APC) или -> гейтвей */}
             {placed.map((p) => {
               if (!visible(p)) {
                 return null;
               }
-              const target = p.uplink && byAddr[p.uplink] ? byAddr[p.uplink] : null;
-              const tx = target ? target.px : cx;
-              const ty = target ? target.py : cy;
+              const up = p.uplink && byAddr[p.uplink] ? byAddr[p.uplink] : null;
+              const g = p.network ? gwPos[p.network] : null;
+              const tx = up ? up.px : g ? g.gx : hubX;
+              const ty = up ? up.py : g ? g.gy : hubY;
               return (
                 <line
                   key={`e-${p.address}`}
@@ -427,13 +454,41 @@ export const LanMap = () => {
                   y1={p.py}
                   x2={tx}
                   y2={ty}
-                  stroke={view.color}
-                  strokeOpacity={p.active ? 0.6 : 0.2}
+                  stroke={THEME.line}
+                  strokeOpacity={p.active ? 0.5 : 0.18}
                   strokeWidth={p.active ? 1.5 : 1}
                 />
               );
             })}
+            {/* хаб NTnet */}
+            <circle
+              cx={hubX}
+              cy={hubY}
+              r={16}
+              fill={THEME.panel}
+              stroke={THEME.accent}
+              strokeWidth={2}
+            />
+            <text
+              x={hubX}
+              y={hubY + 4}
+              textAnchor="middle"
+              fill={THEME.accent}
+              fontSize={10}
+              fontFamily="monospace"
+            >
+              NTnet
+            </text>
           </svg>
+          {map.gateways.map((gw) => (
+            <GatewayMarker
+              key={gw.id}
+              gw={gw}
+              pos={gwPos[gw.id]}
+              selected={selected_network?.id === gw.id}
+              onClick={() => act('select_network', { id: gw.id })}
+            />
+          ))}
           {placed.map((p) => (
             <NodeMarker
               key={p.address}
@@ -441,16 +496,66 @@ export const LanMap = () => {
               dim={!visible(p)}
               selected={selected?.address === p.address}
               jacked={jack?.address === p.address}
-              color={view.color}
-              onClick={() => {
-                act('select', { address: p.address });
-                setFocusAddr(p.address);
-              }}
+              color={
+                map.gateways.find((g) => g.id === p.network)?.color || THEME.accent
+              }
+              onClick={() => act('select', { address: p.address })}
             />
           ))}
         </div>
       </div>
     </Box>
+  );
+};
+
+const GatewayMarker = (props: {
+  gw: Gateway;
+  pos: GwPos;
+  selected: boolean;
+  onClick: () => void;
+}) => {
+  const { gw, pos, selected, onClick } = props;
+  const open = gw.access > 0;
+  return (
+    <div
+      onClick={onClick}
+      title={`${gw.name} — защита ${gw.security}`}
+      style={{
+        position: 'absolute',
+        left: `${pos.gx}px`,
+        top: `${pos.gy}px`,
+        transform: 'translate(-50%, -50%)',
+        textAlign: 'center',
+        cursor: 'pointer',
+        zIndex: 4,
+      }}
+    >
+      <div
+        style={{
+          width: '20px',
+          height: '20px',
+          margin: '0 auto',
+          background: THEME.panel,
+          border: `2px solid ${gw.color}`,
+          transform: 'rotate(45deg)',
+          boxShadow: selected ? `0 0 0 3px ${gw.color}` : undefined,
+          opacity: open ? 1 : 0.6,
+        }}
+      />
+      <Box
+        style={{
+          fontFamily: 'monospace',
+          fontSize: '10px',
+          color: gw.color,
+          whiteSpace: 'nowrap',
+          marginTop: '2px',
+        }}
+      >
+        {gw.code}
+        {!open && <Icon name="lock" ml={0.5} />}
+        {gw.has_key && <Icon name="key" ml={0.5} color={THEME.good} />}
+      </Box>
+    </div>
   );
 };
 
@@ -475,7 +580,7 @@ const NodeMarker = (props: {
         transform: 'translate(-50%, -50%)',
         textAlign: 'center',
         cursor: 'pointer',
-        opacity: dim ? 0.25 : 1,
+        opacity: dim ? 0.2 : 1,
         zIndex: selected ? 3 : 1,
       }}
     >
@@ -498,9 +603,9 @@ const NodeMarker = (props: {
             top: '-6px',
             background: THEME.panel,
             borderRadius: '50%',
-            width: '12px',
-            height: '12px',
-            lineHeight: '12px',
+            width: '13px',
+            height: '13px',
+            lineHeight: '13px',
             fontSize: '8px',
             color: color,
           }}

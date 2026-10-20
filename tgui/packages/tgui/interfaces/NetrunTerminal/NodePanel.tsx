@@ -11,7 +11,60 @@ import {
 
 export const NodePanel = () => {
   const { act, data } = useBackend<NetrunData>();
-  const { selected, can_breach, breach, networks } = data;
+  const { selected, can_breach, breach, networks, selected_network } = data;
+  if (!selected && selected_network) {
+    const net = selected_network;
+    return (
+      <Section
+        title={net.code}
+        fill
+        scrollable
+        buttons={<Icon name="network-wired" />}
+      >
+        <LabeledList>
+          <LabeledList.Item label="Сеть">{net.name}</LabeledList.Item>
+          <LabeledList.Item label="Защита">{net.security}</LabeledList.Item>
+          <LabeledList.Item label="Доступ">
+            <Box inline color={ACCESS_COLORS[net.access]} bold>
+              {ACCESS_NAMES[net.access]}
+            </Box>
+            {net.has_key && <Icon name="key" ml={1} color={THEME.good} />}
+          </LabeledList.Item>
+        </LabeledList>
+        {net.can_breach && (
+          <Button
+            mt={1}
+            icon="key"
+            color="caution"
+            content="Подобрать доступ к сети"
+            disabled={!!breach}
+            onClick={() => act('breach', { kind: 'network', id: net.id })}
+          />
+        )}
+        {net.access < 1 && !net.can_breach && (
+          <Box mt={1} color={THEME.muted}>
+            Нужен ключ сети или легальный доступ отдела.
+          </Box>
+        )}
+        {net.log.length > 0 && (
+          <Box
+            mt={1}
+            p={1}
+            style={{
+              background: THEME.bg,
+              fontFamily: 'monospace',
+              fontSize: '10px',
+              color: THEME.muted,
+            }}
+          >
+            {net.log.map((line, i) => (
+              <Box key={i}>{line}</Box>
+            ))}
+          </Box>
+        )}
+      </Section>
+    );
+  }
   if (!selected) {
     return (
       <Section title="Сети" fill scrollable>
