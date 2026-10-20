@@ -124,6 +124,7 @@ export type NetrunData = {
   entity: EntityState | null;
   chat: { handle: string; messages: string[] };
   web: WebState | null;
+  cli?: { verbs: { id: string; args: string; desc: string }[] };
 };
 
 export type WebSite = { id: string; domain: string; title: string };

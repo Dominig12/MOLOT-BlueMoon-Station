@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input, Section } from '../../components';
@@ -12,14 +12,106 @@ const KIND_COLORS: Record<string, string> = {
   label: THEME.text,
 };
 
+const commonPrefix = (items: string[]): string => {
+  if (!items.length) {
+    return '';
+  }
+  let prefix = items[0];
+  for (const it of items) {
+    while (!it.toLowerCase().startsWith(prefix.toLowerCase())) {
+      prefix = prefix.slice(0, -1);
+      if (!prefix) {
+        return '';
+      }
+    }
+  }
+  return prefix;
+};
+
 export const ConsoleLog = () => {
   const { act, data } = useBackend<NetrunData>();
   const scroller = useRef<HTMLDivElement>(null);
+  const [value, setValue] = useState('');
+  const [history, setHistory] = useState<string[]>([]);
+  const [histIdx, setHistIdx] = useState<number | null>(null);
   useEffect(() => {
     if (scroller.current) {
       scroller.current.scrollTop = scroller.current.scrollHeight;
     }
   }, [data.log.length]);
+
+  const verbs = (data.cli?.verbs ?? []).map((v) => v.id);
+  const addresses = (data.view?.nodes ?? []).map((n) => n.address);
+  const codes = data.networks.map((n) => n.code);
+
+  const submit = () => {
+    const text = value.trim();
+    if (!text) {
+      return;
+    }
+    act('cli', { text });
+    setHistory((h) => {
+      const next = h[h.length - 1] === text ? h : [...h, text];
+      return next.slice(-20);
+    });
+    setHistIdx(null);
+    setValue('');
+  };
+
+  const complete = () => {
+    const tokens = value.split(' ');
+    const last = tokens[tokens.length - 1];
+    const pool = tokens.length <= 1 ? verbs : [...addresses, ...codes];
+    const hits = pool.filter((p) => p.toLowerCase().startsWith(last.toLowerCase()));
+    if (!hits.length) {
+      return;
+    }
+    const filled = hits.length === 1 ? hits[0] : commonPrefix(hits);
+    if (!filled) {
+      return;
+    }
+    tokens[tokens.length - 1] = filled;
+    setValue(tokens.join(' ') + (hits.length === 1 && tokens.length <= 1 ? ' ' : ''));
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    switch (e.key) {
+      case 'Enter':
+        e.preventDefault();
+        submit();
+        break;
+      case 'ArrowUp': {
+        e.preventDefault();
+        if (!history.length) {
+          break;
+        }
+        const idx = histIdx === null ? history.length - 1 : Math.max(0, histIdx - 1);
+        setHistIdx(idx);
+        setValue(history[idx]);
+        break;
+      }
+      case 'ArrowDown': {
+        e.preventDefault();
+        if (histIdx === null) {
+          break;
+        }
+        const idx = histIdx + 1;
+        if (idx >= history.length) {
+          setHistIdx(null);
+          setValue('');
+        } else {
+          setHistIdx(idx);
+          setValue(history[idx]);
+        }
+        break;
+      }
+      case 'Tab':
+        e.preventDefault();
+        complete();
+        break;
+    }
+  };
+
   return (
     <Box style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
       <div
@@ -39,12 +131,27 @@ export const ConsoleLog = () => {
           </div>
         ))}
       </div>
-      <Input
-        fluid
-        selfClear
-        placeholder="help — список команд"
-        onEnter={(_e, value) => act('cli', { text: value })}
-        style={{ fontFamily: 'monospace', background: THEME.panel }}
+      <input
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setHistIdx(null);
+        }}
+        onKeyDown={onKeyDown}
+        placeholder="help — список команд · ↑ история · Tab дополнение"
+        spellCheck={false}
+        style={{
+          width: '100%',
+          boxSizing: 'border-box',
+          fontFamily: 'monospace',
+          fontSize: '12px',
+          color: THEME.text,
+          background: THEME.panel,
+          border: 'none',
+          borderTop: `1px solid ${THEME.line}`,
+          padding: '4px 6px',
+          outline: 'none',
+        }}
       />
     </Box>
   );

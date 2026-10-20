@@ -83,6 +83,7 @@
 		data["breach"] = breach?.ui_payload()
 		data["entity"] = entity_data()
 		data["chat"] = chat_data()
+		data["cli"] = list("verbs" = cli_verbs())
 		return data
 	data["web"] = null
 
@@ -137,6 +138,7 @@
 	data["breach"] = breach?.ui_payload()
 	data["entity"] = entity_data()
 	data["chat"] = chat_data()
+	data["cli"] = list("verbs" = cli_verbs())
 	return data
 
 /// Дополнительные кнопки носителя (выдернуть провод, вынуть шард, вернуться в тело...)
@@ -388,53 +390,3 @@
 
 // MARK: Командная строка
 
-/datum/netrun_console/proc/cli(text)
-	text = trim(copytext_char("[text]", 1, 200))
-	if(!length(text))
-		return
-	log_line("$ [text]", "label")
-	var/list/words = splittext(text, " ")
-	var/verb_name = lowertext(words[1])
-	var/argument = length(words) > 1 ? words[2] : null
-	switch(verb_name)
-		if("help", "?")
-			log_line("net \[id\] — сети / открыть сеть; sel <адрес> — выбрать узел; run <команда> — выполнить; \
-				breach \[адрес | id сети\] — взлом; scan — сканировать; ping \[адрес\] — задержка; ls — локальные файлы; clear — очистить экран")
-		if("clear")
-			log.Cut()
-		if("net")
-			if(!argument)
-				for(var/network_id in SSnetrun.networks)
-					var/datum/netrun_network/network = SSnetrun.networks[network_id]
-					if(can_reach(network))
-						log_line("[network.code] ([network.id]) — [network.name], узлов: [length(network.nodes)], доступ: [netrun_access_name(network_level(network))]")
-				return
-			var/datum/netrun_network/network = SSnetrun.find_network(argument)
-			if(!network || !can_reach(network))
-				log_line("Сеть недоступна.", "bad")
-				return
-			viewed_network_id = network.id
-		if("sel")
-			var/datum/component/netrun_node/node = SSnetrun.find_node(argument)
-			if(!node || node_level(node) < NETRUN_ACCESS_GUEST)
-				log_line("Узел не найден.", "bad")
-				return
-			selected_address = node.address
-			log_line("Выбран [node.get_name()] [node.address].")
-		if("run")
-			run_command(selected_node(), lowertext(argument))
-		if("scan")
-			run_command(selected_node(), "scan")
-		if("ping")
-			var/datum/component/netrun_node/pnode = argument ? SSnetrun.find_node(argument) : selected_node()
-			run_command(pnode, "ping")
-		if("breach")
-			if(argument && SSnetrun.networks[lowertext(argument)])
-				start_breach("network", lowertext(argument))
-			else
-				start_breach("node", argument || selected_address)
-		if("ls")
-			for(var/datum/netrun_file/file as anything in all_files())
-				log_line("[file.name] ([file.kind], [file.size])")
-		else
-			log_line("Неизвестная команда. help — справка.", "bad")

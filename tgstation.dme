@@ -5336,6 +5336,7 @@
 #include "modular_bluemoon\code\modules\movement_schedule\probe_recorder.dm"
 #include "modular_bluemoon\code\modules\movespeed\_movespeed_modifier.dm"
 #include "modular_bluemoon\code\modules\netrun\core\breach.dm"
+#include "modular_bluemoon\code\modules\netrun\core\cli.dm"
 #include "modular_bluemoon\code\modules\netrun\core\commands.dm"
 #include "modular_bluemoon\code\modules\netrun\core\console.dm"
 #include "modular_bluemoon\code\modules\netrun\core\console_ui.dm"
