@@ -12,7 +12,7 @@
 /obj/item/modular_computer/Initialize(mapload)
 	. = ..()
 	if(netrun_nodeable)
-		AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list("pc_programs", "pc_terminate", "pc_shutdown"), 1)
+		AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list("pc_programs", "pc_print", "pc_terminate", "pc_shutdown"), 1)
 
 /obj/item/modular_computer/netrun_online(remote = TRUE)
 	return enabled
@@ -101,3 +101,27 @@
 		return "Устройство уже выключено."
 	computer.shutdown_computer()
 	return "Устройство выключено."
+
+
+/datum/netrun_command/pc_print
+	id = "pc_print"
+	name = "Печать файла"
+	desc = "Распечатать текстовый файл из хранилища на принтере устройства."
+	access = NETRUN_ACCESS_USER
+	icon = "print"
+	trace = 3
+
+/datum/netrun_command/pc_print/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	var/obj/item/modular_computer/computer = node.parent
+	var/obj/item/computer_hardware/printer/printer = computer.all_components[MC_PRINT]
+	if(!printer)
+		return "В устройстве нет принтера."
+	var/datum/netrun_file/doc
+	for(var/datum/netrun_file/file as anything in console.all_files())
+		if(file.kind == NETRUN_FILE_TEXT)
+			doc = file
+	if(!doc)
+		return "В хранилище нет текстового файла."
+	if(!printer.print_text(doc.content, doc.name))
+		return "Печать не удалась (нет бумаги или принтер неисправен)."
+	return "Отправлено на печать: [doc.name]."

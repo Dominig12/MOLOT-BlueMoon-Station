@@ -33,7 +33,7 @@
 		"name" = name,
 		"kind" = kind,
 		"size" = size,
-		"preview" = kind == NETRUN_FILE_TEXT ? copytext_char(content, 1, 200) : null,
+		"preview" = kind == NETRUN_FILE_TEXT ? copytext_char(content, 1, 200) : (kind == NETRUN_FILE_TECHWEB ? "дамп техвеба: [length(splittext(content, ";"))] узлов" : null),
 	)
 
 /// Программы-демоны, влияющие на взлом

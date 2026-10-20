@@ -5,7 +5,7 @@
 
 /obj/machinery/rnd/server/LateInitialize()
 	. = ..()
-	AddComponent(/datum/component/netrun_node, NETRUN_NODE_SERVER, list("rnd_report", "rnd_siphon", "rnd_choke"), 3, list(ACCESS_RD))
+	AddComponent(/datum/component/netrun_node, NETRUN_NODE_SERVER, list("rnd_report", "rnd_nodes", "rnd_siphon", "rnd_grab", "rnd_push", "rnd_choke"), 3, list(ACCESS_RD))
 
 /obj/machinery/rnd/server/netrun_online(remote = TRUE)
 	return working && !(machine_stat & (NOPOWER | BROKEN))
@@ -87,3 +87,80 @@
 	server.working = FALSE
 	addtimer(CALLBACK(server, TYPE_PROC_REF(/obj/machinery/rnd/server, refresh_working)), 30 SECONDS)
 	return "Сервер заглушён на 30 секунд."
+
+// MARK: Кража и выгрузка узлов techweb
+
+/datum/netrun_command/rnd_nodes
+	id = "rnd_nodes"
+	name = "Список технологий"
+	desc = "Показать открытые узлы техвеба сервера."
+	access = NETRUN_ACCESS_USER
+	icon = "sitemap"
+	trace = 3
+	works_offline = TRUE
+
+/datum/netrun_command/rnd_nodes/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	var/obj/machinery/rnd/server/server = node.parent
+	if(!server.stored_research)
+		return "Техвеб не подключён."
+	var/list/names = list()
+	var/count = 0
+	for(var/node_id in server.stored_research.researched_nodes)
+		count++
+		if(count > 14)
+			continue
+		var/datum/techweb_node/tnode = SSresearch.techweb_nodes[node_id]
+		if(tnode)
+			names += tnode.display_name
+	return "Открыто узлов: [length(server.stored_research.researched_nodes)]\n[jointext(names, "\n")][count > 14 ? "\n…" : ""]"
+
+/datum/netrun_command/rnd_grab
+	id = "rnd_grab"
+	name = "Скопировать техвеб"
+	desc = "Снять дамп всех открытых узлов техвеба в файл хранилища."
+	access = NETRUN_ACCESS_ROOT
+	icon = "download"
+	trace = 9
+	danger = TRUE
+
+/datum/netrun_command/rnd_grab/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	var/obj/machinery/rnd/server/server = node.parent
+	if(!server.stored_research || !length(server.stored_research.researched_nodes))
+		return "Нечего копировать."
+	var/list/ids = list()
+	for(var/node_id in server.stored_research.researched_nodes)
+		ids += node_id
+	var/datum/netrun_file/file = new("techweb_[server.server_id].web", NETRUN_FILE_TECHWEB, jointext(ids, ";"), max(1, round(length(ids) / 20)))
+	if(!console.store_file(file))
+		qdel(file)
+		return "Нет места в хранилище."
+	return "Снят дамп техвеба: [length(ids)] узлов в [file.name]."
+
+/datum/netrun_command/rnd_push
+	id = "rnd_push"
+	name = "Залить техвеб"
+	desc = "Разблокировать на этом сервере узлы из сохранённого дампа техвеба."
+	access = NETRUN_ACCESS_ROOT
+	icon = "upload"
+	trace = 11
+	danger = TRUE
+
+/datum/netrun_command/rnd_push/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	var/obj/machinery/rnd/server/server = node.parent
+	if(!server.stored_research)
+		return "Техвеб не подключён."
+	var/datum/netrun_file/source
+	for(var/datum/netrun_file/file as anything in console.all_files())
+		if(file.kind == NETRUN_FILE_TECHWEB)
+			source = file
+	if(!source)
+		return "В хранилище нет дампа техвеба."
+	var/count = 0
+	for(var/node_id in splittext(source.content, ";"))
+		if(!SSresearch.techweb_nodes[node_id])
+			continue
+		if(server.stored_research.researched_nodes[node_id])
+			continue
+		if(server.stored_research.research_node_id(node_id, force = TRUE, auto_update_points = FALSE))
+			count++
+	return "Залито узлов техвеба: [count]."

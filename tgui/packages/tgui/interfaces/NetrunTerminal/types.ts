@@ -130,7 +130,10 @@ export type NetrunData = {
   window: MachineWindow | null;
   map: NetMap | null;
   selected_network: SelectedNetwork | null;
+  ping_route: PingHop[] | null;
 };
+
+export type PingHop = { kind: 'node' | 'gateway' | 'hub'; ref?: string };
 
 export type Gateway = {
   id: string;

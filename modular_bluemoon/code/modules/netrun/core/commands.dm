@@ -70,8 +70,18 @@
 
 /datum/netrun_command/ping/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg)
 	var/lat = console.latency_to(node)
-	var/route = (node == console.jack) ? "прямое подключение" : (lat <= 2 ? "локальная сеть" : "через реле NTnet")
-	return "[node.address]: [lat * 100]мс ([route])"
+	var/route_name = (node == console.jack) ? "прямое подключение" : (lat <= 2 ? "локальная сеть" : "через реле NTnet")
+	// Маршрут для подсветки на карте: узел -> APC -> гейтвей -> хаб
+	var/list/route = list(list("kind" = "node", "ref" = node.address))
+	var/datum/component/netrun_node/up = node.uplink_node()
+	if(up)
+		route += list(list("kind" = "node", "ref" = up.address))
+	if(node.network)
+		route += list(list("kind" = "gateway", "ref" = node.network.id))
+	route += list(list("kind" = "hub"))
+	console.ping_route = route
+	console.ping_at = world.time
+	return "[node.address]: [lat * 100]мс ([route_name]), прыжков: [length(route)]"
 
 /datum/netrun_command/reboot
 	id = "reboot"

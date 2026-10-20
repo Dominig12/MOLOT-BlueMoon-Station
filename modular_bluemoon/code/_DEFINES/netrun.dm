@@ -42,6 +42,7 @@
 #define NETRUN_FILE_KEY "key"
 #define NETRUN_FILE_DAEMON "daemon"
 #define NETRUN_FILE_SEED "seed"
+#define NETRUN_FILE_TECHWEB "techweb"
 
 #define NETRUN_TRACE_MAX 100
 /// Сколько трассировки спадает за секунду простоя

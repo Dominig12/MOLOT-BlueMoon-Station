@@ -208,6 +208,7 @@ const spread = (nodes: Placed[]) => {
 export const StationMap = () => {
   const { act, data } = useBackend<NetrunData>();
   const { selected, selected_network, jack, entity, breach } = data;
+  const route = data.ping_route;
   const map = data.map;
   const canvasRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: -300, y: -160 });
@@ -479,6 +480,46 @@ export const StationMap = () => {
             >
               NTnet
             </text>
+            {route &&
+              (() => {
+                const pts = route
+                  .map((h) => {
+                    if (h.kind === 'hub') {
+                      return { x: hubX, y: hubY };
+                    }
+                    if (h.kind === 'gateway') {
+                      const g = h.ref ? gwPos[h.ref] : null;
+                      return g ? { x: g.gx, y: g.gy } : null;
+                    }
+                    const n = h.ref ? byAddr[h.ref] : null;
+                    return n ? { x: n.px, y: n.py } : null;
+                  })
+                  .filter((p): p is { x: number; y: number } => !!p);
+                if (pts.length < 2) {
+                  return null;
+                }
+                const d =
+                  `M ${pts[0].x} ${pts[0].y} ` +
+                  pts
+                    .slice(1)
+                    .map((p) => `L ${p.x} ${p.y}`)
+                    .join(' ');
+                return (
+                  <g>
+                    <path
+                      d={d}
+                      fill="none"
+                      stroke={THEME.warn}
+                      strokeWidth={2}
+                      strokeDasharray="4 4"
+                      opacity={0.9}
+                    />
+                    <circle r={4} fill={THEME.warn}>
+                      <animateMotion dur="1.2s" repeatCount="indefinite" path={d} />
+                    </circle>
+                  </g>
+                );
+              })()}
           </svg>
           {map.gateways.map((gw) => (
             <GatewayMarker

@@ -88,6 +88,7 @@
 		data["window"] = active_window ? window_payload() : null
 		data["map"] = null
 		data["selected_network"] = null
+		data["ping_route"] = null
 		return data
 	data["web"] = null
 
@@ -168,6 +169,7 @@
 	data["cli"] = list("verbs" = cli_verbs())
 	data["windows"] = windows_payload()
 	data["window"] = active_window ? window_payload() : null
+	data["ping_route"] = (ping_route && world.time - ping_at < 6 SECONDS) ? ping_route : null
 	return data
 
 /// Дополнительные кнопки носителя (выдернуть провод, вынуть шард, вернуться в тело...)

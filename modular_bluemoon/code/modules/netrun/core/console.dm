@@ -38,6 +38,9 @@
 	var/web_slug
 	/// Выбранный на карте гейтвей подсети
 	var/selected_network
+	/// Маршрут последнего ping для подсветки на карте
+	var/list/ping_route
+	var/ping_at = 0
 	/// Открытые окна машин (адреса узлов) и активное окно
 	var/list/windows = list()
 	var/active_window
