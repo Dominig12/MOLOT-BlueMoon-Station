@@ -1,0 +1,161 @@
+import { ReactElement, useEffect, useRef, useState } from 'react';
+
+import { useBackend } from '../../backend';
+import { Box, Button, Icon, Input } from '../../components';
+import {
+  ACCESS_COLORS,
+  NetNode,
+  NetrunData,
+  NetworkEntry,
+  NODE_ICONS,
+  NODE_NAMES,
+  THEME,
+} from './types';
+
+const WIDTH = 520;
+const HEIGHT = 360;
+const PAD = 24;
+
+/** Обзор: NTnet в центре, локальные сети по кругу */
+export const TopologyMap = () => {
+  const { act, data } = useBackend<NetrunData>();
+  const { networks, view, uplink } = data;
+  const cx = WIDTH / 2;
+  const cy = HEIGHT / 2;
+  const radius = Math.min(WIDTH, HEIGHT) / 2 - 50;
+  const placed = networks.map((net, i) => {
+    const angle = (i / Math.max(networks.length, 1)) * Math.PI * 2 - Math.PI / 2;
+    return {
+      net,
+      x: cx + Math.cos(angle) * radius,
+      y: cy + Math.sin(angle) * radius,
+    };
+  });
+  return (
+    <svg
+      width="100%"
+      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+      style={{ background: THEME.bg, display: 'block' }}
+    >
+      <defs>
+        <radialGradient id="netrun-hub">
+          <stop offset="0%" stopColor={THEME.accent} stopOpacity={0.6} />
+          <stop offset="100%" stopColor={THEME.accent} stopOpacity={0} />
+        </radialGradient>
+      </defs>
+      {placed.map(({ net, x, y }) => (
+        <g key={`link-${net.id}`}>
+          <line
+            x1={cx}
+            y1={cy}
+            x2={x}
+            y2={y}
+            stroke={net.reachable ? net.color : THEME.line}
+            strokeOpacity={net.reachable ? 0.5 : 0.3}
+            strokeWidth={net.isolated ? 1 : 2}
+            strokeDasharray={net.isolated ? '4 4' : undefined}
+          />
+          {net.reachable && uplink && !net.isolated && (
+            <circle r={2.5} fill={net.color}>
+              <animateMotion
+                dur={`${2 + net.security * 0.4}s`}
+                repeatCount="indefinite"
+                path={`M${cx},${cy} L${x},${y}`}
+              />
+            </circle>
+          )}
+        </g>
+      ))}
+      <circle cx={cx} cy={cy} r={46} fill="url(#netrun-hub)" />
+      <circle
+        cx={cx}
+        cy={cy}
+        r={22}
+        fill={THEME.panel}
+        stroke={uplink ? THEME.accent : THEME.bad}
+        strokeWidth={2}
+      />
+      <text
+        x={cx}
+        y={cy + 4}
+        textAnchor="middle"
+        fill={uplink ? THEME.accent : THEME.bad}
+        fontSize={11}
+        fontFamily="monospace"
+      >
+        NTnet
+      </text>
+      {placed.map(({ net, x, y }) => (
+        <NetworkBubble
+          key={net.id}
+          net={net}
+          x={x}
+          y={y}
+          selected={view?.id === net.id}
+          onClick={() => act('view_network', { id: net.id })}
+        />
+      ))}
+    </svg>
+  );
+};
+
+const NetworkBubble = (props: {
+  net: NetworkEntry;
+  x: number;
+  y: number;
+  selected: boolean;
+  onClick: () => void;
+}) => {
+  const { net, x, y, selected, onClick } = props;
+  const size = 14 + Math.min(16, Math.sqrt(net.nodes) * 1.5);
+  const opened = net.access > 0;
+  return (
+    <g
+      onClick={net.reachable ? onClick : undefined}
+      style={{ cursor: net.reachable ? 'pointer' : 'default' }}
+      opacity={net.reachable ? 1 : 0.4}
+    >
+      {selected && (
+        <circle
+          cx={x}
+          cy={y}
+          r={size + 6}
+          fill="none"
+          stroke={net.color}
+          strokeWidth={1}
+          strokeDasharray="3 3"
+        />
+      )}
+      <circle
+        cx={x}
+        cy={y}
+        r={size}
+        fill={THEME.panel}
+        stroke={net.color}
+        strokeWidth={opened ? 3 : 1.5}
+      />
+      <text
+        x={x}
+        y={y + 4}
+        textAnchor="middle"
+        fill={net.color}
+        fontSize={11}
+        fontWeight="bold"
+        fontFamily="monospace"
+      >
+        {net.short}
+      </text>
+      <text
+        x={x}
+        y={y + size + 13}
+        textAnchor="middle"
+        fill={THEME.muted}
+        fontSize={9}
+        fontFamily="monospace"
+      >
+        {net.nodes} уз. · защ. {net.security}
+        {net.home ? ' · здесь' : ''}
+      </text>
+    </g>
+  );
+};

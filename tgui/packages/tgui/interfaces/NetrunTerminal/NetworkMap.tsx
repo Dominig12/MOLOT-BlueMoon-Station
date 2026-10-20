@@ -1,12 +1,14 @@
-import { ReactElement } from 'react';
+import { KeyboardEvent, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
-import { Box } from '../../components';
+import { Box, Button, Icon, Input } from '../../components';
 import {
   ACCESS_COLORS,
   NetNode,
   NetrunData,
   NetworkEntry,
+  NODE_ICONS,
+  NODE_NAMES,
   THEME,
 } from './types';
 
@@ -158,10 +160,27 @@ const NetworkBubble = (props: {
   );
 };
 
-/** Карта ЛВС: узлы на своих координатах станции */
+/** Поле узлов ЛВС: панорамирование, иконки-типы, поиск/фильтр, вложенность, WASD */
+const CONTENT_W = 900;
+const CONTENT_H = 560;
+const MARGIN = 60;
+
+type Placed = NetNode & { px: number; py: number };
+
 export const LanMap = () => {
   const { act, data } = useBackend<NetrunData>();
-  const { view, selected, jack } = data;
+  const { view, selected, jack, entity } = data;
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [query, setQuery] = useState('');
+  const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [focusAddr, setFocusAddr] = useState<string | null>(null);
+  const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(
+    null,
+  );
+
   if (!view) {
     return null;
   }
@@ -185,6 +204,8 @@ export const LanMap = () => {
       </Box>
     );
   }
+
+  // Относительные координаты станции -> поле CONTENT, Y вверх
   const xs = nodes.map((n) => n.x);
   const ys = nodes.map((n) => n.y);
   const minX = Math.min(...xs);
@@ -193,105 +214,311 @@ export const LanMap = () => {
   const maxY = Math.max(...ys);
   const spanX = Math.max(maxX - minX, 1);
   const spanY = Math.max(maxY - minY, 1);
-  const scale = Math.min((WIDTH - PAD * 2) / spanX, (HEIGHT - PAD * 2) / spanY);
-  const offsetX = (WIDTH - spanX * scale) / 2;
-  const offsetY = (HEIGHT - spanY * scale) / 2;
-  // Y в BYOND растёт вверх
-  const px = (n: NetNode) => offsetX + (n.x - minX) * scale;
-  const py = (n: NetNode) => HEIGHT - (offsetY + (n.y - minY) * scale);
-  const gx = nodes.reduce((sum, n) => sum + px(n), 0) / nodes.length;
-  const gy = nodes.reduce((sum, n) => sum + py(n), 0) / nodes.length;
+  const scale = Math.min(
+    (CONTENT_W - MARGIN * 2) / spanX,
+    (CONTENT_H - MARGIN * 2) / spanY,
+  );
+  const offX = (CONTENT_W - spanX * scale) / 2;
+  const offY = (CONTENT_H - spanY * scale) / 2;
+  const placed: Placed[] = nodes.map((n) => ({
+    ...n,
+    px: offX + (n.x - minX) * scale,
+    py: CONTENT_H - (offY + (n.y - minY) * scale),
+  }));
+  const byAddr: Record<string, Placed> = {};
+  for (const p of placed) {
+    byAddr[p.address] = p;
+  }
+  const cx = placed.reduce((s, p) => s + p.px, 0) / placed.length;
+  const cy = placed.reduce((s, p) => s + p.py, 0) / placed.length;
+
+  const types = Array.from(new Set(nodes.map((n) => n.type)));
+  const q = query.trim().toLowerCase();
+  const matches = (n: NetNode) => {
+    if (disabledTypes[n.type]) {
+      return false;
+    }
+    if (!q) {
+      return true;
+    }
+    return (
+      n.name.toLowerCase().includes(q) ||
+      n.address.toLowerCase().includes(q) ||
+      (NODE_NAMES[n.type] || n.type).toLowerCase().includes(q)
+    );
+  };
+
+  // Набор «родственных» узлов при фокусе: сам, его аплинк, дети и соседи (до 2 вложений)
+  const related = (addr: string): Set<string> => {
+    const set = new Set<string>();
+    const f = byAddr[addr];
+    if (!f) {
+      return set;
+    }
+    set.add(f.address);
+    if (f.uplink) {
+      set.add(f.uplink);
+      const up = byAddr[f.uplink];
+      if (up?.uplink) {
+        set.add(up.uplink);
+      }
+    }
+    for (const p of placed) {
+      if (p.uplink === f.address || (f.uplink && p.uplink === f.uplink)) {
+        set.add(p.address);
+      }
+    }
+    return set;
+  };
+  const focusSet = focusAddr ? related(focusAddr) : null;
+
+  const visible = (n: NetNode) =>
+    matches(n) && (!focusSet || focusSet.has(n.address));
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const key = e.key.toLowerCase();
+    const dirs: Record<string, [number, number]> = {
+      w: [0, 1],
+      s: [0, -1],
+      a: [-1, 0],
+      d: [1, 0],
+    };
+    if (!dirs[key]) {
+      return;
+    }
+    e.preventDefault();
+    const [dx, dy] = dirs[key];
+    const cur = selected ? byAddr[selected.address] : placed[0];
+    if (!cur) {
+      return;
+    }
+    let best: Placed | null = null;
+    let bestScore = Infinity;
+    for (const p of placed) {
+      if (p.address === cur.address || !visible(p)) {
+        continue;
+      }
+      const vx = p.x - cur.x;
+      const vy = p.y - cur.y;
+      const along = vx * dx + vy * dy;
+      if (along <= 0) {
+        continue;
+      }
+      const off = Math.abs(vx * dy + vy * dx);
+      const score = off * 2 + Math.hypot(vx, vy);
+      if (score < bestScore) {
+        bestScore = score;
+        best = p;
+      }
+    }
+    if (!best) {
+      return;
+    }
+    if (e.shiftKey && entity) {
+      act('hop', { address: best.address });
+    } else {
+      act('select', { address: best.address });
+    }
+  };
+
   return (
-    <svg
-      width="100%"
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-      style={{ background: THEME.bg, display: 'block' }}
-    >
-      <Grid />
-      {nodes.map((n) => (
-        <line
-          key={`l-${n.address}`}
-          x1={gx}
-          y1={gy}
-          x2={px(n)}
-          y2={py(n)}
-          stroke={view.color}
-          strokeOpacity={n.active ? 0.6 : 0.07}
-          strokeWidth={n.active ? 1.5 : 1}
+    <Box style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
+      <Box
+        p={0.5}
+        style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}
+      >
+        <Box inline bold style={{ fontFamily: 'monospace', color: view.color }}>
+          {view.code}
+        </Box>
+        <Input
+          width="130px"
+          placeholder="поиск узла…"
+          value={query}
+          onInput={(_e, v) => setQuery(v)}
         />
-      ))}
-      <rect
-        x={gx - 7}
-        y={gy - 7}
-        width={14}
-        height={14}
-        fill={THEME.panel}
-        stroke={view.color}
-        strokeWidth={2}
-        transform={`rotate(45 ${gx} ${gy})`}
-      />
-      {nodes.map((n) => (
-        <NodeDot
-          key={n.address}
-          node={n}
-          x={px(n)}
-          y={py(n)}
-          selected={selected?.address === n.address}
-          jacked={jack?.address === n.address}
-          onClick={() => act('select', { address: n.address })}
-        />
-      ))}
-    </svg>
+        {types.map((t) => (
+          <Button
+            key={t}
+            compact
+            icon={NODE_ICONS[t] || 'circle'}
+            selected={!disabledTypes[t]}
+            tooltip={NODE_NAMES[t] || t}
+            onClick={() =>
+              setDisabledTypes({ ...disabledTypes, [t]: !disabledTypes[t] })
+            }
+          />
+        ))}
+        {focusAddr && (
+          <Button
+            compact
+            icon="expand"
+            content="вся сеть"
+            onClick={() => setFocusAddr(null)}
+          />
+        )}
+        <Box inline color={THEME.muted} fontSize="10px">
+          WASD — переход{entity ? ', Shift+WASD — прыжок' : ''}
+        </Box>
+      </Box>
+      <div
+        ref={canvasRef}
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        onMouseDown={(e) => {
+          drag.current = { x: e.clientX, y: e.clientY, ox: pan.x, oy: pan.y };
+        }}
+        onMouseMove={(e) => {
+          if (!drag.current) {
+            return;
+          }
+          setPan({
+            x: drag.current.ox + (e.clientX - drag.current.x),
+            y: drag.current.oy + (e.clientY - drag.current.y),
+          });
+        }}
+        onMouseUp={() => {
+          drag.current = null;
+        }}
+        onMouseLeave={() => {
+          drag.current = null;
+        }}
+        style={{
+          position: 'relative',
+          height: '320px',
+          overflow: 'hidden',
+          cursor: 'grab',
+          outline: 'none',
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            transform: `translate(${pan.x}px, ${pan.y}px)`,
+            width: `${CONTENT_W}px`,
+            height: `${CONTENT_H}px`,
+          }}
+        >
+          <svg
+            width={CONTENT_W}
+            height={CONTENT_H}
+            style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none' }}
+          >
+            <rect
+              x={cx - 8}
+              y={cy - 8}
+              width={16}
+              height={16}
+              fill={THEME.panel}
+              stroke={view.color}
+              strokeWidth={2}
+              transform={`rotate(45 ${cx} ${cy})`}
+            />
+            {placed.map((p) => {
+              if (!visible(p)) {
+                return null;
+              }
+              const target = p.uplink && byAddr[p.uplink] ? byAddr[p.uplink] : null;
+              const tx = target ? target.px : cx;
+              const ty = target ? target.py : cy;
+              return (
+                <line
+                  key={`e-${p.address}`}
+                  x1={p.px}
+                  y1={p.py}
+                  x2={tx}
+                  y2={ty}
+                  stroke={view.color}
+                  strokeOpacity={p.active ? 0.6 : 0.2}
+                  strokeWidth={p.active ? 1.5 : 1}
+                />
+              );
+            })}
+          </svg>
+          {placed.map((p) => (
+            <NodeMarker
+              key={p.address}
+              node={p}
+              dim={!visible(p)}
+              selected={selected?.address === p.address}
+              jacked={jack?.address === p.address}
+              color={view.color}
+              onClick={() => {
+                act('select', { address: p.address });
+                setFocusAddr(p.address);
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </Box>
   );
 };
 
-const Grid = () => {
-  const lines: ReactElement[] = [];
-  for (let x = 0; x <= WIDTH; x += 40) {
-    lines.push(
-      <line key={`gx${x}`} x1={x} y1={0} x2={x} y2={HEIGHT} stroke={THEME.line} strokeOpacity={0.35} />,
-    );
-  }
-  for (let y = 0; y <= HEIGHT; y += 40) {
-    lines.push(
-      <line key={`gy${y}`} x1={0} y1={y} x2={WIDTH} y2={y} stroke={THEME.line} strokeOpacity={0.35} />,
-    );
-  }
-  return <g>{lines}</g>;
-};
-
-const NodeDot = (props: {
-  node: NetNode;
-  x: number;
-  y: number;
+const NodeMarker = (props: {
+  node: Placed;
+  dim: boolean;
   selected: boolean;
   jacked: boolean;
+  color: string;
   onClick: () => void;
 }) => {
-  const { node, x, y, selected, jacked, onClick } = props;
-  const fill = node.online ? ACCESS_COLORS[node.access] : '#3a2020';
-  const r = node.type === 'server' || node.type === 'terminal' ? 5 : 3.5;
+  const { node, dim, selected, jacked, color, onClick } = props;
+  const fill = node.online ? ACCESS_COLORS[node.access] : '#5a2a2a';
   return (
-    <g onClick={onClick} style={{ cursor: 'pointer' }}>
-      {node.active && (
-        <circle cx={x} cy={y} r={r} fill="none" stroke={THEME.warn}>
-          <animate attributeName="r" from={r} to={r + 10} dur="1.2s" repeatCount="indefinite" />
-          <animate attributeName="opacity" from={0.9} to={0} dur="1.2s" repeatCount="indefinite" />
-        </circle>
-      )}
-      {node.entities > 0 && (
-        <circle cx={x} cy={y} r={r + 3} fill="none" stroke="#d05090" strokeWidth={1.5} />
-      )}
-      {selected && (
-        <circle cx={x} cy={y} r={r + 6} fill="none" stroke={THEME.text} strokeWidth={1} />
-      )}
-      {jacked && (
-        <rect x={x - r - 4} y={y - r - 4} width={(r + 4) * 2} height={(r + 4) * 2} fill="none" stroke={THEME.good} strokeDasharray="2 2" />
-      )}
-      <circle cx={x} cy={y} r={r} fill={fill} stroke={THEME.bg} strokeWidth={1} />
-      <title>
-        {`${node.name} ${node.address}`}
-      </title>
-    </g>
+    <div
+      onClick={onClick}
+      title={`${node.name} ${node.address} — ${NODE_NAMES[node.type] || node.type}`}
+      style={{
+        position: 'absolute',
+        left: `${node.px}px`,
+        top: `${node.py}px`,
+        transform: 'translate(-50%, -50%)',
+        textAlign: 'center',
+        cursor: 'pointer',
+        opacity: dim ? 0.25 : 1,
+        zIndex: selected ? 3 : 1,
+      }}
+    >
+      <div
+        style={{
+          position: 'relative',
+          width: '16px',
+          height: '16px',
+          margin: '0 auto',
+          borderRadius: '50%',
+          background: fill,
+          border: `2px solid ${selected ? THEME.text : jacked ? THEME.good : THEME.bg}`,
+          boxShadow: node.entities > 0 ? '0 0 0 2px #d05090' : undefined,
+        }}
+      >
+        <Box
+          style={{
+            position: 'absolute',
+            left: '12px',
+            top: '-6px',
+            background: THEME.panel,
+            borderRadius: '50%',
+            width: '12px',
+            height: '12px',
+            lineHeight: '12px',
+            fontSize: '8px',
+            color: color,
+          }}
+        >
+          <Icon name={NODE_ICONS[node.type] || 'circle'} size={0.7} />
+        </Box>
+      </div>
+      <Box
+        style={{
+          fontSize: '9px',
+          fontFamily: 'monospace',
+          color: THEME.muted,
+          whiteSpace: 'nowrap',
+          marginTop: '1px',
+        }}
+      >
+        {node.name.length > 14 ? node.name.slice(0, 13) + '…' : node.name}
+      </Box>
+    </div>
   );
 };
