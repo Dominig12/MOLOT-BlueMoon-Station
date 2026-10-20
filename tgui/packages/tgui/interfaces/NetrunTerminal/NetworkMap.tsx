@@ -163,10 +163,10 @@ const NetworkBubble = (props: {
 
 /** Единое поле всей сети: гейтвеи подсетей, APC-подузлы и машины, с иконками-типами,
  * панорамированием, поиском/фильтром, вложенностью и WASD-навигацией. */
-const FIELD_W = 1400;
-const FIELD_H = 900;
+const FIELD_W = 2000;
+const FIELD_H = 1300;
 const FIELD_MARGIN = 80;
-const MIN_GAP = 46;
+const MIN_GAP = 68;
 
 type Placed = NetNode & { px: number; py: number };
 type GwPos = { id: string; gx: number; gy: number };
@@ -211,7 +211,8 @@ export const StationMap = () => {
   const route = data.ping_route;
   const map = data.map;
   const canvasRef = useRef<HTMLDivElement>(null);
-  const [pan, setPan] = useState({ x: -300, y: -160 });
+  const [pan, setPan] = useState({ x: -600, y: -360 });
+  const [zoom, setZoom] = useState(0.7);
   const [query, setQuery] = useState('');
   const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>(
     {},
@@ -401,6 +402,11 @@ export const StationMap = () => {
         onMouseLeave={() => {
           drag.current = null;
         }}
+        onWheel={(e) => {
+          e.preventDefault();
+          const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+          setZoom((z) => Math.min(2.2, Math.max(0.3, z * factor)));
+        }}
         style={{
           position: 'relative',
           height: '360px',
@@ -412,7 +418,8 @@ export const StationMap = () => {
         <div
           style={{
             position: 'absolute',
-            transform: `translate(${pan.x}px, ${pan.y}px)`,
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: '0 0',
             width: `${FIELD_W}px`,
             height: `${FIELD_H}px`,
           }}

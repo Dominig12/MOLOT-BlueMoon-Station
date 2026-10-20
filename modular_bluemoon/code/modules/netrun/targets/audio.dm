@@ -63,15 +63,23 @@
 
 /obj/item/radio/intercom/Hear(message, atom/movable/speaker, message_langs, raw_message, radio_freq, list/spans, message_mode, atom/movable/source)
 	. = ..()
-	if(radio_freq || message_mode == MODE_INTERCOM || !on || emped)
-		return
-	if(!speaker || speaker == src || get_dist(src, speaker) > canhear_range)
+	if(message_mode == MODE_INTERCOM || !on || emped || speaker == src)
 		return
 	var/datum/component/netrun_node/node = GetComponent(/datum/component/netrun_node)
-	if(!node || !(broadcasting || world.time < node.tapped_until))
+	if(!node || (!LAZYLEN(node.entities) && !LAZYLEN(node.listeners)))
 		return
-	if(message_mode == MODE_WHISPER || message_mode == MODE_WHISPER_CRIT)
-		raw_message = stars(raw_message)
+	if(radio_freq)
+		// Пришло по радио - слышно, если включён динамик (приём)
+		if(!listening)
+			return
+	else
+		// Местная речь рядом - ловит только включённый микрофон (или скрытая запись)
+		if(!broadcasting && world.time >= node.tapped_until)
+			return
+		if(!speaker || get_dist(src, speaker) > canhear_range)
+			return
+		if(message_mode == MODE_WHISPER || message_mode == MODE_WHISPER_CRIT)
+			raw_message = stars(raw_message)
 	node.hear_line(speaker, raw_message)
 
 /datum/netrun_command/mic_toggle

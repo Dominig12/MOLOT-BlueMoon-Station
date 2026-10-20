@@ -9,6 +9,7 @@
 	see_in_dark = 2
 	var/datum/component/netrun_node/host_node
 	var/datum/netrun_console/entity/console
+	var/blinded = FALSE
 	var/integrity = 100
 	var/max_integrity = 100
 	var/next_hop = 0
@@ -38,10 +39,11 @@
 	. = ..()
 	if(!client)
 		return
-	to_chat(src, span_notice("Вы — процесс в сети станции. Вы видите и слышите всё вокруг узла, в котором находитесь, \
-		и говорите через его динамик. Стрелки переносят вас к ближайшему доступному узлу в этом направлении, \
-		кнопка «Сеть» открывает карту, взлом и переходы."))
+	to_chat(src, span_notice("Вы — процесс в сети станции. Физически вы видите мир только через камеры, к которым у вас есть доступ: \
+		перейдите в узел-камеру. Говорить и слышать можно через интеркомы — включите микрофон или динамик. Стрелки — переход \
+		к ближайшему узлу, кнопка «Сеть» открывает карту, взлом и переходы."))
 	INVOKE_ASYNC(console, TYPE_PROC_REF(/datum, ui_interact), src)
+	update_vision()
 
 /mob/camera/netrun_entity/get_status_tab_items()
 	. = ..()
@@ -62,6 +64,7 @@
 	console.viewed_network_id = node.network?.id
 	console.selected_address = node.address
 	node.touch()
+	update_vision()
 	return TRUE
 
 /mob/camera/netrun_entity/proc/leave_node()
@@ -115,6 +118,35 @@
 		integrity = min(max_integrity, integrity + delta * 0.5)
 	if(dive_body)
 		dive_body.SetUnconscious(5 SECONDS)
+	update_vision()
+
+// MARK: Зрение - только через доступные камеры
+
+/mob/camera/netrun_entity/proc/current_camera()
+	if(host_node?.node_type != NETRUN_NODE_CAMERA || !host_node.is_online())
+		return null
+	if(console.node_level(host_node) < NETRUN_ACCESS_GUEST)
+		return null
+	var/obj/machinery/camera/cam = host_node.parent
+	return cam.status ? cam : null
+
+/mob/camera/netrun_entity/proc/update_vision()
+	if(!client)
+		return
+	var/obj/machinery/camera/cam = current_camera()
+	if(cam)
+		if(blinded)
+			clear_fullscreen("netrun_blind")
+			blinded = FALSE
+		if(client.eye != cam)
+			reset_perspective(cam)
+		see_in_dark = 7
+	else
+		if(client.eye != src)
+			reset_perspective(null)
+		if(!blinded)
+			overlay_fullscreen("netrun_blind", /atom/movable/screen/fullscreen/scaled/blind)
+			blinded = TRUE
 
 // MARK: Урон
 
@@ -184,7 +216,17 @@
 		to_chat(src, span_warning("Здесь нет динамика."))
 		return
 	log_talk(message, LOG_SAY, tag = "netrun via [speaker]")
-	speaker.say(message)
+	if(istype(speaker, /obj/item/radio/intercom))
+		var/obj/item/radio/intercom/intercom = speaker
+		if(!intercom.on || intercom.emped)
+			to_chat(src, span_warning("Интерком обесточен."))
+			return
+		if(intercom.broadcasting) // микрофон включён — голос уходит в эфир
+			intercom.talk_into(src, message, null, spans)
+		// динамик интеркома: локальный вывод голоса
+		intercom.audible_message(span_name("[intercom]") + span_radio(" передаёт, \"[message]\""), null, intercom.canhear_range)
+		return
+	speaker.audible_message(span_name("[speaker]") + span_radio(" передаёт, \"[message]\""))
 
 /mob/camera/netrun_entity/emote(act, m_type = 1, message = null, intentional = FALSE, forced = FALSE)
 	return
