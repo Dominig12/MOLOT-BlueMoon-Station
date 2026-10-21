@@ -96,14 +96,14 @@
 /datum/netrun_ice/proc/is_stunned()
 	return world.time < combat_stun_until
 
-/datum/netrun_ice/proc/apply_damage(amount, reason, atom/source)
+/datum/netrun_ice/proc/apply_damage(amount, reason, datum/netrun_console/attacker)
 	if(QDELETED(src))
 		return
 	if(world.time < combat_shield_until)
 		amount *= combat_shield_factor
 	integrity -= amount
 	if(integrity <= 0)
-		destroyed(source)
+		destroyed(attacker)
 
 /datum/netrun_ice/proc/apply_stun(duration)
 	combat_stun_until = max(combat_stun_until, world.time + duration)
@@ -115,29 +115,43 @@
 /datum/netrun_ice/proc/apply_heal(amount)
 	integrity = min(max_integrity, integrity + amount)
 
-/datum/netrun_ice/proc/destroyed(atom/source)
+/datum/netrun_ice/proc/destroyed(datum/netrun_console/killer)
 	if(QDELETED(src))
 		return
 	node?.network?.add_log("Процесс защиты [name] уничтожен.")
 	node?.add_log("[name]: процесс завершён.")
 	SSnetrun.post_event("purge", null, node?.address)
-	drop_loot()
+	drop_loot(killer)
 	qdel(src)
 
-/// Шанс оставить боевую программу тому, кто находится в узле.
-/datum/netrun_ice/proc/drop_loot()
-	if(kind != NETRUN_ICE_HUNTER && !prob(35))
+/// Лут с ICE. В первую очередь - в память убившей консоли (включая раннера за терминалом/декой),
+/// затем сущности-игроку в узле, затем в файлы узла, иначе - физическим шардом рядом с убившим.
+/datum/netrun_ice/proc/drop_loot(datum/netrun_console/killer)
+	if(kind != NETRUN_ICE_HUNTER && !prob(50))
 		return
 	var/datum/netrun_file/loot = netrun_program_file(pick("strike", "blackout", "assault"))
 	if(!loot)
 		return
-	// Отдаём добычу первой сущности-игроку в узле; иначе кладём в файлы узла.
+	if(!QDELETED(killer) && killer.store_file(loot))
+		killer.log_line("Из обломков [name] извлечён файл: [loot.name].", "good")
+		if(ismob(killer.host))
+			to_chat(killer.host, span_notice("Из обломков процесса вы вытащили файл: [loot.name]."))
+		return
 	for(var/mob/camera/netrun_entity/entity as anything in node?.entities)
 		if(entity.client && entity.console?.store_file(loot))
 			to_chat(entity, span_notice("Из обломков процесса вы вытащили файл: [loot.name]."))
 			return
 	if(node?.files && node.used_storage() + loot.size <= node.storage_capacity)
 		node.files += loot
+		node.add_log("В памяти узла остался файл: [loot.name].")
+		return
+	// Нет места нигде в сети - роняем физический шард рядом с убившим (у кого есть тело/машина).
+	var/turf/drop_turf = (!QDELETED(killer) && isatom(killer.host)) ? get_turf(killer.host) : get_turf(node?.parent)
+	if(drop_turf)
+		var/obj/item/netrun_shard/shard = new(drop_turf)
+		shard.name = "data shard ([loot.name])"
+		shard.files += loot
+		killer?.log_line("Нет места в памяти - лут выпал физическим шардом.", "average")
 		return
 	qdel(loot)
 

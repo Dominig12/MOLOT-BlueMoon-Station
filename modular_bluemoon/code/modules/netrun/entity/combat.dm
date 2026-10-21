@@ -189,7 +189,7 @@
 	var/target_name = netrun_combatant_name(target)
 	switch(program.role)
 		if(NETRUN_PROGRAM_ATTACK)
-			netrun_combatant_hit(target, program.power, "программа [program.name]", host)
+			netrun_combatant_hit(target, program.power, "программа [program.name]", src)
 			log_line("[program.name] -> [target_name]: урон [program.power].", "good")
 		if(NETRUN_PROGRAM_STUN)
 			netrun_combatant_stun(target, program.power)
@@ -205,13 +205,13 @@
 
 // MARK: Диспетчеры эффектов (сущность или ICE)
 
-/proc/netrun_combatant_hit(thing, amount, reason, atom/source)
+/proc/netrun_combatant_hit(thing, amount, reason, datum/netrun_console/attacker)
 	if(istype(thing, /mob/camera/netrun_entity))
 		var/mob/camera/netrun_entity/entity = thing
-		entity.apply_damage(amount, reason, source)
+		entity.apply_damage(amount, reason, attacker)
 	else if(istype(thing, /datum/netrun_ice))
 		var/datum/netrun_ice/ice = thing
-		ice.apply_damage(amount, reason, source)
+		ice.apply_damage(amount, reason, attacker)
 
 /proc/netrun_combatant_stun(thing, duration)
 	if(istype(thing, /mob/camera/netrun_entity))

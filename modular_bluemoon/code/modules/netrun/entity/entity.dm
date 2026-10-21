@@ -294,7 +294,7 @@
 /mob/camera/netrun_entity/proc/is_stunned()
 	return world.time < combat_stun_until
 
-/mob/camera/netrun_entity/proc/apply_damage(amount, reason, atom/source)
+/mob/camera/netrun_entity/proc/apply_damage(amount, reason, datum/netrun_console/attacker)
 	if(world.time < combat_shield_until)
 		amount *= combat_shield_factor
 	take_integrity(amount, reason)
