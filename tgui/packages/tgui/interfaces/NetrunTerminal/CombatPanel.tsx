@@ -28,6 +28,26 @@ const IntegrityBar = (props: { cur: number; max: number }) => {
   );
 };
 
+/** Remains visible above the map/puzzle even while another bottom tab is open. */
+export const IncomingAttacks = (props: { onCombat: () => void }) => {
+  const { act, data } = useBackend<NetrunData>();
+  const incoming = data.combat?.incoming ?? [];
+  if (!incoming.length) { return null; }
+  return (
+    <Box p={1} mb={0.5} role="alert" style={{ border: `2px solid ${THEME.bad}`, background: THEME.bg }}>
+      {incoming.map((attack, index) => (
+        <Box key={`${attack.source}-${attack.name}-${index}`} color={THEME.bad} bold>
+          {attack.source} готовит {attack.name} · {attack.role === 'stun' ? `${attack.power / 10} с оглушения` : `${attack.power} ${attack.role === 'trace' ? 'трассировки' : 'урона'}`} · через {attack.remaining} с
+        </Box>
+      ))}
+      {incoming.some((attack) => attack.role !== 'trace') && <Box fontSize="11px">Щит снижает урон. Оглушение ICE или выход из узла срывает его атаку.</Box>}
+      {incoming.some((attack) => attack.role === 'trace') && <Box fontSize="11px">Чтобы сорвать trace.exe, прервите взлом или оглушите ICE. Щит не скрывает трассировку.</Box>}
+      <Button icon="crosshairs" content="Открыть бой" onClick={props.onCombat} />
+      {!!data.breach && <Button icon="stop" content="Прервать взлом" onClick={() => act('breach_abort')} />}
+    </Box>
+  );
+};
+
 export const CombatPanel = () => {
   const { act, data } = useBackend<NetrunData>();
   const { combat } = data;
@@ -65,7 +85,7 @@ export const CombatPanel = () => {
       {combat.self && (
         <Box mb={1} p={0.5} style={{ background: THEME.panel, border: `1px solid ${THEME.line}` }}>
           <Box color={THEME.accent}>
-            Вы {combat.self.stunned ? ' · ОГЛУШЕНЫ' : ''}
+            Вы {combat.self.stunned ? ' · ОГЛУШЕНЫ' : ''}{combat.self.shielded ? ' · ЩИТ АКТИВЕН' : ''}
           </Box>
           <IntegrityBar cur={combat.self.integrity} max={combat.self.max_integrity} />
           <Box fontSize="10px" color={THEME.muted}>
@@ -94,12 +114,20 @@ export const CombatPanel = () => {
               <Icon name={t.hostile ? 'skull' : 'ghost'} mr={1} />
               {t.name}
               {t.stunned ? <Box inline ml={1} color={THEME.warn}>оглушён</Box> : null}
+              {t.shielded ? <Box inline ml={1} color={THEME.accent}>щит</Box> : null}
               {target === t.ref ? <Box inline ml={1} color={THEME.accent}>● цель</Box> : null}
             </Box>
             <IntegrityBar cur={t.integrity} max={t.max_integrity} />
             <Box fontSize="10px" color={THEME.muted}>
               {t.integrity}/{t.max_integrity}
             </Box>
+            {t.casting && <Box bold color={THEME.bad}>Готовит {t.casting.name}: {t.casting.remaining} с</Box>}
+            {t.programs?.map((p) => (
+              <Box key={p.name} fontSize="11px" color={p.ready_in ? THEME.muted : THEME.warn}
+                title={`${p.desc} · сила ${p.power} · подготовка ${p.windup} с · кулдаун ${p.cooldown} с`}>
+                {p.name}: {p.ready_in > 0 ? `перезарядка ${p.ready_in} с` : 'готова'}
+              </Box>
+            ))}
           </Box>
         ))
       )}
@@ -127,6 +155,18 @@ export const CombatPanel = () => {
             );
           })}
         </div>
+      )}
+      {!!combat.loot?.length && (
+        <Box mt={1} p={0.5} style={{ border: `1px solid ${THEME.good}` }}>
+          <Box bold color={THEME.good}>Добыча в узле</Box>
+          {combat.loot.map((file) => (
+            <Box key={file.uid}>
+              {file.name} · {file.size} яч.
+              <Button ml={1} icon="download" content="Забрать" disabled={combat.self?.stunned || data.locked > 0}
+                onClick={() => act('recover_salvage', { uid: file.uid })} />
+            </Box>
+          ))}
+        </Box>
       )}
     </Box>
   );

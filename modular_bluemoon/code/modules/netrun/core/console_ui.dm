@@ -56,6 +56,7 @@
 	data["trace"] = round(trace, 0.1)
 	data["locked"] = is_locked() ? round((lockout_until - world.time) / (1 SECONDS)) : 0
 	data["can_breach"] = can_breach
+	data["can_autobreach"] = can_breach && !!daemon_bonus("autobreach")
 	data["log"] = log
 	data["jack"] = jack ? list("address" = jack.address, "name" = jack.get_name()) : null
 	data["host_actions"] = host_actions()
@@ -75,7 +76,7 @@
 		data["shard"] = shard_payload()
 		data["breach"] = breach.ui_payload()
 		data["entity"] = entity_data()
-		data["combat"] = null
+		data["combat"] = breach_combat_payload()
 		data["chat"] = chat_data()
 		data["cli"] = cli_payload(FALSE)
 		data["windows"] = windows_payload()
@@ -534,7 +535,10 @@
 			run_command(selected_node(), params["id"])
 			return TRUE
 		if("breach")
-			start_breach(params["kind"] == "network" ? "network" : "node", params["id"])
+			start_breach(params["kind"] == "network" ? "network" : "node", params["id"], !!params["automatic"])
+			return TRUE
+		if("recover_salvage")
+			recover_salvage(params["uid"])
 			return TRUE
 		if("breach_pick")
 			breach?.choose(text2num("[params["index"]]"))

@@ -398,8 +398,10 @@
 
 // MARK: Взлом
 
-/datum/netrun_console/proc/start_breach(kind, id)
+/datum/netrun_console/proc/start_breach(kind, id, automatic = FALSE)
 	if(!can_breach || breach || is_locked())
+		return FALSE
+	if(automatic && (kind == "firmware" || !daemon_bonus("autobreach")))
 		return FALSE
 	var/security
 	var/target_name
@@ -422,7 +424,7 @@
 			security = 5
 			target_name = "прошивка [target_name]"
 		node.touch()
-	breach = new(src, kind, id, target_name, security)
+	breach = automatic ? new /datum/netrun_breach/automatic(src, kind, id, target_name, security) : new /datum/netrun_breach(src, kind, id, target_name, security)
 	if(kind != "network")
 		var/datum/component/netrun_node/target = SSnetrun.find_node(id)
 		breach.target_network = target.network

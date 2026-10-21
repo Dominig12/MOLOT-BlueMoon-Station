@@ -138,7 +138,7 @@ APC одной группы этажей связаны между собой. �
 /obj/machinery/netrun_server/stash/breach_suite
 	name = "breach tools archive"
 	desc = "Стойка со скрытым архивом сетевых инструментов. Кто-то собирал её с умыслом."
-	preload_daemons = list("buffer", "icepick", "cloak")
+	preload_daemons = list("buffer", "icepick", "cloak", "autobreach")
 	preload_files = list("readme.txt" = "Инструменты для работы с чужими сетями. Буфер, анализатор защиты, маскировка следов. Используй с умом.")
 
 /obj/machinery/netrun_server/stash/recon

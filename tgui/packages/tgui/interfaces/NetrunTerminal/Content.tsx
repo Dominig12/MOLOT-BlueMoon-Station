@@ -1,8 +1,8 @@
-import { ReactNode, useRef, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Icon, Stack, Tabs } from '../../components';
-import { CombatPanel } from './CombatPanel';
+import { CombatPanel, IncomingAttacks } from './CombatPanel';
 import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
@@ -30,6 +30,10 @@ export const NetrunContent = () => {
   const [bottom, setBottom] = useState<'console' | 'chat' | 'combat'>('console');
   const mapHidden = !!(breach || machineWindow || web);
   const threats = (data.combat?.targets ?? []).filter((t) => t.hostile).length;
+  const incomingCount = data.combat?.incoming?.length ?? 0;
+  useEffect(() => {
+    if (incomingCount > 0) { setBottom('combat'); }
+  }, [incomingCount]);
   return (
     <Box
       style={{
@@ -47,6 +51,7 @@ export const NetrunContent = () => {
     >
       <Header />
       <EntityPanel />
+      <IncomingAttacks onCombat={() => setBottom('combat')} />
       <Tabs>
         <Tabs.Tab
           icon="diagram-project"

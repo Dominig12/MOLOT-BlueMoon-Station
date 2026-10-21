@@ -60,6 +60,9 @@
 #define NETRUN_PROGRAM_STUN "stun"
 #define NETRUN_PROGRAM_REPAIR "repair"
 #define NETRUN_PROGRAM_PURGE "purge"
+#define NETRUN_PROGRAM_TRACE "trace"
+/// Bounded recoverable files left by defeated processes, separate from machine storage.
+#define NETRUN_MAX_SALVAGE_FILES 4
 
 // Враждебные процессы (ICE)
 #define NETRUN_ICE_SENTRY "sentry"

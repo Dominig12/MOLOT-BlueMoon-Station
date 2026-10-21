@@ -16,11 +16,14 @@
 	var/kind = NETRUN_ICE_SENTRY
 	var/integrity = 120
 	var/max_integrity = 120
-	/// Урон по цели за удар
-	var/attack_power = 14
-	/// Пауза между ударами
-	var/attack_interval = 2 SECONDS
+	/// Programs are registry definitions, with the same power and cooldown as player files.
+	var/list/program_ids = list("strike", "barrier", "trace")
+	var/list/program_cd = list()
 	var/next_attack = 0
+	var/datum/netrun_program/pending_program
+	var/datum/weakref/pending_target_ref
+	var/datum/weakref/enemy_ref
+	var/attack_at = 0
 	var/next_ai = 0
 	/// Сторож: узел, который он охраняет (чтобы вернуться)
 	var/datum/weakref/anchor_ref
@@ -39,8 +42,7 @@
 		name = "ICE-HUNTER"
 		integrity = 90
 		max_integrity = 90
-		attack_power = 18
-		attack_interval = 1.5 SECONDS
+		program_ids = list("assault", "strike", "blackout", "trace")
 	else
 		name = "ICE-SENTRY"
 	SSnetrun.ice_processes += src
@@ -49,6 +51,7 @@
 		anchor_ref = WEAKREF(start)
 
 /datum/netrun_ice/Destroy()
+	cancel_program()
 	SSnetrun.ice_processes -= src
 	leave_node()
 	anchor_ref = null
@@ -66,6 +69,7 @@
 	return TRUE
 
 /datum/netrun_ice/proc/leave_node()
+	cancel_program()
 	if(!node)
 		return
 	LAZYREMOVE(node.netrun_ice, src)
@@ -93,12 +97,31 @@
 /datum/netrun_ice/proc/combat_name()
 	return name
 
+/datum/netrun_ice/proc/program_payload()
+	. = list()
+	for(var/id in program_ids)
+		var/datum/netrun_program/program = SSnetrun.get_program(id)
+		if(!program)
+			continue
+		var/list/entry = program.ui_entry()
+		entry["ready_in"] = max(0, CEILING(((program_cd[id] || 0) - world.time) / (1 SECONDS), 0.1))
+		. += list(entry)
+
+/datum/netrun_ice/proc/casting_payload()
+	if(!pending_program)
+		return null
+	return list("name" = pending_program.name, "role" = pending_program.role,
+		"power" = pending_program.power, "remaining" = max(0, CEILING((attack_at - world.time) / (1 SECONDS), 0.1)))
+
 /datum/netrun_ice/proc/is_stunned()
 	return world.time < combat_stun_until
 
 /datum/netrun_ice/proc/apply_damage(amount, reason, datum/netrun_console/attacker)
 	if(QDELETED(src))
 		return
+	var/mob/camera/netrun_entity/enemy = attacker?.combat_self()
+	if(istype(enemy) && enemy.host_node == node)
+		enemy_ref = WEAKREF(enemy)
 	if(world.time < combat_shield_until)
 		amount *= combat_shield_factor
 	integrity -= amount
@@ -107,6 +130,7 @@
 
 /datum/netrun_ice/proc/apply_stun(duration)
 	combat_stun_until = max(combat_stun_until, world.time + duration)
+	cancel_program()
 
 /datum/netrun_ice/proc/apply_shield(pct, duration)
 	combat_shield_until = world.time + duration
@@ -125,11 +149,28 @@
 	qdel(src)
 
 /// Лут с ICE. В первую очередь - в память убившей консоли (включая раннера за терминалом/декой),
-/// затем сущности-игроку в узле, затем в файлы узла, иначе - физическим шардом рядом с убившим.
+/// затем сущности-игроку в узле, затем в ограниченный кеш обломков узла.
 /datum/netrun_ice/proc/drop_loot(datum/netrun_console/killer)
-	if(kind != NETRUN_ICE_HUNTER && !prob(50))
-		return
-	var/datum/netrun_file/loot = netrun_program_file(pick("strike", "blackout", "assault"))
+	// A daemon is guaranteed; hunters also leave a combat program.
+	SSnetrun.get_daemon(null)
+	var/list/pool = list()
+	for(var/id in SSnetrun.daemons)
+		var/datum/netrun_daemon/daemon = SSnetrun.daemons[id]
+		if(daemon.loot_weight > 0)
+			pool[id] = daemon.loot_weight
+	if(length(pool))
+		deliver_loot(netrun_daemon_file(pickweight(pool)), killer)
+	if(kind == NETRUN_ICE_HUNTER)
+		SSnetrun.get_program(null)
+		var/list/program_pool = list()
+		for(var/id in SSnetrun.programs)
+			var/datum/netrun_program/program = SSnetrun.programs[id]
+			if(program.size > 0 && program.role != NETRUN_PROGRAM_TRACE)
+				program_pool += id
+		if(length(program_pool))
+			deliver_loot(netrun_program_file(pick(program_pool)), killer)
+
+/datum/netrun_ice/proc/deliver_loot(datum/netrun_file/loot, datum/netrun_console/killer)
 	if(!loot)
 		return
 	if(!QDELETED(killer) && killer.store_file(loot))
@@ -141,9 +182,17 @@
 		if(entity.client && entity.console?.store_file(loot))
 			to_chat(entity, span_notice("Из обломков процесса вы вытащили файл: [loot.name]."))
 			return
-	if(node?.files && node.used_storage() + loot.size <= node.storage_capacity)
-		node.files += loot
-		node.add_log("В памяти узла остался файл: [loot.name].")
+	if(!QDELETED(node))
+		// Debris is recoverable without USER privileges on the host machine.
+		// Bounded separately: defeating ICE never expands the machine's disk.
+		while(length(node.salvage) >= NETRUN_MAX_SALVAGE_FILES)
+			var/datum/netrun_file/expired = node.salvage[1]
+			node.salvage.Cut(1, 2)
+			node.add_log("Старые обломки [expired.name] вытеснены новой добычей.")
+			qdel(expired)
+		node.salvage += loot
+		node.add_log("В обломках процесса остался файл: [loot.name].")
+		killer?.log_line("Нет места в памяти. [loot.name] можно забрать из обломков в узле [node.address].", "average")
 		return
 	// Нет места нигде в сети - роняем физический шард рядом с убившим (у кого есть тело/машина).
 	var/turf/drop_turf = (!QDELETED(killer) && isatom(killer.host)) ? get_turf(killer.host) : get_turf(node?.parent)
@@ -161,7 +210,11 @@
 	if(QDELETED(node) || QDELETED(node.parent))
 		host_lost()
 		return
-	if(is_stunned())
+	if(is_stunned() || !node.is_online())
+		cancel_program()
+		return
+	if(pending_program)
+		resolve_program()
 		return
 	var/mob/camera/netrun_entity/prey = find_intruder(node)
 	if(prey)
@@ -180,6 +233,9 @@
 
 /// Нарушитель в узле: сущность без легального доступа ПОЛЬЗОВАТЕЛЯ к узлу.
 /datum/netrun_ice/proc/find_intruder(datum/component/netrun_node/where)
+	var/mob/camera/netrun_entity/enemy = enemy_ref?.resolve()
+	if(!QDELETED(enemy) && enemy.host_node == where)
+		return enemy
 	var/mob/camera/netrun_entity/best
 	var/best_integrity = INFINITY
 	for(var/mob/camera/netrun_entity/entity as anything in where?.entities)
@@ -195,27 +251,76 @@
 /datum/netrun_ice/proc/try_attack(mob/camera/netrun_entity/prey)
 	if(world.time < next_attack || QDELETED(prey))
 		return
-	next_attack = world.time + attack_interval
-	prey.take_integrity(attack_power, "атака [name]")
+	for(var/id in program_ids)
+		var/datum/netrun_program/program = SSnetrun.get_program(id)
+		if(!program || world.time < (program_cd[id] || 0) || program.role == NETRUN_PROGRAM_TRACE)
+			continue
+		if(program.role == NETRUN_PROGRAM_SHIELD && (integrity > max_integrity * 0.75 || world.time < combat_shield_until))
+			continue
+		if(begin_program(program, program.needs_target ? prey : src))
+			return
+
+/datum/netrun_ice/proc/pending_target()
+	return pending_target_ref?.resolve()
+
+/// A console is a valid trace target only while it is still attacking this node/LAN.
+/datum/netrun_ice/proc/valid_trace_target(datum/netrun_console/console)
+	if(!istype(console) || QDELETED(console))
+		return FALSE
+	var/datum/netrun_breach/breach = console?.breach
+	return !QDELETED(console) && !console.is_locked() && breach && ((breach.target_kind == "network" && node?.network && breach.target_id == node.network.id) || (breach.target_kind != "network" && breach.target_id == node?.address))
+
+/datum/netrun_ice/proc/begin_program(datum/netrun_program/program, datum/target)
+	if(QDELETED(target) || !program || (program.role == NETRUN_PROGRAM_TRACE ? !valid_trace_target(target) : !netrun_combatant_in_node(target, node)))
+		return FALSE
+	if(pending_program || is_stunned() || !node?.is_online() || world.time < next_attack || !(program.id in program_ids) || world.time < (program_cd[program.id] || 0))
+		return FALSE
+	pending_program = program
+	pending_target_ref = WEAKREF(target)
+	attack_at = world.time + program.windup
+	program_cd[program.id] = attack_at + program.cooldown
+	var/datum/netrun_console/victim
+	if(istype(target, /mob/camera/netrun_entity))
+		var/mob/camera/netrun_entity/entity = target
+		victim = entity.console
+		to_chat(entity, span_userdanger("[name] готовит [program.name]: до срабатывания [program.windup / (1 SECONDS)] с! Щит, оглушение или переход помогут избежать атаки."))
+	else if(istype(target, /datum/netrun_console))
+		victim = target
+	victim?.log_line("[name] готовит [program.name], срабатывание через [program.windup / (1 SECONDS)] с.", "bad")
+	node.add_log("[name]: подготовка [program.name].")
+	return TRUE
+
+/datum/netrun_ice/proc/cancel_program()
+	pending_program = null
+	pending_target_ref = null
+	attack_at = 0
+
+/datum/netrun_ice/proc/resolve_program()
+	if(!pending_program)
+		return
+	var/datum/target = pending_target()
+	if(QDELETED(target) || (pending_program.role == NETRUN_PROGRAM_TRACE ? !valid_trace_target(target) : !netrun_combatant_in_node(target, node)))
+		cancel_program()
+		return
+	if(world.time < attack_at)
+		return
+	var/datum/netrun_program/program = pending_program
+	cancel_program()
+	next_attack = world.time + 0.5 SECONDS
+	netrun_apply_program(program, target, null)
 	SSnetrun.post_event("intrusion", null, node?.address)
-	if(!QDELETED(prey) && prey.console)
-		prey.console.add_trace(attack_power * 0.3)
+	if(!QDELETED(target) && istype(target, /mob/camera/netrun_entity))
+		var/mob/camera/netrun_entity/entity = target
+		entity.console?.log_line("[name]: сработала [program.name].", "bad")
 
 /// Сторож без прямой цели давит на тех, кто ломает его узел или сеть.
 /datum/netrun_ice/proc/harass_intruders()
-	if(world.time < next_attack)
+	var/datum/netrun_program/program = SSnetrun.get_program("trace")
+	if(world.time < next_attack || world.time < (program_cd[program.id] || 0))
 		return
-	var/datum/netrun_network/network = node?.network
 	for(var/datum/netrun_console/console as anything in SSnetrun.consoles)
-		if(QDELETED(console))
-			continue
-		var/datum/netrun_breach/breach = console.breach
-		var/hit = FALSE
-		if(breach && ((breach.target_kind == "network" && network && breach.target_id == network.id) || (breach.target_kind != "network" && breach.target_id == node?.address)))
-			hit = TRUE
-		if(hit)
-			console.add_trace(node.get_security() * 1.5)
-			next_attack = world.time + attack_interval
+		if(valid_trace_target(console) && begin_program(program, console))
+			return
 
 /datum/netrun_ice/proc/hunt()
 	if(world.time < hop_cooldown)

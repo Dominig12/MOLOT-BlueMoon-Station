@@ -3,8 +3,10 @@ import { combineReducers, createStore, setGlobalStore } from 'common/redux';
 
 import { backendReducer, backendUpdate } from '../../backend';
 import { debugReducer } from '../../debug';
+import { CombatPanel } from './CombatPanel';
 import { NetrunContent } from './Content';
 import { FilePanel } from './FilePanel';
+import { MatrixPanel } from './Matrix';
 import * as mapGeometry from './mapLayout';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
@@ -60,6 +62,39 @@ const sent = (topic, action: string) => topic.mock.calls
   .map((call) => JSON.parse(call[0].payload));
 
 describe('Netrun terminal panels', () => {
+  test('automatic breach explicitly sends its mode and shows waiting progress instead of cells', () => {
+    const topic = setup({ can_autobreach: true, selected: { ...node, access: 1 } });
+    const panel = render(<NodePanel />);
+    fireEvent.click(panel.getByText('Автовзлом'));
+    expect(sent(topic, 'breach')).toContainEqual({ kind: 'node', id: node.address, automatic: true });
+    panel.unmount();
+    const { getByText } = render(<MatrixPanel state={{ minigame: 'automatic', target: 'test node', security: 3,
+      size: 0, cells: [], daemons: [], time_left: 18, progress: 0.4 }} />);
+    expect(getByText(/Подбор доступа: 40%/)).toBeTruthy();
+    fireEvent.click(getByText('Прервать взлом'));
+    expect(sent(topic, 'breach_abort')).toHaveLength(1);
+  });
+
+  test('incoming ICE warning remains visible over an active breach puzzle', () => {
+    setup({ combat: { node: node.address, node_name: node.name, self: null, targets: [], programs: [],
+      incoming: [{ source: 'ICE-SENTRY', name: 'strike.exe', role: 'attack', power: 18, remaining: 2.5 }] },
+    breach: { minigame: 'automatic', target: node.name, security: 2, size: 0, cells: [], daemons: [], time_left: 18, progress: 0.3 } });
+    const { getByRole, getByText } = render(<NetrunContent />);
+    expect(getByRole('alert').textContent).toContain('ICE-SENTRY готовит strike.exe');
+    expect(getByRole('alert').textContent).toContain('2.5 с');
+    expect(getByText('Открыть бой')).toBeTruthy();
+  });
+
+  test('recoverable daemon loot is shown even without a living combat target', () => {
+    const topic = setup({ combat: { node: node.address, node_name: node.name,
+      self: { integrity: 100, max_integrity: 100, stunned: false }, targets: [], programs: [],
+      loot: [{ uid: 'salvage-1', name: 'autobreach.exe', kind: 'daemon', size: 3, preview: null }] } });
+    const { getByText } = render(<CombatPanel />);
+    expect(getByText(/autobreach.exe/)).toBeTruthy();
+    fireEvent.click(getByText('Забрать'));
+    expect(sent(topic, 'recover_salvage')).toEqual([{ uid: 'salvage-1' }]);
+  });
+
   test('stored route generations update status and overlay without recomputing graph geometry', () => {
     const layout = jest.spyOn(mapGeometry, 'layoutGraph');
     const topic = setup();

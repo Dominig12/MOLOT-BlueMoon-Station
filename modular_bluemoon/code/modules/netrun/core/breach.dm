@@ -280,3 +280,48 @@
 		"daemons" = daemons,
 		"time_left" = round(time_left() / (1 SECONDS)),
 	)
+
+/// Uses the ordinary breach lifecycle, trace, defenses and final validation.
+/datum/netrun_breach/automatic
+	var/duration
+
+/datum/netrun_breach/automatic/New(datum/netrun_console/console, target_kind, target_id, target_name, security)
+	..()
+	var/datum/netrun_daemon/autobreach/tool = SSnetrun.get_daemon("autobreach")
+	duration = tool.breach_duration(src.security, target_kind)
+	deadline = world.time + duration
+	daemons = list(list("name" = "АВТОДОСТУП", "reward" = NETRUN_ACCESS_USER, "sequence" = list(), "done" = FALSE))
+
+/datum/netrun_breach/automatic/valid_target()
+	return console?.daemon_bonus("autobreach") && ..()
+
+/datum/netrun_breach/automatic/pick_minigame()
+	return "automatic"
+
+/datum/netrun_breach/automatic/generate()
+	matrix = list()
+	used = list()
+	daemons = list()
+
+/datum/netrun_breach/automatic/choose(index)
+	return FALSE
+
+/datum/netrun_breach/automatic/finish()
+	if(finished)
+		return
+	if(world.time < deadline)
+		finished = TRUE
+		if(console?.breach == src)
+			console.breach = null
+			console.log_line("Автовзлом прерван: доступ не получен, накопленная трассировка сохранена.", "average")
+		qdel(src)
+		return
+	if(valid_target())
+		daemons[1]["done"] = TRUE
+	return ..()
+
+/datum/netrun_breach/automatic/ui_payload()
+	return list("minigame" = "automatic", "target" = target_name, "security" = security,
+		"size" = 0, "cells" = list(), "daemons" = daemons,
+		"time_left" = CEILING(time_left() / (1 SECONDS), 1),
+		"progress" = clamp(1 - time_left() / duration, 0, 1))

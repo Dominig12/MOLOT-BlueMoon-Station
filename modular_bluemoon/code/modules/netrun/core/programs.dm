@@ -25,6 +25,8 @@
 	/// Трассировка за запуск (шум боевой активности)
 	var/trace = 3
 	var/icon = "bolt"
+	/// ICE announces this preparation period before applying the same effect.
+	var/windup = 2.5 SECONDS
 
 /datum/netrun_program/proc/create_file()
 	return new /datum/netrun_file(name, NETRUN_FILE_PROGRAM, id, size)
@@ -41,6 +43,7 @@
 		"consumable" = consumable,
 		"needs_target" = needs_target,
 		"icon" = icon,
+		"windup" = windup / (1 SECONDS),
 	)
 
 // MARK: Реестр
@@ -168,6 +171,33 @@
 	needs_target = FALSE
 	trace = 1
 	icon = "briefcase-medical"
+
+/// Counter-intrusion uses the same program/cooldown machinery as physical attacks.
+/datum/netrun_program/trace
+	id = "trace"
+	name = "trace.exe"
+	desc = "Увеличивает трассировку активного взломщика после предупреждения."
+	role = NETRUN_PROGRAM_TRACE
+	power = 6
+	cooldown = 5 SECONDS
+	windup = 3 SECONDS
+	icon = "fingerprint"
+
+/// Shared effect dispatcher: ICE cannot bypass entity shields with raw damage.
+/proc/netrun_apply_program(datum/netrun_program/program, target, datum/netrun_console/attacker)
+	switch(program.role)
+		if(NETRUN_PROGRAM_ATTACK)
+			netrun_combatant_hit(target, program.power, "программа [program.name]", attacker)
+		if(NETRUN_PROGRAM_STUN)
+			netrun_combatant_stun(target, program.power)
+		if(NETRUN_PROGRAM_SHIELD)
+			netrun_combatant_shield(target, program.power, 5 SECONDS)
+		if(NETRUN_PROGRAM_REPAIR)
+			netrun_combatant_heal(target, program.power)
+		if(NETRUN_PROGRAM_TRACE)
+			if(istype(target, /datum/netrun_console))
+				var/datum/netrun_console/console = target
+				console.add_trace(program.power)
 
 // MARK: Печатаемые/добываемые шарды с программами
 

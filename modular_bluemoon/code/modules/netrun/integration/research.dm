@@ -3,7 +3,7 @@
 	display_name = "Сетевая инфраструктура"
 	description = "Проводные терминалы, серверы данных и инструменты для работы с локальными сетями станции."
 	prereq_ids = list("comptech", "datatheory")
-	design_ids = list("netrun_terminal", "netrun_server", "netrun_shard", "netrun_deck", "netrun_daemon_buffer")
+	design_ids = list("netrun_terminal", "netrun_server", "netrun_shard", "netrun_deck", "netrun_daemon_buffer", "netrun_daemon_autobreach")
 	research_costs = list(TECHWEB_POINT_TYPE_GENERIC = 2000)
 
 /datum/techweb_node/netrunning_neural
@@ -88,6 +88,16 @@
 	build_type = PROTOLATHE
 	materials = list(/datum/material/glass = 500, /datum/material/silver = 150, /datum/material/gold = 200)
 	build_path = /obj/item/netrun_shard/buffer
+	category = list("Computer Parts")
+	departmental_flags = DEPARTMENTAL_FLAG_ENGINEERING | DEPARTMENTAL_FLAG_SCIENCE
+
+/datum/design/netrun_daemon_autobreach
+	name = "Automatic Breach Daemon"
+	desc = "Шард с autobreach.exe: медленный гарантированный подбор доступа без миниигры."
+	id = "netrun_daemon_autobreach"
+	build_type = PROTOLATHE
+	materials = list(/datum/material/glass = 700, /datum/material/gold = 400, /datum/material/silver = 200)
+	build_path = /obj/item/netrun_shard/autobreach
 	category = list("Computer Parts")
 	departmental_flags = DEPARTMENTAL_FLAG_ENGINEERING | DEPARTMENTAL_FLAG_SCIENCE
 

@@ -99,7 +99,7 @@ export type Daemon = {
 };
 
 export type MatrixState = {
-  minigame?: 'matrix' | 'sequence';
+  minigame?: 'matrix' | 'sequence' | 'automatic';
   target: string;
   security: number;
   size: number;
@@ -139,7 +139,13 @@ export type CombatTarget = {
   integrity: number;
   max_integrity: number;
   stunned: boolean;
+  programs?: EnemyProgram[];
+  shielded?: boolean;
+  casting?: IncomingProgram | null;
 };
+
+export type IncomingProgram = { name: string; role: string; power: number; remaining: number; source?: string };
+export type EnemyProgram = { name: string; desc: string; role: string; power: number; cooldown: number; windup: number; ready_in: number };
 
 export type CombatProgram = {
   id: string;
@@ -159,9 +165,11 @@ export type CombatProgram = {
 export type CombatState = {
   node: string;
   node_name: string;
-  self: { integrity: number; max_integrity: number; stunned: boolean } | null;
+  self: { integrity: number; max_integrity: number; stunned: boolean; shielded?: boolean } | null;
   targets: CombatTarget[];
   programs: CombatProgram[];
+  incoming?: IncomingProgram[];
+  loot?: NetFile[];
 };
 
 export type SearchResult = {
@@ -180,6 +188,7 @@ export type NetrunData = {
   trace: number;
   locked: number;
   can_breach: boolean;
+  can_autobreach?: boolean;
   log: LogLine[];
   jack: { address: string; name: string } | null;
   host_actions: HostAction[];

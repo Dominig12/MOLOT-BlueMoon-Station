@@ -5,6 +5,7 @@
 	size = 4
 	bonus_kind = "buffer"
 	bonus = 2
+	loot_weight = 0
 
 /datum/unit_test/netrun_daemon_registry/Run()
 	var/datum/netrun_daemon/definition = SSnetrun.get_daemon("buffer")

@@ -10,6 +10,8 @@
 	var/size = 1
 	var/bonus_kind
 	var/bonus = 0
+	/// Zero excludes a definition from ICE salvage (e.g. test-only definitions).
+	var/loot_weight = 1
 
 /datum/netrun_daemon/proc/create_file()
 	return new /datum/netrun_file(name, NETRUN_FILE_DAEMON, id, size)
@@ -123,6 +125,28 @@
 	size = 5
 	bonus_kind = "skeleton"
 	bonus = 1
+	loot_weight = 0.2
+
+/// Guaranteed progress replaces the puzzle, not route/access validation or ICE.
+/datum/netrun_daemon/autobreach
+	id = "autobreach"
+	name = "autobreach.exe"
+	desc = "Автовзлом без случайного провала: 14–30 секунд для узла, 22–38 для ЛВС. Даёт USER узла или гостевой вход в ЛВС; связь и программа должны сохраняться. Прошивка требует ручного взлома."
+	size = 3
+	bonus_kind = "autobreach"
+	bonus = 1
+	var/base_duration = 10 SECONDS
+	var/security_duration = 4 SECONDS
+	var/network_duration = 8 SECONDS
+
+/datum/netrun_daemon/autobreach/proc/breach_duration(security, kind)
+	return base_duration + clamp(security, 1, 5) * security_duration + (kind == "network" ? network_duration : 0)
+
+/obj/item/netrun_shard/autobreach
+	name = "data shard (autobreach.exe)"
+	desc = "Шард с медленным детерминированным подбором сетевого доступа."
+	icon_state = "datadisk2"
+	preload_daemons = list("autobreach")
 
 // Печатаемые/добываемые шарды с новыми программами
 /obj/item/netrun_shard/extend

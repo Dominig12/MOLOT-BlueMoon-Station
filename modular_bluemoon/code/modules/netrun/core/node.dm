@@ -11,6 +11,8 @@
 	/// Хранилище файлов узла
 	var/list/datum/netrun_file/files
 	var/storage_capacity = 0
+	/// Recoverable process debris does not grant access to the machine's own files.
+	var/list/datum/netrun_file/salvage = list()
 	var/last_activity = -INFINITY
 	/// Сущности, живущие в этом узле
 	var/list/mob/camera/netrun_entity/entities
@@ -78,6 +80,7 @@
 	binding_area = null
 	topology_turf = null
 	QDEL_LIST(files)
+	QDEL_LIST(salvage)
 	return ..()
 
 /datum/component/netrun_node/proc/join_network()

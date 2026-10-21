@@ -1,5 +1,6 @@
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Section } from '../../components';
+import { AutoBreachButton } from './AutoBreachButton';
 import { CommandList } from './CommandList';
 import { RemotePanel } from './RemotePanel';
 import {
@@ -47,6 +48,8 @@ export const WindowPanel = (props: { window: MachineWindow }) => {
       )}
       {(w.can_breach || w.network?.can_breach) && (
         <Box mb={1}>
+          {w.can_breach && w.access < 2 && <AutoBreachButton kind="node" id={w.address} disabled={!w.online} />}
+          {w.network?.can_breach && <AutoBreachButton kind="network" id={w.network.id} />}
           {w.can_breach && (
             <Button
               icon="key"

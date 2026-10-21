@@ -1,5 +1,6 @@
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, LabeledList, Section } from '../../components';
+import { AutoBreachButton } from './AutoBreachButton';
 import { CommandList } from './CommandList';
 import {
   ACCESS_COLORS,
@@ -42,6 +43,7 @@ export const NodePanel = () => {
             onClick={() => act('breach', { kind: 'network', id: net.id })}
           />
         )}
+        {net.can_breach && <AutoBreachButton kind="network" id={net.id} />}
         {net.access < 1 && !net.can_breach && (
           <Box mt={1} color={THEME.muted}>
             Нужен ключ сети или легальный доступ отдела.
@@ -115,6 +117,7 @@ export const NodePanel = () => {
                     onClick={() => act('breach', { kind: 'network', id: net.id })}
                   />
                 )}
+                {net.can_breach && <AutoBreachButton kind="network" id={net.id} disabled={!net.reachable} />}
               </Box>
             </Box>
           ))}
@@ -205,6 +208,7 @@ export const NodePanel = () => {
                 onClick={() => act('breach', { kind: 'network', id: selected.lan!.id })}
               />
             )}
+            {selected.lan.can_breach && <AutoBreachButton kind="network" id={selected.lan.id} />}
           </Box>
         </Box>
       )}
@@ -246,6 +250,7 @@ export const NodePanel = () => {
           onClick={() => act('breach', { kind: 'node', id: selected.address })}
         />
       )}
+      {can_breach && selected.access >= 1 && selected.access < 2 && <AutoBreachButton kind="node" id={selected.address} disabled={!selected.online} />}
       {selected.files && (
         <Box mt={2}>
           <Box color={THEME.muted} mb={0.5}>

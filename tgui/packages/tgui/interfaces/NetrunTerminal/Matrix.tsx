@@ -39,6 +39,20 @@ const Shell = (props: { children: ReactNode }) => (
 
 const MatrixView = memo((props: { state: MatrixState; act: (action: string, payload?: object) => void }) => {
   const { state, act } = props;
+  if (state.minigame === 'automatic') {
+    return (
+      <Box p={2} style={{ width: '100%', overflowY: 'auto' }}>
+        <Box bold color={LIME}>autobreach.exe · {state.target}</Box>
+        <Box my={1}>Подбор доступа: {Math.round((state.progress ?? 0) * 100)}% · осталось {state.time_left} с</Box>
+        <Box style={{ height: '12px', background: THEME.line }}>
+          <Box style={{ width: `${(state.progress ?? 0) * 100}%`, height: '100%', background: LIME }} />
+        </Box>
+        <Box my={1} color={THEME.muted}>Результат: USER узла или ГОСТЬ ЛВС. Не теряйте связь и файл программы. ICE и трассировка остаются активны.</Box>
+        <Box mb={1} color={THEME.muted}>Отмена сохраняет накопленную трассировку, но не добавляет штраф.</Box>
+        <Button icon="stop" color="bad" content="Прервать взлом" onClick={() => act('breach_abort')} />
+      </Box>
+    );
+  }
   if (state.minigame === 'sequence') {
     return <SequenceView state={state} act={act} />;
   }
