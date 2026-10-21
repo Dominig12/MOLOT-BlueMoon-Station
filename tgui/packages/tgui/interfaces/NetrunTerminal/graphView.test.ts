@@ -8,6 +8,19 @@ const node = (address: string, px = 0, py = 0): PlacedNode => ({
   online: true, access: 1, entities: 0, active: false, uplink: null, px, py,
 });
 
+test('APC fit uses actual area runs including cells without nodes', () => {
+  const scene = new GraphScene(); scene.update([node('APC')], []);
+  const points = scene.fitPoints([{ address: 'APC', z: 1, runs: [{ x: 20, y: 30, width: 4 }, { x: 20, y: 31, width: 1 }] }]);
+  expect(points).toContainEqual({ px: 19.5 * 96, py: -30.5 * 96 });
+  expect(points).toContainEqual({ px: 23.5 * 96, py: -29.5 * 96 });
+  const camera = new GraphViewport(); camera.fit(points, 350, 250);
+  for (const point of points) {
+    const screen = camera.project(point);
+    expect(screen.px).toBeGreaterThanOrEqual(0); expect(screen.px).toBeLessThanOrEqual(350);
+    expect(screen.py).toBeGreaterThanOrEqual(0); expect(screen.py).toBeLessThanOrEqual(250);
+  }
+});
+
 test('manual camera survives data changes and wheel zoom keeps its cursor anchor', () => {
   const camera = new GraphViewport(); camera.fit([node('a'), node('b', 100000, -20000)], 720, 480);
   const fitZoom = camera.zoom;

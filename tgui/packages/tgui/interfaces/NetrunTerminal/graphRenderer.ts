@@ -1,17 +1,19 @@
 import { layoutLabels } from './graphLabels';
-import { GRAPH_GLYPH_RADIUS, GRAPH_LEVEL } from './graphLayout';
+import { GRAPH_GLYPH_RADIUS, GRAPH_TILE } from './graphLayout';
 import { GraphScene, PlacedNode } from './graphScene';
 import { clamp, GraphViewport } from './graphViewport';
 import { GraphPoint } from './mapLayout';
-import { ACCESS_COLORS, Gateway, NetEdge, NetEvent } from './types';
+import { ACCESS_COLORS, ApcZone, Gateway, NetEdge, NetEvent } from './types';
 
 export type GraphOverlay = {
   selected: string | null; jacked: string | null; entityHost: string | null;
   gateways: Map<string, Gateway>; selectedRoute: string[]; waypointRoute: string[]; pingRoute: string[];
   events: NetEvent[];
+  apcZones?: ApcZone[];
 };
 
 const markerColor = (node: PlacedNode) => !node.online ? '#85434a' : ACCESS_COLORS[node.access] || '#678698';
+const physicalPoint = (node: PlacedNode): GraphPoint => ({ px: node.anchorX ?? node.px, py: node.anchorY ?? node.py });
 type EdgeGeometry = { from: GraphPoint; to: GraphPoint; signature: string };
 type EdgeTransition = EdgeGeometry & { started: number; removed: boolean };
 
@@ -25,6 +27,20 @@ export class GraphRenderer {
   private edgeTransitions = new Map<string, EdgeTransition>();
   private initialized = false;
 
+  private drawShape(ctx: CanvasRenderingContext2D, node: PlacedNode) {
+      if (node.type === 'apc') { ctx.rect(node.px - 11, node.py - 11, 22, 22); }
+      else if (['gateway', 'relay'].includes(node.type)) {
+        for (let corner = 0; corner < 6; corner++) {
+          const angle = corner * Math.PI / 3, px = node.px + Math.cos(angle) * 14, py = node.py + Math.sin(angle) * 14;
+          if (!corner) { ctx.moveTo(px, py); } else { ctx.lineTo(px, py); }
+        }
+        ctx.closePath();
+      }
+      else if (['server', 'terminal'].includes(node.type)) {
+        ctx.moveTo(node.px, node.py - 12); ctx.lineTo(node.px + 12, node.py); ctx.lineTo(node.px, node.py + 12); ctx.lineTo(node.px - 12, node.py); ctx.closePath();
+      } else { ctx.arc(node.px, node.py, 8, 0, Math.PI * 2); }
+  }
+
   private drawEdges(ctx: CanvasRenderingContext2D, scene: GraphScene, overlay: GraphOverlay, view: GraphViewport,
     width: number, height: number, straight: (a: GraphPoint, b: GraphPoint) => void) {
     const groups = new Map<string, { edges: NetEdge[]; selected: boolean; kind: string; online: boolean }>();
@@ -36,32 +52,40 @@ export class GraphRenderer {
     }
     const left = -view.x / view.zoom, top = -view.y / view.zoom;
     const right = (width - view.x) / view.zoom, bottom = (height - view.y) / view.zoom;
+    const denseSelection = (scene.adjacency.get(overlay.selected)?.size || 0) > 24;
     // One stroke per style prevents shared fanout trunks from accumulating opacity thousands of times.
     for (const group of groups.values()) {
       // Every tree link — including a selected node's — is a straight spoke to its parent,
       // so highlighting a path looks exactly like the edges it runs along.
       ctx.beginPath();
-      let relayIndex = 0;
       for (const edge of group.edges) {
         const a = scene.byAddress.get(edge.from), b = scene.byAddress.get(edge.to);
         if (!a || !b || Math.max(a.px, b.px) < left || Math.min(a.px, b.px) > right || Math.max(a.py, b.py) < top || Math.min(a.py, b.py) > bottom) { continue; }
-        if (group.kind === 'relay') {
-          // Inter-sector relay links are not tree edges: route them through an overhead
-          // channel above the roots (the py<0 band is always empty) so they cross nothing.
-          const channel = -GRAPH_LEVEL * 0.6 - (relayIndex++ % 6) * 12;
-          ctx.moveTo(a.px, a.py); ctx.lineTo(a.px, channel); ctx.lineTo(b.px, channel); ctx.lineTo(b.px, b.py);
-        } else {
-          straight(a, b);
-        }
+        straight(physicalPoint(a), physicalPoint(b));
       }
       ctx.strokeStyle = !group.online ? '#24333e' : group.selected ? '#9ad0e0' : group.kind === 'relay' ? '#3fb8ad' : group.kind === 'apc' ? '#3d6d86' : '#274a5f';
-      ctx.globalAlpha = view.zoom < .3 && group.kind === 'endpoint' ? .32 : group.kind === 'endpoint' ? .72 : 1;
-      ctx.lineWidth = group.selected ? 2.5 : group.kind === 'endpoint' ? 1 : 1.5;
+      ctx.globalAlpha = group.selected && denseSelection ? .22 : view.zoom < .3 && group.kind === 'endpoint' ? .32 : group.kind === 'endpoint' ? .72 : 1;
+      ctx.lineWidth = group.selected && !denseSelection ? 2.5 : group.kind === 'endpoint' ? 1 : 1.5;
       ctx.setLineDash(group.online ? [] : [4, 5]); ctx.stroke();
     }
     ctx.globalAlpha = 1; ctx.setLineDash([]);
   }
 
+  private drawGeography(ctx: CanvasRenderingContext2D, scene: GraphScene, zones: ApcZone[]) {
+    // These runs are the actual server-owned APC area tiles, including holes and irregular borders.
+    ctx.fillStyle = 'rgba(64,149,188,.16)';
+    for (const zone of zones) {
+      for (const run of zone.runs) {
+        ctx.fillRect((run.x - .5) * GRAPH_TILE, -(run.y + .5) * GRAPH_TILE, run.width * GRAPH_TILE, GRAPH_TILE);
+      }
+    }
+    ctx.strokeStyle = 'rgba(117,163,180,.45)'; ctx.lineWidth = 1; ctx.setLineDash([2, 3]); ctx.beginPath();
+    for (const node of scene.nodes) {
+      const anchor = physicalPoint(node);
+      if (anchor.px !== node.px || anchor.py !== node.py) { ctx.moveTo(anchor.px, anchor.py); ctx.lineTo(node.px, node.py); }
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
   private drawEdgeTransitions(ctx: CanvasRenderingContext2D, segment: (a: GraphPoint, b: GraphPoint) => void, now: number) {
     let animating = false;
     for (const [id, transition] of this.edgeTransitions) {
@@ -91,7 +115,7 @@ export class GraphRenderer {
     for (const edge of scene.edges) {
       const from = scene.byAddress.get(edge.from), to = scene.byAddress.get(edge.to);
       if (!from || !to) { continue; }
-      const geometry = { from: { px: from.px, py: from.py }, to: { px: to.px, py: to.py },
+      const geometry = { from: physicalPoint(from), to: physicalPoint(to),
         signature: `${edge.from}:${edge.to}:${edge.kind}:${edge.online}:${from.px},${from.py}:${to.px},${to.py}` };
       nextEdges.set(edge.id, geometry);
       if (this.initialized && this.edges.get(edge.id)?.signature !== geometry.signature) {
@@ -122,6 +146,7 @@ export class GraphRenderer {
     for (let gx = ((x % step) + step) % step; gx < width; gx += step) { ctx.moveTo(gx, 0); ctx.lineTo(gx, height); }
     for (let gy = ((y % step) + step) % step; gy < height; gy += step) { ctx.moveTo(0, gy); ctx.lineTo(width, gy); }
     ctx.stroke(); ctx.save(); ctx.translate(x, y); ctx.scale(zoom, zoom);
+    this.drawGeography(ctx, scene, overlay.apcZones || []);
     const selectedNeighbors = scene.adjacency.get(overlay.selected);
     const straight = (a: GraphPoint, b: GraphPoint) => { ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py); };
     this.drawEdges(ctx, scene, overlay, view, width, height, straight);
@@ -135,7 +160,7 @@ export class GraphRenderer {
       ctx.shadowBlur = 8; ctx.shadowColor = color;
       for (let i = 1; i < addresses.length; i++) {
         const a = scene.byAddress.get(addresses[i - 1]), b = scene.byAddress.get(addresses[i]);
-        if (a && b && scene.adjacency.get(a.address)?.has(b.address)) { straight(a, b); }
+        if (a && b && scene.adjacency.get(a.address)?.has(b.address)) { straight(physicalPoint(a), physicalPoint(b)); }
       }
       ctx.stroke(); ctx.setLineDash([]); ctx.lineDashOffset = 0; ctx.shadowBlur = 0;
     };
@@ -172,13 +197,10 @@ export class GraphRenderer {
         ctx.lineWidth = 1.5; ctx.stroke();
       }
       // Glow lifts key nodes off the board without enlarging their footprint.
-      if (important) { ctx.shadowBlur = 16; ctx.shadowColor = selected ? '#9dffe4' : host ? '#f8a3e6' : '#9ad0e0'; }
-      else if (node.ice) { ctx.shadowBlur = 14; ctx.shadowColor = '#e9545f'; }
+      if (important && zoom >= .45) { ctx.shadowBlur = 16; ctx.shadowColor = selected ? '#9dffe4' : host ? '#f8a3e6' : '#9ad0e0'; }
+      else if (node.ice && zoom >= .45) { ctx.shadowBlur = 14; ctx.shadowColor = '#e9545f'; }
       ctx.beginPath();
-      if (node.type === 'apc') { ctx.rect(node.px - 11, node.py - 11, 22, 22); }
-      else if (['gateway', 'relay', 'server', 'terminal'].includes(node.type)) {
-        ctx.moveTo(node.px, node.py - 12); ctx.lineTo(node.px + 12, node.py); ctx.lineTo(node.px, node.py + 12); ctx.lineTo(node.px - 12, node.py); ctx.closePath();
-      } else { ctx.arc(node.px, node.py, 8, 0, Math.PI * 2); }
+      this.drawShape(ctx, node);
       ctx.fillStyle = color; ctx.fill();
       ctx.lineWidth = selectedNeighbors?.has(node.address) ? 2.5 : 1.5;
       ctx.strokeStyle = important ? '#d9f2f2' : gateway?.color || '#527287'; ctx.stroke();
@@ -214,7 +236,7 @@ export class GraphRenderer {
       ctx.fillStyle = '#0b1d28'; ctx.fillRect(label.rect.left, label.rect.top, label.rect.right - label.rect.left, 19);
       ctx.fillStyle = priority(label.node) ? '#e0f4ef' : '#99b2c1'; ctx.fillText(label.text, label.rect.left + 4, label.rect.top + 13);
     }
-    ctx.fillStyle = '#8faebe'; ctx.fillText(`${scene.nodes.length} узлов · ${Math.round(zoom * 100)}%`, 12, height - 11);
+    ctx.fillStyle = '#8faebe'; ctx.fillText(`Север ↑ · ${scene.nodes.length} узлов · ${Math.round(zoom * 100)}%`, 12, height - 11);
     return animating;
   }
 }

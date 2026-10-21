@@ -13,6 +13,7 @@ export type NetNode = {
   ice?: number;
   active: boolean;
   uplink: string | null;
+  apc?: string | null;
   network?: string;
   sector?: string;
 };
@@ -185,7 +186,10 @@ export type SearchResult = {
   visible: boolean;
 };
 
+export type WorkspaceView = 'terminal' | 'map' | 'files' | 'pinned' | 'combat' | 'breach' | 'web';
+
 export type NetrunData = {
+  workspace_view?: WorkspaceView;
   origin: string;
   wireless: boolean;
   uplink: boolean;
@@ -282,6 +286,13 @@ export type NetMap = {
   /** Per-console projected graph generations; legacy snapshots use semantic comparison. */
   structure_revision?: number;
   state_revision?: number;
+  source_sector?: string | null;
+  source_z?: number | null;
+  active_sector?: string | null;
+  active_z?: number | null;
+  sectors?: { id: string; name: string; levels: number[] }[];
+  apc_zones?: ApcZone[];
+  relay_destinations?: RelayDestination[];
   /** Server-cached path to the selected target; latency is milliseconds. */
   route?: {
     route: string[];
@@ -290,6 +301,12 @@ export type NetMap = {
     revision: number;
     reachable: boolean;
   } | null;
+};
+
+export type ApcZone = { address: string; z: number; runs: { x: number; y: number; width: number }[] };
+export type RelayDestination = {
+  from: string; to: string; name: string; sector: string; z: number;
+  online: boolean; can_hop: boolean; unavailable_reason?: string | null;
 };
 
 export type SelectedNetwork = {
@@ -382,6 +399,7 @@ export const ACCESS_NAMES = ['НЕТ', 'ГОСТЬ', 'ПОЛЬЗОВАТЕЛЬ',
 export const ACCESS_COLORS = ['#59606e', '#8b93a3', '#4ac0ff', '#3cdc8c'];
 
 export const NODE_ICONS: Record<string, string> = {
+  relay: 'tower-broadcast',
   airlock: 'door-closed',
   apc: 'car-battery',
   camera: 'video',
@@ -402,6 +420,7 @@ export const NODE_ICONS: Record<string, string> = {
 };
 
 export const NODE_NAMES: Record<string, string> = {
+  relay: 'Реле NTnet',
   airlock: 'Шлюзы',
   apc: 'Щитки APC',
   camera: 'Камеры',

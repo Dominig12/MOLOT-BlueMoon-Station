@@ -7,178 +7,178 @@ import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
-import { ACCESS_COLORS, ACCESS_NAMES, NetrunData, THEME } from './types';
+import { ACCESS_COLORS, ACCESS_NAMES, NetrunData, THEME, WorkspaceView } from './types';
 import { WebPanel } from './WebPanel';
 import { WindowPanel } from './WindowPanel';
 
 const ORIGIN_NAMES: Record<string, string> = {
-  terminal: 'Проводной терминал',
-  deck: 'Кибердека',
-  implant: 'Нейролинк',
-  ntos: 'NTOS-клиент',
-  entity: 'Резидентный процесс',
-  circuit: 'Схема',
-  pai: 'пИИ',
-  neural: 'Нейроинтерфейс',
+  terminal: 'Проводной терминал', deck: 'Кибердека', implant: 'Нейролинк',
+  ntos: 'NTOS-клиент', entity: 'Резидентный процесс', circuit: 'Схема',
+  pai: 'пИИ', neural: 'Нейроинтерфейс',
 };
 
-/** Общее содержимое окна - используется и терминалом, и NTOS-программой */
+const PAGE_NAMES: Record<WorkspaceView, string> = {
+  terminal: 'Терминал', map: 'Карта', files: 'Файлы', pinned: 'Закреплённые узлы',
+  combat: 'Бой', breach: 'Взлом', web: 'WEB',
+};
+
+/** Each workspace remains mounted so navigation preserves drafts, filters and map position. */
 export const NetrunContent = () => {
   const { act, data } = useBackend<NetrunData>();
   const { breach, web, windows, window: machineWindow } = data;
-  const webAvailable = data.networks.some((n) => n.id === 'web');
-  const [bottom, setBottom] = useState<'console' | 'chat' | 'combat'>('console');
+  const storedPage = data.workspace_view === 'breach' && !breach ? 'terminal' : data.workspace_view;
+  const [page, setPage] = useState<WorkspaceView>(() => storedPage
+    ?? (breach ? 'breach' : machineWindow ? 'pinned' : web ? 'web' : 'terminal'));
+  const [terminalTab, setTerminalTab] = useState<'console' | 'chat'>('console');
   const [compact, setCompact] = useState(() => window.innerWidth < 860);
-  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 860);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const previousPage = useRef<WorkspaceView>(page === 'breach' ? 'terminal' : page);
+  const hadBreach = useRef(!!breach);
+  const incomingCount = data.combat?.incoming?.length ?? 0;
+  const threats = (data.combat?.targets ?? []).filter((target) => target.hostile).length;
+  const webAvailable = data.networks.some((network) => network.id === 'web') || !!web;
+
+  const navigate = (next: WorkspaceView) => {
+    if (next !== 'breach') { previousPage.current = next; }
+    setPage(next);
+    act('workspace_view', { page: next });
+  };
+
   useEffect(() => {
     const resize = () => setCompact(window.innerWidth < 860);
     window.addEventListener('resize', resize);
     return () => window.removeEventListener('resize', resize);
   }, []);
-  const mapHidden = !!(breach || machineWindow || web);
-  const threats = (data.combat?.targets ?? []).filter((t) => t.hostile).length;
-  const incomingCount = data.combat?.incoming?.length ?? 0;
   useEffect(() => {
-    if (incomingCount > 0) { setBottom('combat'); }
-  }, [incomingCount]);
+    if (!data.workspace_view) { return; }
+    // A closed UI may miss breach completion. Correct that stale server mode once;
+    // an already mounted puzzle uses its remembered page in the lifecycle effect.
+    if (data.workspace_view === 'breach' && !breach) {
+      if (!hadBreach.current) { navigate(previousPage.current); }
+      return;
+    }
+    if (data.workspace_view !== 'breach') { previousPage.current = data.workspace_view; }
+    setPage(data.workspace_view);
+  }, [data.workspace_view]);
+  useEffect(() => {
+    if (breach && !hadBreach.current) {
+      navigate('breach');
+    } else if (!breach && hadBreach.current && page === 'breach') {
+      navigate(previousPage.current);
+    }
+    hadBreach.current = !!breach;
+  }, [!!breach]);
+
+  const tabs: { id: WorkspaceView; icon: string; count?: number }[] = [
+    { id: 'terminal', icon: 'terminal' },
+    { id: 'map', icon: 'diagram-project' },
+    { id: 'files', icon: 'folder-open' },
+    { id: 'pinned', icon: 'thumbtack', count: windows.length },
+  ];
+  if (data.combat || incomingCount || page === 'combat') {
+    tabs.push({ id: 'combat', icon: 'crosshairs', count: threats || incomingCount });
+  }
+  if (breach) { tabs.push({ id: 'breach', icon: 'key' }); }
+  if (webAvailable || page === 'web') { tabs.push({ id: 'web', icon: 'globe' }); }
+
   return (
-    <Box
-      style={{
-        color: THEME.text,
-        background: THEME.panel,
-        height: '100%',
-        minHeight: 0,
-        minWidth: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        boxSizing: 'border-box',
-        overflow: 'hidden',
-        padding: '8px',
-        gap: '5px',
-      }}
-    >
+    <Box style={{ color: THEME.text, background: THEME.panel, height: '100%', minHeight: 0, minWidth: 0,
+      display: 'flex', flexDirection: 'column', boxSizing: 'border-box', overflow: 'hidden', padding: '8px', gap: '5px' }}>
       <Header />
-      <EntityPanel />
-      <Tabs>
-        <Tabs.Tab
-          icon="diagram-project"
-          selected={!web}
-          onClick={() => act('view_network', { id: 'map' })}
-        >
-          Сеть
-        </Tabs.Tab>
-        {webAvailable && (
-          <Tabs.Tab
-            icon="globe"
-            selected={!!web}
-            onClick={() => act('view_network', { id: 'web' })}
-          >
-            WEB
-          </Tabs.Tab>
-        )}
-      </Tabs>
-      {windows.length > 0 && (
-        <Tabs>
-          {windows.map((wtab) => (
-            <Tabs.Tab
-              key={wtab.address}
-              icon={wtab.online ? undefined : 'triangle-exclamation'}
-              selected={machineWindow?.address === wtab.address}
-              onClick={() => act('window_focus', { address: wtab.address })}
-            >
-              {wtab.title.length > 12 ? wtab.title.slice(0, 11) + '…' : wtab.title}
-              <Icon
-                name="xmark"
-                ml={0.5}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  act('window_close', { address: wtab.address });
-                }}
-              />
+      <div aria-label="Разделы нетрана" style={{ flex: '0 0 auto', minWidth: 0, overflowX: 'auto' }}>
+        <Tabs style={{ width: 'max-content', minWidth: '100%', whiteSpace: 'nowrap', overflow: 'visible' }}>
+          {tabs.map((tab) => (
+            <Tabs.Tab key={tab.id} icon={tab.icon} selected={page === tab.id}
+              onClick={() => navigate(tab.id)} style={tab.id === 'combat' && incomingCount ? { color: THEME.bad } : undefined}>
+              {PAGE_NAMES[tab.id]}{tab.count ? ` (${tab.count})` : ''}
             </Tabs.Tab>
           ))}
         </Tabs>
-      )}
-      <div data-net-layout="workspace" style={{
-        display: 'flex', flex: '1 1 0', minHeight: '300px', minWidth: 0, position: 'relative',
-        borderRadius: '7px', overflow: 'hidden', gap: '6px',
-      }}>
-        {/* Floated over the workspace so appearing/updating attack rows never reflow the map or bottom tabs. */}
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 9, pointerEvents: 'none' }}>
-          <div style={{ pointerEvents: 'auto', maxHeight: '45%', overflowY: 'auto' }}>
-            <IncomingAttacks onCombat={() => setBottom('combat')} />
-          </div>
-        </div>
-        {breach && <MatrixPanel state={breach} />}
-        {!breach && machineWindow && <Box style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'auto' }}>
-          <WindowPanel window={machineWindow} />
-                                     </Box>}
-        {!breach && !machineWindow && web && <Box style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'auto' }}>
-          <WebPanel web={web} />
-                                             </Box>}
-        <div style={{ display: mapHidden ? 'none' : 'flex', flex: '1 1 auto', minWidth: 0, minHeight: 0,
-          overflow: 'hidden', gap: '7px', alignItems: 'stretch', position: 'relative' }}>
-          <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ flex: '0 0 auto', textAlign: 'right', minHeight: '22px' }}>
-              <Button compact icon={sidebarOpen ? 'angles-right' : 'angles-left'}
-                content={sidebarOpen ? 'Скрыть информацию об узле' : 'Показать информацию об узле'}
-                onClick={() => setSidebarOpen(!sidebarOpen)} />
-            </div>
-            <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}><StationMap suspended={mapHidden} /></div>
-          </div>
-          <div data-net-layout="sidebar" style={{
-            display: sidebarOpen ? 'block' : 'none', flex: compact ? 'none' : '0 0 282px',
-            width: compact ? 'min(84%, 310px)' : '282px', position: compact ? 'absolute' : 'relative',
-            right: compact ? 0 : undefined, top: compact ? 0 : undefined,
-            zIndex: compact ? 7 : undefined,
-            minWidth: 0, minHeight: 0, height: '100%', overflowY: 'auto', overflowX: 'hidden',
-            background: '#0d222d', border: `1px solid ${THEME.line}`,
-            borderRadius: '7px', boxSizing: 'border-box',
-          }}><NodeSidebar suspended={mapHidden} />
-          </div>
-        </div>
       </div>
-      <div data-net-layout="bottom" style={{
-        display: 'flex', flex: '0 1 22%', minHeight: '128px', minWidth: 0, overflow: 'hidden',
-        gap: '7px', alignItems: 'stretch',
-      }}>
-        <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column',
-          background: '#0d222d', borderRadius: '7px', border: `1px solid ${THEME.line}`, overflow: 'hidden' }}>
+      <IncomingAttacks compact onCombat={() => navigate('combat')} />
+      <div data-net-layout="workspace" style={{ display: 'flex', flex: '1 1 0', minHeight: 0, minWidth: 0,
+        position: 'relative', borderRadius: '7px', overflow: 'hidden' }}>
+        <WorkspacePage id="terminal" active={page}>
+          <EntityPanel />
           <Tabs>
-            <Tabs.Tab icon="terminal" selected={bottom === 'console'} onClick={() => setBottom('console')}>
-              Консоль
-            </Tabs.Tab>
-            <Tabs.Tab icon="comments" selected={bottom === 'chat'} onClick={() => setBottom('chat')}>
-              #noosphere
-            </Tabs.Tab>
-            {data.combat && <Tabs.Tab icon="crosshairs" selected={bottom === 'combat'}
-              onClick={() => setBottom('combat')} style={threats ? { color: THEME.bad } : undefined}>
-              Бой{threats ? ` (${threats})` : ''}
-                            </Tabs.Tab>}
+            <Tabs.Tab icon="terminal" selected={terminalTab === 'console'} onClick={() => setTerminalTab('console')}>Консоль</Tabs.Tab>
+            <Tabs.Tab icon="comments" selected={terminalTab === 'chat'} onClick={() => setTerminalTab('chat')}>#noosphere</Tabs.Tab>
           </Tabs>
-          <div style={{ display: bottom === 'console' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0, overflow: 'auto' }}><ConsoleLog /></div>
-          <div style={{ display: bottom === 'chat' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0, overflow: 'auto' }}><NetChat /></div>
-          <div style={{ display: bottom === 'combat' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0, overflow: 'auto' }}><CombatPanel /></div>
-        </div>
-        <div style={{ flex: compact ? '0 0 180px' : '0 0 244px', width: compact ? '180px' : '244px', minWidth: 0, minHeight: 0, overflow: 'auto',
-          background: '#0d222d', borderRadius: '7px', border: `1px solid ${THEME.line}` }}>
-          <StoragePanel />
-        </div>
+          <div style={{ display: terminalTab === 'console' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}><ConsoleLog /></div>
+          <div style={{ display: terminalTab === 'chat' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}><NetChat /></div>
+        </WorkspacePage>
+        <WorkspacePage id="map" active={page}>
+          <div style={{ display: 'flex', flex: '1 1 0', minWidth: 0, minHeight: 0, gap: '7px', position: 'relative' }}>
+            <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ flex: '0 0 auto', textAlign: 'right', minHeight: '22px' }}>
+                <Button compact icon={sidebarOpen ? 'angles-right' : 'angles-left'}
+                  content={sidebarOpen ? 'Скрыть информацию об узле' : 'Показать информацию об узле'}
+                  onClick={() => setSidebarOpen(!sidebarOpen)} />
+              </div>
+              <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}><StationMap suspended={page !== 'map'} /></div>
+            </div>
+            <div data-net-layout="sidebar" style={{ display: sidebarOpen ? 'block' : 'none',
+              flex: compact ? 'none' : '0 0 282px', width: compact ? 'min(84%, 310px)' : '282px',
+              position: compact ? 'absolute' : 'relative', right: compact ? 0 : undefined, top: compact ? 0 : undefined,
+              zIndex: compact ? 7 : undefined, minWidth: 0, minHeight: 0, height: '100%', overflowY: 'auto',
+              overflowX: 'hidden', background: '#0d222d', border: `1px solid ${THEME.line}`,
+              borderRadius: '7px', boxSizing: 'border-box' }}>
+              <NodeSidebar suspended={page !== 'map'} />
+            </div>
+          </div>
+          <Legend />
+        </WorkspacePage>
+        <WorkspacePage id="files" active={page} scrollable><StoragePanel /></WorkspacePage>
+        <WorkspacePage id="pinned" active={page}>
+          {windows.length > 0 && (
+            <div style={{ flex: '0 0 auto', minWidth: 0, overflowX: 'auto' }}>
+              <Tabs style={{ width: 'max-content', minWidth: '100%', whiteSpace: 'nowrap', overflow: 'visible' }}>
+                {windows.map((tab) => (
+                  <Tabs.Tab key={tab.address} icon={tab.online ? undefined : 'triangle-exclamation'}
+                    selected={machineWindow?.address === tab.address}
+                    onClick={() => act('window_focus', { address: tab.address })}>
+                    {tab.title.length > 24 ? `${tab.title.slice(0, 23)}…` : tab.title}
+                    <Icon name="xmark" ml={0.5} title={`Закрыть закреплённый узел ${tab.title}`}
+                      onClick={(event) => { event.stopPropagation(); act('window_close', { address: tab.address }); }} />
+                  </Tabs.Tab>
+                ))}
+              </Tabs>
+            </div>
+          )}
+          <div style={{ flex: '1 1 0', minHeight: 0, width: '100%', overflowY: 'auto' }}>
+            {machineWindow ? <WindowPanel window={machineWindow} />
+              : <Box color={THEME.muted} p={1}>Закреплённых узлов нет. Выберите узел на карте и откройте его окно.</Box>}
+          </div>
+        </WorkspacePage>
+        <WorkspacePage id="combat" active={page} scrollable><CombatPanel /></WorkspacePage>
+        <WorkspacePage id="breach" active={page} scrollable>
+          {breach ? <MatrixPanel state={breach} /> : <Box color={THEME.muted} p={1}>Активного взлома нет.</Box>}
+        </WorkspacePage>
+        <WorkspacePage id="web" active={page} scrollable>
+          {web ? <WebPanel web={web} /> : <Box color={THEME.muted} p={1}>Ожидание каталога WEB.</Box>}
+        </WorkspacePage>
       </div>
-      <Legend />
     </Box>
   );
 };
+
+const WorkspacePage = (props: { id: WorkspaceView; active: WorkspaceView; scrollable?: boolean; children: ReactNode }) => (
+  <div role="tabpanel" aria-label={PAGE_NAMES[props.id]} aria-hidden={props.active !== props.id}
+    data-net-page={props.id} style={{ display: props.active === props.id ? 'flex' : 'none', flex: '1 1 0',
+      flexDirection: 'column', width: '100%', minWidth: 0, minHeight: 0,
+      overflowX: 'hidden', overflowY: props.scrollable ? 'auto' : 'hidden' }}>
+    {props.children}
+  </div>
+);
 
 const NodeSidebar = (props: { suspended: boolean }) => {
   const content = useRef<ReactNode>(null);
   if (!props.suspended) { content.current = <NodePanel />; }
   return content.current;
 };
-
 const Header = () => {
   const { data } = useBackend<NetrunData>();
-  const { origin, uplink, trace, locked, wireless, jack } = data;
+  const { origin, uplink, trace, locked, wireless, jack, entity } = data;
   const traceColor = trace > 66 ? THEME.bad : trace > 33 ? THEME.warn : THEME.accent;
   return (
     <Stack align="center" mb={1} style={{ fontFamily: 'monospace', flexWrap: 'wrap', rowGap: '4px' }}>
@@ -193,6 +193,11 @@ const Header = () => {
         <Stack.Item ml={2} color={THEME.good}>
           <Icon name="plug" mr={0.5} />
           {jack.name}
+        </Stack.Item>
+      )}
+      {entity && (
+        <Stack.Item ml={2} color={entity.integrity > entity.max_integrity * 0.25 ? THEME.text : THEME.bad}>
+          Целостность {entity.integrity}/{entity.max_integrity}
         </Stack.Item>
       )}
       <Stack.Item grow ml={2} style={{ minWidth: '180px' }}>

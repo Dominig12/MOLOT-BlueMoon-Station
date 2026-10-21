@@ -104,7 +104,7 @@
 	SSnetrun.ensure_topology()
 	TEST_ASSERT_EQUAL(client_node.uplink_node(), remote_node, "Crossing sectors must rebind even when the root area instance is unchanged")
 
-/// The sector backbone is a connected tree with one copy of each undirected APC edge.
+/// The sector backbone unions two nearest neighbors and bridges disconnected groups.
 /datum/unit_test/netrun_topology_apc_tree/Run()
 	var/turf/origin = run_loc_floor_bottom_left
 	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
@@ -134,7 +134,7 @@
 		TEST_ASSERT(!pairs[forward] && !pairs[backward], "An undirected APC edge must be published only once")
 		pairs[forward] = TRUE
 		edge_count++
-	TEST_ASSERT_EQUAL(edge_count, length(addresses) - 1, "Four APCs must form a minimal tree with exactly N-1 edges")
+	TEST_ASSERT_EQUAL(edge_count, 5, "The fixture's two-nearest union must publish five distinct APC links")
 	var/list/visited = list(addresses[1])
 	var/list/frontier = list(addresses[1])
 	while(length(frontier))
@@ -144,7 +144,7 @@
 			if((neighbor in addresses) && !(neighbor in visited))
 				visited += neighbor
 				frontier += neighbor
-	TEST_ASSERT_EQUAL(length(visited), length(addresses), "The N-1 APC edges must connect all actual APCs, rather than leave a cycle and an orphan")
+	TEST_ASSERT_EQUAL(length(visited), length(addresses), "The neighbor backbone must connect every actual APC")
 	var/list/relay_neighbors = topology.adjacency[relay_node.address]
 	TEST_ASSERT_EQUAL(length(relay_neighbors), 1, "A lone quantum relay must attach to exactly one APC in its sector")
 	var/datum/component/netrun_node/relay_apc = relay_node.uplink_node()
@@ -190,11 +190,12 @@
 		var/datum/component/netrun_node/node = apc.GetComponent(/datum/component/netrun_node)
 		TEST_ASSERT(source.console.store_file(new /datum/netrun_file("[node.address].key", NETRUN_FILE_KEY, node.network.passcode, 1, node.network.id)), "The public map test needs legitimate keys for its security domains")
 	source.console.map_view.selected_address = source_node.address
+	source.console.workspace_view = "map"
 	var/list/payload = source.console.ui_data(null)
 	TEST_ASSERT(netrun_map_has_node(payload, far_node.address), "A two-edge peer must be loaded even when physically far away")
 	TEST_ASSERT(netrun_map_has_node(payload, three_hops_node.address), "A permitted peer beyond the old two-edge neighborhood must be included")
-	TEST_ASSERT_EQUAL(source.console.latency_to(far_node), source.console.latency_to(near_node), "Equal graph paths must have equal latency regardless of tile distance")
-	TEST_ASSERT(source.console.latency_to(three_hops_node) > source.console.latency_to(far_node), "An extra APC edge must increase latency even when its target is physically close")
+	TEST_ASSERT(source.console.latency_to(far_node) > source.console.latency_to(near_node), "Equal-hop paths must reflect the longer geographic cable to the distant endpoint")
+	TEST_ASSERT(source.console.latency_to(far_node) > source.console.latency_to(three_hops_node), "A nearby peer through another APC can have less physical latency than a distant peer on the same APC")
 	TEST_ASSERT(source.console.store_file(netrun_daemon_file("mapper")), "The mapper daemon must fit in the test console")
 	payload = source.console.ui_data(null)
 	TEST_ASSERT(netrun_map_has_node(payload, three_hops_node.address), "Installing mapper must preserve already permitted distant endpoints")
@@ -251,10 +252,20 @@
 	TEST_ASSERT(!(target_node.address in node_addresses), "Mapper must not leak a locked endpoint into ordinary CLI completion")
 	TEST_ASSERT(apc_node.address in node_addresses, "The protected LAN's structural APC must remain discoverable")
 	TEST_ASSERT(!(apc_node.network.code in node_addresses), "Combining breach targets must not append network codes to the shared node-address pool")
+	var/nodes_verb_pool
+	var/select_verb_pool
+	for(var/list/verb as anything in cli["verbs"])
+		if(verb["id"] == "nodes")
+			nodes_verb_pool = verb["completion_key"]
+		if(verb["id"] == "sel")
+			select_verb_pool = verb["completion_key"]
+	TEST_ASSERT_NOTEQUAL(nodes_verb_pool, select_verb_pool, "The no-argument nodes verb must not alias the shared endpoint completion pool")
 	var/datum/netrun_file/key = new("medical.key", NETRUN_FILE_KEY, target_node.network.passcode, 1, target_node.network.id)
 	TEST_ASSERT(source.console.store_file(key), "The legitimate network key must fit in memory")
 	TEST_ASSERT(key in source.console.all_files(TRUE), "The new key must belong to the current inventory before its UI projection is requested")
 	TEST_ASSERT(source.console.has_key(target_node.network, TRUE), "Fresh key authorization must recognize the stored file before generating CLI disclosure")
+	TEST_ASSERT(source.console.has_key(target_node.network), "Ordinary key authorization must recognize the stored file outside a UI snapshot")
+	TEST_ASSERT_EQUAL(source.console.network_level(target_node.network), NETRUN_ACCESS_GUEST, "A legitimate key must grant the reachable protected LAN before generating CLI disclosure")
 	payload = source.console.ui_data(null)
 	cli = payload["cli"]
 	pools = cli["completions"]
@@ -299,6 +310,7 @@
 	TEST_ASSERT(stored.revision > previous_revision, "The scheduled refresh must advance the retained route revision")
 	TEST_ASSERT(!stored.reached[target_node.address], "A refreshed server table must remove a path through broken infrastructure")
 	source.console.map_view.selected_address = target_node.address
+	source.console.workspace_view = "map"
 	var/list/payload = source.console.ui_data(null)
 	var/list/map = payload["map"]
 	var/list/selected_route = map["route"]

@@ -11,6 +11,7 @@
 	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, locate(origin.x + 10, origin.y, origin.z))
 	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
 	SSnetrun.ensure_topology()
+	source.console.workspace_view = "map"
 	var/list/payload = source.console.ui_data(null)
 	TEST_ASSERT(netrun_map_has_node(payload, target_node.address), "The complete permitted graph must include endpoints beyond four edges")
 	var/list/map = payload["map"]
@@ -36,7 +37,7 @@
 	for(var/list/edge as anything in map["edges"])
 		TEST_ASSERT(edge["from"] != old_address && edge["to"] != old_address, "Deleted endpoints must not leave dangling map edges")
 
-/// A carrier moving in the same LAN still changes the co-located endpoint chain.
+/// A carried endpoint remains directly attached to its APC when crossing other machines.
 /datum/unit_test/netrun_topology_nested_host_rebind/Run()
 	var/turf/origin = run_loc_floor_bottom_left
 	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
@@ -54,15 +55,17 @@
 	var/datum/component/netrun_node/first_node = first.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/second_node = second.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/apc = node.bound_apc
-	TEST_ASSERT_EQUAL(node.bound_host, first_node, "The nested personal endpoint must initially chain through its co-located machine")
+	TEST_ASSERT_EQUAL(node.uplink_node(), apc, "A personal endpoint must connect directly to its bound APC")
+	TEST_ASSERT_NULL(graph.edge_between(node.address, first_node.address), "Co-location must not create a machine-intermediary edge")
 	carrier.forceMove(peer_spot)
 	// The subsystem's fallback calls join_network even when the child receives no MOVED.
 	node.join_network()
 	SSnetrun.ensure_topology()
 	TEST_ASSERT_EQUAL(node.bound_apc, apc, "Movement within one root area must retain the existing APC binding")
-	TEST_ASSERT_EQUAL(node.bound_host, second_node, "The same-area carrier movement must refresh its intermediary host")
-	TEST_ASSERT_NULL(graph.edge_between(node.address, first_node.address), "The old host edge must disappear")
-	TEST_ASSERT_NOTNULL(graph.edge_between(node.address, second_node.address), "The new co-located host edge must be published")
+	TEST_ASSERT_EQUAL(node.uplink_node(), apc, "Same-area movement must preserve the direct APC attachment")
+	TEST_ASSERT_NULL(graph.edge_between(node.address, first_node.address), "The previous co-located machine must have no endpoint edge")
+	TEST_ASSERT_NULL(graph.edge_between(node.address, second_node.address), "The new co-located machine must have no endpoint edge")
+	TEST_ASSERT_NOTNULL(graph.edge_between(node.address, apc.address), "The physical cable must still terminate at the original APC")
 
 /// A firewall notification revokes acquired rights before an immediate request can use them.
 /datum/unit_test/netrun_firewall_signal_revocation/Run()

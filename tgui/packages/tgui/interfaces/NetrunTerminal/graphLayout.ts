@@ -1,10 +1,13 @@
 import type { GraphPoint, LayoutNode } from './mapLayout';
 import { NetEdge } from './types';
 
-/** Kept for call-site compatibility; the tidy layout is deterministic and holds no state. */
-export type GraphLayoutCache = Record<string, never>;
-export const createGraphLayoutCache = (): GraphLayoutCache => ({});
-
+export const GRAPH_TILE = 96;
+/** Local marker slots within/around a physical station tile. */
+export const GRAPH_GAP = 48;
+export const GRAPH_GLYPH_RADIUS = 24;
+type CachedPoint = GraphPoint & { anchorX: number; anchorY: number; physical: string };
+export type GraphLayoutCache = { positions: Map<string, CachedPoint> };
+export const createGraphLayoutCache = (): GraphLayoutCache => ({ positions: new Map() });
 export const graphAdjacency = (nodes: LayoutNode[], edges: NetEdge[]) => {
   const adjacency = new Map(nodes.map((node) => [node.address, new Set<string>()]));
   for (const edge of edges) {
@@ -15,122 +18,54 @@ export const graphAdjacency = (nodes: LayoutNode[], edges: NetEdge[]) => {
   return adjacency;
 };
 
-/** Horizontal distance between adjacent leaves. */
-export const GRAPH_GAP = 128;
-/** Vertical distance between tree levels. */
-export const GRAPH_LEVEL = Math.round(GRAPH_GAP * 1.6);
-/** Shape, stroke, status badges and rings all remain inside this world-space radius. */
-export const GRAPH_GLYPH_RADIUS = 24;
+const spiral = (slot: number): GraphPoint => {
+  if (!slot) { return { px: 0, py: 0 }; }
+  const r = Math.ceil((Math.sqrt(slot + 1) - 1) / 2);
+  const t = (slot - (2 * r - 1) ** 2 + r) % (8 * r);
+  let x: number, y: number;
+  if (t < 2 * r) { x = -r + t; y = r; }
+  else if (t < 4 * r) { x = r; y = 3 * r - t; }
+  else if (t < 6 * r) { x = 5 * r - t; y = -r; }
+  else { x = -r; y = t - 7 * r; }
+  return { px: x * GRAPH_GAP, py: y * GRAPH_GAP };
+};
+const key = (point: GraphPoint) => `${point.px},${point.py}`;
 
-/**
- * Layered tidy-tree placement (a leaf-slot variant of Reingold–Tilford).
- *
- * The permitted graph is a forest: every endpoint has one uplink parent, and the
- * APC/relay backbone forms a spanning tree. Laying each tree out by levels — leaves
- * on their own columns left to right, every parent centred over its contiguous block
- * of children — guarantees that no two tree edges cross and no two nodes share a cell.
- * The few extra inter-sector relay links are not tree edges and still render as drawn.
- */
+/** Physical station coordinates, north up. Only stacked markers receive local display offsets. */
 export class GraphLayout {
-  constructor(readonly cache: GraphLayoutCache = createGraphLayoutCache()) {}
+  constructor(readonly cache = createGraphLayoutCache()) {}
+  clear() { this.cache.positions.clear(); }
 
-  /** A deterministic layout keeps no retained geometry; re-arrange simply recomputes. */
-  clear() {}
-
-  update(nodes: LayoutNode[], edges: NetEdge[]): Map<string, GraphPoint> {
-    const byAddress = new Map(nodes.map((node) => [node.address, node]));
-    const addresses = [...byAddress.keys()].sort();
-    const backbone = new Set(nodes.filter((node) => ['apc', 'gateway', 'relay'].includes(node.type)).map((node) => node.address));
-    for (const edge of edges) {
-      if (edge.kind !== 'endpoint' && byAddress.has(edge.from) && byAddress.has(edge.to)) {
-        backbone.add(edge.from); backbone.add(edge.to);
+  update(nodes: LayoutNode[], _edges: NetEdge[]): Map<string, GraphPoint> {
+    const sorted = [...nodes].sort((a, b) => a.address.localeCompare(b.address));
+    const anchors = new Map(sorted.map((node) => [node.address, {
+      px: (Number.isFinite(node.x) ? node.x : 0) * GRAPH_TILE,
+      py: -(Number.isFinite(node.y) ? node.y : 0) * GRAPH_TILE,
+      physical: `${node.x || 0},${node.y || 0},${node.z || 0}`,
+    }]));
+    const reserved = new Set([...anchors.values()].map(key));
+    const occupied = new Set<string>(), placed = new Map<string, CachedPoint>();
+    // Retain every stationary marker, including its stack offset, regardless of input order.
+    for (const node of sorted) {
+      const previous = this.cache.positions.get(node.address), anchor = anchors.get(node.address);
+      if (previous?.physical === anchor.physical && !occupied.has(key(previous))) {
+        placed.set(node.address, previous); occupied.add(key(previous));
       }
     }
-
-    // Parent assignment. Endpoints follow their authoritative uplink, then any endpoint
-    // edge to the backbone; the backbone is spanned by a deterministic BFS.
-    const parent = new Map<string, string>();
-    for (const node of nodes) {
-      if (!backbone.has(node.address) && node.uplink && byAddress.has(node.uplink) && node.uplink !== node.address) {
-        parent.set(node.address, node.uplink);
+    const cursors = new Map<string, number>();
+    for (const node of sorted) {
+      if (placed.has(node.address)) { continue; }
+      const anchor = anchors.get(node.address), anchorKey = key(anchor);
+      let slot = cursors.get(anchorKey) || 0, point: GraphPoint;
+      while (true) {
+        const offset = spiral(slot++);
+        point = { px: anchor.px + offset.px, py: anchor.py + offset.py };
+        if (!occupied.has(key(point)) && (key(point) === anchorKey || !reserved.has(key(point)))) { break; }
       }
+      const cached = { ...point, anchorX: anchor.px, anchorY: anchor.py, physical: anchor.physical };
+      placed.set(node.address, cached); occupied.add(key(point)); cursors.set(anchorKey, slot);
     }
-    for (const edge of [...edges].sort((a, b) => a.id.localeCompare(b.id))) {
-      if (edge.kind !== 'endpoint') { continue; }
-      for (const [child, par] of [[edge.from, edge.to], [edge.to, edge.from]]) {
-        if (byAddress.has(child) && !backbone.has(child) && !parent.has(child) && backbone.has(par)) {
-          parent.set(child, par);
-        }
-      }
-    }
-    const backboneAdjacency = new Map<string, string[]>();
-    for (const address of backbone) { backboneAdjacency.set(address, []); }
-    for (const edge of edges) {
-      if (edge.kind === 'endpoint' || edge.from === edge.to) { continue; }
-      if (backbone.has(edge.from) && backbone.has(edge.to)) {
-        backboneAdjacency.get(edge.from).push(edge.to); backboneAdjacency.get(edge.to).push(edge.from);
-      }
-    }
-    const spanned = new Set<string>();
-    for (const root of [...backbone].sort()) {
-      if (spanned.has(root)) { continue; }
-      spanned.add(root);
-      const queue = [root];
-      for (let i = 0; i < queue.length; i++) {
-        for (const neighbor of [...(backboneAdjacency.get(queue[i]) || [])].sort()) {
-          if (!spanned.has(neighbor)) { spanned.add(neighbor); parent.set(neighbor, queue[i]); queue.push(neighbor); }
-        }
-      }
-    }
-    // Break malformed parent cycles so the forest is always acyclic.
-    for (const address of addresses) {
-      const seen = new Set<string>();
-      let cursor: string | undefined = address;
-      while (cursor && parent.has(cursor)) {
-        if (seen.has(cursor)) { parent.delete(cursor); break; }
-        seen.add(cursor); cursor = parent.get(cursor);
-      }
-    }
-
-    const children = new Map<string, string[]>();
-    const roots: string[] = [];
-    for (const address of addresses) {
-      const par = parent.get(address);
-      if (par && byAddress.has(par)) {
-        const list = children.get(par) || [];
-        list.push(address); children.set(par, list);
-      } else {
-        roots.push(address);
-      }
-    }
-    for (const list of children.values()) { list.sort(); }
-    roots.sort();
-
-    // Iterative post-order: leaves claim successive columns, parents centre over children.
-    const px = new Map<string, number>();
-    const depth = new Map<string, number>();
-    let column = 0;
-    for (const root of roots) {
-      const stack: { address: string; level: number; index: number }[] = [{ address: root, level: 0, index: 0 }];
-      while (stack.length) {
-        const frame = stack[stack.length - 1];
-        if (frame.index === 0) { depth.set(frame.address, frame.level); }
-        const kids = children.get(frame.address) || [];
-        if (frame.index < kids.length) {
-          stack.push({ address: kids[frame.index++], level: frame.level + 1, index: 0 });
-          continue;
-        }
-        if (!kids.length) { px.set(frame.address, column++ * GRAPH_GAP); }
-        else {
-          let sum = 0;
-          for (const kid of kids) { sum += px.get(kid); }
-          px.set(frame.address, sum / kids.length);
-        }
-        stack.pop();
-      }
-      column += 1; // keep a clear gap between separate trees
-    }
-
-    return new Map(addresses.map((address) => [address, { px: px.get(address) ?? 0, py: (depth.get(address) ?? 0) * GRAPH_LEVEL }]));
+    this.cache.positions = placed;
+    return placed;
   }
 }

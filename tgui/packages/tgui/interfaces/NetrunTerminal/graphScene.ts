@@ -1,6 +1,6 @@
-import { GRAPH_GAP } from './graphLayout';
+import { GRAPH_GAP, GRAPH_TILE } from './graphLayout';
 import { graphAdjacency, GraphPoint } from './mapLayout';
-import { NetEdge, NetNode } from './types';
+import { ApcZone, NetEdge, NetNode } from './types';
 
 export type PlacedNode = NetNode & GraphPoint;
 const cellKey = (x: number, y: number) => `${x},${y}`;
@@ -24,6 +24,18 @@ export class GraphScene {
       const cell = this.cells.get(key) || [];
       cell.push(node); this.cells.set(key, cell);
     }
+  }
+
+  /** Fit includes the selected APC's actual powered area, including empty tiles. */
+  fitPoints(zones: ApcZone[] = []): GraphPoint[] {
+    const points: GraphPoint[] = [...this.nodes];
+    for (const zone of zones) {
+      for (const run of zone.runs) {
+        points.push({ px: (run.x - .5) * GRAPH_TILE, py: -(run.y + .5) * GRAPH_TILE },
+          { px: (run.x + run.width - .5) * GRAPH_TILE, py: -(run.y - .5) * GRAPH_TILE });
+      }
+    }
+    return points;
   }
 
   visible(left: number, top: number, right: number, bottom: number) {

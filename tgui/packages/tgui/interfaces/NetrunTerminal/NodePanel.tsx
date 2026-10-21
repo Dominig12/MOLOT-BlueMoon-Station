@@ -139,7 +139,8 @@ export const NodePanel = () => {
           />
           <Button
             icon="window-maximize"
-            tooltip="Открыть окном"
+            content="Закрепить"
+            tooltip="Открыть в закреплённых узлах"
             onClick={() => act('window_open', { address: selected.address })}
           />
           <Icon name={NODE_ICONS[selected.type] || 'circle'} ml={1} />

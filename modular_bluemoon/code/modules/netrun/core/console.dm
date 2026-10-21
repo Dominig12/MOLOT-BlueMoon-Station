@@ -21,6 +21,8 @@
 	/// Последний оператор - от его ID считается легальный доступ
 	var/mob/operator
 	var/next_command = 0
+	/// Each workspace page owns the available screen area; hidden maps are not serialized.
+	var/workspace_view = "terminal"
 	/// One consistent, request-local topology snapshot during ui_data serialization.
 	var/datum/netrun_path_tree/ui_routes
 	/// Кеш на время одного ui_data: доступы оператора и уровни сетей
@@ -149,7 +151,9 @@
 	return access_session.user_access(fresh)
 
 /datum/netrun_access_session/proc/user_access(fresh = FALSE)
-	return (!fresh && owner.access_cache) || netrun_mob_access(owner.operator)
+	if(!fresh && owner.access_cache)
+		return owner.access_cache
+	return netrun_mob_access(owner.operator)
 
 /datum/netrun_console/proc/has_key(datum/netrun_network/network, fresh = FALSE)
 	return access_session.has_key(network, fresh)
@@ -509,6 +513,7 @@
 	if(kind != "network")
 		SSnetrun.raise_defenses(owner, SSnetrun.find_node(id))
 	owner.log_line("Запущен взлом: [target_name].", "average")
+	owner.workspace_view = "breach"
 	return TRUE
 
 /datum/netrun_console/proc/breach_finished(datum/netrun_breach/finished)

@@ -3,7 +3,6 @@ import { KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState 
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input } from '../../components';
 import { GraphCanvas, GraphCanvasHandle } from './GraphCanvas';
-import { GraphLayout } from './graphLayout';
 import { createGraphLayoutCache, graphAdjacency, graphNeighborhood, GraphPoint, layoutGraph } from './mapLayout';
 import {
   ACCESS_NAMES, NetEdge, NetEvent, NetMap, NetNode, NetrunData, NODE_ICONS,
@@ -43,7 +42,7 @@ export const StationMap = (props: { suspended?: boolean } = {}) => {
   const latest = useRef<MapInput | null>(null);
   if (!props.suspended) {
     latest.current = {
-      map: data.map, selectedAddress: data.selected?.address ?? null,
+      map: data.map || latest.current?.map || null, selectedAddress: data.selected?.address ?? null,
       selectedNetwork: data.selected_network?.id ?? null, jackAddress: data.jack?.address ?? null,
       entityHost: data.entity?.host ?? null, hasEntity: !!data.entity,
       pingRoute: data.ping_route ?? EMPTY_HOPS, events: data.events ?? EMPTY_EVENTS,
@@ -65,14 +64,18 @@ const MapSnapshot = memo(({ input, act }: { input: MapInput; act: Act }) => {
   ]) : String(input.map.structure_revision);
   const stateKey = input.map?.state_revision;
   const nodes = useSemanticValue(rawNodes, stateKey === undefined ? JSON.stringify(rawNodes.map((node) => [
-    node.address, node.type, node.uplink, node.name, node.network, node.sector,
+    node.address, node.type, node.uplink, node.name, node.network, node.sector, node.apc, node.x, node.y, node.z,
     node.online, node.access, node.entities, node.ice, node.active, node.can_hop,
   ])) : `${topologyKey}:${stateKey}`);
   const edges = useSemanticValue(rawEdges, stateKey === undefined ? JSON.stringify(rawEdges) : `${topologyKey}:${stateKey}`);
   const gateways = useSemanticValue(input.map?.gateways ?? [], JSON.stringify(input.map?.gateways ?? []));
   const storedRoute = useSemanticValue(input.map?.route ?? null, JSON.stringify(input.map?.route ?? null));
-  const map = useMemo(() => input.map ? { ...input.map, nodes, edges, gateways, route: storedRoute } : null,
-    [!!input.map, input.map?.focus, input.map?.revision, input.map?.structure_revision, stateKey, nodes, edges, gateways, storedRoute]);
+  const geographyValue = { source_sector: input.map?.source_sector, source_z: input.map?.source_z,
+    active_sector: input.map?.active_sector, active_z: input.map?.active_z, sectors: input.map?.sectors,
+    apc_zones: input.map?.apc_zones, relay_destinations: input.map?.relay_destinations };
+  const geography = useSemanticValue(geographyValue, JSON.stringify(geographyValue));
+  const map = useMemo(() => input.map ? { ...input.map, ...geography, nodes, edges, gateways, route: storedRoute } : null,
+    [!!input.map, input.map?.focus, input.map?.revision, input.map?.structure_revision, stateKey, geography, nodes, edges, gateways, storedRoute]);
   const pingRoute = useSemanticValue(input.pingRoute, JSON.stringify(input.pingRoute));
   const events = useSemanticValue(input.events, JSON.stringify(input.events));
   const waypoint = useSemanticValue(input.waypoint, JSON.stringify(input.waypoint));
@@ -85,14 +88,17 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
     map, topologyKey, pingRoute, events, waypoint, search } = props;
   const viewport = useRef<GraphCanvasHandle>(null);
   const [layoutCache] = useState(createGraphLayoutCache);
-  const [arrangement, setArrangement] = useState(0);
   const [query, setQuery] = useState('');
   const [focusNearby, setFocusNearby] = useState(false);
   const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>({});
+  const [pendingCenter, setPendingCenter] = useState<string | null>(null);
+  const [searchReset, setSearchReset] = useState(0);
   const nodes = map?.nodes ?? EMPTY_NODES;
   const edges = map?.edges ?? EMPTY_EDGES;
-  const positions = useMemo(() => layoutGraph(nodes, edges, layoutCache), [topologyKey, layoutCache, arrangement]);
-  useEffect(() => { if (arrangement) { viewport.current?.fit(); } }, [arrangement]);
+  const geometryKey = useMemo(() => map?.structure_revision === undefined
+    ? JSON.stringify(nodes.map((node) => [node.address, node.x, node.y, node.z])) : topologyKey,
+  [nodes, topologyKey, map?.structure_revision]);
+  const positions = useMemo(() => layoutGraph(nodes, edges, layoutCache), [geometryKey, layoutCache]);
   const adjacency = useMemo(() => graphAdjacency(nodes, edges), [topologyKey]);
   const liveAdjacency = useMemo(() => graphAdjacency(nodes, edges.filter((edge) => edge.online !== false)), [topologyKey, edges]);
   const placed = useMemo<Placed[]>(() => nodes.map((node) => ({ ...node, ...positions.get(node.address) })), [nodes, positions]);
@@ -120,7 +126,17 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   // the canvas additionally verifies every adjacent pair against real edges.
   const selectedRoute = map?.route?.reachable ? map.route.route : [];
   const pingAddresses = pingRoute.filter((hop) => hop.kind === 'node').map((hop) => hop.ref);
-  const onSelect = useCallback((address: string) => act('select', { address }), [act]);
+  const onSelect = useCallback((address: string) => { setPendingCenter(null); act('select', { address }); }, [act]);
+  const locate = useCallback((address: string, own = false) => {
+    setQuery(''); setSearchReset((value) => value + 1); setFocusNearby(false); setDisabledTypes({}); setPendingCenter(address);
+    if (own) { act('focus_host'); } else { act('select', { address }); }
+  }, [act]);
+  useEffect(() => {
+    // A cross-floor selection arrives after the click. Wait for its committed canvas scene.
+    if (pendingCenter && selectedAddress === pendingCenter && visibleIds.has(pendingCenter) && viewport.current) {
+      viewport.current.center(pendingCenter); setPendingCenter(null);
+    }
+  }, [pendingCenter, selectedAddress, visibleIds]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement) { return; }
@@ -152,30 +168,37 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   };
 
   if (!map) { return null; }
-  if (!nodes.length) { return <Box p={2} color={THEME.muted}>Нет доступных узлов для подключения.</Box>; }
+  const sector = map.sectors?.find((entry) => entry.id === map.active_sector);
+  const relayDestinations = (map.relay_destinations || []).filter((destination) => destination.from === (selectedAddress || entityHost));
   return (
     <Box data-net-layout="map" onKeyDown={onKeyDown} style={{
       background: '#08131c', border: `1px solid ${THEME.line}`, borderRadius: '7px',
       display: 'flex', flexDirection: 'column', flex: '1 1 auto', height: '100%',
       minHeight: 0, minWidth: 0, boxSizing: 'border-box', overflow: 'hidden',
     }}>
+      {!!map.sectors?.length && <Box p={0.5} style={{ display: 'flex', flex: '0 0 auto', gap: '4px', overflowX: 'auto', borderBottom: `1px solid ${THEME.line}` }}>
+        {map.sectors.map((entry) => (<Button key={entry.id} compact selected={entry.id === map.active_sector}
+          content={entry.name} aria-label={`Сектор: ${entry.name}`} onClick={() => { setPendingCenter(null); act('map_sector', { id: entry.id }); }} />))}
+        {sector?.levels.map((z) => (<Button key={z} compact selected={z === map.active_z}
+          content={`Z${z}`} aria-label={`Этаж Z${z}`} onClick={() => { setPendingCenter(null); act('map_sector', { id: sector.id, z }); }} />))}
+        {map.source_sector && (map.source_sector !== map.active_sector || map.source_z !== map.active_z) && <Button compact
+          icon="location-crosshairs" content="Точка подключения" onClick={() => act('map_sector', { id: map.source_sector, z: map.source_z })} />}
+                                </Box>}
       <Box p={1} style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', borderBottom: `1px solid ${THEME.line}`, background: '#0d222d' }}>
-        <Input width="156px" placeholder="поиск узла…" value={query}
-          onInput={(_event, value) => setQuery(value)}
+        <Input key={searchReset} width="156px" placeholder="поиск узла…" value={query}
+          onInput={(_event, value) => { setPendingCenter(null); setQuery(value); }}
           onEnter={(_event, value) => act('search', { text: value })} />
         <Button compact icon="magnifying-glass" tooltip="Поиск узлов по всей сети" onClick={() => act('search', { text: query })} />
         {hasEntity && entityHost && <Button compact icon="location-crosshairs" content="Мой узел"
-          onClick={() => { act('focus_host'); viewport.current?.center(entityHost); }} />}
+          onClick={() => locate(entityHost, true)} />}
         <Button compact icon="bullseye" content="Рядом" selected={focusNearby} disabled={!selectedAddress}
-          tooltip="Показать окружение выбранного узла в 2 переходах" onClick={() => setFocusNearby(!focusNearby)} />
+          tooltip="Показать окружение выбранного узла в 2 переходах" onClick={() => { setPendingCenter(null); setFocusNearby(!focusNearby); }} />
         <Button compact icon="crosshairs" tooltip="К выбранному узлу" disabled={!selectedAddress}
           onClick={() => selectedAddress && viewport.current?.center(selectedAddress)} />
         <Button compact icon="expand" tooltip="Вместить все отфильтрованные узлы" onClick={() => viewport.current?.fit()} />
-        <Button compact icon="diagram-project" content="Упорядочить" tooltip="Заново компактно разместить всю доступную сеть"
-          onClick={() => { new GraphLayout(layoutCache).clear(); setArrangement((value) => value + 1); }} />
         <Box style={{ flex: '1 1 auto', minWidth: 0 }} />
         <Box color={THEME.muted} fontSize="10px" style={{ whiteSpace: 'nowrap' }}>
-          {visibleNodes.length}/{nodes.length} · вся доступная сеть
+          {visibleNodes.length}/{nodes.length} · текущий этаж
         </Box>
         {map.route && <StoredRouteStatus route={map.route} />}
       </Box>
@@ -183,7 +206,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
         {types.map((type) => (<Button key={type} compact icon={NODE_ICONS[type] || 'circle'}
           selected={!disabledTypes[type]} aria-label={`Фильтр: ${NODE_NAMES[type] || type}`}
           tooltip={NODE_NAMES[type] || type}
-          onClick={() => setDisabledTypes((old) => ({ ...old, [type]: !old[type] }))} />))}
+          onClick={() => { setPendingCenter(null); setDisabledTypes((old) => ({ ...old, [type]: !old[type] })); }} />))}
         <Box ml={1} style={{ width: '1px', alignSelf: 'stretch', background: THEME.line, flexShrink: 0 }} />
         {(map.gateways ?? []).map((gateway) => (<Button key={gateway.id} compact content={[gateway.code, gatewaySectors.get(gateway.id)].filter(Boolean).join(' · ')}
           icon={gateway.has_key ? 'key' : gateway.access ? 'network-wired' : 'lock'}
@@ -194,6 +217,18 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
       {waypoint && <Box p={0.5} style={{ background: '#12202a', borderBottom: `1px solid ${THEME.line}` }}>
         <WaypointRoute wp={waypoint} onClear={() => act('clear_waypoint')} onNext={(address) => act('select', { address })} />
                    </Box>}
+      {relayDestinations.length > 0 && <Box data-net-relay-destinations p={0.75} style={{ flex: '0 0 auto', maxHeight: '112px', overflowY: 'auto', borderBottom: `1px solid ${THEME.line}` }}>
+        <Box color={THEME.muted} fontSize="10px">Реле NTnet · направления перехода</Box>
+        {relayDestinations.map((destination) => (<Box key={`${destination.from}:${destination.to}`} mt={0.5} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <Icon name="tower-broadcast" color={destination.online ? THEME.good : THEME.bad} />
+          <Box style={{ flex: '1 1 auto', minWidth: 0 }}>{destination.name} · {map.sectors?.find((entry) => entry.id === destination.sector)?.name || destination.sector} · Z{destination.z}</Box>
+          <Button compact content="Показать" aria-label={`Показать реле ${destination.name}`}
+            onClick={() => locate(destination.to)} />
+          <Button compact icon="arrow-right" content="Перейти" disabled={!destination.can_hop}
+            tooltip={destination.unavailable_reason || 'Перейти через реле'} aria-label={`Перейти к реле ${destination.name}`}
+            onClick={() => act('relay_hop', { address: destination.to })} />
+                                                 </Box>))}
+                                       </Box>}
       {search?.length > 0 && <Box p={0.75} style={{ flex: '0 0 auto', maxHeight: '104px', overflowY: 'auto', borderBottom: `1px solid ${THEME.line}`, fontFamily: 'monospace' }}>
         <Box color={THEME.muted} fontSize="10px" mb={0.5}>Найдено в сети: {search.length}
           <Button compact icon="xmark" ml={1} tooltip="Очистить поиск" onClick={() => act('search', { text: '' })} />
@@ -208,12 +243,14 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
           {result.visible && <Button compact icon="diagram-project" tooltip="Выбрать на карте" onClick={() => onSelect(result.address)} />}
                                  </Box>))}
                              </Box>}
-      <GraphCanvas ref={viewport} adjacency={adjacency} nodes={visibleNodes} edges={visibleEdges} positions={visiblePoints}
+      {!nodes.length && <Box p={1} color={THEME.muted}>На этом этаже нет доступных узлов.</Box>}
+      <GraphCanvas key={`${map.active_sector || ''}:${map.active_z ?? ''}`} ref={viewport} adjacency={adjacency} nodes={visibleNodes} edges={visibleEdges} positions={visiblePoints}
         gateways={gateways} selected={selectedAddress} jacked={jackAddress} focus={map.focus}
+        apcZones={map.apc_zones}
         entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || []}
         pingRoute={pingAddresses} events={events} onSelect={onSelect} />
       <Box p={0.5} color={THEME.muted} fontSize="10px" style={{ flexShrink: 0, borderTop: `1px solid ${THEME.line}`, background: '#0d222d' }}>
-        □ APC · ◇ сервер/терминал · ○ устройство · розовый — процесс · красное кольцо — ICE<br />
+        □ APC · ⬡ реле · ◇ сервер/терминал · ○ устройство · подсветка — зона выбранного APC<br />
         ЛКМ — выбрать · потянуть — переместить · колесо — масштаб · WASD — выбор{hasEntity ? ' · Shift+WASD — переход' : ''}
       </Box>
     </Box>

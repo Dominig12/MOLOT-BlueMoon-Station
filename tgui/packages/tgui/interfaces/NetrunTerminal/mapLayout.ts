@@ -1,12 +1,12 @@
 import { GraphLayout, GraphLayoutCache } from './graphLayout';
 import { NetEdge } from './types';
 
-export { createGraphLayoutCache, graphAdjacency } from './graphLayout';
 export type { GraphLayoutCache } from './graphLayout';
+export { createGraphLayoutCache, graphAdjacency } from './graphLayout';
 
-/** Layout input deliberately excludes station coordinates. */
-export type LayoutNode = { address: string; type: string; uplink?: string | null };
-export type GraphPoint = { px: number; py: number };
+/** Server-owned geographic location; uplink remains connectivity rather than geometry. */
+export type LayoutNode = { address: string; type: string; x?: number; y?: number; z?: number; uplink?: string | null };
+export type GraphPoint = { px: number; py: number; anchorX?: number; anchorY?: number };
 export const graphBounds = (points: Iterable<GraphPoint>, padding = 100) => {
   let minX = Infinity;
   let minY = Infinity;

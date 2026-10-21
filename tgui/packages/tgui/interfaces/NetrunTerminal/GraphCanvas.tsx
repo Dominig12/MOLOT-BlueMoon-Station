@@ -47,7 +47,7 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     if (animating && typeof window.requestAnimationFrame === 'function') { queuePaint(); }
   };
   const fit = useCallback(() => {
-    const { width, height } = size(); view.fit(retained.current.nodes, width, height); queuePaint();
+    const { width, height } = size(); view.fit(retained.current.fitPoints(latest.current.apcZones), width, height); queuePaint();
   }, [view, queuePaint, size]);
   const center = useCallback((address: string) => {
     const point = retained.current.byAddress.get(address);
@@ -101,13 +101,14 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
       onPointerLeave={() => setTooltip(null)}
       onPointerUp={(event) => {
         const press = down.current; down.current = null;
-        if (press && !press.moved) { const node = hit(event.clientX, event.clientY); if (node) { latest.current.onSelect(node.address); } }
+        if (!press || press.moved) { return; }
+        const node = hit(event.clientX, event.clientY); if (node) { latest.current.onSelect(node.address); }
       }}
       onPointerCancel={() => { down.current = null; setTooltip(null); }}
       onWheel={(event) => {
         event.preventDefault(); setTooltip(null);
         const bounds = event.currentTarget.getBoundingClientRect(), dimensions = size();
-        const fitted = new GraphViewport(); fitted.fit(retained.current.nodes, dimensions.width, dimensions.height);
+        const fitted = new GraphViewport(); fitted.fit(retained.current.fitPoints(latest.current.apcZones), dimensions.width, dimensions.height);
         view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, fitted.zoom); queuePaint();
       }}>
       <canvas ref={canvas} data-net-canvas aria-hidden="true" style={{ display: 'block', width: '100%', height: '100%' }} />
@@ -116,6 +117,7 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
         <div style={{ opacity: .7, fontFamily: 'monospace' }}>{tooltipNode.address}</div>
         <div style={{ color: tooltipNode.online ? '#74d8b4' : '#ec8f91' }}>{NODE_NAMES[tooltipNode.type] || tooltipNode.type} · {tooltipNode.online ? 'В сети' : 'Не отвечает'}</div>
         <div>{tooltipNode.sector || ''}{tooltipNode.ice ? ` · ICE: ${tooltipNode.ice}` : ''}{tooltipNode.entities ? ` · процессы: ${tooltipNode.entities}` : ''}</div>
+        <div>X {tooltipNode.x} · Y {tooltipNode.y} · Z {tooltipNode.z ?? '—'}</div>
                                  </div>}
     </div>
   );

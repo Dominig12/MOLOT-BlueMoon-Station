@@ -23,6 +23,15 @@ export class GraphViewport {
     this.fitting = false;
   }
 
+  /** Zoom to a world-space box (used to expand a collapsed LAN into view). */
+  fitBox(minX: number, minY: number, maxX: number, maxY: number, width: number, height: number) {
+    const boxWidth = Math.max(1, maxX - minX), boxHeight = Math.max(1, maxY - minY), padding = 80;
+    this.zoom = clamp(Math.min(width / (boxWidth + padding * 2), height / (boxHeight + padding * 2)), 0.08, 2.5);
+    this.x = width / 2 - (minX + boxWidth / 2) * this.zoom;
+    this.y = height / 2 - (minY + boxHeight / 2) * this.zoom;
+    this.fitting = false;
+  }
+
   pan(x: number, y: number) { this.x = x; this.y = y; this.fitting = false; }
 
   zoomAt(x: number, y: number, delta: number, fitZoom: number) {

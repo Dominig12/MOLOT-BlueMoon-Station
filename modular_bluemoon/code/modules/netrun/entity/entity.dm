@@ -134,6 +134,17 @@
 	enter_node(node)
 	return TRUE
 
+/// A gateway transition is an ordinary authorized hop between two operational relays.
+/mob/camera/netrun_entity/proc/can_relay_hop(datum/component/netrun_node/node)
+	if(!netrun_quantum_link(host_node, node))
+		return FALSE
+	return can_enter(node)
+
+/mob/camera/netrun_entity/proc/relay_hop(datum/component/netrun_node/node)
+	if(!can_relay_hop(node))
+		return FALSE
+	return hop(node)
+
 /// Путь из соседних узлов, в каждый из которых процесс может войти (online + USER/ключ).
 /mob/camera/netrun_entity/proc/enterable_path(datum/component/netrun_node/target)
 	if(QDELETED(target) || !host_node)
@@ -479,6 +490,11 @@
 /datum/netrun_console/entity/host_act(action, list/params, mob/user)
 	var/mob/camera/netrun_entity/entity = host
 	switch(action)
+		if("relay_hop")
+			var/datum/component/netrun_node/dest = SSnetrun.find_node(params["address"])
+			if(!entity.relay_hop(dest))
+				log_line(entity.hop_denial(dest), "bad")
+			return TRUE
 		if("hop")
 			var/datum/component/netrun_node/dest = SSnetrun.find_node(params["address"])
 			if(!entity.hop(dest))

@@ -42,6 +42,11 @@
 #define NETRUN_LAN_SECURITY "sec"
 #define NETRUN_LAN_COMMAND "cmd"
 
+/// Geographic physical links: one world tile adds one decisecond of latency.
+#define NETRUN_LINK_TILES_PER_DS 1
+#define NETRUN_RELAY_LATENCY 3
+#define NETRUN_APC_NEIGHBORS 2
+
 // Типы файлов
 #define NETRUN_FILE_TEXT "text"
 #define NETRUN_FILE_KEY "key"

@@ -29,10 +29,23 @@ const IntegrityBar = (props: { cur: number; max: number }) => {
 };
 
 /** Remains visible above the map/puzzle even while another bottom tab is open. */
-export const IncomingAttacks = (props: { onCombat: () => void }) => {
+export const IncomingAttacks = (props: { onCombat: () => void; compact?: boolean }) => {
   const { act, data } = useBackend<NetrunData>();
   const incoming = data.combat?.incoming ?? [];
   if (!incoming.length) { return null; }
+  if (props.compact) {
+    const next = incoming.reduce((soonest, attack) => attack.remaining < soonest.remaining ? attack : soonest);
+    return (
+      <Box role="alert" p={0.5} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center',
+        flexWrap: 'wrap', gap: '6px', border: `1px solid ${THEME.bad}`, background: THEME.bg }}>
+        <Box color={THEME.bad} bold style={{ flex: '1 1 160px', minWidth: 0 }}>
+          {next.source} готовит {next.name} · через {next.remaining} с{incoming.length > 1 ? ` · атак: ${incoming.length}` : ''}
+        </Box>
+        <Button compact icon="crosshairs" content="Открыть бой" onClick={props.onCombat} />
+        {!!data.breach && <Button compact icon="stop" content="Прервать взлом" onClick={() => act('breach_abort')} />}
+      </Box>
+    );
+  }
   return (
     <Box p={1} mb={0.5} role="alert" style={{ border: `2px solid ${THEME.bad}`, background: THEME.bg }}>
       {incoming.map((attack, index) => (

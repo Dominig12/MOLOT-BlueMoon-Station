@@ -47,3 +47,33 @@ test('event animation ends, marker geometry remains bounded and missing route se
   for (const args of calls.get('arc').mock.calls) { expect(args[2]).toBeLessThanOrEqual(GRAPH_GLYPH_RADIUS); }
   expect(renderer.paint(context, scene, camera, { ...overlay, events }, 720, 480, 1, 5000)).toBe(false);
 });
+
+test('APC shading follows each actual area run instead of inventing a rectangular powered zone', () => {
+  const calls = new Map<string, jest.Mock>();
+  const context = new Proxy({}, { get: (_target, name: string) => {
+    if (!calls.has(name)) { calls.set(name, name === 'measureText' ? jest.fn((text: string) => ({ width: text.length * 7 })) : jest.fn()); }
+    return calls.get(name);
+  } }) as CanvasRenderingContext2D;
+  const scene = new GraphScene(); scene.update([node], []);
+  const renderer = new GraphRenderer(), camera = new GraphViewport(); camera.fit(scene.nodes, 720, 480);
+  renderer.update(scene, [], 0);
+  renderer.paint(context, scene, camera, { ...overlay, apcZones: [{ address: 'APC', z: 1,
+    runs: [{ x: 20, y: 30, width: 4 }, { x: 20, y: 31, width: 1 }] }] }, 720, 480, 1, 5000);
+  expect(calls.get('fillRect').mock.calls).toContainEqual([19.5 * 96, -30.5 * 96, 4 * 96, 96]);
+  expect(calls.get('fillRect').mock.calls).toContainEqual([19.5 * 96, -31.5 * 96, 96, 96]);
+  expect(calls.get('fillRect').mock.calls).not.toContainEqual([19.5 * 96, -31.5 * 96, 4 * 96, 2 * 96]);
+});
+
+test('overview keeps all 6000 geographic markers instead of collapsing them into LAN clusters', () => {
+  const calls = new Map<string, jest.Mock>();
+  const context = new Proxy({}, { get: (_target, name: string) => {
+    if (!calls.has(name)) { calls.set(name, name === 'measureText' ? jest.fn((text: string) => ({ width: text.length * 7 })) : jest.fn()); }
+    return calls.get(name);
+  } }) as CanvasRenderingContext2D;
+  const nodes = Array.from({ length: 6000 }, (_, i) => ({ ...node, address: `N${i}`, type: 'camera', network: i % 2 ? 'A' : 'B', px: (i % 80) * 96, py: Math.floor(i / 80) * 96 }));
+  const scene = new GraphScene(); scene.update(nodes, []);
+  const renderer = new GraphRenderer(), camera = new GraphViewport(); camera.fit(scene.nodes, 350, 250);
+  renderer.update(scene, [], 0);
+  renderer.paint(context, scene, camera, { ...overlay, selected: null }, 350, 250, 1, 5000);
+  expect(calls.get('arc')).toHaveBeenCalledTimes(6000);
+});

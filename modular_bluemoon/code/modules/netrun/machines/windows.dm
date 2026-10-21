@@ -63,6 +63,7 @@
 			windows.Cut(1, 2)
 		windows += address
 	active_window = address
+	owner.workspace_view = "pinned"
 	owner.map_view.selected_address = address
 	owner.map_view.selected_network = null
 	return TRUE
@@ -189,6 +190,8 @@
 	qdel(tree)
 	var/atom/A = node.parent
 	var/result = world.PushUsr(owner.operator, CALLBACK(A, TYPE_PROC_REF(/atom, netrun_window_act), owner, node, action, params))
+	if(QDELETED(src) || QDELETED(owner) || QDELETED(node))
+		return
 	if(!isnull(result))
 		owner.log_line(result)
 	node.add_log("[owner.log_source()]: [entry["name"]][illegal ? " (без авторизации)" : ""].")

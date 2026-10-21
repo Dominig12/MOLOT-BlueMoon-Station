@@ -25,9 +25,6 @@
 	var/list/logs = list()
 	/// One structural APC attachment, independent of power and temporary online state.
 	var/datum/component/netrun_node/bound_apc
-	/// Co-located intermediary node (same turf machine) this endpoint chains through,
-	/// so stacked nodes form APC-Camera-Neuro instead of a star to the APC. Rebuild-owned.
-	var/datum/component/netrun_node/bound_host
 	var/area/binding_area
 	var/binding_sector
 	var/binding_checked = FALSE
@@ -79,7 +76,6 @@
 	netrun_ice = null
 	leave_network()
 	bound_apc = null
-	bound_host = null
 	binding_area = null
 	topology_turf = null
 	QDEL_NULL(file_store)
@@ -204,9 +200,6 @@
 	if(node_type == NETRUN_NODE_APC)
 		return null
 	join_network()
-	// Если узел стоит в одной клетке с машиной-посредником, цепляемся к ней (APC-Камера-Нейроинтерфейс).
-	if(!QDELETED(bound_host) && SSnetrun.nodes_by_address[bound_host.address] == bound_host)
-		return bound_host
 	return bound_apc
 
 /datum/component/netrun_node/proc/ui_entry(datum/netrun_console/console)
@@ -215,7 +208,7 @@
 	. = list(
 		"address" = address,
 		"name" = get_name(),
-		"type" = node_type,
+		"type" = istype(parent, /obj/machinery/ntnet_relay) ? "relay" : node_type,
 		"x" = T ? T.x : 0,
 		"y" = T ? T.y : 0,
 		"z" = T ? T.z : 0,
@@ -226,6 +219,7 @@
 		"ice" = LAZYLEN(netrun_ice),
 		"active" = world.time - last_activity < 5 SECONDS,
 		"uplink" = uplink?.address,
+		"apc" = bound_apc?.address,
 	)
 	if(console.origin == NETRUN_ORIGIN_ENTITY && istype(console.host, /mob/camera/netrun_entity))
 		var/mob/camera/netrun_entity/entity = console.host

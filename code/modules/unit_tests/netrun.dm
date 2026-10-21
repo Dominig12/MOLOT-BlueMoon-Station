@@ -24,6 +24,7 @@
 	TEST_ASSERT(console.store_file(key), "The legitimate network key must fit in memory")
 	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_GUEST, "A LAN key must grant traversal without granting USER machine actions")
 	console.access_session.node_access[node.address] = NETRUN_ACCESS_USER
+	console.workspace_view = "map"
 	var/list/payload = console.ui_data(null)
 	var/list/selected = payload["selected"]
 	var/list/window = console.window_payload()

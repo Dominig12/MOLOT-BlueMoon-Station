@@ -5,7 +5,7 @@
 	var/name = "нет маршрута"
 
 /proc/netrun_quantum_link(datum/component/netrun_node/first, datum/component/netrun_node/second)
-	return istype(first?.parent, /obj/machinery/ntnet_relay) && istype(second?.parent, /obj/machinery/ntnet_relay) && first.binding_sector != second.binding_sector
+	return first != second && istype(first?.parent, /obj/machinery/ntnet_relay) && istype(second?.parent, /obj/machinery/ntnet_relay)
 
 /// A local reboot never causes structural rebinding; only forwarding stops.
 /proc/netrun_link_available(datum/component/netrun_node/first, datum/component/netrun_node/second, allow_offline_destination = FALSE)
@@ -17,7 +17,7 @@
 		return !SSnetworks.station_network.setting_disabled && from_relay.is_operational() && to_relay.is_operational()
 	return TRUE
 
-/// Request-local BFS. UI serialization shares one snapshot; later requests
+/// Request-local weighted shortest paths. UI serialization shares one snapshot; later requests
 /// revalidate live APC and relay availability instead of caching working routes.
 /datum/netrun_path_tree
 	var/datum/component/netrun_node/source
@@ -27,39 +27,98 @@
 	var/list/previous = list()
 	var/list/costs = list()
 	var/list/remote = list()
+	var/geometry_revision = 0
+	/// A flat binary heap avoids one disposable datum for every relaxed endpoint.
+	var/list/frontier_addresses = list()
+	var/list/frontier_costs = list()
+	var/popped_cost = 0
 
 /datum/netrun_path_tree/New(datum/netrun_topology/graph, datum/component/netrun_node/start)
 	source = start
+	geometry_revision = graph?.weight_revision || 0
 	if(QDELETED(start) || !graph.nodes[start.address])
 		return
-	var/list/queue = list(start.address)
+	var/list/settled = list()
+	var/relays_expanded = FALSE
 	reached[start.address] = TRUE
 	costs[start.address] = 0
-	for(var/i = 1, i <= length(queue), i++)
-		var/address = queue[i]
+	push_candidate(start.address, 0)
+	while(length(frontier_addresses))
+		var/address = pop_candidate()
+		if(settled[address] || popped_cost != costs[address])
+			continue
+		settled[address] = TRUE
 		var/datum/component/netrun_node/current = graph.nodes[address]
 		// Offline destinations are leaves: they cannot forward traffic.
 		if(QDELETED(current) || !current.is_online())
 			continue
-		for(var/neighbor in graph.neighbors(address))
-			if(reached[neighbor])
-				continue
+		for(var/neighbor in graph.neighbors(address, FALSE))
 			var/datum/component/netrun_node/next = graph.nodes[neighbor]
-			if(QDELETED(next))
+			if(settled[neighbor] || QDELETED(next) || !netrun_link_available(current, next, TRUE))
 				continue
-			var/quantum = netrun_quantum_link(current, next)
-			if(quantum)
-				if(!netrun_link_available(current, next, TRUE))
-					continue
-				// Quantum relays connect sectors directly. They cannot provide a
-				// detour around a broken APC in the source sector via another Z.
-				if(remote[address] || next.binding_sector == start.binding_sector)
-					continue
-			reached[neighbor] = TRUE
-			previous[neighbor] = address
-			costs[neighbor] = costs[address] + (quantum ? 3 : 1)
-			remote[neighbor] = remote[address] || quantum
-			queue += neighbor
+			relax(neighbor, address, costs[address] + graph.edge_cost(address, neighbor), remote[address])
+		// Every operational relay can reach every other relay at the same cost.
+		// The cheapest settled entry expands this virtual bucket exactly once.
+		if(relays_expanded || !graph.is_relay(current))
+			continue
+		var/obj/machinery/ntnet_relay/relay = current.parent
+		if(!relay.is_operational() || SSnetworks.station_network.setting_disabled)
+			continue
+		relays_expanded = TRUE
+		for(var/relay_address in graph.relay_addresses)
+			if(relay_address == address || settled[relay_address])
+				continue
+			var/datum/component/netrun_node/next = graph.nodes[relay_address]
+			if(!netrun_link_available(current, next, TRUE))
+				continue
+			relax(relay_address, address, costs[address] + NETRUN_RELAY_LATENCY, TRUE)
+	frontier_addresses.Cut()
+	frontier_costs.Cut()
+
+/datum/netrun_path_tree/proc/relax(address, from_address, cost, quantum)
+	if(!isnull(costs[address]) && costs[address] <= cost)
+		return
+	reached[address] = TRUE
+	previous[address] = from_address
+	costs[address] = cost
+	remote[address] = quantum
+	push_candidate(address, cost)
+
+/datum/netrun_path_tree/proc/frontier_before(first, second)
+	if(frontier_costs[first] != frontier_costs[second])
+		return frontier_costs[first] < frontier_costs[second]
+	return sorttext(frontier_addresses[first], frontier_addresses[second]) == 1
+
+/datum/netrun_path_tree/proc/push_candidate(address, cost)
+	frontier_addresses += address
+	frontier_costs += cost
+	var/index = length(frontier_addresses)
+	while(index > 1)
+		var/parent_index = round(index / 2)
+		if(!frontier_before(index, parent_index))
+			break
+		frontier_addresses.Swap(index, parent_index)
+		frontier_costs.Swap(index, parent_index)
+		index = parent_index
+
+/datum/netrun_path_tree/proc/pop_candidate()
+	. = frontier_addresses[1]
+	popped_cost = frontier_costs[1]
+	var/last = length(frontier_addresses)
+	frontier_addresses[1] = frontier_addresses[last]
+	frontier_costs[1] = frontier_costs[last]
+	frontier_addresses.len--
+	frontier_costs.len--
+	var/index = 1
+	while(index * 2 <= length(frontier_addresses))
+		var/child = index * 2
+		if(child < length(frontier_addresses) && frontier_before(child + 1, child))
+			child++
+		if(!frontier_before(child, index))
+			break
+		frontier_addresses.Swap(index, child)
+		frontier_costs.Swap(index, child)
+		index = child
 
 /datum/netrun_path_tree/proc/addresses_to(address)
 	var/list/path = list()
@@ -80,6 +139,7 @@
 	snapshot.previous = previous.Copy()
 	snapshot.costs = costs.Copy()
 	snapshot.remote = remote.Copy()
+	snapshot.geometry_revision = geometry_revision
 	return snapshot
 
 /// Only physical paths are retained. Permissions and command authorization
@@ -107,7 +167,7 @@
 	return table
 
 /// SSnetrun refreshes active routes once per subsystem interval. A source
-/// unused for two intervals expires, so hidden maps do not keep doing BFS.
+/// unused for two intervals expires, so hidden maps do not keep rebuilding route trees.
 /datum/netrun_topology/proc/refresh_route_tables()
 	if(world.time < route_refresh_at)
 		return
@@ -127,7 +187,7 @@
 	route_used[start.address] = world.time
 	refresh_route_tables()
 	var/datum/netrun_path_tree/table = route_tables[start.address]
-	if(!table)
+	if(!table || table.geometry_revision != weight_revision)
 		table = store_route_table(start)
 	return table.copy()
 

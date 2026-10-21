@@ -19,7 +19,7 @@
 	// Matrix clicks need no global discovery pass. The live delivery/finish
 	// checks own fresh trees; this snapshot only describes the visible panel.
 	refresh_route_node(selected_node())
-	ui_routes = intrusion.breach ? null : make_path_tree(TRUE)
+	ui_routes = (!intrusion.breach || (workspace_view in list("map", "files", "pinned", "terminal", "web"))) ? make_path_tree(TRUE) : null
 	access_cache = user_access()
 	network_level_cache = list()
 	ui_node_levels = list()
@@ -46,6 +46,7 @@
 /datum/netrun_console/proc/build_ui_data(mob/user)
 	var/list/data = list()
 	data["origin"] = origin
+	data["workspace_view"] = workspace_view
 	data["wireless"] = connection.wireless
 	if(!intrusion.breach || world.time >= ui_uplink_refresh)
 		ui_uplink_value = has_uplink()
@@ -58,9 +59,10 @@
 	data["log"] = log
 	data["jack"] = connection.jack ? list("address" = connection.jack.address, "name" = connection.jack.get_name()) : null
 	data["host_actions"] = host_actions()
+	data["file"] = file_payload()
 	// Matrix clicks must not rebuild the hidden graph, global autocomplete,
 	// selected-node command help or the native machine UI behind the puzzle.
-	if(intrusion.breach)
+	if(intrusion.breach && !(workspace_view in list("map", "files", "pinned", "terminal", "web")))
 		data["networks"] = ui_network_catalog || list()
 		data["view"] = null
 		data["web"] = null
@@ -123,7 +125,7 @@
 	data["networks"] = networks
 	ui_network_catalog = networks
 
-	if(map_view.viewed_network_id == "web" && web_browsing())
+	if(workspace_view == "web" && web_browsing())
 		data["view"] = null
 		data["selected"] = null
 		data["web"] = web_payload()
@@ -133,9 +135,9 @@
 		data["entity"] = entity_data()
 		data["combat"] = combat_payload()
 		data["chat"] = chat_data()
-		data["cli"] = cli_payload()
+		data["cli"] = cli_payload(FALSE)
 		data["windows"] = windows_payload()
-		data["window"] = remote_session.active_window ? window_payload() : null
+		data["window"] = null
 		data["map"] = null
 		data["selected_network"] = null
 		data["ping_route"] = null
@@ -144,13 +146,13 @@
 		return data
 	data["web"] = null
 
-	data["map"] = map_payload()
-	data["waypoint"] = waypoint_payload()
+	data["map"] = workspace_view == "map" ? map_payload() : null
+	data["waypoint"] = workspace_view == "map" ? waypoint_payload() : null
 	data["view"] = null
 
 	var/datum/component/netrun_node/node = selected_node()
 	var/list/selected = null
-	if(node && node_visible(node))
+	if((workspace_view in list("map", "files", "pinned")) && node && node_visible(node))
 		var/level = node_level(node)
 		selected = node.ui_entry(src)
 		selected["network"] = node.network?.short_name
@@ -205,12 +207,12 @@
 	data["entity"] = entity_data()
 	data["combat"] = combat_payload()
 	data["chat"] = chat_data()
-	data["cli"] = cli_payload()
+	data["cli"] = cli_payload(workspace_view == "terminal")
 	data["windows"] = windows_payload()
-	data["window"] = remote_session.active_window ? window_payload() : null
+	data["window"] = workspace_view == "pinned" && remote_session.active_window ? window_payload() : null
 	data["ping_route"] = (map_view.ping_route && world.time - map_view.ping_at < 6 SECONDS) ? map_view.ping_route : null
 	data["events"] = SSnetrun.recent_events()
-	data["search"] = search_payload()
+	data["search"] = workspace_view == "map" ? search_payload() : null
 	return data
 
 /// Поиск по всей сети: находит достижимые узлы по имени/адресу, чтобы проложить
@@ -384,11 +386,29 @@
 	if(file_act(action, params, ui.user))
 		return TRUE
 	switch(action)
+		if("workspace_view")
+			var/page = params["page"]
+			if(page in list("terminal", "map", "files", "pinned", "combat", "breach", "web"))
+				if(page != "web" || web_browsing())
+					workspace_view = page
+					map_view.viewed_network_id = page == "web" ? "web" : null
+			return TRUE
+		if("map_sector")
+			map_view.select_sector(params["id"], params["z"])
+			return TRUE
+		if("relay_hop")
+			if(origin == NETRUN_ORIGIN_ENTITY && istype(host, /mob/camera/netrun_entity))
+				var/mob/camera/netrun_entity/entity = host
+				var/datum/component/netrun_node/target = SSnetrun.find_node(params["address"])
+				if(SSnetrun.get_topology().is_relay(entity.host_node) && SSnetrun.get_topology().is_relay(target))
+					entity.relay_hop(target)
+			return TRUE
 		if("view_network")
-			remote_session.active_window = null
 			if(params["id"] == "web" && web_browsing())
+				workspace_view = "web"
 				map_view.viewed_network_id = "web"
 			else
+				workspace_view = "map"
 				map_view.viewed_network_id = null
 			return TRUE
 		if("select_network")
@@ -414,6 +434,7 @@
 			if(here)
 				map_view.selected_address = here.address
 				map_view.selected_network = null
+				map_view.follow_source()
 			return TRUE
 		if("search")
 			var/text = params["text"]
@@ -426,6 +447,9 @@
 			if(node && node_visible(node))
 				map_view.selected_address = node.address
 				map_view.selected_network = null
+				var/turf/position = get_turf(node.parent)
+				if(node.binding_sector != map_view.active_sector || position?.z != map_view.active_z)
+					map_view.select_sector(node.binding_sector, position?.z)
 			return TRUE
 		if("window_open")
 			open_window(params["address"])
@@ -435,6 +459,7 @@
 			return TRUE
 		if("window_focus")
 			if(params["address"] in remote_session.windows)
+				workspace_view = "pinned"
 				remote_session.active_window = params["address"]
 				map_view.selected_address = remote_session.active_window
 				map_view.selected_network = null

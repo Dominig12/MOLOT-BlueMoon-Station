@@ -1,125 +1,76 @@
-import { GRAPH_GAP, GRAPH_LEVEL } from './graphLayout';
-import { createGraphLayoutCache, graphAdjacency, graphBounds, graphNeighborhood, graphPath, GraphPoint, layoutGraph } from './mapLayout';
+import { GRAPH_GAP, GRAPH_GLYPH_RADIUS, GRAPH_TILE } from './graphLayout';
+import { createGraphLayoutCache, graphAdjacency, graphBounds, graphNeighborhood, graphPath, layoutGraph } from './mapLayout';
 import { NetEdge } from './types';
 
 const nodes = [
-  { address: 'APC-A', type: 'apc', uplink: null },
-  { address: 'APC-B', type: 'apc', uplink: null },
-  { address: 'RELAY', type: 'gateway', uplink: 'APC-B' },
-  { address: 'CLIENT', type: 'terminal', uplink: 'APC-A' },
+  { address: 'APC-A', type: 'apc', x: 10, y: 20, z: 1, uplink: null },
+  { address: 'APC-B', type: 'apc', x: 30, y: 15, z: 1, uplink: null },
+  { address: 'RELAY', type: 'relay', x: 31, y: 15, z: 1, uplink: 'APC-B' },
+  { address: 'CLIENT', type: 'terminal', x: 12, y: 25, z: 1, uplink: 'APC-A' },
 ];
 const edges: NetEdge[] = [
   { id: 'client', from: 'CLIENT', to: 'APC-A', kind: 'endpoint' },
   { id: 'chain', from: 'APC-A', to: 'APC-B', kind: 'apc' },
-  { id: 'relay', from: 'RELAY', to: 'APC-B', kind: 'relay' },
+  { id: 'relay', from: 'RELAY', to: 'APC-B', kind: 'endpoint' },
 ];
 
-/** Strict segment intersection, excluding links that legitimately share a tree node. */
-const orient = (a: GraphPoint, b: GraphPoint, c: GraphPoint) =>
-  Math.sign((b.py - a.py) * (c.px - b.px) - (b.px - a.px) * (c.py - b.py));
-const segmentsCross = (p1: GraphPoint, p2: GraphPoint, p3: GraphPoint, p4: GraphPoint) => {
-  const d1 = orient(p3, p4, p1), d2 = orient(p3, p4, p2), d3 = orient(p1, p2, p3), d4 = orient(p1, p2, p4);
-  return d1 !== d2 && d3 !== d4 && d1 !== 0 && d2 !== 0 && d3 !== 0 && d4 !== 0;
-};
-const treeEdgeCrossings = (layout: Map<string, GraphPoint>, links: NetEdge[]) => {
-  let crossings = 0;
-  for (let i = 0; i < links.length; i++) {
-    for (let j = i + 1; j < links.length; j++) {
-      const a = links[i], b = links[j];
-      if (a.from === b.from || a.from === b.to || a.to === b.from || a.to === b.to) { continue; }
-      if (segmentsCross(layout.get(a.from), layout.get(a.to), layout.get(b.from), layout.get(b.to))) { crossings++; }
+describe('geographic network map placement', () => {
+  test('station x/y control geometry with north up, independently of topology or input order', () => {
+    const layout = layoutGraph(nodes, edges, createGraphLayoutCache());
+    expect(layout.get('APC-A').px).toBe(10 * GRAPH_TILE);
+    expect(layout.get('APC-A').py).toBe(-20 * GRAPH_TILE);
+    expect(layout.get('CLIENT').px).toBe(12 * GRAPH_TILE);
+    expect(layout.get('CLIENT').py).toBe(-25 * GRAPH_TILE);
+    expect(layoutGraph([...nodes].reverse(), [...edges].reverse(), createGraphLayoutCache())).toEqual(layout);
+    expect(layoutGraph(nodes.map((node) => ({ ...node, uplink: null })), [], createGraphLayoutCache())).toEqual(layout);
+  });
+
+  test('movement relocates its physical anchor while stationary peers retain their point objects', () => {
+    const cache = createGraphLayoutCache();
+    const before = layoutGraph(nodes, edges, cache);
+    const moved = nodes.map((node) => node.address === 'CLIENT' ? { ...node, x: 40, y: 50 } : node);
+    const after = layoutGraph(moved, edges, cache);
+    expect(after.get('CLIENT').px).toBe(40 * GRAPH_TILE);
+    expect(after.get('CLIENT').py).toBe(-50 * GRAPH_TILE);
+    for (const address of ['APC-A', 'APC-B', 'RELAY']) { expect(after.get(address)).toBe(before.get(address)); }
+  });
+
+  test('stacked markers use deterministic nearby offsets and retain their actual world anchor', () => {
+    const stack = Array.from({ length: 8 }, (_, i) => ({ ...nodes[0], address: `STACK-${i}`, type: 'implant' }));
+    const neighbor = { ...nodes[0], address: 'NEIGHBOR', x: 11 };
+    const cache = createGraphLayoutCache(), points = layoutGraph([...stack, neighbor], [], cache);
+    expect(new Set([...points.values()].map((point) => `${point.px},${point.py}`)).size).toBe(9);
+    expect(points.get('NEIGHBOR').px).toBe(11 * GRAPH_TILE);
+    for (const entry of stack) {
+      const point = points.get(entry.address);
+      expect(point.anchorX).toBe(10 * GRAPH_TILE);
+      expect(point.anchorY).toBe(-20 * GRAPH_TILE);
+      expect(Math.abs(point.px - point.anchorX)).toBeLessThanOrEqual(GRAPH_GAP * 2);
+      expect(Math.abs(point.py - point.anchorY)).toBeLessThanOrEqual(GRAPH_GAP * 2);
     }
-  }
-  return crossings;
-};
-
-describe('tidy-tree network graph layout', () => {
-  test('topology controls placement without reading physical coordinates or input order', () => {
-    const poisoned = nodes.map((node) => Object.defineProperties({ ...node }, {
-      x: { get: () => { throw new Error('Tile x must not enter the layout'); } },
-      y: { get: () => { throw new Error('Tile y must not enter the layout'); } },
-      z: { get: () => { throw new Error('Tile z must not enter the layout'); } },
-    }));
-    expect(layoutGraph(poisoned, edges, createGraphLayoutCache()))
-      .toEqual(layoutGraph(nodes, edges, createGraphLayoutCache()));
-    expect(layoutGraph([...nodes].reverse(), [...edges].reverse(), createGraphLayoutCache()))
-      .toEqual(layoutGraph(nodes, edges, createGraphLayoutCache()));
+    const reversed = layoutGraph([neighbor, ...stack].reverse(), [], createGraphLayoutCache());
+    expect(reversed).toEqual(points);
+    const expanded = layoutGraph([...stack, neighbor, { ...stack[0], address: 'A-NEW' }], [], cache);
+    for (const [address, point] of points) { expect(expanded.get(address)).toBe(point); }
+    expect(GRAPH_GLYPH_RADIUS * 2).toBeLessThanOrEqual(GRAPH_GAP);
   });
 
-  test('every node occupies a distinct cell', () => {
-    const layout = layoutGraph(nodes, edges, createGraphLayoutCache());
-    const cells = new Set([...layout.values()].map((point) => `${point.px},${point.py}`));
-    expect(cells.size).toBe(nodes.length);
+  test('6000 physical nodes stay distinct without aggregation and deletion drops stale addresses', () => {
+    const large = Array.from({ length: 6000 }, (_, i) => ({ ...nodes[0], address: `N${i}`, x: i % 80, y: Math.floor(i / 80) }));
+    const cache = createGraphLayoutCache(), points = layoutGraph(large, [], cache);
+    expect(points.size).toBe(6000);
+    expect(new Set([...points.values()].map((point) => `${point.px},${point.py}`)).size).toBe(6000);
+    const trimmed = layoutGraph(large.slice(0, 1), [], cache);
+    expect(trimmed.size).toBe(1); expect(cache.positions.size).toBe(1);
+    expect(trimmed.get('N0')).toBe(points.get('N0'));
   });
 
-  test('children always sit on a deeper level than their parent', () => {
-    const layout = layoutGraph(nodes, edges, createGraphLayoutCache());
-    expect(layout.get('CLIENT').py).toBeGreaterThan(layout.get('APC-A').py);
-    expect(layout.get('RELAY').py).toBeGreaterThan(layout.get('APC-B').py);
-  });
-
-  test('a pure tree is laid out without a single edge crossing', () => {
-    const treeNodes = [
-      { address: 'ROOT', type: 'apc', uplink: null },
-      { address: 'APC-1', type: 'apc', uplink: null },
-      { address: 'APC-2', type: 'apc', uplink: null },
-      { address: 'C1', type: 'camera', uplink: 'APC-1' },
-      { address: 'C2', type: 'camera', uplink: 'APC-1' },
-      { address: 'C3', type: 'camera', uplink: 'APC-2' },
-      { address: 'DEEP', type: 'implant', uplink: 'C3' },
-    ];
-    const treeEdges: NetEdge[] = [
-      { id: 'a1', from: 'APC-1', to: 'ROOT', kind: 'apc' },
-      { id: 'a2', from: 'APC-2', to: 'ROOT', kind: 'apc' },
-      { id: 'c1', from: 'C1', to: 'APC-1', kind: 'endpoint' },
-      { id: 'c2', from: 'C2', to: 'APC-1', kind: 'endpoint' },
-      { id: 'c3', from: 'C3', to: 'APC-2', kind: 'endpoint' },
-      { id: 'deep', from: 'DEEP', to: 'C3', kind: 'endpoint' },
-    ];
-    const layout = layoutGraph(treeNodes, treeEdges, createGraphLayoutCache());
-    expect(new Set([...layout.values()].map((p) => `${p.px},${p.py}`)).size).toBe(treeNodes.length);
-    expect(treeEdgeCrossings(layout, treeEdges)).toBe(0);
-  });
-
-  test('rebinding an endpoint moves it one level beneath its new parent', () => {
-    const before = layoutGraph(nodes, edges, createGraphLayoutCache());
-    expect(before.get('CLIENT').py - before.get('APC-A').py).toBe(GRAPH_LEVEL);
-    const reboundNodes = nodes.map((node) => node.address === 'CLIENT' ? { ...node, uplink: 'APC-B' } : node);
-    const reboundEdges = edges.map((edge) => edge.id === 'client' ? { ...edge, to: 'APC-B' } : edge);
-    const after = layoutGraph(reboundNodes, reboundEdges, createGraphLayoutCache());
-    expect(after.get('CLIENT').py - after.get('APC-B').py).toBe(GRAPH_LEVEL);
-  });
-
-  test('a dense APC fanout keeps distinct, evenly spaced leaves without crossings', () => {
-    const clients = Array.from({ length: 400 }, (_, index) => ({ address: `C${String(index).padStart(3, '0')}`, type: 'terminal', uplink: 'APC-A' }));
-    const clientEdges: NetEdge[] = clients.map((node) => ({ id: node.address, from: node.address, to: 'APC-A', kind: 'endpoint' }));
-    const layout = layoutGraph([nodes[0], ...clients], clientEdges, createGraphLayoutCache());
-    expect(new Set([...layout.values()].map((p) => `${p.px},${p.py}`)).size).toBe(clients.length + 1);
-    const leaves = clients.map((node) => layout.get(node.address).px).sort((a, b) => a - b);
-    for (let i = 1; i < leaves.length; i++) { expect(leaves[i] - leaves[i - 1]).toBeGreaterThanOrEqual(GRAPH_GAP); }
-    expect(treeEdgeCrossings(layout, clientEdges)).toBe(0);
-  });
-
-  test('malformed parent cycles still terminate with distinct finite positions', () => {
-    const cyclic = Array.from({ length: 50 }, (_, i) => ({ address: `N${i}`, type: 'implant', uplink: `N${(i + 1) % 50}` }));
-    const layout = layoutGraph(cyclic, [], createGraphLayoutCache());
-    expect(layout.size).toBe(50);
-    for (const point of layout.values()) { expect(Number.isFinite(point.px) && Number.isFinite(point.py)).toBe(true); }
-    expect(new Set([...layout.values()].map((p) => `${p.px},${p.py}`)).size).toBe(50);
-  });
-
-  test('graph bounds contain negative and far-away coordinates without changing the world origin', () => {
+  test('physical bounds include negative coordinates and published topology remains authoritative', () => {
     const points = [{ px: -1800, py: -900 }, { px: 16000, py: 4200 }];
     const bounds = graphBounds(points);
-    expect(bounds.minX).toBeLessThan(points[0].px);
-    expect(bounds.minY).toBeLessThan(points[0].py);
-    expect(bounds.minX + bounds.width).toBeGreaterThan(points[1].px);
-    expect(bounds.minY + bounds.height).toBeGreaterThan(points[1].py);
-  });
-
-  test('graph neighborhoods and paths contain only published edges', () => {
+    expect(bounds.minX).toBeLessThan(-1800); expect(bounds.minY).toBeLessThan(-900);
+    expect(bounds.minX + bounds.width).toBeGreaterThan(16000);
     const adjacency = graphAdjacency(nodes, edges);
-    expect([...adjacency.get('CLIENT')]).toEqual(['APC-A']);
     expect(graphNeighborhood(adjacency, 'CLIENT', 2)).toEqual(new Set(['CLIENT', 'APC-A', 'APC-B']));
     expect(graphPath(adjacency, 'CLIENT', 'RELAY')).toEqual(['CLIENT', 'APC-A', 'APC-B', 'RELAY']);
     expect(graphPath(graphAdjacency(nodes, edges.slice(0, 1)), 'CLIENT', 'RELAY')).toEqual([]);

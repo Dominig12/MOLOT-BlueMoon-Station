@@ -75,7 +75,9 @@
 	var/list/pools = list()
 	for(var/verb_name in SSnetrun.get_cli_commands())
 		var/datum/netrun_cli_command/command = SSnetrun.cli_commands[verb_name]
-		var/group = command.completion_group || command.id
+		// Verb names and shared pool names occupy separate namespaces: the
+		// no-argument `nodes` verb must not replace the shared address pool.
+		var/group = command.completion_group || "verb:[command.id]"
 		verbs += list(list("id" = command.id, "args" = command.args, "desc" = command.desc, "category" = command.category, "completion_key" = group))
 		if(include_completions && !(group in pools))
 			pools[group] = command.completions(src, "")

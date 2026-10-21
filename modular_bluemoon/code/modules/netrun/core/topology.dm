@@ -7,7 +7,7 @@
 		min_z = min(min_z, z)
 	return "sector:[min_z]"
 
-/// Geometry is used only when binding a new endpoint or rebuilding infrastructure.
+/// Physical distance determines endpoint binding, APC neighbors, and cable latency.
 /proc/netrun_topology_distance(turf/first, turf/second)
 	if(!first || !second)
 		return INFINITY
@@ -32,6 +32,8 @@
 	var/list/apcs_by_sector = list()
 	var/list/relay_addresses = list()
 	var/list/nearest_by_turf = list()
+	/// Moving an endpoint updates route costs without replacing its structural parent.
+	var/weight_revision = 0
 
 /datum/netrun_topology/proc/invalidate()
 	dirty = TRUE
@@ -69,41 +71,14 @@
 /datum/netrun_topology/proc/is_infrastructure(datum/component/netrun_node/node)
 	return node && (node.node_type == NETRUN_NODE_APC || is_relay(node))
 
-/// Личный/мобильный узел: кибернетика носителя, нейролинк, пИИ, борг, ИИ, дека, либо узел на мобе.
-/datum/netrun_topology/proc/is_personal(datum/component/netrun_node/node)
-	if(!node)
-		return FALSE
-	if(node.node_type in list(NETRUN_NODE_IMPLANT, NETRUN_NODE_NEURAL, NETRUN_NODE_PAI, NETRUN_NODE_BORG, NETRUN_NODE_AI, NETRUN_NODE_DECK))
-		return TRUE
-	return ismob(node.parent)
-
-/// Машина-посредник: стационарный узел, к которому может цепляться личный узел в той же клетке.
-/datum/netrun_topology/proc/is_host_candidate(datum/component/netrun_node/node)
-	return node && !is_infrastructure(node) && !is_personal(node) && node.bound_apc
-
-/// Индекс машин-посредников по клеткам: клетка -> ближайший по адресу host-узел.
-/datum/netrun_topology/proc/build_host_index()
-	. = list()
-	for(var/address in nodes)
-		var/datum/component/netrun_node/candidate = nodes[address]
-		if(!is_host_candidate(candidate))
-			continue
-		var/turf/here = get_turf(candidate.parent)
-		if(!here)
-			continue
-		var/datum/component/netrun_node/current = .["\ref[here]"]
-		if(!current || sorttext(address, current.address) == 1)
-			.["\ref[here]"] = candidate
-
-/// Для личного узла - машина в той же клетке, через которую строить цепочку (через индекс).
-/datum/netrun_topology/proc/endpoint_host(datum/component/netrun_node/node, list/host_index)
-	if(!is_personal(node))
-		return null
-	var/turf/here = get_turf(node.parent)
-	if(!here)
-		return null
-	var/datum/component/netrun_node/host = host_index["\ref[here]"]
-	return (host && host != node) ? host : null
+/// A mapped APC may be mounted outside the area it actually supplies.
+/datum/netrun_topology/proc/apc_area(datum/component/netrun_node/node)
+	var/area/room
+	if(istype(node?.parent, /obj/machinery/power/apc))
+		var/obj/machinery/power/apc/apc = node.parent
+		room = apc.area
+	room = room || get_area(node?.parent)
+	return room?.base_area || room
 
 /// Allocation and index refresh do not build the graph or call join_network().
 /datum/netrun_topology/proc/index_infrastructure()
@@ -134,22 +109,27 @@
 		return null
 	index_infrastructure()
 	var/sector = netrun_sector_for(position)
+	var/area/room = get_area(position)
+	var/area/root_area = room?.base_area || room
 	// Coordinates avoid keeping replaced turfs alive in a long-lived cache.
-	var/cache_key = "[sector]:[position.x],[position.y],[position.z]"
+	var/cache_key = "[sector]:[REF(root_area)]:[position.x],[position.y],[position.z]"
 	if(cache_key in nearest_by_turf)
 		return nearest_by_turf[cache_key]
 	var/list/candidates = apcs_by_sector[sector]
 	var/datum/component/netrun_node/best
 	var/best_distance = INFINITY
+	var/best_native = FALSE
 	// The index is address-sorted, so equal distances have a total, stable tie-break.
 	for(var/address in candidates)
 		var/datum/component/netrun_node/candidate = SSnetrun.nodes_by_address[address]
 		if(QDELETED(candidate) || netrun_sector_for(get_turf(candidate.parent)) != sector)
 			continue
 		var/distance = netrun_topology_distance(position, get_turf(candidate.parent))
-		if(distance < best_distance)
+		var/native = apc_area(candidate) == root_area
+		if((native && !best_native) || (native == best_native && distance < best_distance))
 			best = candidate
 			best_distance = distance
+			best_native = native
 	nearest_by_turf[cache_key] = best
 	return best
 
@@ -162,10 +142,11 @@
 	var/sector = netrun_sector_for(position)
 	var/area/room = position ? get_area(position) : null
 	var/area/root_area = room?.base_area || room
-	// Personal endpoints can change co-located hosts while keeping their APC/LAN.
+	// The endpoint stays on its APC while its geographic cable length changes.
 	if(!is_infrastructure(node) && node.topology_turf != position)
 		node.topology_turf = position
-		invalidate()
+		refresh_node_weights(node)
+		node.notify_changed(NETRUN_CHANGED_STATE)
 	if(is_infrastructure(node) && (node.topology_turf != position || (node.binding_checked && node.binding_sector != sector)))
 		node.topology_turf = position
 		infrastructure_changed()
@@ -189,11 +170,43 @@
 		invalidate()
 		node.notify_changed(NETRUN_CHANGED_BINDING)
 
-/datum/netrun_topology/proc/neighbors(address)
-	return adjacency[address] || list()
+/datum/netrun_topology/proc/neighbors(address, include_relays = TRUE)
+	var/list/local = adjacency[address] || list()
+	if(!include_relays || !(address in relay_addresses))
+		return local
+	// Quantum connectivity is a bucket, not a quadratic list of materialized edges.
+	. = local.Copy()
+	for(var/relay_address in relay_addresses)
+		if(relay_address != address && nodes[relay_address])
+			. += relay_address
 
 /datum/netrun_topology/proc/edge_between(first, second)
-	return edge_lookup["[first]>[second]"]
+	var/list/edge = edge_lookup["[first]>[second]"]
+	if(edge)
+		return edge
+	if(first != second && (first in relay_addresses) && (second in relay_addresses) && nodes[first] && nodes[second])
+		var/list/pair = sort_list(list(first, second))
+		return list("id" = "relay:[pair[1]]>[pair[2]]", "from" = pair[1], "to" = pair[2], "kind" = "relay", "latency" = NETRUN_RELAY_LATENCY)
+
+/datum/netrun_topology/proc/edge_cost(first, second)
+	if(netrun_quantum_link(nodes[first], nodes[second]))
+		return NETRUN_RELAY_LATENCY
+	var/datum/component/netrun_node/from_node = nodes[first]
+	var/datum/component/netrun_node/to_node = nodes[second]
+	return max(1, CEILING(netrun_topology_distance(get_turf(from_node?.parent), get_turf(to_node?.parent)) / NETRUN_LINK_TILES_PER_DS, 1))
+
+/datum/netrun_topology/proc/refresh_node_weights(datum/component/netrun_node/node)
+	var/changed = FALSE
+	for(var/neighbor in adjacency[node.address])
+		var/list/edge = edge_lookup["[node.address]>[neighbor]"]
+		var/datum/component/netrun_node/peer = nodes[neighbor]
+		var/cost = edge_cost(node.address, neighbor)
+		if(edge["latency"] != cost)
+			edge["latency"] = cost
+			changed = TRUE
+		edge["distance"] = netrun_topology_distance(get_turf(node.parent), get_turf(peer.parent))
+	if(changed)
+		weight_revision++
 
 /// All edges are undirected and canonicalized by address, including endpoint bindings.
 /datum/netrun_topology/proc/add_edge(first, second, kind)
@@ -208,40 +221,75 @@
 	first_neighbors += second
 	var/list/second_neighbors = adjacency[second]
 	second_neighbors += first
-	var/list/edge = list("id" = "[kind]:[first]>[second]", "from" = first, "to" = second, "kind" = kind)
+	var/datum/component/netrun_node/from_node = nodes[first]
+	var/datum/component/netrun_node/to_node = nodes[second]
+	var/list/edge = list("id" = "[kind]:[first]>[second]", "from" = first, "to" = second, "kind" = kind,
+		"latency" = edge_cost(first, second), "distance" = netrun_topology_distance(get_turf(from_node.parent), get_turf(to_node.parent)))
 	edges += list(edge)
 	edge_lookup["[first]>[second]"] = edge
 	edge_lookup["[second]>[first]"] = edge
 
-/// Deterministic Prim tree. Each newly joined APC updates the frontier once:
-/// O(A^2) distance comparisons, with no repeated all-pairs scans per edge.
+/// Stable distance ordering, then canonical endpoint addresses for equal lengths.
+/proc/cmp_netrun_physical_edge(list/first, list/second)
+	var/order = first["distance"] - second["distance"]
+	if(order)
+		return order
+	order = sorttext(second["from"], first["from"])
+	if(order)
+		return order
+	return sorttext(second["to"], first["to"])
+
+/datum/netrun_topology/proc/apc_component(list/components, address)
+	var/root = address
+	while(components[root] != root)
+		root = components[root]
+	while(address != root)
+		var/next = components[address]
+		components[address] = root
+		address = next
+	return root
+
+/// Each APC selects its two nearest peers. Kruskal adds only the shortest
+/// bridges between remaining components; no artificial hub or relay is involved.
 /datum/netrun_topology/proc/connect_apcs(list/addresses)
 	if(length(addresses) < 2)
 		return
-	var/list/pending = addresses.Copy(2)
-	var/list/distances = list()
-	var/list/parents = list()
-	var/latest = addresses[1]
-	while(length(pending))
-		var/datum/component/netrun_node/joined_node = nodes[latest]
-		var/turf/joined_turf = get_turf(joined_node.parent)
-		for(var/address in pending)
-			var/datum/component/netrun_node/candidate = nodes[address]
-			var/distance = netrun_topology_distance(joined_turf, get_turf(candidate.parent))
-			if(isnull(distances[address]) || distance < distances[address] || (distance == distances[address] && sorttext(latest, parents[address]) == 1))
-				distances[address] = distance
-				parents[address] = latest
-		var/best
-		var/best_distance = INFINITY
-		for(var/address in pending)
-			if(distances[address] < best_distance)
-				best = address
-				best_distance = distances[address]
-		if(!best)
-			break
-		add_edge(parents[best], best, "apc")
-		pending -= best
-		latest = best
+	var/list/pairs = list()
+	var/list/components = list()
+	var/list/selected = list()
+	for(var/i in 1 to length(addresses))
+		var/address = addresses[i]
+		components[address] = address
+		selected[address] = 0
+		var/datum/component/netrun_node/first = nodes[address]
+		for(var/j = i + 1, j <= length(addresses), j++)
+			var/datum/component/netrun_node/second = nodes[addresses[j]]
+			pairs += list(list("from" = address, "to" = second.address,
+				"distance" = netrun_topology_distance(get_turf(first.parent), get_turf(second.parent))))
+	sortTim(pairs, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
+	for(var/list/pair as anything in pairs)
+		var/first = pair["from"]
+		var/second = pair["to"]
+		var/chosen = FALSE
+		if(selected[first] < NETRUN_APC_NEIGHBORS)
+			selected[first]++
+			chosen = TRUE
+		if(selected[second] < NETRUN_APC_NEIGHBORS)
+			selected[second]++
+			chosen = TRUE
+		if(!chosen)
+			continue
+		add_edge(first, second, "apc")
+		components[apc_component(components, second)] = apc_component(components, first)
+	for(var/list/pair as anything in pairs)
+		var/first = pair["from"]
+		var/second = pair["to"]
+		var/first_root = apc_component(components, first)
+		var/second_root = apc_component(components, second)
+		if(first_root == second_root)
+			continue
+		add_edge(first, second, "apc")
+		components[second_root] = first_root
 
 /datum/netrun_topology/proc/rebuild()
 	if(rebuilding)
@@ -275,36 +323,21 @@
 		nodes[address] = node
 		adjacency[address] = list()
 	index_infrastructure()
-	// Личные/мобильные узлы, стоящие в одной клетке с машиной, цепляются к ней, а не напрямую к APC:
-	// получается цепочка APC-Камера-Нейроинтерфейс вместо звезды APC-Камера, APC-Нейроинтерфейс.
-	var/list/host_index = build_host_index()
-	for(var/address in nodes)
-		var/datum/component/netrun_node/node = nodes[address]
-		node.bound_host = node.bound_apc ? endpoint_host(node, host_index) : null
+	// Every endpoint has one physical cable to its APC, including personal nodes.
 	for(var/address in nodes)
 		var/datum/component/netrun_node/node = nodes[address]
 		if(!node.bound_apc)
 			continue
-		var/datum/component/netrun_node/host = node.bound_host
-		if(host && nodes[host.address])
-			add_edge(address, host.address, "endpoint")
-		else
-			add_edge(address, node.bound_apc.address, "endpoint")
+		add_edge(address, node.bound_apc.address, "endpoint")
 	var/list/sectors = sort_list(apcs_by_sector.Copy())
 	for(var/sector in sectors)
 		connect_apcs(apcs_by_sector[sector])
-	for(var/i in 1 to length(relay_addresses))
-		var/from_address = relay_addresses[i]
-		var/datum/component/netrun_node/from_node = nodes[from_address]
-		for(var/j = i + 1, j <= length(relay_addresses), j++)
-			var/to_address = relay_addresses[j]
-			var/datum/component/netrun_node/to_node = nodes[to_address]
-			if(from_node.binding_sector != to_node.binding_sector)
-				add_edge(from_address, to_address, "relay")
+	// Relay-to-relay transitions are an implicit uniform-cost bucket.
 	for(var/address in adjacency)
 		adjacency[address] = sort_list(adjacency[address])
 	dirty = FALSE
 	revision++
+	weight_revision++
 	deferred_bindings = SSatoms.initialized != INITIALIZATION_INNEW_REGULAR
 	rebuilding = FALSE
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, revision)

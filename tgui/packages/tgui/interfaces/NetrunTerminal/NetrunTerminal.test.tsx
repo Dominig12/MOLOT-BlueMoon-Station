@@ -6,12 +6,12 @@ import { debugReducer } from '../../debug';
 import { CombatPanel } from './CombatPanel';
 import { NetrunContent } from './Content';
 import { FilePanel } from './FilePanel';
+import { GraphViewport } from './graphViewport';
 import * as mapGeometry from './mapLayout';
 import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog } from './Panels';
-import { GraphViewport } from './graphViewport';
 import { NetrunData } from './types';
 import { WindowPanel } from './WindowPanel';
 
@@ -63,13 +63,101 @@ const sent = (topic, action: string) => topic.mock.calls
   .map((call) => JSON.parse(call[0].payload));
 
 describe('Netrun terminal panels', () => {
-  test('arrange then manual pan is preserved when a later structural update arrives', () => {
+  test('sector/floor controls and relay destinations send explicit geographic actions', () => {
+    const relay = { ...node, type: 'relay', z: 1, sector: 'station' };
+    const topic = setup({ selected: relay, map: { gateways: [], nodes: [relay], edges: [], focus: relay.address, revision: 1,
+      source_sector: 'station', source_z: 1, active_sector: 'station', active_z: 1,
+      sectors: [{ id: 'station', name: 'Станция', levels: [1, 2] }, { id: 'mining', name: 'Шахта', levels: [5] }],
+      relay_destinations: [
+        { from: relay.address, to: 'MINING', name: 'Реле шахты', sector: 'mining', z: 5, online: true, can_hop: true },
+        { from: relay.address, to: 'OFFLINE', name: 'Неисправное реле', sector: 'mining', z: 5, online: false, can_hop: false, unavailable_reason: 'Реле отключено' },
+      ] } });
+    const { getByLabelText } = render(<StationMap />);
+    fireEvent.click(getByLabelText('Сектор: Шахта'));
+    fireEvent.click(getByLabelText('Этаж Z2'));
+    fireEvent.click(getByLabelText('Показать реле Реле шахты'));
+    fireEvent.click(getByLabelText('Перейти к реле Реле шахты'));
+    fireEvent.click(getByLabelText('Перейти к реле Неисправное реле'));
+    expect(sent(topic, 'map_sector')).toEqual([{ id: 'mining' }, { id: 'station', z: 2 }]);
+    expect(sent(topic, 'select')).toEqual([{ address: 'MINING' }]);
+    expect(sent(topic, 'relay_hop')).toEqual([{ address: 'MINING' }]);
+  });
+
+  test('my node clears incompatible filters and centers only after its new floor arrives', () => {
+    const center = jest.spyOn(GraphViewport.prototype, 'center');
+    const remote = { ...node, address: 'REMOTE', type: 'camera', z: 5 };
+    const host = { ...node, address: 'HOST', type: 'camera', x: 50, y: 60, z: 1 };
+    const initial = { gateways: [], nodes: [remote], edges: [], focus: remote.address, revision: 1,
+      active_sector: 'mining', active_z: 5 };
+    const topic = setup({ selected: remote, map: initial,
+      entity: { name: 'Process', integrity: 100, max_integrity: 100, host: host.address, host_name: host.name, diving: false } });
+    const panel = render(<StationMap />);
+    fireEvent.click(panel.getByLabelText('Фильтр: Камеры'));
+    fireEvent.click(panel.getByText('Рядом'));
+    fireEvent.input(panel.getByPlaceholderText('поиск узла…'), { target: { value: 'Скрыть всё' } });
+    fireEvent.click(panel.getByText('Мой узел'));
+    expect(sent(topic, 'focus_host')).toHaveLength(1);
+    expect(center).not.toHaveBeenCalled();
+    expect((panel.getByPlaceholderText('поиск узла…') as HTMLInputElement).value).toBe('');
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...initial }, log: [{ text: 'Old floor response', kind: 'label' }] } })));
+    expect(center).not.toHaveBeenCalled();
+    const fresh = { ...initial, revision: 2, active_sector: 'station', active_z: 1,
+      nodes: [host, { ...host, address: 'PEER', x: 80 }], focus: host.address };
+    act(() => topic.store.dispatch(backendUpdate({ data: { selected: host, map: fresh } })));
+    panel.rerender(<StationMap />);
+    expect(panel.getByText('2/2 · текущий этаж')).toBeTruthy();
+    expect(center).toHaveBeenCalledTimes(1);
+    expect(center.mock.calls[0][0]).toEqual(expect.objectContaining({ px: 50 * 96, py: -60 * 96 }));
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...fresh } } })));
+    expect(center).toHaveBeenCalledTimes(1);
+    center.mockRestore();
+  });
+
+  test('show relay selects the destination and centers after the delayed sector response', () => {
+    const center = jest.spyOn(GraphViewport.prototype, 'center');
+    const origin = { ...node, type: 'relay', z: 1 };
+    const target = { ...origin, address: 'TARGET', x: 70, y: 80, z: 5 };
+    const initial = { gateways: [], nodes: [origin], edges: [], focus: origin.address, revision: 1,
+      active_sector: 'station', active_z: 1, relay_destinations: [{ from: origin.address, to: target.address,
+        name: 'Реле назначения', sector: 'mining', z: 5, online: true, can_hop: false }] };
+    const topic = setup({ selected: origin, map: initial });
+    const panel = render(<StationMap />);
+    fireEvent.click(panel.getByLabelText('Фильтр: Реле NTnet'));
+    fireEvent.input(panel.getByPlaceholderText('поиск узла…'), { target: { value: 'Без совпадений' } });
+    fireEvent.click(panel.getByLabelText('Показать реле Реле назначения'));
+    expect(sent(topic, 'select')).toEqual([{ address: target.address }]);
+    expect(sent(topic, 'map_sector')).toEqual([]);
+    expect(center).not.toHaveBeenCalled();
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...initial, revision: 2 } } })));
+    expect(center).not.toHaveBeenCalled();
+    act(() => topic.store.dispatch(backendUpdate({ data: { selected: target, map: { ...initial, revision: 3,
+      active_sector: 'mining', active_z: 5, nodes: [target], focus: target.address, relay_destinations: [] } } })));
+    panel.rerender(<StationMap />);
+    expect(panel.getByText('1/1 · текущий этаж')).toBeTruthy();
+    expect(center).toHaveBeenCalledTimes(1);
+    expect(center.mock.calls[0][0]).toEqual(expect.objectContaining({ px: 70 * 96, py: -80 * 96 }));
+    center.mockRestore();
+  });
+
+  test('legacy physical movement changes geometry even when global topology revision stays fixed', () => {
+    const layout = jest.spyOn(mapGeometry, 'layoutGraph');
+    const map = { gateways: [], focus: node.address, revision: 1, nodes: [node], edges: [] };
+    const topic = setup({ map });
+    const panel = render(<StationMap />);
+    expect(layout).toHaveBeenCalledTimes(1);
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, nodes: [{ ...node, x: 50, y: 80 }] } } })));
+    panel.rerender(<StationMap />);
+    expect(layout).toHaveBeenCalledTimes(2);
+    expect(layout.mock.results[1].value.get(node.address).anchorX).toBe(50 * 96);
+    layout.mockRestore();
+  });
+
+  test('manual pan is preserved when a later structural update arrives', () => {
     const originalPointer = window.PointerEvent;
     Object.defineProperty(window, 'PointerEvent', { value: MouseEvent, configurable: true });
     const fit = jest.spyOn(GraphViewport.prototype, 'fit');
     const topic = setup();
     const { getByText, getByLabelText, rerender } = render(<StationMap />);
-    fireEvent.click(getByText('Упорядочить'));
     const viewport = getByLabelText('Карта сети');
     fireEvent.pointerDown(viewport, { clientX: 100, clientY: 100, button: 0 });
     fireEvent.pointerMove(viewport, { clientX: 150, clientY: 150 });
@@ -99,14 +187,13 @@ describe('Netrun terminal panels', () => {
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...initial, structure_revision: 5, state_revision: 12,
       nodes: [node, added], edges: [{ id: 'new-link', from: node.address, to: 'NEW', kind: 'endpoint' }] } } })));
     rerender(<StationMap />);
-    expect(getByText('2/2 · вся доступная сеть')).toBeTruthy();
+    expect(getByText('2/2 · текущий этаж')).toBeTruthy();
     expect(layout).toHaveBeenCalledTimes(2);
-    fireEvent.click(getByText('Упорядочить'));
-    expect(layout).toHaveBeenCalledTimes(3);
+
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...initial, structure_revision: 6, state_revision: 13 } } })));
     rerender(<StationMap />);
-    expect(getByText('1/1 · вся доступная сеть')).toBeTruthy();
-    expect(layout).toHaveBeenCalledTimes(4);
+    expect(getByText('1/1 · текущий этаж')).toBeTruthy();
+    expect(layout).toHaveBeenCalledTimes(3);
     layout.mockRestore();
   });
 
@@ -199,11 +286,12 @@ describe('Netrun terminal panels', () => {
   });
 
   test('workspace and map consume available height and remote file controls stay in aligned scrolling rows', () => {
-    setup({ selected: { ...node, access: 3, files: [
+    setup({ workspace_view: 'map', selected: { ...node, access: 3, files: [
       { uid: 'text', name: 'Очень длинное имя файла с заметкой для передачи.txt', kind: 'text', size: 1, preview: null },
       { uid: 'photo', name: 'Фото.png', kind: 'photo', size: 2, preview: null },
     ] } });
-    const { container } = render(<NetrunContent />);
+    const { container, getByText } = render(<NetrunContent />);
+    fireEvent.click(getByText('Показать информацию об узле'));
     const workspace = container.querySelector<HTMLElement>('[data-net-layout="workspace"]');
     const map = container.querySelector<HTMLElement>('[data-net-layout="map"]');
     expect(workspace.style.flex).toContain('1 1');
@@ -226,20 +314,20 @@ describe('Netrun terminal panels', () => {
     const topic = setup({ map: { gateways: [], focus: node.address, revision: 1,
       nodes: [node, camera], edges: [{ id: 'camera-link', from: camera.address, to: node.address, kind: 'endpoint' }] } });
     const { getByLabelText, getByPlaceholderText, getByText } = render(<StationMap />);
-    expect(getByText('2/2 · вся доступная сеть')).toBeTruthy();
+    expect(getByText('2/2 · текущий этаж')).toBeTruthy();
     fireEvent.click(getByLabelText('Фильтр: Камеры'));
-    expect(getByText('1/2 · вся доступная сеть')).toBeTruthy();
+    expect(getByText('1/2 · текущий этаж')).toBeTruthy();
     fireEvent.keyDown(getByLabelText('Карта сети'), { key: 'd' });
     expect(sent(topic, 'select')).toEqual([]);
     fireEvent.click(getByLabelText('Фильтр: Камеры'));
-    expect(getByText('2/2 · вся доступная сеть')).toBeTruthy();
+    expect(getByText('2/2 · текущий этаж')).toBeTruthy();
     const input = getByPlaceholderText('поиск узла…');
     fireEvent.input(input, { target: { value: 'лаборатории' } });
-    expect(getByText('1/2 · вся доступная сеть')).toBeTruthy();
+    expect(getByText('1/2 · текущий этаж')).toBeTruthy();
     fireEvent.input(input, { target: { value: 'несуществующий узел' } });
-    expect(getByText('0/2 · вся доступная сеть')).toBeTruthy();
+    expect(getByText('0/2 · текущий этаж')).toBeTruthy();
     fireEvent.input(input, { target: { value: '' } });
-    expect(getByText('2/2 · вся доступная сеть')).toBeTruthy();
+    expect(getByText('2/2 · текущий этаж')).toBeTruthy();
   });
 
   test('large network renders with a single Canvas, regardless of number of vertices', () => {
@@ -247,26 +335,10 @@ describe('Netrun terminal panels', () => {
     const edges = large.map((n) => ({ id: n.address, from: n.address, to: node.address, kind: 'endpoint' as const }));
     setup({ map: { gateways: [], focus: node.address, revision: 1, nodes: [node, ...large], edges } });
     const { container, getByText } = render(<StationMap />);
-    expect(getByText('1101/1101 · вся доступная сеть')).toBeTruthy();
+    expect(getByText('1101/1101 · текущий этаж')).toBeTruthy();
     expect(container.querySelectorAll('canvas[data-net-canvas]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-net-node]')).toHaveLength(0);
     expect(container.querySelectorAll('[data-net-edge]')).toHaveLength(0);
-  });
-
-  test('server tile coordinates cannot move a stable map layout', () => {
-    const map = {
-      nodes: [node, { ...node, address: 'CAM', type: 'camera', uplink: node.address }],
-      edges: [{ id: 'endpoint', from: 'CAM', to: node.address, kind: 'endpoint' as const }],
-      gateways: [], focus: node.address, revision: 1,
-    };
-    const cache = mapGeometry.createGraphLayoutCache();
-    const before = mapGeometry.layoutGraph(map.nodes, map.edges, cache);
-    const movedTiles = map.nodes.map((n) => ({ ...n, x: -9999, y: 9999, z: 4 }));
-    const after = mapGeometry.layoutGraph(movedTiles, map.edges, cache);
-    expect(after).toEqual(before);
-    setup({ map });
-    const { container } = render(<StationMap />);
-    expect(container.querySelectorAll('canvas[data-net-canvas]')).toHaveLength(1);
   });
 
   test('node commands have natural height and dispatch the selected command', () => {
@@ -305,9 +377,10 @@ describe('Netrun terminal panels', () => {
         daemons: [], time_left: 20, pick_row: true,
       },
     });
-    const { getByText, queryByText } = render(<NetrunContent />);
+    const { container, getByText } = render(<NetrunContent />);
     expect(getByText('BREACH APC')).toBeTruthy();
-    expect(queryByText('Запросы')).toBeNull();
+    expect(container.querySelector<HTMLElement>('[data-net-page="breach"]').style.display).toBe('flex');
+    expect(container.querySelector<HTMLElement>('[data-net-page="pinned"]').style.display).toBe('none');
   });
 
   test('Tab completes addresses from the unified map', () => {
