@@ -313,7 +313,6 @@
 		next_command = world.time + max(0.5 SECONDS, lat)
 		var/datum/netrun_request/command/packet = new(src, node, command, command_id, node.network, operator, inventory.selected_file_uid || "none")
 		return packet.send(lat)
-	return TRUE
 
 /// Собственно выполнение команды - может вызываться с задержкой маршрута
 /datum/netrun_console/proc/do_command(datum/component/netrun_node/node, datum/netrun_command/command, command_id, illegal, datum/netrun_network/sent_network, mob/sender, file_uid)

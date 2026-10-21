@@ -153,8 +153,8 @@
 	var/list/lines = list("Маршрут до [node.get_name()] [node.address] — задержка ~[route.latency * 100] мс:")
 	var/step = 0
 	for(var/address in route.hops)
-		var/datum/component/netrun_node/hop = SSnetrun.find_node(address)
-		lines += "  [step++]. [hop ? "[hop.get_name()] " : ""][address]"
+		var/datum/component/netrun_node/hop = SSnetrun.find_node(address["ref"])
+		lines += "  [step++]. [hop ? "[hop.get_name()] " : ""][address["ref"]]"
 	qdel(route)
 	return jointext(lines, "\n")
 
