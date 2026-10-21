@@ -42,7 +42,7 @@ const setup = (overrides: Partial<NetrunData> = {}) => {
       locked: 0, can_breach: true, log: [], jack: null, host_actions: [],
       networks: [], view: null, selected: node,
       storage: { files: [], used: 0, capacity: 10 }, shard: null,
-      breach: null, entity: null, chat: { handle: 'runner', messages: [] },
+      breach: null, entity: null, combat: null, chat: { handle: 'runner', messages: [] },
       web: null, windows: [], window: null,
       map: { gateways: [], focus: node.address, depth: 2, revision: 1,
         nodes: [node, { ...node, address: 'BBBB:0002', x: 20 }],

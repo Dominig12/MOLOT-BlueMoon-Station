@@ -173,6 +173,41 @@ export const NodePanel = () => {
           Узел закрыт. Подберите доступ к узлу или его сети.
         </Box>
       )}
+      {selected.lan && (
+        <Box mt={1} p={1} style={{ background: THEME.bg, border: `1px solid ${selected.lan.color}` }}>
+          <Box>
+            <Icon name="network-wired" mr={1} color={selected.lan.color} />
+            <Box inline bold style={{ fontFamily: 'monospace', color: selected.lan.color }}>
+              {selected.lan.code}
+            </Box>
+            {selected.lan.has_key && <Icon name="key" ml={1} color={THEME.good} />}
+            <Box inline ml={1} color={ACCESS_COLORS[selected.lan.access]}>
+              {ACCESS_NAMES[selected.lan.access]}
+            </Box>
+          </Box>
+          <Box color={THEME.muted} fontSize="11px">
+            ЛВС: {selected.lan.name} · защита {selected.lan.security}
+          </Box>
+          <Box mt={0.5}>
+            <Button
+              compact
+              icon="diagram-project"
+              content="Открыть ЛВС"
+              onClick={() => act('select_network', { id: selected.lan!.id })}
+            />
+            {selected.lan.can_breach && (
+              <Button
+                compact
+                icon="key"
+                color="caution"
+                content="Подобрать доступ к ЛВС"
+                disabled={!!breach}
+                onClick={() => act('breach', { kind: 'network', id: selected.lan!.id })}
+              />
+            )}
+          </Box>
+        </Box>
+      )}
       {selected.status.length > 0 && (
         <Box
           mt={1}

@@ -40,6 +40,7 @@ SUBSYSTEM_DEF(netrun)
 	// Publish new endpoints and carrier movement even when nobody opens a map.
 	// Active display routes are server-owned; execution still checks a fresh path.
 	ensure_topology().refresh_route_tables()
+	process_ice()
 	var/delta = wait / (1 SECONDS)
 	while(length(currentrun))
 		var/datum/netrun_console/console = currentrun[length(currentrun)]

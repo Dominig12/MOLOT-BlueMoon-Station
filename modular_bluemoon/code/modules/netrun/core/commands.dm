@@ -106,6 +106,8 @@
 	lines += A.netrun_status()
 	if(length(node.entities) && console.node_level(node) >= NETRUN_ACCESS_USER)
 		lines += "Обнаружены резидентные процессы: [length(node.entities)]"
+	if(LAZYLEN(node.netrun_ice))
+		lines += "ВНИМАНИЕ: активные процессы защиты (ICE): [LAZYLEN(node.netrun_ice)]"
 	return jointext(lines, "\n")
 
 /datum/netrun_command/ping

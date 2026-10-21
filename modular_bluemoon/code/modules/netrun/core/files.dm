@@ -49,6 +49,9 @@
 		if(NETRUN_FILE_DAEMON)
 			var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(content)
 			preview = daemon?.desc
+		if(NETRUN_FILE_PROGRAM)
+			var/datum/netrun_program/program = SSnetrun.get_program(content)
+			preview = program?.desc
 		if(NETRUN_FILE_TEXT)
 			preview = copytext_char(content, 1, 200)
 		if(NETRUN_FILE_TECHWEB)
@@ -100,11 +103,17 @@
 	var/capacity = 8
 	/// Что записано на шард при создании: list(тип файла = содержимое) или id демонов
 	var/list/preload_daemons
+	/// Боевые программы, записанные на шард при создании (id из реестра /datum/netrun_program)
+	var/list/preload_programs
 
 /obj/item/netrun_shard/Initialize(mapload)
 	. = ..()
 	for(var/id in preload_daemons)
 		var/datum/netrun_file/file = netrun_daemon_file(id)
+		if(file)
+			files += file
+	for(var/id in preload_programs)
+		var/datum/netrun_file/file = netrun_program_file(id)
 		if(file)
 			files += file
 

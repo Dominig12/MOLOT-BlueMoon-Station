@@ -69,6 +69,42 @@
 /datum/netrun_topology/proc/is_infrastructure(datum/component/netrun_node/node)
 	return node && (node.node_type == NETRUN_NODE_APC || is_relay(node))
 
+/// Личный/мобильный узел: кибернетика носителя, нейролинк, пИИ, борг, ИИ, дека, либо узел на мобе.
+/datum/netrun_topology/proc/is_personal(datum/component/netrun_node/node)
+	if(!node)
+		return FALSE
+	if(node.node_type in list(NETRUN_NODE_IMPLANT, NETRUN_NODE_NEURAL, NETRUN_NODE_PAI, NETRUN_NODE_BORG, NETRUN_NODE_AI, NETRUN_NODE_DECK))
+		return TRUE
+	return ismob(node.parent)
+
+/// Машина-посредник: стационарный узел, к которому может цепляться личный узел в той же клетке.
+/datum/netrun_topology/proc/is_host_candidate(datum/component/netrun_node/node)
+	return node && !is_infrastructure(node) && !is_personal(node) && node.bound_apc
+
+/// Индекс машин-посредников по клеткам: клетка -> ближайший по адресу host-узел.
+/datum/netrun_topology/proc/build_host_index()
+	. = list()
+	for(var/address in nodes)
+		var/datum/component/netrun_node/candidate = nodes[address]
+		if(!is_host_candidate(candidate))
+			continue
+		var/turf/here = get_turf(candidate.parent)
+		if(!here)
+			continue
+		var/datum/component/netrun_node/current = .["\ref[here]"]
+		if(!current || sorttext(address, current.address) == 1)
+			.["\ref[here]"] = candidate
+
+/// Для личного узла - машина в той же клетке, через которую строить цепочку (через индекс).
+/datum/netrun_topology/proc/endpoint_host(datum/component/netrun_node/node, list/host_index)
+	if(!is_personal(node))
+		return null
+	var/turf/here = get_turf(node.parent)
+	if(!here)
+		return null
+	var/datum/component/netrun_node/host = host_index["\ref[here]"]
+	return (host && host != node) ? host : null
+
 /// Allocation and index refresh do not build the graph or call join_network().
 /datum/netrun_topology/proc/index_infrastructure()
 	if(indexed_revision == infrastructure_revision)
@@ -234,9 +270,20 @@
 		nodes[address] = node
 		adjacency[address] = list()
 	index_infrastructure()
+	// Личные/мобильные узлы, стоящие в одной клетке с машиной, цепляются к ней, а не напрямую к APC:
+	// получается цепочка APC-Камера-Нейроинтерфейс вместо звезды APC-Камера, APC-Нейроинтерфейс.
+	var/list/host_index = build_host_index()
 	for(var/address in nodes)
 		var/datum/component/netrun_node/node = nodes[address]
-		if(node.bound_apc)
+		node.bound_host = node.bound_apc ? endpoint_host(node, host_index) : null
+	for(var/address in nodes)
+		var/datum/component/netrun_node/node = nodes[address]
+		if(!node.bound_apc)
+			continue
+		var/datum/component/netrun_node/host = node.bound_host
+		if(host && nodes[host.address])
+			add_edge(address, host.address, "endpoint")
+		else
 			add_edge(address, node.bound_apc.address, "endpoint")
 	var/list/sectors = sort_list(apcs_by_sector.Copy())
 	for(var/sector in sectors)

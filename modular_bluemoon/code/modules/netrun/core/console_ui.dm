@@ -73,6 +73,7 @@
 		data["shard"] = shard_payload()
 		data["breach"] = breach.ui_payload()
 		data["entity"] = entity_data()
+		data["combat"] = null
 		data["chat"] = chat_data()
 		data["cli"] = cli_payload(FALSE)
 		data["windows"] = windows_payload()
@@ -129,6 +130,7 @@
 		data["shard"] = shard_payload()
 		data["breach"] = breach?.ui_payload()
 		data["entity"] = entity_data()
+		data["combat"] = combat_payload()
 		data["chat"] = chat_data()
 		data["cli"] = cli_payload()
 		data["windows"] = windows_payload()
@@ -153,6 +155,20 @@
 		selected["network"] = node.network?.short_name
 		selected["legit"] = legit_node_level(node)
 		selected["commands"] = node.command_entries(src)
+		// APC/шлюз - это точка входа в ЛВС: отдаём доступ и взлом сети прямо на узле, без верхней панели.
+		if((node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)) && node.network)
+			var/datum/netrun_network/lan = node.network
+			var/lan_level = network_level(lan)
+			selected["lan"] = list(
+				"id" = lan.id,
+				"code" = lan.code,
+				"name" = lan.name,
+				"color" = lan.color,
+				"security" = lan.security,
+				"access" = lan_level,
+				"has_key" = has_key(lan),
+				"can_breach" = can_breach && lan_level < NETRUN_ACCESS_GUEST,
+			)
 		selected["logs"] = level >= NETRUN_ACCESS_USER ? node.logs.Copy() : list()
 		var/atom/A = node.parent
 		selected["status"] = level >= NETRUN_ACCESS_USER ? A.netrun_status() : list()
@@ -186,6 +202,7 @@
 
 	data["breach"] = breach?.ui_payload()
 	data["entity"] = entity_data()
+	data["combat"] = combat_payload()
 	data["chat"] = chat_data()
 	data["cli"] = cli_payload()
 	data["windows"] = windows_payload()
@@ -446,6 +463,9 @@
 			return TRUE
 		if("breach_abort")
 			breach?.finish()
+			return TRUE
+		if("program_use")
+			program_use(params["uid"], params["target"])
 			return TRUE
 		if("download")
 			transfer_from_node(params["uid"], !!params["to_shard"])

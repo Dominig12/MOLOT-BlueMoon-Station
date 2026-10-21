@@ -51,12 +51,27 @@
 #define NETRUN_FILE_TECHWEB "techweb"
 #define NETRUN_FILE_TECHWEB_LINK "techweb_link"
 #define NETRUN_FILE_PHOTO "photo"
+/// Активная боевая программа ("карточка"): её запускают против цели в узле
+#define NETRUN_FILE_PROGRAM "program"
+
+// Боевые роли программ
+#define NETRUN_PROGRAM_ATTACK "attack"
+#define NETRUN_PROGRAM_SHIELD "shield"
+#define NETRUN_PROGRAM_STUN "stun"
+#define NETRUN_PROGRAM_REPAIR "repair"
+#define NETRUN_PROGRAM_PURGE "purge"
+
+// Враждебные процессы (ICE)
+#define NETRUN_ICE_SENTRY "sentry"
+#define NETRUN_ICE_HUNTER "hunter"
 
 /// События расширений: источник сигнала — сущность или её консоль.
 #define COMSIG_NETRUN_ENTITY_NODE_CHANGED "netrun_entity_node_changed"
 #define COMSIG_NETRUN_ENTITY_TICK "netrun_entity_tick"
 #define COMSIG_NETRUN_ENTITY_INTEGRITY "netrun_entity_integrity"
 #define COMSIG_NETRUN_CONSOLE_EVENT "netrun_console_event"
+/// Нелегальный сетевой доступ к кибернетическому узлу носителя: (datum/netrun_console, datum/component/netrun_node)
+#define COMSIG_NETRUN_IMPLANT_INTRUSION "netrun_implant_intrusion"
 
 #define NETRUN_TRACE_MAX 100
 /// Сколько трассировки спадает за секунду простоя

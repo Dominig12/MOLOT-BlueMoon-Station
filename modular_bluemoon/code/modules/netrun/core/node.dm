@@ -14,12 +14,19 @@
 	var/last_activity = -INFINITY
 	/// Сущности, живущие в этом узле
 	var/list/mob/camera/netrun_entity/entities
+	/// Враждебные процессы (ICE), стоящие в этом узле
+	var/list/datum/netrun_ice/netrun_ice
 	/// Узел оглушён ЭМИ или командой и до этого времени не отвечает
 	var/offline_until = 0
+	/// До этого времени на узле поднят сетевой экран (усиленная защита)
+	var/firewall_until = 0
 	/// Ограниченный журнал самого узла, сохраняется при переходе между ЛВС.
 	var/list/logs = list()
 	/// One structural APC attachment, independent of power and temporary online state.
 	var/datum/component/netrun_node/bound_apc
+	/// Co-located intermediary node (same turf machine) this endpoint chains through,
+	/// so stacked nodes form APC-Camera-Neuro instead of a star to the APC. Rebuild-owned.
+	var/datum/component/netrun_node/bound_host
 	var/area/binding_area
 	var/binding_sector
 	var/binding_checked = FALSE
@@ -62,8 +69,12 @@
 	for(var/mob/camera/netrun_entity/entity as anything in entities)
 		entity.host_lost()
 	entities = null
+	for(var/datum/netrun_ice/ice as anything in netrun_ice)
+		ice.host_lost()
+	netrun_ice = null
 	leave_network()
 	bound_apc = null
+	bound_host = null
 	binding_area = null
 	topology_turf = null
 	QDEL_LIST(files)
@@ -106,7 +117,27 @@
 		entity.take_integrity(severity >= 50 ? 40 : 20, "электромагнитный импульс")
 
 /datum/component/netrun_node/proc/get_security()
-	return clamp(base_security + (network ? network.security - 1 : 0), 1, 5)
+	var/firewall = world.time < firewall_until ? 2 : 0
+	return clamp(base_security + (network ? network.security - 1 : 0) + firewall, 1, 5)
+
+/// Поднять сетевой экран: сбросить взломанные доступы к узлу и прервать взлом цели.
+/datum/component/netrun_node/proc/raise_firewall(duration = 20 SECONDS)
+	firewall_until = world.time + duration
+	add_log("Поднят сетевой экран.")
+	network?.add_log("Узел [address]: активирован сетевой экран.")
+	for(var/datum/netrun_console/console as anything in SSnetrun.consoles)
+		if(QDELETED(console))
+			continue
+		if(console.node_access[address])
+			console.node_access -= address
+			console.add_trace(get_security() * 4)
+			console.log_line("[address]: сетевой экран сбросил ваш доступ.", "bad")
+		var/datum/netrun_breach/breach = console.breach
+		if(breach && breach.target_kind != "network" && breach.target_id == address)
+			console.log_line("[address]: взлом прерван сетевым экраном.", "bad")
+			console.add_trace(20)
+			QDEL_NULL(console.breach)
+	SSnetrun.post_event("trace", null, address)
 
 /// Отвечает ли узел на удалённые запросы
 /datum/component/netrun_node/proc/is_online(remote = TRUE)
@@ -158,6 +189,9 @@
 	if(node_type == NETRUN_NODE_APC)
 		return null
 	join_network()
+	// Если узел стоит в одной клетке с машиной-посредником, цепляемся к ней (APC-Камера-Нейроинтерфейс).
+	if(!QDELETED(bound_host) && SSnetrun.nodes_by_address[bound_host.address] == bound_host)
+		return bound_host
 	return bound_apc
 
 /datum/component/netrun_node/proc/ui_entry(datum/netrun_console/console)
@@ -174,6 +208,7 @@
 		"online" = is_online(),
 		"access" = console.node_level(src),
 		"entities" = length(entities),
+		"ice" = LAZYLEN(netrun_ice),
 		"active" = world.time - last_activity < 5 SECONDS,
 		"uplink" = uplink?.address,
 	)
@@ -221,3 +256,11 @@
 /// Ответный удар по носителю консоли при полной трассировке
 /atom/proc/netrun_traced(datum/netrun_console/console)
 	return
+
+/// Нелегальное сетевое действие над этим атомом (носитель узла может отреагировать)
+/atom/proc/netrun_on_illegal(datum/netrun_console/console, datum/component/netrun_node/node)
+	return
+
+/// Объект может навязать конкретную мини-игру взлома ("matrix" / "sequence"); null - по умолчанию.
+/atom/proc/netrun_breach_minigame()
+	return null

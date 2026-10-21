@@ -30,6 +30,11 @@
 	var/list/daemons = list()
 	var/deadline = 0
 	var/finished = FALSE
+	/// Тип мини-игры: "matrix" (протокол взлома) или "sequence" (трассировка цепочки)
+	var/minigame = "matrix"
+	/// Для "sequence": порядок ячеек, которые надо нажать, и сколько уже пройдено
+	var/list/order = list()
+	var/progress = 0
 
 /datum/netrun_breach/New(datum/netrun_console/console, target_kind, target_id, target_name, security)
 	src.console = console
@@ -44,7 +49,21 @@
 	if(target_kind == "network")
 		size++
 		deadline -= 5 SECONDS
+	minigame = pick_minigame()
 	generate()
+
+/// Выбор мини-игры: простая трассировка для слабых узлов, протокол взлома для защищённых.
+/// Объект цели может навязать свой вариант через netrun_breach_minigame().
+/datum/netrun_breach/proc/pick_minigame()
+	if(target_kind == "node")
+		var/datum/component/netrun_node/node = SSnetrun.find_node(target_id)
+		var/atom/target = node?.parent
+		var/forced = target?.netrun_breach_minigame()
+		if(forced)
+			return forced
+	if(target_kind == "firmware" || target_kind == "network")
+		return "matrix"
+	return security <= 2 ? "sequence" : "matrix"
 
 /datum/netrun_breach/Destroy()
 	console = null
@@ -72,6 +91,9 @@
 	return ((index - 1) % size) + 1
 
 /datum/netrun_breach/proc/generate()
+	if(minigame == "sequence")
+		generate_sequence()
+		return
 	var/list/codes = NETRUN_BREACH_CODES
 	matrix = list()
 	used = list()
@@ -125,7 +147,57 @@
 			"done" = FALSE,
 		))
 
+/// Трассировка цепочки: сетка кодов, в которой узлы-цели пронумерованы,
+/// и их надо нажать строго по порядку. Короткая и быстрая - для слабых узлов.
+/datum/netrun_breach/proc/generate_sequence()
+	var/list/codes = NETRUN_BREACH_CODES
+	size = 5
+	matrix = list()
+	used = list()
+	daemons = list()
+	buffer = list()
+	order = list()
+	progress = 0
+	for(var/i in 1 to size * size)
+		matrix += pick(codes)
+		used += FALSE
+	var/seq_len = clamp(3 + security, 3, 7)
+	var/list/pool = list()
+	for(var/i in 1 to size * size)
+		pool += i
+	for(var/i in 1 to seq_len)
+		if(!length(pool))
+			break
+		var/cell = pick(pool)
+		pool -= cell
+		order += cell
+	var/reward = NETRUN_ACCESS_USER
+	var/goal_name = "ТРАССИРОВКА"
+	if(target_kind == "node" && console.daemon_bonus("skeleton"))
+		reward = NETRUN_ACCESS_ROOT
+		goal_name = "ОТМЫЧКА"
+	daemons += list(list("name" = goal_name, "reward" = reward, "sequence" = list(), "done" = FALSE))
+	daemons += list(list("name" = "ЗАМЕСТИ СЛЕДЫ", "reward" = 0, "sequence" = list(), "done" = FALSE))
+
+/datum/netrun_breach/proc/choose_sequence(index)
+	if(finished || index < 1 || index > length(matrix) || used[index])
+		return FALSE
+	if(index != order[progress + 1])
+		// Ошибка трассировки: штраф по времени.
+		deadline -= 3 SECONDS
+		return FALSE
+	used[index] = TRUE
+	progress++
+	if(progress >= length(order))
+		daemons[1]["done"] = TRUE
+		if(time_left() >= 12 SECONDS)
+			daemons[2]["done"] = TRUE
+		finish()
+	return TRUE
+
 /datum/netrun_breach/proc/choose(index)
+	if(minigame == "sequence")
+		return choose_sequence(index)
 	if(finished || index < 1 || index > length(matrix) || used[index])
 		return FALSE
 	if(pick_row ? row_of(index) != current_line : col_of(index) != current_line)
@@ -166,6 +238,8 @@
 	console.breach_finished(src)
 
 /datum/netrun_breach/proc/ui_payload()
+	if(minigame == "sequence")
+		return sequence_payload()
 	var/list/cells = list()
 	for(var/i in 1 to length(matrix))
 		cells += list(list(
@@ -173,6 +247,7 @@
 			"active" = !used[i] && (pick_row ? row_of(i) == current_line : col_of(i) == current_line),
 		))
 	return list(
+		"minigame" = "matrix",
 		"target" = target_name,
 		"security" = security,
 		"size" = size,
@@ -182,4 +257,26 @@
 		"daemons" = daemons,
 		"time_left" = round(time_left() / (1 SECONDS)),
 		"pick_row" = pick_row,
+	)
+
+/datum/netrun_breach/proc/sequence_payload()
+	var/list/cells = list()
+	for(var/i in 1 to length(matrix))
+		var/pos = order.Find(i)
+		cells += list(list(
+			"code" = matrix[i],
+			"order" = pos,
+			"done" = used[i],
+			"active" = (pos == progress + 1),
+		))
+	return list(
+		"minigame" = "sequence",
+		"target" = target_name,
+		"security" = security,
+		"size" = size,
+		"cells" = cells,
+		"progress" = progress,
+		"total" = length(order),
+		"daemons" = daemons,
+		"time_left" = round(time_left() / (1 SECONDS)),
 	)

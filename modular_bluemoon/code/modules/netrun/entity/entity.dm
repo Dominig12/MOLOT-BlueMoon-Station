@@ -13,6 +13,16 @@
 	var/integrity = 100
 	var/max_integrity = 100
 	var/next_hop = 0
+	// Боевые состояния
+	var/combat_stun_until = 0
+	var/combat_shield_until = 0
+	var/combat_shield_factor = 1
+	/// Маршрут погружения: цепочка адресов узлов от точки входа
+	var/list/route_chain = list()
+	/// Адрес узла-точки входа при погружении (куда нужно вернуться телу)
+	var/dive_entry_address
+	/// Момент, с которого потеряна связь с точкой входа (0 - связь есть)
+	var/severed_at = 0
 	/// Тело нетраннера, если это погружение
 	var/mob/living/carbon/dive_body
 	var/datum/action/innate/netrun_console/console_action
@@ -72,8 +82,20 @@
 	console.selected_address = node.address
 	node.touch()
 	update_vision()
+	track_route(node)
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_NODE_CHANGED, null, node)
 	return TRUE
+
+/// Запоминаем пройденный путь погружения. При возврате на уже пройденный узел
+/// петля срезается - цепочка остаётся кратчайшей фактически пройденной.
+/mob/camera/netrun_entity/proc/track_route(datum/component/netrun_node/node)
+	if(!dive_body || !node?.address)
+		return
+	var/existing = route_chain.Find(node.address)
+	if(existing)
+		route_chain.Cut(existing + 1)
+	else
+		route_chain += node.address
 
 /mob/camera/netrun_entity/proc/leave_node()
 	if(!host_node)
@@ -93,7 +115,7 @@
 	return (node.address in graph.neighbors(host_node.address)) && netrun_link_available(host_node, node) && (console.node_level(node) >= NETRUN_ACCESS_USER || console.has_key(node.network, TRUE))
 
 /mob/camera/netrun_entity/proc/hop(datum/component/netrun_node/node)
-	if(world.time < next_hop || !can_enter(node))
+	if(world.time < next_hop || is_stunned() || !can_enter(node))
 		return FALSE
 	next_hop = world.time + 1 SECONDS
 	enter_node(node)
@@ -135,8 +157,84 @@
 		integrity = min(max_integrity, integrity + delta * 0.5)
 	if(dive_body)
 		dive_body.SetUnconscious(5 SECONDS)
+		check_dive_link(delta)
+		if(QDELETED(src))
+			return
 	update_vision()
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_TICK, delta)
+
+/// Есть ли ещё физический маршрут от текущего узла назад к точке входа погружения.
+/mob/camera/netrun_entity/proc/dive_link_intact()
+	if(!dive_entry_address)
+		return TRUE
+	var/datum/component/netrun_node/entry = SSnetrun.find_node(dive_entry_address)
+	if(QDELETED(entry) || QDELETED(entry.parent))
+		return FALSE
+	if(!host_node)
+		return FALSE
+	if(host_node == entry)
+		return TRUE
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/list/queue = list(host_node.address)
+	var/list/seen = list()
+	seen[host_node.address] = TRUE
+	for(var/i = 1, i <= length(queue), i++)
+		var/address = queue[i]
+		var/datum/component/netrun_node/current = graph.nodes[address]
+		if(QDELETED(current) || !current.is_online())
+			continue
+		for(var/neighbor in graph.neighbors(address))
+			if(seen[neighbor])
+				continue
+			if(!netrun_link_available(current, graph.nodes[neighbor]))
+				continue
+			if(neighbor == entry.address)
+				return TRUE
+			seen[neighbor] = TRUE
+			queue += neighbor
+	return FALSE
+
+/// Обрезали маршрут к телу: сначала нарастающий урон мозгу, затем - либо гибель
+/// тела с остаточным процессом в сети, либо жёсткий аварийный выход.
+/mob/camera/netrun_entity/proc/check_dive_link(delta)
+	if(!dive_body)
+		return
+	if(dive_link_intact())
+		if(severed_at)
+			severed_at = 0
+			to_chat(src, span_notice("Канал связи с телом восстановлен."))
+		return
+	if(!severed_at)
+		severed_at = world.time
+		to_chat(src, span_userdanger("СВЯЗЬ С ТЕЛОМ ПОТЕРЯНА! Маршрут к точке входа обрезан — срочно восстановите путь!"))
+		SEND_SOUND(src, sound('sound/machines/warning-buzzer.ogg', volume = 60))
+	var/mob/living/carbon/body = dive_body
+	body.adjustOrganLoss(ORGAN_SLOT_BRAIN, 3 * delta)
+	var/severed_for = world.time - severed_at
+	if(severed_for < 15 SECONDS)
+		return
+	// Точка входа уничтожена безвозвратно - тело гибнет, процесс остаётся в сети.
+	var/datum/component/netrun_node/entry = SSnetrun.find_node(dive_entry_address)
+	if(QDELETED(entry) || QDELETED(entry.parent))
+		to_chat(src, span_userdanger("Точка входа уничтожена. Ваше тело гибнет, а процесс остаётся заперт в сети."))
+		body.adjustOrganLoss(ORGAN_SLOT_BRAIN, 80)
+		body.death()
+		strand_in_network()
+		return
+	// Путь восстановить ещё можно, но система рвёт соединение с тяжёлым уроном мозгу.
+	to_chat(src, span_userdanger("Аварийный разрыв соединения!"))
+	body.adjustOrganLoss(ORGAN_SLOT_BRAIN, 55)
+	return_to_body()
+
+/// Процесс теряет связь с мёртвым телом и остаётся самостоятельной сущностью в сети.
+/mob/camera/netrun_entity/proc/strand_in_network()
+	if(!dive_body)
+		return
+	release_body()
+	dive_entry_address = null
+	severed_at = 0
+	set_net_name("GHOST-[uppertext(copytext(md5("[world.time][rand(1, 99999)]"), 1, 5))]", "Заблудший процесс")
+	to_chat(src, span_warning("Вы больше не связаны с телом. Вы — процесс, застрявший в сети станции."))
 
 // MARK: Зрение через доступные оптические устройства
 
@@ -187,6 +285,31 @@
 		if(!blinded)
 			overlay_fullscreen("netrun_blind", /atom/movable/screen/fullscreen/scaled/blind)
 			blinded = TRUE
+
+// MARK: Боевой интерфейс
+
+/mob/camera/netrun_entity/proc/combat_name()
+	return real_name
+
+/mob/camera/netrun_entity/proc/is_stunned()
+	return world.time < combat_stun_until
+
+/mob/camera/netrun_entity/proc/apply_damage(amount, reason, atom/source)
+	if(world.time < combat_shield_until)
+		amount *= combat_shield_factor
+	take_integrity(amount, reason)
+
+/mob/camera/netrun_entity/proc/apply_stun(duration)
+	combat_stun_until = max(combat_stun_until, world.time + duration)
+	to_chat(src, span_userdanger("Ваш процесс оглушён!"))
+
+/mob/camera/netrun_entity/proc/apply_shield(pct, duration)
+	combat_shield_until = world.time + duration
+	combat_shield_factor = clamp(1 - pct / 100, 0.1, 1)
+
+/mob/camera/netrun_entity/proc/apply_heal(amount)
+	integrity = min(max_integrity, integrity + amount)
+	to_chat(src, span_notice("Целостность восстановлена: [round(integrity)]/[max_integrity]."))
 
 // MARK: Урон
 
@@ -272,9 +395,17 @@
 	message = trim(copytext_char(sanitize(message), 1, MAX_MESSAGE_LEN))
 	if(!length(message))
 		return
+	// Процессы, делящие узел, слышат друг друга напрямую по внутренней шине -
+	// даже если у узла нет динамика для внешнего мира.
+	var/heard_locally = FALSE
+	for(var/mob/camera/netrun_entity/other as anything in host_node?.entities)
+		to_chat(other, span_notice("\[шина [host_node.address]] [span_name(real_name)]: [message]"))
+		if(other != src)
+			heard_locally = TRUE
 	var/atom/movable/speaker = host_node?.parent
 	if(!istype(speaker))
-		to_chat(src, span_warning("Здесь нет динамика."))
+		if(!heard_locally)
+			to_chat(src, span_warning("Здесь нет ни динамика, ни других процессов."))
 		return
 	log_talk(message, LOG_SAY, tag = "netrun via [speaker]")
 	if(istype(speaker, /obj/item/radio/intercom))
@@ -301,6 +432,8 @@
 	var/mob/camera/netrun_entity/entity = new(get_turf(start.parent), start)
 	entity.set_net_name(body.real_name, "Нетраннер")
 	entity.dive_body = body
+	entity.dive_entry_address = start.address
+	entity.route_chain = list(start.address)
 	entity.RegisterSignal(body, COMSIG_MOB_APPLY_DAMAGE, TYPE_PROC_REF(/mob/camera/netrun_entity, on_body_damage))
 	entity.RegisterSignal(body, COMSIG_LIVING_DEATH, TYPE_PROC_REF(/mob/camera/netrun_entity, on_body_death))
 	body.SetUnconscious(5 SECONDS)

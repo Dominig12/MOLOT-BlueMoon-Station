@@ -52,7 +52,32 @@ const FileEditor = (props: { onCreated?: () => void }) => {
         </Box>
       )}
       {file?.kind === 'photo' && file.image && (
-        <img src={file.image} alt={file.name} style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', marginTop: '6px', objectFit: 'contain' }} />
+        <div
+          style={{
+            marginTop: '6px',
+            maxWidth: '100%',
+            maxHeight: '260px',
+            // Сохраняем пропорции кадра: контейнер не превышает натуральный размер картинки.
+            aspectRatio: file.width && file.height ? `${file.width} / ${file.height}` : undefined,
+            width: file.width ? `${file.width}px` : 'auto',
+            overflow: 'hidden',
+            background: THEME.bg,
+          }}
+        >
+          <img
+            src={file.image}
+            alt={file.name}
+            style={{
+              display: 'block',
+              width: '100%',
+              height: '100%',
+              // Картинка растягивается по размеру рамки, а не повторяется плиткой.
+              objectFit: 'contain',
+              backgroundRepeat: 'no-repeat',
+              imageRendering: 'pixelated',
+            }}
+          />
+        </div>
       )}
       {(!file || file.kind === 'text') ? (
         <textarea

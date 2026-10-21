@@ -84,7 +84,7 @@ const MapSnapshot = memo((props: { input: MapInput; act: Act; resetKey: number }
   ]);
   const nodes = useSemanticValue(rawNodes, JSON.stringify(rawNodes.map((node) => [
     node.address, node.type, node.uplink, node.name, node.network, node.sector,
-    node.online, node.access, node.entities, node.can_hop,
+    node.online, node.access, node.entities, node.ice, node.active, node.can_hop,
   ])));
   const edges = useSemanticValue(rawEdges, JSON.stringify(rawEdges));
   const gateways = useSemanticValue(input.map?.gateways ?? [], JSON.stringify(input.map?.gateways ?? []));
@@ -261,6 +261,17 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act; resetK
         style={{ position: 'relative', flex: '1 1 auto', minHeight: '120px', overflow: 'hidden', cursor: 'grab', outlineOffset: '-2px' }}>
         <div data-net-world style={{ position: 'absolute', left: 0, top: 0, width: `${bounds.width}px`, height: `${bounds.height}px`, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0' }}>
           <div data-net-canvas style={{ position: 'absolute', left: `${bounds.minX}px`, top: `${bounds.minY}px`, width: `${bounds.width}px`, height: `${bounds.height}px` }}>
+          <style>{`
+            @keyframes netrunNodePulse {
+              0% { box-shadow: 0 0 0 0 rgba(90,220,140,0.45); }
+              70% { box-shadow: 0 0 6px 5px rgba(90,220,140,0); }
+              100% { box-shadow: 0 0 0 0 rgba(90,220,140,0); }
+            }
+            .netrun-node-active { animation: netrunNodePulse 1.4s ease-out infinite; }
+            [data-net-edge] { transition: stroke-opacity 0.4s ease, stroke 0.4s ease; }
+            [data-net-event-ring] { transition: r 0.4s linear, opacity 0.4s linear, stroke-width 0.4s linear; }
+          `}
+          </style>
           <svg width={bounds.width} height={bounds.height} viewBox={`${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}`} style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none' }}>
             <EdgesLayer edges={edges} positions={positions} visible={visibleIds} />
             <RoutesLayer selectedPath={selectedPath} pingPath={pingPath} waypointPath={waypointPath} />
@@ -312,9 +323,9 @@ const EventsLayer = memo((props: { events: NetEvent[]; positions: Map<string, Gr
     if (!to) { return null; }
     const from = point(event.from);
     const color = event.kind === 'trace' ? THEME.bad : event.kind === 'command' ? THEME.accent : THEME.warn;
-    return (<g key={index} opacity={Math.max(0, 1 - event.age / 4)}>
+    return (<g key={index} opacity={Math.max(0, 1 - event.age / 4)} style={{ transition: 'opacity 0.4s linear' }}>
       {from && (from.px !== to.px || from.py !== to.py) && <line x1={from.px} y1={from.py} x2={to.px} y2={to.py} stroke={color} strokeOpacity={0.4} />}
-      <circle cx={to.px} cy={to.py} r={6 + event.age * 7} fill="none" stroke={color} strokeWidth={2} />
+      <circle data-net-event-ring cx={to.px} cy={to.py} r={6 + event.age * 7} fill="none" stroke={color} strokeWidth={2} />
             </g>);
   })}
           </g>);
@@ -334,16 +345,26 @@ const NodeMarker = memo((props: { node: Placed; selected: boolean; jacked: boole
   const { node, selected, jacked, focused, color, onSelect } = props;
   return (
     <div onClick={() => onSelect(node.address)} data-net-node={node.address} title={`${node.name} ${node.address} — ${NODE_NAMES[node.type] || node.type}`}
-      style={{ position: 'absolute', left: `${node.px - props.originX}px`, top: `${node.py - props.originY}px`, transform: 'translate(-50%, -50%)', textAlign: 'center', cursor: 'pointer', zIndex: selected ? 3 : 1 }}>
-      <div style={{ position: 'relative', width: '18px', height: '18px', margin: '0 auto', borderRadius: node.type === 'apc' ? '3px' : '50%',
+      style={{ position: 'absolute', left: `${node.px - props.originX}px`, top: `${node.py - props.originY}px`, transform: 'translate(-50%, -50%)',
+        width: '18px', height: '18px', cursor: 'pointer', zIndex: selected ? 3 : 1,
+        transition: 'left 0.45s cubic-bezier(0.22, 1, 0.36, 1), top 0.45s cubic-bezier(0.22, 1, 0.36, 1)' }}>
+      {/* Кружок стоит точно в координате узла; подпись спозиционирована абсолютно и не смещает его. */}
+      <div className={node.active ? 'netrun-node-active' : undefined}
+        style={{ position: 'absolute', left: 0, top: 0, width: '18px', height: '18px', borderRadius: node.type === 'apc' ? '3px' : '50%',
         background: node.online ? ACCESS_COLORS[node.access] : '#5a2a2a',
         border: `2px solid ${selected ? THEME.text : jacked ? THEME.good : focused ? THEME.accent : THEME.bg}`,
-        boxShadow: node.entities > 0 ? '0 0 0 2px #d05090' : undefined }}>
+        boxShadow: node.ice ? '0 0 6px 2px ' + THEME.bad : node.entities > 0 ? '0 0 6px 2px #d05090' : undefined,
+        transition: 'box-shadow 0.3s ease, background 0.3s ease, border-color 0.3s ease' }}>
         <Box style={{ position: 'absolute', left: '13px', top: '-8px', background: THEME.panel, borderRadius: '50%', width: '15px', height: '15px', lineHeight: '15px', fontSize: '9px', color }}>
           <Icon name={NODE_ICONS[node.type] || 'circle'} style={{ fontSize: '80%' }} />
         </Box>
+        {!!node.ice && (
+          <Box style={{ position: 'absolute', left: '-9px', top: '-8px', background: THEME.panel, borderRadius: '50%', width: '15px', height: '15px', lineHeight: '15px', fontSize: '9px', color: THEME.bad }}>
+            <Icon name="skull" style={{ fontSize: '80%' }} />
+          </Box>
+        )}
       </div>
-      <Box style={{ fontSize: '9px', fontFamily: 'monospace', color: THEME.muted, whiteSpace: 'nowrap', marginTop: '2px' }}>
+      <Box style={{ position: 'absolute', top: '22px', left: '50%', transform: 'translateX(-50%)', fontSize: '9px', fontFamily: 'monospace', color: THEME.muted, whiteSpace: 'nowrap' }}>
         {node.name.length > 18 ? node.name.slice(0, 17) + '…' : node.name}
       </Box>
     </div>
@@ -351,7 +372,7 @@ const NodeMarker = memo((props: { node: Placed; selected: boolean; jacked: boole
 }, (before, after) => before.selected === after.selected && before.jacked === after.jacked
   && before.focused === after.focused && before.color === after.color && before.onSelect === after.onSelect
   && before.originX === after.originX && before.originY === after.originY
-  && ['address', 'name', 'type', 'online', 'access', 'entities', 'px', 'py'].every((key) => before.node[key] === after.node[key]));
+  && ['address', 'name', 'type', 'online', 'access', 'entities', 'ice', 'active', 'px', 'py'].every((key) => before.node[key] === after.node[key]));
 
 const WaypointRoute = (props: { wp: Waypoint; onClear: () => void; onNext: (address: string) => void }) => (
   <Box inline ml={1} color={props.wp.lost || !props.wp.reachable ? THEME.bad : THEME.accent} fontSize="10px">

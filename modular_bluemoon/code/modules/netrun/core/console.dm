@@ -303,6 +303,8 @@
 	node.network?.add_log("[log_source()] -> [node.address]: [command.name][illegal ? " (без авторизации)" : ""]", illegal && command.access >= NETRUN_ACCESS_ROOT)
 	if(illegal)
 		add_trace(command.trace * node.get_security())
+		SSnetrun.raise_defenses(src, node)
+		target.netrun_on_illegal(src, node)
 	return TRUE
 
 /// Есть ли вообще маршрут к узлу (иначе узел отрезан - подключиться нельзя)
@@ -365,6 +367,10 @@
 		var/datum/netrun_network/network = SSnetrun.networks[network_id]
 		if(!network.isolated)
 			network.add_log("Трассировка завершена: нарушитель в районе [where].")
+	// Система защиты высылает охотника к точке, откуда шло вторжение.
+	var/datum/component/netrun_node/near = route_source()
+	if(near)
+		SSnetrun.dispatch_hunter(near)
 	host?.netrun_traced(src)
 
 /datum/netrun_console/proc/process_tick(delta)
@@ -427,6 +433,9 @@
 		breach.buffer_size = min(breach.buffer_size, 7)
 		breach.generate()
 	SSnetrun.post_event("breach", kind == "network" ? id : null, kind == "network" ? null : id)
+	// Взлом защищённой цели поднимает сторожевой ICE.
+	if(kind != "network")
+		SSnetrun.raise_defenses(src, SSnetrun.find_node(id))
 	log_line("Запущен взлом: [target_name].", "average")
 	return TRUE
 

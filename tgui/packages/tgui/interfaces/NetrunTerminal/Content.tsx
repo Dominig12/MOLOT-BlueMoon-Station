@@ -2,6 +2,7 @@ import { ReactNode, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Icon, Stack, Tabs } from '../../components';
+import { CombatPanel } from './CombatPanel';
 import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
@@ -26,8 +27,9 @@ export const NetrunContent = () => {
   const { act, data } = useBackend<NetrunData>();
   const { breach, web, windows, window: machineWindow } = data;
   const webAvailable = data.networks.some((n) => n.id === 'web');
-  const [bottom, setBottom] = useState<'console' | 'chat'>('console');
+  const [bottom, setBottom] = useState<'console' | 'chat' | 'combat'>('console');
   const mapHidden = !!(breach || machineWindow || web);
+  const threats = (data.combat?.targets ?? []).filter((t) => t.hostile).length;
   return (
     <Box
       style={{
@@ -126,9 +128,20 @@ export const NetrunContent = () => {
             <Tabs.Tab icon="comments" selected={bottom === 'chat'} onClick={() => setBottom('chat')}>
               #noosphere
             </Tabs.Tab>
+            {data.combat && (
+              <Tabs.Tab
+                icon="crosshairs"
+                selected={bottom === 'combat'}
+                onClick={() => setBottom('combat')}
+                style={threats ? { color: THEME.bad } : undefined}
+              >
+                Бой{threats ? ` (${threats})` : ''}
+              </Tabs.Tab>
+            )}
           </Tabs>
           <div style={{ display: bottom === 'console' ? 'flex' : 'none', flex: '1 1 auto', minHeight: 0 }}><ConsoleLog /></div>
           <div style={{ display: bottom === 'chat' ? 'flex' : 'none', flex: '1 1 auto', minHeight: 0 }}><NetChat /></div>
+          <div style={{ display: bottom === 'combat' ? 'flex' : 'none', flex: '1 1 auto', minHeight: 0 }}><CombatPanel /></div>
         </div>
         <div style={{ flex: '1 1 270px', minWidth: '240px', minHeight: '150px', height: '100%', overflow: 'auto' }}>
           <StoragePanel />

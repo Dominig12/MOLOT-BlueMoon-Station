@@ -10,6 +10,7 @@ export type NetNode = {
   access: number;
   can_hop?: boolean;
   entities: number;
+  ice?: number;
   active: boolean;
   uplink: string | null;
   network?: string;
@@ -52,6 +53,16 @@ export type SelectedNode = NetNode & {
   logs?: string[];
   files?: NetFile[];
   storage?: { used: number; capacity: number };
+  lan?: {
+    id: string;
+    code: string;
+    name: string;
+    color: string;
+    security: number;
+    access: number;
+    has_key: boolean;
+    can_breach: boolean;
+  };
 };
 
 export type NetworkEntry = {
@@ -88,15 +99,23 @@ export type Daemon = {
 };
 
 export type MatrixState = {
+  minigame?: 'matrix' | 'sequence';
   target: string;
   security: number;
   size: number;
-  cells: { code: string | null; active: boolean }[];
-  buffer: string[];
-  buffer_size: number;
+  cells: {
+    code: string | null;
+    active: boolean;
+    order?: number;
+    done?: boolean;
+  }[];
+  buffer?: string[];
+  buffer_size?: number;
   daemons: Daemon[];
   time_left: number;
-  pick_row: boolean;
+  pick_row?: boolean;
+  progress?: number;
+  total?: number;
 };
 
 export type LogLine = { time?: string; text: string; kind: string };
@@ -110,6 +129,39 @@ export type EntityState = {
   host: string | null;
   host_name: string | null;
   diving: boolean;
+};
+
+export type CombatTarget = {
+  ref: string;
+  name: string;
+  kind: 'entity' | 'ice';
+  hostile: boolean;
+  integrity: number;
+  max_integrity: number;
+  stunned: boolean;
+};
+
+export type CombatProgram = {
+  id: string;
+  uid: string;
+  name: string;
+  desc: string;
+  size: number;
+  role: string;
+  power: number;
+  cooldown: number;
+  consumable: boolean;
+  needs_target: boolean;
+  icon: string;
+  ready_in: number;
+};
+
+export type CombatState = {
+  node: string;
+  node_name: string;
+  self: { integrity: number; max_integrity: number; stunned: boolean } | null;
+  targets: CombatTarget[];
+  programs: CombatProgram[];
 };
 
 export type NetrunData = {
@@ -129,6 +181,7 @@ export type NetrunData = {
   shard: (Storage & { name: string }) | null;
   breach: MatrixState | null;
   entity: EntityState | null;
+  combat: CombatState | null;
   chat: { handle: string; messages: string[] };
   web: WebState | null;
   cli?: {
