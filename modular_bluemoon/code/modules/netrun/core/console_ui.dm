@@ -2,6 +2,8 @@
 	/// Если задано - состояние tgui для этой консоли (импланты, сущности)
 	var/datum/ui_state/state_override
 	var/tgui_title = "Сетевой терминал"
+	/// Поисковый запрос по всей сети (для прокладки маршрута к ещё не открытым узлам)
+	var/search_query
 
 /datum/netrun_console/ui_state(mob/user)
 	if(state_override)
@@ -209,7 +211,36 @@
 	data["window"] = active_window ? window_payload() : null
 	data["ping_route"] = (ping_route && world.time - ping_at < 6 SECONDS) ? ping_route : null
 	data["events"] = SSnetrun.recent_events()
+	data["search"] = search_payload()
 	return data
+
+/// Поиск по всей сети: находит достижимые узлы по имени/адресу, чтобы проложить
+/// к ним маршрут даже если они ещё не открыты на карте. Доступ к узлу этим не выдаётся.
+/datum/netrun_console/proc/search_payload()
+	if(!search_query)
+		return null
+	var/query = lowertext(search_query)
+	. = list()
+	var/count = 0
+	for(var/address in SSnetrun.nodes_by_address)
+		if(count >= 24)
+			break
+		var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
+		if(QDELETED(node) || QDELETED(node.parent))
+			continue
+		if(!findtext(lowertext(node.get_name()), query) && !findtext(lowertext(address), query))
+			continue
+		if(!can_route(node))
+			continue
+		count++
+		. += list(list(
+			"address" = node.address,
+			"name" = node.get_name(),
+			"type" = node.node_type,
+			"network" = node.network?.short_name,
+			"online" = node.is_online(),
+			"visible" = node_visible(node),
+		))
 
 /// Дополнительные кнопки носителя (выдернуть провод, вынуть шард, вернуться в тело...)
 /datum/netrun_console/proc/host_actions()
@@ -265,6 +296,22 @@
 		shown[address] = TRUE
 		if(node.network)
 			networks[node.network.id] = node.network
+	// Узлы вдоль пеленга и выбранного маршрута показываем целиком, даже за пределами
+	// глубины карты - чтобы путь от текущего узла до цели рисовался без разрывов.
+	for(var/address in route_reveal_addresses(focus))
+		if(shown[address])
+			continue
+		var/datum/component/netrun_node/node = graph.nodes[address]
+		if(QDELETED(node) || !can_route(node))
+			continue
+		var/list/entry = node.ui_entry(src)
+		entry["network"] = node.network?.id
+		entry["sector"] = node.binding_sector
+		entry["neighbor_count"] = length(graph.neighbors(address))
+		map_nodes += list(entry)
+		shown[address] = TRUE
+		if(node.network)
+			networks[node.network.id] = node.network
 	var/list/edges = list()
 	var/list/edge_ids = list()
 	for(var/address in shown)
@@ -301,6 +348,22 @@
 		"revision" = graph.revision,
 		"route" = map_route_payload(selected_node() || focus),
 	)
+
+/// Адреса всех узлов на пеленге и на выбранном маршруте - их карта показывает целиком.
+/datum/netrun_console/proc/route_reveal_addresses(datum/component/netrun_node/focus)
+	. = list()
+	var/datum/component/netrun_node/waypoint = waypoint_address ? SSnetrun.find_node(waypoint_address) : null
+	if(waypoint && can_route(waypoint))
+		var/datum/netrun_route/route = route_to(waypoint)
+		for(var/list/hop as anything in route.hops)
+			. += hop["ref"]
+		qdel(route)
+	var/datum/component/netrun_node/selected = selected_node() || focus
+	if(selected && can_route(selected))
+		var/datum/netrun_route/route = route_to(selected)
+		for(var/list/hop as anything in route.hops)
+			. += hop["ref"]
+		qdel(route)
 
 /// The client receives the selected route, not the whole server routing table.
 /datum/netrun_console/proc/map_route_payload(datum/component/netrun_node/target)
@@ -421,12 +484,27 @@
 			return TRUE
 		if("set_waypoint")
 			var/datum/component/netrun_node/node = SSnetrun.find_node(params["address"])
-			if(node && node_visible(node))
+			// Пеленг можно ставить на любой достижимый узел, даже ещё не открытый на карте.
+			if(node && (node_visible(node) || can_route(node)))
 				waypoint_address = node.address
 				log_line("Пеленг на [node.get_name()] [node.address].", "label")
+			else
+				log_line("К этому узлу нет маршрута для пеленга.", "bad")
 			return TRUE
 		if("clear_waypoint")
 			waypoint_address = null
+			return TRUE
+		if("focus_host")
+			var/datum/component/netrun_node/here = route_source()
+			if(here)
+				selected_address = here.address
+				selected_network = null
+			return TRUE
+		if("search")
+			var/text = params["text"]
+			search_query = istext(text) ? trim(copytext_char(sanitize(text), 1, 40)) : null
+			if(!length(search_query))
+				search_query = null
 			return TRUE
 		if("select")
 			var/datum/component/netrun_node/node = SSnetrun.find_node(params["address"])

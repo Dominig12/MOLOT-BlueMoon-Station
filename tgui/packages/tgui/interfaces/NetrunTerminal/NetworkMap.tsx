@@ -22,6 +22,7 @@ import {
   NODE_ICONS,
   NODE_NAMES,
   PingHop,
+  SearchResult,
   THEME,
   Waypoint,
 } from './types';
@@ -38,12 +39,14 @@ type MapInput = {
   pingRoute: PingHop[];
   events: NetEvent[];
   waypoint: Waypoint | null;
+  search: SearchResult[];
 };
 
 const EMPTY_NODES: NetNode[] = [];
 const EMPTY_EDGES: NetEdge[] = [];
 const EMPTY_EVENTS: NetEvent[] = [];
 const EMPTY_HOPS: PingHop[] = [];
+const EMPTY_SEARCH: SearchResult[] = [];
 
 // Backend payload objects are recreated even when only a log or breach cell
 // changed. Retain snapshots by the fields that the map actually displays.
@@ -67,7 +70,7 @@ export const StationMap = (props: { suspended?: boolean } = {}) => {
       selectedNetwork: data.selected_network?.id ?? null, jackAddress: data.jack?.address ?? null,
       entityHost: data.entity?.host ?? null, hasEntity: !!data.entity,
       pingRoute: data.ping_route ?? EMPTY_HOPS, events: data.events ?? EMPTY_EVENTS,
-      waypoint: data.waypoint ?? null,
+      waypoint: data.waypoint ?? null, search: data.search ?? EMPTY_SEARCH,
     };
   }
   // Freeze before computing signatures too: hidden maps do no graph work.
@@ -118,7 +121,7 @@ const routePath = (addresses: string[], points: Map<string, GraphPoint>, adjacen
  * independent of station tiles, filtering and the current polling frame.
  */
 const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act; resetKey: number }) => {
-  const { act, selectedAddress, selectedNetwork, jackAddress, entityHost, hasEntity, map, topologyKey, pingRoute, events, waypoint, resetKey } = props;
+  const { act, selectedAddress, selectedNetwork, jackAddress, entityHost, hasEntity, map, topologyKey, pingRoute, events, waypoint, search, resetKey } = props;
   const canvasRef = useRef<HTMLDivElement>(null);
   const [layoutCache] = useState(createGraphLayoutCache);
   const [pan, setPan] = useState({ x: -600, y: -240 });
@@ -200,7 +203,21 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act; resetK
   return (
     <Box data-net-layout="map" style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, boxSizing: 'border-box' }}>
       <Box p={0.5} style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-        <Input width="140px" placeholder="поиск узла…" value={query} onInput={(_event, value) => setQuery(value)} />
+        <Input width="140px" placeholder="поиск узла…" value={query}
+          onInput={(_event, value) => setQuery(value)}
+          onEnter={(_event, value) => act('search', { text: value })} />
+        <Button compact icon="magnifying-glass" tooltip="Искать по всей сети (в т.ч. неоткрытые узлы) и проложить к ним пеленг"
+          onClick={() => act('search', { text: query })} />
+        {hasEntity && entityHost && (
+          <Button compact icon="location-crosshairs" content="Мой узел"
+            tooltip="Вернуться к узлу, где сейчас находится процесс"
+            onClick={() => {
+              act('focus_host');
+              const point = positions.get(entityHost);
+              const canvas = canvasRef.current;
+              if (point && canvas) { setPan({ x: canvas.clientWidth / 2 - point.px * zoom, y: canvas.clientHeight / 2 - point.py * zoom }); }
+            }} />
+        )}
         <Button compact icon="bullseye" content="2 перехода" selected={focusNearby}
           disabled={!selectedAddress} tooltip="Оставить выбранный узел и его окружение по реальным связям."
           onClick={() => setFocusNearby(!focusNearby)} />
@@ -239,6 +256,31 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act; resetK
         {waypoint && <WaypointRoute wp={waypoint} onClear={() => act('clear_waypoint')}
           onNext={(address) => act('select', { address })} />}
       </Box>
+      {search.length > 0 && (
+        <Box p={0.5} style={{ maxHeight: '130px', overflowY: 'auto', borderTop: `1px solid ${THEME.line}`, fontFamily: 'monospace' }}>
+          <Box color={THEME.muted} fontSize="10px" mb={0.5}>
+            Найдено в сети: {search.length}
+            <Button compact icon="xmark" ml={1} tooltip="Очистить поиск" onClick={() => act('search', { text: '' })} />
+          </Box>
+          {search.map((result) => (
+            <Box key={result.address} mb={0.5} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Icon name={NODE_ICONS[result.type] || 'circle'} color={result.online ? THEME.accent : THEME.bad} />
+              <Box style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {result.name}
+                <Box inline ml={1} color={THEME.muted} fontSize="9px">{result.address}{result.network ? ` · ${result.network}` : ''}</Box>
+              </Box>
+              <Button compact icon="location-arrow"
+                selected={waypoint?.address === result.address}
+                tooltip="Проложить пеленг к этому узлу"
+                onClick={() => act('set_waypoint', { address: result.address })} />
+              {result.visible && (
+                <Button compact icon="diagram-project" tooltip="Выбрать на карте"
+                  onClick={() => act('select', { address: result.address })} />
+              )}
+            </Box>
+          ))}
+        </Box>
+      )}
       <div ref={canvasRef} role="application" aria-label="Карта сети" tabIndex={0} onKeyDown={onKeyDown}
         onMouseDown={(event) => {
           if (event.button !== 0) { return; }

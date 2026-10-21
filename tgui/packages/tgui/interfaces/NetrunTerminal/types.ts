@@ -164,6 +164,15 @@ export type CombatState = {
   programs: CombatProgram[];
 };
 
+export type SearchResult = {
+  address: string;
+  name: string;
+  type: string;
+  network: string | null;
+  online: boolean;
+  visible: boolean;
+};
+
 export type NetrunData = {
   origin: string;
   wireless: boolean;
@@ -202,6 +211,7 @@ export type NetrunData = {
   ping_route: PingHop[] | null;
   events?: NetEvent[] | null;
   waypoint?: Waypoint | null;
+  search?: SearchResult[] | null;
   file?: (NetFile & {
     content: string | null;
     image: string | null;
