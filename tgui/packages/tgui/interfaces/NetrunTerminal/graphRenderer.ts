@@ -26,7 +26,7 @@ export class GraphRenderer {
   private initialized = false;
 
   private drawEdges(ctx: CanvasRenderingContext2D, scene: GraphScene, overlay: GraphOverlay, view: GraphViewport,
-    width: number, height: number, elbow: (a: GraphPoint, b: GraphPoint) => void, straight: (a: GraphPoint, b: GraphPoint) => void) {
+    width: number, height: number, straight: (a: GraphPoint, b: GraphPoint) => void) {
     const groups = new Map<string, { edges: NetEdge[]; selected: boolean; kind: string; online: boolean }>();
     for (const edge of scene.edges) {
       const selected = view.zoom >= .6 && (edge.from === overlay.selected || edge.to === overlay.selected);
@@ -38,9 +38,8 @@ export class GraphRenderer {
     const right = (width - view.x) / view.zoom, bottom = (height - view.y) / view.zoom;
     // One stroke per style prevents shared fanout trunks from accumulating opacity thousands of times.
     for (const group of groups.values()) {
-      // Endpoint links are straight spokes from their APC: spokes sharing a hub never cross.
-      // A selected node's links are drawn with the classic right-angle elbow highlight instead.
-      const segment = group.selected ? elbow : group.kind === 'endpoint' ? straight : elbow;
+      // Every tree link — including a selected node's — is a straight spoke to its parent,
+      // so highlighting a path looks exactly like the edges it runs along.
       ctx.beginPath();
       let relayIndex = 0;
       for (const edge of group.edges) {
@@ -52,7 +51,7 @@ export class GraphRenderer {
           const channel = -GRAPH_LEVEL * 0.6 - (relayIndex++ % 6) * 12;
           ctx.moveTo(a.px, a.py); ctx.lineTo(a.px, channel); ctx.lineTo(b.px, channel); ctx.lineTo(b.px, b.py);
         } else {
-          segment(a, b);
+          straight(a, b);
         }
       }
       ctx.strokeStyle = !group.online ? '#24333e' : group.selected ? '#9ad0e0' : group.kind === 'relay' ? '#3fb8ad' : group.kind === 'apc' ? '#3d6d86' : '#274a5f';
@@ -124,12 +123,8 @@ export class GraphRenderer {
     for (let gy = ((y % step) + step) % step; gy < height; gy += step) { ctx.moveTo(0, gy); ctx.lineTo(width, gy); }
     ctx.stroke(); ctx.save(); ctx.translate(x, y); ctx.scale(zoom, zoom);
     const selectedNeighbors = scene.adjacency.get(overlay.selected);
-    const elbow = (a: GraphPoint, b: GraphPoint) => {
-      const middle = (a.px + b.px) / 2;
-      ctx.moveTo(a.px, a.py); ctx.lineTo(middle, a.py); ctx.lineTo(middle, b.py); ctx.lineTo(b.px, b.py);
-    };
     const straight = (a: GraphPoint, b: GraphPoint) => { ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py); };
-    this.drawEdges(ctx, scene, overlay, view, width, height, elbow, straight);
+    this.drawEdges(ctx, scene, overlay, view, width, height, straight);
     // Marching ants flow along highlighted routes to read as live traffic.
     const flow = -(now / 28) % 1000;
     const route = (addresses: string[], color: string, dash: number[]) => {
@@ -140,14 +135,14 @@ export class GraphRenderer {
       ctx.shadowBlur = 8; ctx.shadowColor = color;
       for (let i = 1; i < addresses.length; i++) {
         const a = scene.byAddress.get(addresses[i - 1]), b = scene.byAddress.get(addresses[i]);
-        if (a && b && scene.adjacency.get(a.address)?.has(b.address)) { elbow(a, b); }
+        if (a && b && scene.adjacency.get(a.address)?.has(b.address)) { straight(a, b); }
       }
       ctx.stroke(); ctx.setLineDash([]); ctx.lineDashOffset = 0; ctx.shadowBlur = 0;
     };
     route(overlay.selectedRoute, '#50e8c0', [11, 7]);
     route(overlay.waypointRoute, '#e879b8', [8, 5]);
     route(overlay.pingRoute, '#ffc56b', [4, 5]);
-    animating = this.drawEdgeTransitions(ctx, elbow, now) || animating;
+    animating = this.drawEdgeTransitions(ctx, straight, now) || animating;
     const visible = scene.visible(left - GRAPH_GLYPH_RADIUS, top - GRAPH_GLYPH_RADIUS, right + GRAPH_GLYPH_RADIUS, bottom + GRAPH_GLYPH_RADIUS);
     for (const node of visible) {
       const selected = node.address === overlay.selected, host = node.address === overlay.entityHost, jacked = node.address === overlay.jacked;
