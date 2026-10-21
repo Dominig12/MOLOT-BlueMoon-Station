@@ -145,6 +145,8 @@ describe('dynamic large network and reparenting', () => {
     }
     for (const address of ['HOST', 'PERSONAL', 'CHILD']) {
       expect(after.get(address)).not.toEqual(before.get(address));
+      expect(after.get(address).px - after.get('HOST').px).toBe(before.get(address).px - before.get('HOST').px);
+      expect(after.get(address).py - after.get('HOST').py).toBe(before.get(address).py - before.get('HOST').py);
     }
     expect(after.get('HOST').binding).toContain('endpoint:APC-2:');
     expect(after.get('PERSONAL').binding).toContain('endpoint:HOST:');

@@ -226,4 +226,7 @@ const StoredRouteStatus = memo(({ route }: { route: NonNullable<NetMap['route']>
                                                                                         </Box>));
 const WaypointRoute = ({ wp, onClear, onNext }: { wp: Waypoint; onClear: () => void; onNext: (address: string) => void }) => (<Box inline
   color={wp.lost || !wp.reachable ? THEME.bad : THEME.accent} fontSize="10px">
-  <Icon name="route" mr={1} />{wp.name} · {wp.lost ? 'цель потеряна' : wp.reachable ? `${wp.hops} переходов` : 'нет маршру
+  <Icon name="route" mr={1} />{wp.name} · {wp.lost ? 'цель потеряна' : wp.reachable ? `${wp.hops} переходов` : 'нет маршрута'}
+  {wp.next && <Button compact ml={1} icon="arrow-right" content="Следующий узел" onClick={() => onNext(wp.next)} />}
+  <Button compact icon="xmark" ml={1} onClick={onClear} />
+                                                                                                                              </Box>);

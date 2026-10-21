@@ -11,6 +11,7 @@ import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog } from './Panels';
+import { GraphViewport } from './graphViewport';
 import { NetrunData } from './types';
 import { WindowPanel } from './WindowPanel';
 
@@ -62,6 +63,28 @@ const sent = (topic, action: string) => topic.mock.calls
   .map((call) => JSON.parse(call[0].payload));
 
 describe('Netrun terminal panels', () => {
+  test('arrange then manual pan is preserved when a later structural update arrives', () => {
+    const originalPointer = window.PointerEvent;
+    Object.defineProperty(window, 'PointerEvent', { value: MouseEvent, configurable: true });
+    const fit = jest.spyOn(GraphViewport.prototype, 'fit');
+    const topic = setup();
+    const { getByText, getByLabelText, rerender } = render(<StationMap />);
+    fireEvent.click(getByText('Упорядочить'));
+    const viewport = getByLabelText('Карта сети');
+    fireEvent.pointerDown(viewport, { clientX: 100, clientY: 100, button: 0 });
+    fireEvent.pointerMove(viewport, { clientX: 150, clientY: 150 });
+    fireEvent.pointerUp(viewport, { clientX: 150, clientY: 150 });
+    const before = fit.mock.calls.length;
+    const map = topic.store.getState().backend.data.map;
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, revision: 2,
+      nodes: [...map.nodes, { ...node, address: 'NEW', type: 'camera', uplink: node.address }],
+      edges: [...map.edges, { id: 'new', from: node.address, to: 'NEW', kind: 'endpoint' }] } } })));
+    rerender(<StationMap />);
+    expect(fit).toHaveBeenCalledTimes(before);
+    fit.mockRestore();
+    Object.defineProperty(window, 'PointerEvent', { value: originalPointer, configurable: true });
+  });
+
   test('projected state revisions repaint without layout and structural revisions replace nodes and links', () => {
     const layout = jest.spyOn(mapGeometry, 'layoutGraph');
     const initial = { gateways: [], focus: node.address, revision: 1, structure_revision: 4, state_revision: 10,
