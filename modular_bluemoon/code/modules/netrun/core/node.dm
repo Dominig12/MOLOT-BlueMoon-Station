@@ -31,7 +31,14 @@
 	var/binding_infra_revision = -1
 	/// Infrastructure geometry changes invalidate the shared graph even inside one area.
 	var/turf/topology_turf
-	var/list/last_state
+	/// APC only: turf its resolved LAN was cached for, so the department lookup runs once per move.
+	var/turf/apc_network_turf
+	/// Last reconciled status fields; compared as scalars to avoid per-tick list allocation.
+	var/last_online
+	var/last_security
+	var/last_entities = -1
+	var/last_ice = -1
+	var/last_active
 
 /datum/component/netrun_node/Initialize(node_type, list/command_ids, security = 1, list/required_access, storage_capacity = 0)
 	if(!isatom(parent))
@@ -89,7 +96,8 @@
 	if(node_type == NETRUN_NODE_APC)
 		new_net = SSnetrun.get_apc_network(src)
 	else if(bound_apc)
-		new_net = SSnetrun.get_apc_network(bound_apc)
+		// The APC already resolved its own LAN; reuse it instead of recomputing the lookup per endpoint.
+		new_net = bound_apc.network || SSnetrun.get_apc_network(bound_apc)
 	else
 		new_net = netrun_fallback_network_for(get_turf(parent))
 	if(network == new_net)
@@ -120,11 +128,22 @@
 	notify_changed(NETRUN_CHANGED_STATE)
 
 /// The fallback samples only fields exposed by the graph, including timed states.
+/// Polls the timed/native status that has no change signal (power, firewall expiry, occupants,
+/// activity window). Name changes arrive via COMSIG_ATOM_UPDATE_NAME, so no string is built here.
+/// Scalar comparison avoids allocating and deep-comparing a fresh list for every node each tick.
 /datum/component/netrun_node/proc/reconcile_state()
-	var/list/state = list(get_name(), is_online(), get_security(), length(entities), length(netrun_ice), world.time - last_activity < 5 SECONDS)
-	if(netrun_snapshot_equal(last_state, state))
+	var/online = is_online()
+	var/security = get_security()
+	var/entity_count = length(entities)
+	var/ice_count = length(netrun_ice)
+	var/active = world.time - last_activity < 5 SECONDS
+	if(online == last_online && security == last_security && entity_count == last_entities && ice_count == last_ice && active == last_active)
 		return
-	last_state = state
+	last_online = online
+	last_security = security
+	last_entities = entity_count
+	last_ice = ice_count
+	last_active = active
 	notify_changed(NETRUN_CHANGED_STATE)
 
 /datum/component/netrun_node/proc/notify_changed(flags = NETRUN_CHANGED_STATE)

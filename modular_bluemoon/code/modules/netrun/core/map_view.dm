@@ -65,7 +65,10 @@
 	if(!netrun_snapshot_equal(context, current_context))
 		dirty = TRUE
 	context = current_context
-	if(dirty || !snapshot || snapshot["revision"] != graph.revision || world.time >= refreshed_at + SSnetrun.wait)
+	// Real changes already mark the view dirty (node/topology signals) or bump the graph revision
+	// or the context snapshot above. The periodic pass only catches unsignaled credential drift,
+	// so it runs rarely instead of forcing a full O(nodes) projection rebuild every tick.
+	if(dirty || !snapshot || snapshot["revision"] != graph.revision || world.time >= refreshed_at + NETRUN_MAP_RECONCILE_INTERVAL)
 		rebuild(graph)
 	var/list/result = snapshot.Copy()
 	result["focus"] = focus?.address

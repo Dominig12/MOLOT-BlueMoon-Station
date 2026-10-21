@@ -102,6 +102,11 @@ SUBSYSTEM_DEF(netrun)
 /datum/controller/subsystem/netrun/proc/get_apc_network(datum/component/netrun_node/apc_node)
 	if(QDELETED(apc_node) || apc_node.node_type != NETRUN_NODE_APC)
 		return null
+	var/turf/here = get_turf(apc_node.parent)
+	// The department lookup (sector + area type + string id) only changes when the APC moves,
+	// so cache the resolved LAN per turf instead of recomputing it for every tick.
+	if(apc_node.network && apc_node.apc_network_turf == here && networks[apc_node.network.id] == apc_node.network)
+		return apc_node.network
 	var/area/source_area
 	if(istype(apc_node.parent, /obj/machinery/power/apc))
 		var/obj/machinery/power/apc/apc = apc_node.parent
@@ -109,12 +114,13 @@ SUBSYSTEM_DEF(netrun)
 	if(!source_area)
 		source_area = get_area(apc_node.parent)
 	source_area = source_area?.base_area || source_area
-	var/sector = netrun_sector_for(get_turf(apc_node.parent))
+	var/sector = netrun_sector_for(here)
 	var/id = "dept_[sector || "none"]:[netrun_department_key(source_area)]"
 	var/datum/netrun_network/network = networks[id]
 	if(!network)
 		network = new(id, source_area)
 		networks[id] = network
+	apc_node.apc_network_turf = here
 	return network
 
 /// ЛВС отсека: по одной на APC-зону, свойства берутся из типа отсека.

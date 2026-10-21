@@ -114,6 +114,9 @@
 /// Окно «след потерян» после заметания следов: лёд не атакует и не перезахватывает цель
 #define NETRUN_DISENGAGE_GRACE (8 SECONDS)
 
+/// Как часто карта вслепую пересверяется ради незасигналенного дрейфа доступов (не каждый тик).
+#define NETRUN_MAP_RECONCILE_INTERVAL (5 SECONDS)
+
 #define NETRUN_MAX_LOG 60
 #define NETRUN_MAX_CONSOLE_LOG 40
 

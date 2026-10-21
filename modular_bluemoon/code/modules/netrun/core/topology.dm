@@ -139,6 +139,10 @@
 	if(QDELETED(node) || QDELETED(node.parent))
 		return
 	var/turf/position = get_turf(node.parent)
+	// Fast path: an already-bound node that has not moved, under unchanged infrastructure,
+	// keeps its binding - skip the sector/area/nearest-APC work entirely.
+	if(position == node.topology_turf && node.binding_checked && node.binding_infra_revision == infrastructure_revision)
+		return
 	var/sector = netrun_sector_for(position)
 	var/area/room = position ? get_area(position) : null
 	var/area/root_area = room?.base_area || room
