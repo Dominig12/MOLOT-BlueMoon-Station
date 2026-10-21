@@ -24,10 +24,14 @@ SUBSYSTEM_DEF(netrun)
 	return ..()
 
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
+	// Когда никто не в сети, посекундная сверка каждого узла - пустая работа: топология
+	// перестроится лениво при следующем подключении. Пока нет раннеров (и разовая
+	// инициализация патрулей/лора завершена) - не сверяем узлы и не копируем их список.
+	var/reconcile = length(consoles) || length(entities) || !patrol_initialized || !lore_initialized
 	if(!resumed)
 		currentrun = consoles.Copy()
-		currentnodes = nodes_by_address.Copy()
 		currentice = ice_processes.Copy()
+		currentnodes = reconcile ? nodes_by_address.Copy() : list()
 	var/delta = wait / (1 SECONDS)
 	// Combat and open sessions go first: a heavy node sync must never starve ICE reactions
 	// or UI refresh, or a one-second fight would stretch to several real seconds under load.
@@ -47,6 +51,8 @@ SUBSYSTEM_DEF(netrun)
 			console.flush_ui()
 		if(MC_TICK_CHECK)
 			return
+	if(!reconcile)
+		return
 	// Вложенный предмет не получает MOVED при перемещении носителя. Сверяем топологию
 	// независимо от открытых интерфейсов, не создавая сигнал на каждом контейнере.
 	// Это односекундная сверка - она может безопасно уступить тик боевой части выше.

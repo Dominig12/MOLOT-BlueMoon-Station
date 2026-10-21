@@ -247,7 +247,9 @@
 			node?.network?.add_log("Охотничий процесс свёрнут: цель не найдена.")
 			qdel(src)
 			return
-	hunt()
+	// Нет ни одной сетевой сущности - преследовать некого, дорогой BFS не нужен.
+	if(length(SSnetrun.entities))
+		hunt()
 
 /// Нарушитель в узле: сущность без легального доступа ПОЛЬЗОВАТЕЛЯ к узлу.
 /datum/netrun_ice/proc/find_intruder(datum/component/netrun_node/where)

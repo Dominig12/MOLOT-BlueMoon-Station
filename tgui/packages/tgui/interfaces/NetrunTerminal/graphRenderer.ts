@@ -1,5 +1,5 @@
 import { layoutLabels } from './graphLabels';
-import { GRAPH_GLYPH_RADIUS } from './graphLayout';
+import { GRAPH_GLYPH_RADIUS, GRAPH_LEVEL } from './graphLayout';
 import { GraphScene, PlacedNode } from './graphScene';
 import { clamp, GraphViewport } from './graphViewport';
 import { GraphPoint } from './mapLayout';
@@ -41,10 +41,18 @@ export class GraphRenderer {
       // Endpoint links are straight spokes from their APC: spokes sharing a hub never cross.
       const segment = group.kind === 'endpoint' ? straight : elbow;
       ctx.beginPath();
+      let relayIndex = 0;
       for (const edge of group.edges) {
         const a = scene.byAddress.get(edge.from), b = scene.byAddress.get(edge.to);
         if (!a || !b || Math.max(a.px, b.px) < left || Math.min(a.px, b.px) > right || Math.max(a.py, b.py) < top || Math.min(a.py, b.py) > bottom) { continue; }
-        segment(a, b);
+        if (group.kind === 'relay') {
+          // Inter-sector relay links are not tree edges: route them through an overhead
+          // channel above the roots (the py<0 band is always empty) so they cross nothing.
+          const channel = -GRAPH_LEVEL * 0.6 - (relayIndex++ % 6) * 12;
+          ctx.moveTo(a.px, a.py); ctx.lineTo(a.px, channel); ctx.lineTo(b.px, channel); ctx.lineTo(b.px, b.py);
+        } else {
+          segment(a, b);
+        }
       }
       ctx.strokeStyle = !group.online ? '#24333e' : group.selected ? '#9ad0e0' : group.kind === 'relay' ? '#3fb8ad' : group.kind === 'apc' ? '#3d6d86' : '#274a5f';
       ctx.globalAlpha = view.zoom < .3 && group.kind === 'endpoint' ? .32 : group.kind === 'endpoint' ? .72 : 1;
@@ -124,7 +132,8 @@ export class GraphRenderer {
     // Marching ants flow along highlighted routes to read as live traffic.
     const flow = -(now / 28) % 1000;
     const route = (addresses: string[], color: string, dash: number[]) => {
-      if (addresses.length > 1) { animating = true; }
+      // Animate marching ants only when zoomed in; at overview it would repaint the whole map each frame.
+      if (addresses.length > 1 && view.zoom >= .3) { animating = true; }
       ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 3.5;
       ctx.setLineDash(dash); ctx.lineDashOffset = flow;
       ctx.shadowBlur = 8; ctx.shadowColor = color;
@@ -148,11 +157,13 @@ export class GraphRenderer {
       if (progress >= 1) { this.changed.delete(node.address); }
       else { animating = true; }
       // Live pulses: ICE threats and recently-active nodes breathe so the eye finds them.
-      if (node.ice) {
+      // Only animated when zoomed in — at overview they are invisible yet would force a
+      // continuous full-canvas repaint of the whole network.
+      if (node.ice && zoom >= .45) {
         animating = true;
         ctx.beginPath(); ctx.arc(node.px, node.py, 20 + Math.sin(now / 260) * 2.5, 0, Math.PI * 2);
         ctx.strokeStyle = `rgba(233,110,124,${0.5 + Math.sin(now / 260) * 0.25})`; ctx.lineWidth = 2; ctx.stroke();
-      } else if (node.active && zoom >= .3) {
+      } else if (node.active && zoom >= .45) {
         animating = true;
         ctx.beginPath(); ctx.arc(node.px, node.py, 18 + Math.sin(now / 320) * 2, 0, Math.PI * 2);
         ctx.strokeStyle = `rgba(255,194,107,${0.35 + Math.sin(now / 320) * 0.2})`; ctx.lineWidth = 1.5; ctx.stroke();
