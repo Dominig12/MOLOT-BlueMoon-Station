@@ -11,6 +11,10 @@
 	var/structure_revision = 0
 	var/state_revision = 0
 	var/dirty = TRUE
+	/// A structural change (binding, removal, topology) needs a full projection rebuild.
+	var/structure_dirty = TRUE
+	/// Addresses whose status changed since the last payload - updated in place, no full pass.
+	var/list/dirty_nodes = list()
 	var/refreshed_at = -INFINITY
 	var/list/snapshot
 	var/list/structure
@@ -27,7 +31,8 @@
 /datum/netrun_map_view/New(datum/netrun_console/owner)
 	src.owner = owner
 	geometry = new
-	RegisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED), PROC_REF(on_graph_changed))
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(on_node_changed))
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, PROC_REF(on_topology_changed))
 
 /datum/netrun_map_view/Destroy()
 	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED))
@@ -40,9 +45,22 @@
 	owner = null
 	return ..()
 
-/datum/netrun_map_view/proc/on_graph_changed(datum/source)
+/// A single node's status change updates just that node in place; binding and removal are
+/// structural (they move edges and membership) and need a full projection rebuild.
+/datum/netrun_map_view/proc/on_node_changed(datum/source, datum/component/netrun_node/node, flags)
 	SIGNAL_HANDLER
-	invalidate()
+	if(flags & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED))
+		structure_dirty = TRUE
+	else if(node)
+		dirty_nodes[node.address] = TRUE
+	if(owner)
+		owner.ui_dirty = TRUE
+
+/datum/netrun_map_view/proc/on_topology_changed(datum/source)
+	SIGNAL_HANDLER
+	structure_dirty = TRUE
+	if(owner)
+		owner.ui_dirty = TRUE
 
 /datum/netrun_map_view/proc/invalidate()
 	dirty = TRUE
@@ -61,15 +79,18 @@
 		active_z = current?.z
 	source_sector = current_sector
 	source_z = current?.z
-	var/list/current_context = list(owner.operator, owner.route_source()?.address, selected_address, waypoint_address, active_sector, active_z)
+	// Access is included so a credential change (an ID picked up or dropped) refreshes the
+	// projection through the context diff - no periodic full pass is needed to catch it.
+	var/list/current_context = list(owner.operator, owner.route_source()?.address, selected_address, waypoint_address, active_sector, active_z, owner.user_access())
 	if(!netrun_snapshot_equal(context, current_context))
 		dirty = TRUE
 	context = current_context
-	// Real changes already mark the view dirty (node/topology signals) or bump the graph revision
-	// or the context snapshot above. The periodic pass only catches unsignaled credential drift,
-	// so it runs rarely instead of forcing a full O(nodes) projection rebuild every tick.
-	if(dirty || !snapshot || snapshot["revision"] != graph.revision || world.time >= refreshed_at + NETRUN_MAP_RECONCILE_INTERVAL)
+	// Fully event-driven: a full rebuild only on a structural change, context change or a new
+	// graph revision; a status-only change updates just the affected nodes in place.
+	if(dirty || structure_dirty || !snapshot || snapshot["revision"] != graph.revision)
 		rebuild(graph)
+	else if(length(dirty_nodes))
+		apply_incremental(graph)
 	var/list/result = snapshot.Copy()
 	result["focus"] = focus?.address
 	result["route"] = owner.map_route_payload(owner.selected_node() || focus)
@@ -185,7 +206,44 @@
 		"source_sector" = source_sector, "source_z" = source_z, "active_sector" = active_sector, "active_z" = active_z,
 		"sectors" = sector_catalog, "apc_zones" = apc_zones, "relay_destinations" = destinations)
 	dirty = FALSE
+	structure_dirty = FALSE
+	dirty_nodes.Cut()
 	refreshed_at = world.time
+
+/// Refresh only the nodes whose status changed (and their incident edges) without a full
+/// O(graph) pass. Membership and layout are unchanged, so only state_revision advances.
+/datum/netrun_map_view/proc/apply_incremental(datum/netrun_topology/graph)
+	var/list/map_nodes = snapshot["nodes"]
+	var/list/map_edges = snapshot["edges"]
+	var/bumped = FALSE
+	for(var/address in dirty_nodes)
+		var/list/previous = node_entries[address]
+		if(!previous)
+			continue // node is not part of the shown projection; its status does not affect the view
+		var/datum/component/netrun_node/node = graph.nodes[address]
+		if(QDELETED(node))
+			continue
+		var/list/entry = node.ui_entry(owner)
+		entry["network"] = node.network?.id
+		entry["sector"] = node.binding_sector
+		entry["neighbor_count"] = length(graph.neighbors(address))
+		if(netrun_snapshot_equal(previous, entry))
+			continue
+		var/index = map_nodes.Find(previous)
+		if(index)
+			map_nodes[index] = entry
+		node_entries[address] = entry
+		bumped = TRUE
+		for(var/list/edge_entry as anything in map_edges)
+			if(edge_entry["from"] != address && edge_entry["to"] != address)
+				continue
+			var/online = netrun_link_available(graph.nodes[edge_entry["from"]], graph.nodes[edge_entry["to"]])
+			if(edge_entry["online"] != online)
+				edge_entry["online"] = online
+	dirty_nodes.Cut()
+	if(bumped)
+		state_revision++
+		snapshot["state_revision"] = state_revision
 
 /datum/netrun_map_view/proc/relay_destinations(datum/netrun_topology/graph, datum/component/netrun_node/selected, list/shown, list/permitted)
 	. = list()
