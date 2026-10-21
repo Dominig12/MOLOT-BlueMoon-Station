@@ -71,6 +71,32 @@
 
 // MARK: Атакующие программы
 
+/// Встроенная атака процесса: слабая, но всегда доступна и не занимает память.
+/// Благодаря ей сущность может повредить ICE даже с пустым хранилищем.
+/datum/netrun_program/sting
+	id = "sting"
+	name = "sting"
+	desc = "Встроенный процессорный удар. Слабый, но бесплатный и не теряется."
+	role = NETRUN_PROGRAM_ATTACK
+	power = 11
+	cooldown = 2.5 SECONDS
+	size = 0
+	trace = 2
+	icon = "hand-fist"
+
+/// Встроенная защита процесса: всегда доступна, слабее печатных щитов, не теряется.
+/datum/netrun_program/shell
+	id = "shell"
+	name = "shell"
+	desc = "Встроенный защитный контур: входящий урон меньше на треть на 5 секунд."
+	role = NETRUN_PROGRAM_SHIELD
+	power = 35
+	cooldown = 12 SECONDS
+	size = 0
+	needs_target = FALSE
+	trace = 1
+	icon = "shield"
+
 /datum/netrun_program/strike
 	id = "strike"
 	name = "strike.exe"

@@ -82,9 +82,19 @@
 			"stunned" = hp["stunned"],
 		))
 
-/// Доступные боевые программы в памяти и их готовность.
+/// Доступные боевые программы и их готовность: сперва встроенная атака процесса, затем из памяти.
 /datum/netrun_console/proc/combat_programs()
 	. = list()
+	if(combat_self())
+		for(var/builtin_id in list("sting", "shell"))
+			var/datum/netrun_program/builtin = SSnetrun.get_program(builtin_id)
+			if(!builtin)
+				continue
+			var/list/entry = builtin.ui_entry()
+			entry["uid"] = "builtin:[builtin_id]"
+			entry["builtin"] = TRUE
+			entry["ready_in"] = max(0, round(((program_cd[builtin.id] || 0) - world.time) / (1 SECONDS), 0.1))
+			. += list(entry)
 	for(var/datum/netrun_file/file as anything in all_files())
 		if(file.kind != NETRUN_FILE_PROGRAM)
 			continue
@@ -116,10 +126,19 @@
 /datum/netrun_console/proc/program_use(uid, target_ref)
 	if(is_locked() || world.time < next_command)
 		return FALSE
-	var/datum/netrun_file/file = find_local_file(uid)
-	if(!file || file.kind != NETRUN_FILE_PROGRAM)
-		return FALSE
-	var/datum/netrun_program/program = SSnetrun.get_program(file.content)
+	// Встроенная атака не хранится в файле и не расходуется.
+	var/builtin = findtext("[uid]", "builtin:") == 1
+	var/datum/netrun_file/file
+	var/datum/netrun_program/program
+	if(builtin)
+		program = SSnetrun.get_program(copytext("[uid]", length("builtin:") + 1))
+		if(!program || !combat_self())
+			return FALSE
+	else
+		file = find_local_file(uid)
+		if(!file || file.kind != NETRUN_FILE_PROGRAM)
+			return FALSE
+		program = SSnetrun.get_program(file.content)
 	if(!program)
 		return FALSE
 	if(world.time < (program_cd[program.id] || 0))
