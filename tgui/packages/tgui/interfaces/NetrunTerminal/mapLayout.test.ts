@@ -115,3 +115,51 @@ describe('incremental network graph layout', () => {
     expect(layout.size).toBe(1001);
   });
 });
+
+describe('dynamic large network and reparenting', () => {
+  test('moving a nested branch preserves unchanged coordinates and follows its new host', () => {
+    const cache = createGraphLayoutCache();
+    const tree = [
+      { address: 'APC-1', type: 'apc', uplink: null },
+      { address: 'APC-2', type: 'apc', uplink: null },
+      { address: 'HOST', type: 'camera', uplink: 'APC-1' },
+      { address: 'PERSONAL', type: 'pai', uplink: 'HOST' },
+      { address: 'CHILD', type: 'implant', uplink: 'PERSONAL' },
+      { address: 'STATIC', type: 'camera', uplink: 'APC-1' },
+    ];
+    const links: NetEdge[] = [
+      { id: 'apcs', from: 'APC-1', to: 'APC-2', kind: 'apc' },
+      { id: 'host', from: 'HOST', to: 'APC-1', kind: 'endpoint' },
+      { id: 'personal', from: 'PERSONAL', to: 'HOST', kind: 'endpoint' },
+      { id: 'child', from: 'CHILD', to: 'PERSONAL', kind: 'endpoint' },
+      { id: 'static', from: 'STATIC', to: 'APC-1', kind: 'endpoint' },
+    ];
+    const before = layoutGraph(tree, links, cache);
+    const rebound = tree.map((n) => n.address === 'HOST' ? { ...n, uplink: 'APC-2' } : n);
+    const reboundLinks = links.map((n) => n.id === 'host' ? { ...n, to: 'APC-2' } : n);
+    const after = layoutGraph(rebound, reboundLinks, cache);
+    for (const address of ['APC-1', 'APC-2', 'STATIC']) {
+      expect(after.get(address)).toBe(before.get(address));
+    }
+    for (const address of ['HOST', 'PERSONAL', 'CHILD']) {
+      expect(after.get(address)).not.toEqual(before.get(address));
+    }
+    expect(after.get('HOST').binding).toContain('endpoint:APC-2:');
+    expect(after.get('PERSONAL').binding).toContain('endpoint:HOST:');
+  });
+
+  test('six thousand endpoint nodes remain distinct, and additions preserve existing points', () => {
+    const cache = createGraphLayoutCache();
+    const apc = { address: 'APC', type: 'apc', uplink: null };
+    const clients = Array.from({ length: 6000 }, (_, i) => ({ address: `N${i}`, type: 'terminal', uplink: 'APC' }));
+    const links: NetEdge[] = clients.map((n) => ({ id: n.address, from: 'APC', to: n.address, kind: 'endpoint' }));
+    const before = layoutGraph([apc, ...clients], links, cache);
+    expect(before.size).toBe(6001);
+    const points = new Set([...before.values()].map((p) => `${p.px},${p.py}`));
+    expect(points.size).toBe(before.size);
+    const next = { address: 'NEW', type: 'camera', uplink: 'APC' };
+    const after = layoutGraph([apc, ...clients, next], [...links, { id: 'new', from: 'APC', to: 'NEW', kind: 'endpoint' }], cache);
+    for (const n of [apc, ...clients]) { expect(after.get(n.address)).toBe(before.get(n.address)); }
+    expect(after.get('NEW')).toBeDefined();
+  });
+});

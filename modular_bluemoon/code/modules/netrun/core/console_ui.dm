@@ -267,20 +267,31 @@
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/focus = map_focus_node()
 	var/depth = max(0, map_depth) + (daemon_bonus("mapper") ? 2 : 0)
-	var/list/distances = list()
-	var/list/queue = list()
-	if(focus)
-		distances[focus.address] = 0
-		queue += focus.address
-	for(var/i = 1, i <= length(queue), i++)
-		var/address = queue[i]
-		if(distances[address] >= depth)
-			continue
-		for(var/neighbor in graph.neighbors(address))
-			if(!isnull(distances[neighbor]))
+	// Reuse the structural BFS for a fixed focus/depth/topology. This is only
+	// a list of addresses; online state, visibility and access remain live.
+	var/focus_address = focus?.address
+	var/list/queue
+	if(map_slice_addresses && map_slice_revision == graph.revision && map_slice_focus == focus_address && map_slice_depth == depth)
+		queue = map_slice_addresses
+	else
+		var/list/distances = list()
+		queue = list()
+		if(focus)
+			distances[focus.address] = 0
+			queue += focus.address
+		for(var/i = 1, i <= length(queue), i++)
+			var/address = queue[i]
+			if(distances[address] >= depth)
 				continue
-			distances[neighbor] = distances[address] + 1
-			queue += neighbor
+			for(var/neighbor in graph.neighbors(address))
+				if(!isnull(distances[neighbor]))
+					continue
+				distances[neighbor] = distances[address] + 1
+				queue += neighbor
+		map_slice_addresses = queue
+		map_slice_revision = graph.revision
+		map_slice_focus = focus_address
+		map_slice_depth = depth
 	var/list/shown = list()
 	var/list/map_nodes = list()
 	var/list/networks = list()

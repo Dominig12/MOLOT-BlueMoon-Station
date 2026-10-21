@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
-import { Box, Icon, Stack, Tabs } from '../../components';
+import { Box, Button, Icon, Stack, Tabs } from '../../components';
 import { CombatPanel, IncomingAttacks } from './CombatPanel';
 import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
@@ -28,6 +28,13 @@ export const NetrunContent = () => {
   const { breach, web, windows, window: machineWindow } = data;
   const webAvailable = data.networks.some((n) => n.id === 'web');
   const [bottom, setBottom] = useState<'console' | 'chat' | 'combat'>('console');
+  const [compact, setCompact] = useState(() => window.innerWidth < 860);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 860);
+  useEffect(() => {
+    const resize = () => setCompact(window.innerWidth < 860);
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
   const mapHidden = !!(breach || machineWindow || web);
   const threats = (data.combat?.targets ?? []).filter((t) => t.hostile).length;
   const incomingCount = data.combat?.incoming?.length ?? 0;
@@ -45,8 +52,9 @@ export const NetrunContent = () => {
         display: 'flex',
         flexDirection: 'column',
         boxSizing: 'border-box',
-        overflow: 'auto',
-        padding: '6px',
+        overflow: 'hidden',
+        padding: '8px',
+        gap: '5px',
       }}
     >
       <Header />
@@ -92,40 +100,45 @@ export const NetrunContent = () => {
           ))}
         </Tabs>
       )}
-      <div data-net-layout="workspace" style={{ display: 'flex', flex: '1 1 65%', minHeight: '220px', minWidth: 0, overflow: 'hidden' }}>
-      {breach && <MatrixPanel state={breach} />}
-      {!breach && machineWindow && (
-        <Box style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'auto' }}>
+      <div data-net-layout="workspace" style={{
+        display: 'flex', flex: '1 1 0', minHeight: '210px', minWidth: 0,
+        borderRadius: '7px', overflow: 'hidden', gap: '6px',
+      }}>
+        {breach && <MatrixPanel state={breach} />}
+        {!breach && machineWindow && <Box style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'auto' }}>
           <WindowPanel window={machineWindow} />
-        </Box>
-      )}
-      {!breach && !machineWindow && web && (
-        <Box style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'auto' }}>
+                                     </Box>}
+        {!breach && !machineWindow && web && <Box style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'auto' }}>
           <WebPanel web={web} />
-        </Box>
-      )}
-      <div style={{ display: mapHidden ? 'none' : 'flex', flex: '1 1 auto', width: '100%', minHeight: 0, overflow: 'auto', flexWrap: 'wrap', alignItems: 'stretch', gap: '6px' }}>
-        <div style={{ flex: '2 1 440px', minWidth: 0, minHeight: '220px', height: '100%' }}>
-          <StationMap suspended={mapHidden} />
-        </div>
-          <div
-            style={{
-              width: '280px',
-              minWidth: '240px',
-              maxWidth: '520px',
-              flex: '1 1 280px',
-              height: '100%',
-              minHeight: '220px',
-              resize: 'horizontal',
-              overflow: 'auto',
-            }}
-          >
-            <NodeSidebar suspended={mapHidden} />
+                                             </Box>}
+        <div style={{ display: mapHidden ? 'none' : 'flex', flex: '1 1 auto', minWidth: 0, minHeight: 0,
+          overflow: 'hidden', gap: '7px', alignItems: 'stretch', position: 'relative' }}>
+          <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: '0 0 auto', textAlign: 'right', minHeight: '22px' }}>
+              <Button compact icon={sidebarOpen ? 'angles-right' : 'angles-left'}
+                content={sidebarOpen ? 'Скрыть информацию об узле' : 'Показать информацию об узле'}
+                onClick={() => setSidebarOpen(!sidebarOpen)} />
+            </div>
+            <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}><StationMap suspended={mapHidden} /></div>
           </div>
+          <div data-net-layout="sidebar" style={{
+            display: sidebarOpen ? 'block' : 'none', flex: compact ? 'none' : '0 0 282px',
+            width: compact ? 'min(84%, 310px)' : '282px', position: compact ? 'absolute' : 'relative',
+            right: compact ? 0 : undefined, top: compact ? 0 : undefined,
+            zIndex: compact ? 7 : undefined,
+            minWidth: 0, minHeight: 0, height: '100%', overflowY: 'auto', overflowX: 'hidden',
+            background: '#0d222d', border: `1px solid ${THEME.line}`,
+            borderRadius: '7px', boxSizing: 'border-box',
+          }}><NodeSidebar suspended={mapHidden} />
+          </div>
+        </div>
       </div>
-      </div>
-      <div data-net-layout="bottom" style={{ display: 'flex', flex: '0 1 35%', minHeight: '160px', overflow: 'auto', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
-        <div style={{ flex: '2 1 440px', minWidth: 0, minHeight: '150px', display: 'flex', flexDirection: 'column' }}>
+      <div data-net-layout="bottom" style={{
+        display: 'flex', flex: '0 1 29%', minHeight: '150px', minWidth: 0, overflow: 'hidden',
+        gap: '7px', alignItems: 'stretch',
+      }}>
+        <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column',
+          background: '#0d222d', borderRadius: '7px', border: `1px solid ${THEME.line}`, overflow: 'hidden' }}>
           <Tabs>
             <Tabs.Tab icon="terminal" selected={bottom === 'console'} onClick={() => setBottom('console')}>
               Консоль
@@ -133,22 +146,17 @@ export const NetrunContent = () => {
             <Tabs.Tab icon="comments" selected={bottom === 'chat'} onClick={() => setBottom('chat')}>
               #noosphere
             </Tabs.Tab>
-            {data.combat && (
-              <Tabs.Tab
-                icon="crosshairs"
-                selected={bottom === 'combat'}
-                onClick={() => setBottom('combat')}
-                style={threats ? { color: THEME.bad } : undefined}
-              >
-                Бой{threats ? ` (${threats})` : ''}
-              </Tabs.Tab>
-            )}
+            {data.combat && <Tabs.Tab icon="crosshairs" selected={bottom === 'combat'}
+              onClick={() => setBottom('combat')} style={threats ? { color: THEME.bad } : undefined}>
+              Бой{threats ? ` (${threats})` : ''}
+                            </Tabs.Tab>}
           </Tabs>
-          <div style={{ display: bottom === 'console' ? 'flex' : 'none', flex: '1 1 auto', minHeight: 0 }}><ConsoleLog /></div>
-          <div style={{ display: bottom === 'chat' ? 'flex' : 'none', flex: '1 1 auto', minHeight: 0 }}><NetChat /></div>
-          <div style={{ display: bottom === 'combat' ? 'flex' : 'none', flex: '1 1 auto', minHeight: 0 }}><CombatPanel /></div>
+          <div style={{ display: bottom === 'console' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0, overflow: 'auto' }}><ConsoleLog /></div>
+          <div style={{ display: bottom === 'chat' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0, overflow: 'auto' }}><NetChat /></div>
+          <div style={{ display: bottom === 'combat' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0, overflow: 'auto' }}><CombatPanel /></div>
         </div>
-        <div style={{ flex: '1 1 270px', minWidth: '240px', minHeight: '150px', height: '100%', overflow: 'auto' }}>
+        <div style={{ flex: compact ? '0 0 180px' : '0 0 244px', width: compact ? '180px' : '244px', minWidth: 0, minHeight: 0, overflow: 'auto',
+          background: '#0d222d', borderRadius: '7px', border: `1px solid ${THEME.line}` }}>
           <StoragePanel />
         </div>
       </div>

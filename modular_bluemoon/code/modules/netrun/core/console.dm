@@ -43,6 +43,11 @@
 	var/ping_at = 0
 	/// Neighborhood depth in real graph edges.
 	var/map_depth = 2
+	/// A persistent BFS slice cache: UI polls rebuild statuses but not graph discovery.
+	var/map_slice_revision = -1
+	var/map_slice_focus
+	var/map_slice_depth = -1
+	var/list/map_slice_addresses
 	/// One consistent, request-local topology snapshot during ui_data serialization.
 	var/datum/netrun_path_tree/ui_routes
 	/// Пеленг: адрес целевого узла для навигации
@@ -81,6 +86,7 @@
 	stop_watch()
 	SSnetrun.consoles -= src
 	QDEL_NULL(breach)
+	map_slice_addresses = null
 	QDEL_LIST(storage)
 	set_jack(null)
 	operator = null
@@ -356,6 +362,7 @@
 	node_access.Cut()
 	network_access.Cut()
 	QDEL_NULL(breach)
+	map_slice_addresses = null
 	stop_watch()
 	windows.Cut()
 	active_window = null
@@ -378,6 +385,7 @@
 		if(!breach.valid_target())
 			log_line("Взлом отменён: цель недоступна или переменила сеть.", "bad")
 			QDEL_NULL(breach)
+	map_slice_addresses = null
 		else if(breach.time_left() <= 0)
 			breach.finish()
 		else

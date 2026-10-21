@@ -72,128 +72,206 @@ export const graphPath = (adjacency: Map<string, Set<string>>, from: string, to:
   return [];
 };
 
-const GAP = 76;
+const GAP = 78;
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
-/** Pinned backbone lanes and endpoint slots under their actual APC.
- * Revealing a slice allocates only missing vertices. Rebinding an endpoint
- * moves that endpoint while leaving unrelated cached positions untouched.
+/**
+ * Stable, incremental placement of a topology received from the DM backend.
+ * No station tile coordinates and no time-dependent simulation are involved.
+ *
+ * Re-parenting an endpoint invalidates its placement AND the placement of all
+ * visible descendants; unaffected nodes keep their exact point objects.
+ * A spatial hash keeps collision checks local even for thousands of clients.
  */
 export const layoutGraph = (nodes: LayoutNode[], edges: NetEdge[], cache: GraphLayoutCache) => {
   const byAddress = new Map(nodes.map((node) => [node.address, node]));
   const adjacency = graphAdjacency(nodes, edges);
-  const backbone = new Set(nodes.filter((node) => ['apc', 'gateway', 'relay'].includes(node.type)).map((node) => node.address));
+  const backbone = new Set(nodes.filter((node) => ['apc', 'gateway', 'relay'].includes(node.type)).map((n) => n.address));
+  for (const edge of edges) {
+    if (edge.kind !== 'endpoint' && byAddress.has(edge.from) && byAddress.has(edge.to)) {
+      backbone.add(edge.from); backbone.add(edge.to);
+    }
+  }
   const parents = new Map<string, string>();
   for (const node of nodes) {
-    if (node.uplink && !backbone.has(node.address)) { parents.set(node.address, node.uplink); }
+    if (!backbone.has(node.address) && node.uplink && node.uplink !== node.address) {
+      parents.set(node.address, node.uplink);
+    }
   }
   for (const edge of edges) {
-    if (!byAddress.has(edge.from) || !byAddress.has(edge.to)) { continue; }
-    // Edge endpoints are canonicalized by address, not directed child -> APC.
-    // The authoritative binding may also point outside the current graph slice.
-    if (edge.kind === 'endpoint') {
-      const from = byAddress.get(edge.from);
-      const to = byAddress.get(edge.to);
-      if (from.type === 'apc' && !backbone.has(to.address) && !parents.has(to.address)) { parents.set(to.address, from.address); }
-      if (to.type === 'apc' && !backbone.has(from.address) && !parents.has(from.address)) { parents.set(from.address, to.address); }
+    if (edge.kind !== 'endpoint') { continue; }
+    const first = byAddress.get(edge.from), second = byAddress.get(edge.to);
+    if (!first || !second) { continue; }
+    if (backbone.has(first.address) && !backbone.has(second.address) && !parents.has(second.address)) {
+      parents.set(second.address, first.address);
+    } else if (backbone.has(second.address) && !backbone.has(first.address) && !parents.has(first.address)) {
+      parents.set(first.address, second.address);
     }
-    else { backbone.add(edge.from); backbone.add(edge.to); }
   }
-  const binding = (node: LayoutNode) => {
-    if (backbone.has(node.address)) { return 'backbone'; }
-    const parent = parents.get(node.address) ?? node.uplink ?? '';
-    const anchor = cache.positions.get(parent);
-    return `endpoint:${parent}:${anchor ? `${anchor.px},${anchor.py}` : 'unresolved'}`;
-  };
-  const result = () => new Map(nodes.map((node) => [node.address, cache.positions.get(node.address)]));
-  if (nodes.every((node) => cache.positions.get(node.address)?.binding === binding(node))) { return result(); }
-
+  const addresses = [...byAddress.keys()].sort();
   const buckets = new Map<string, GraphPoint[]>();
-  const cell = (x: number, y: number) => `${Math.floor(x / GAP)},${Math.floor(y / GAP)}`;
-  const insert = (point: GraphPoint) => {
-    const key = cell(point.px, point.py);
-    const bucket = buckets.get(key);
-    if (bucket) { bucket.push(point); } else { buckets.set(key, [point]); }
+  const key = (point: GraphPoint) => `${Math.floor(point.px / GAP)},${Math.floor(point.py / GAP)}`;
+  const occupy = (point: GraphPoint) => {
+    const id = key(point);
+    const list = buckets.get(id);
+    if (list) { list.push(point); } else { buckets.set(id, [point]); }
   };
-  const free = (point: GraphPoint) => {
-    const cx = Math.floor(point.px / GAP);
-    const cy = Math.floor(point.py / GAP);
+  const free = (px: number, py: number) => {
+    const cx = Math.floor(px / GAP), cy = Math.floor(py / GAP);
     for (let dx = -1; dx <= 1; dx++) {
       for (let dy = -1; dy <= 1; dy++) {
         for (const other of buckets.get(`${cx + dx},${cy + dy}`) ?? []) {
-          if (Math.abs(point.px - other.px) < GAP && Math.abs(point.py - other.py) < GAP) { return false; }
+          if (Math.abs(px - other.px) < GAP && Math.abs(py - other.py) < GAP) { return false; }
         }
       }
     }
     return true;
   };
-  for (const point of cache.positions.values()) { insert(point); }
-  const save = (address: string, point: GraphPoint, signature: string) => {
-    cache.positions.set(address, { ...point, binding: signature });
-    insert(point);
-  };
-  const componentOrigin = () => {
-    let point: GraphPoint;
-    do {
-      const slot = cache.nextComponent++;
-      point = { px: 1000 + (slot % 3) * 1280, py: 600 + Math.floor(slot / 3) * 1280 };
-    } while (!free(point));
-    return point;
-  };
-  const backboneSlot = (anchor: GraphPoint, owner: string) => {
-    let slot = cache.backboneSlots.get(owner) ?? 0;
-    let point: GraphPoint;
-    do {
-      const column = Math.floor(slot / 5) + 1;
-      const row = [0, -1, 1, -2, 2][slot % 5];
-      point = { px: anchor.px + column * 320, py: anchor.py + row * 320 };
-      slot++;
-    } while (!free(point));
-    cache.backboneSlots.set(owner, slot);
-    return point;
-  };
-
-  const ordered = [...backbone].sort();
-  const pending = new Set(ordered.filter((address) => cache.positions.get(address)?.binding !== 'backbone'));
-  const queue: string[] = [];
-  for (const address of ordered) {
-    if (!pending.has(address)) { queue.push(...[...(adjacency.get(address) ?? [])].filter((neighbor) => pending.has(neighbor)).sort()); }
-  }
-  let cursor = 0;
-  let root = 0;
-  while (pending.size) {
-    let address: string | undefined;
-    while (cursor < queue.length && !address) {
-      const next = queue[cursor++];
-      if (pending.has(next)) { address = next; }
+  const newPoints = new Map<string, CachedPoint>();
+  const status = new Map<string, boolean>();
+  const inProgress = new Set<string>();
+  // A cached endpoint is stable only if every ancestor and its binding remain stable.
+  // This prepass means old positions of a moved branch cannot obstruct its new home.
+  const isStable = (address: string): boolean => {
+    if (status.has(address)) { return status.get(address); }
+    const node = byAddress.get(address), point = cache.positions.get(address);
+    if (!node || !point || inProgress.has(address)) { status.set(address, false); return false; }
+    if (backbone.has(address)) {
+      const stable = point.binding === 'backbone'; status.set(address, stable); return stable;
     }
-    if (!address) {
-      while (!pending.has(ordered[root])) { root++; }
-      address = ordered[root];
-    }
-    pending.delete(address);
-    const neighbors = [...(adjacency.get(address) ?? [])].filter((neighbor) => backbone.has(neighbor) && !pending.has(neighbor) && cache.positions.has(neighbor)).sort();
-    const anchorAddress = neighbors[0];
-    const anchor = cache.positions.get(anchorAddress);
-    save(address, anchor ? backboneSlot(anchor, anchorAddress) : componentOrigin(), 'backbone');
-    queue.push(...[...(adjacency.get(address) ?? [])].filter((neighbor) => pending.has(neighbor)).sort());
-  }
-  for (const node of [...nodes].sort((a, b) => a.address.localeCompare(b.address))) {
-    if (backbone.has(node.address)) { continue; }
-    const signature = binding(node);
-    if (cache.positions.get(node.address)?.binding === signature) { continue; }
-    const parent = parents.get(node.address) ?? node.uplink ?? '';
+    inProgress.add(address);
+    const parent = parents.get(address) || '';
+    const ancestor = byAddress.has(parent) ? isStable(parent) : !!cache.positions.get(parent);
     const anchor = cache.positions.get(parent);
-    if (!anchor) { save(node.address, componentOrigin(), signature); continue; }
-    let slot = cache.endpointSlots.get(parent) ?? 0;
-    let point: GraphPoint;
-    do {
-      const row = Math.ceil(Math.sqrt(slot + 2) - 1);
-      const column = slot - (row * row - 1) - row;
-      point = { px: anchor.px + column * 96, py: anchor.py + row * 96 };
-      slot++;
-    } while (!free(point));
-    cache.endpointSlots.set(parent, slot);
-    save(node.address, point, signature);
+    const signature = `endpoint:${parent}:${anchor ? `${anchor.px},${anchor.py}` : 'unresolved'}`;
+    const stable = ancestor && point.binding === signature;
+    inProgress.delete(address); status.set(address, stable);
+    return stable;
+  };
+  for (const address of addresses) { isStable(address); }
+  // Retain positions of hidden vertices so exposing a graph slice never
+  // causes an existing endpoint to appear inside a previously hidden node.
+  for (const [address, point] of cache.positions) {
+    if (!byAddress.has(address) || status.get(address)) { occupy(point); }
   }
-  return result();
+  const save = (address: string, px: number, py: number, binding: string) => {
+    const point = { px, py, binding };
+    newPoints.set(address, point);
+    cache.positions.set(address, point);
+    occupy(point);
+    return point;
+  };
+  const origin = (address: string) => {
+    let px = 0, py = 0;
+    while (true) {
+      const slot = cache.nextComponent++;
+      // Square spiral of disconnected components; not a giant straight row.
+      const ring = Math.ceil(Math.sqrt(slot + 1));
+      const angle = slot * GOLDEN_ANGLE;
+      px = Math.round(950 + Math.cos(angle) * ring * 620);
+      py = Math.round(600 + Math.sin(angle) * ring * 620);
+      if (free(px, py)) { return save(address, px, py, 'backbone'); }
+    }
+  };
+  const placed = new Map<string, CachedPoint>();
+  const placeBackbone = (address: string) => {
+    const existing = cache.positions.get(address);
+    if (status.get(address) && existing) { placed.set(address, existing); return; }
+    const neighbors = [...(adjacency.get(address) || [])]
+      .filter((other) => backbone.has(other) && placed.has(other)).sort();
+    const owner = neighbors[0];
+    const anchor = owner && placed.get(owner);
+    if (!anchor) { placed.set(address, origin(address)); return; }
+    let slot = cache.backboneSlots.get(owner) || 0;
+    while (true) {
+      const ring = Math.floor(slot / 8) + 1;
+      const angle = ((slot % 8) / 8) * Math.PI * 2;
+      const px = anchor.px + Math.round(Math.cos(angle) * 320 * ring);
+      const py = anchor.py + Math.round(Math.sin(angle) * 320 * ring);
+      slot++;
+      if (!free(px, py)) { continue; }
+      cache.backboneSlots.set(owner, slot);
+      placed.set(address, save(address, px, py, 'backbone'));
+      return;
+    }
+  };
+  const backboneAddresses = addresses.filter((address) => backbone.has(address));
+  // Place existing components first, then traverse their neighborhood.
+  const queue: string[] = backboneAddresses.filter((address) => status.get(address));
+  for (const address of queue) { placeBackbone(address); }
+  const pending = new Set(backboneAddresses.filter((address) => !status.get(address)));
+  let cursor = 0;
+  while (pending.size) {
+    let next: string | undefined;
+    while (cursor < queue.length && !next) {
+      const anchor = queue[cursor++];
+      next = [...(adjacency.get(anchor) || [])].filter((address) => pending.has(address)).sort()[0];
+      if (next) { break; }
+    }
+    if (!next) { next = [...pending].sort()[0]; }
+    placeBackbone(next); pending.delete(next); queue.push(next);
+  }
+  const placing = new Set<string>();
+  const placeEndpoint = (address: string): CachedPoint => {
+    const known = placed.get(address);
+    if (known) { return known; }
+    const cached = cache.positions.get(address);
+    if (status.get(address) && cached) { placed.set(address, cached); return cached; }
+    // Guard malicious/broken cyclic uplinks (DM normally emits a tree here).
+    if (placing.has(address)) {
+      const px = 950 + cache.nextComponent++ * 300;
+      const point = save(address, px, 900, 'endpoint::unresolved');
+      placed.set(address, point); return point;
+    }
+    placing.add(address);
+    const parent = parents.get(address) || '';
+    const anchor = byAddress.has(parent)
+      ? (backbone.has(parent) ? placed.get(parent) : placeEndpoint(parent))
+      : cache.positions.get(parent);
+    const signature = `endpoint:${parent}:${anchor ? `${anchor.px},${anchor.py}` : 'unresolved'}`;
+    if (!anchor) {
+      // No visible/cached parent: keep deterministic disconnected placement.
+      let slot = cache.nextComponent++;
+      let point: CachedPoint;
+      do {
+        const px = 950 + (slot % 10) * 180;
+        const py = 900 + Math.floor(slot / 10) * 180;
+        if (free(px, py)) { point = save(address, px, py, signature); break; }
+        slot++;
+      } while (true);
+      placing.delete(address); placed.set(address, point); return point;
+    }
+    let slot = cache.endpointSlots.get(parent) || 0;
+    let point: CachedPoint;
+    while (true) {
+      // Golden-angle sunflower: natural branching, nearly uniform density.
+      // Slot zero is directly below its parent for an intuitive first child.
+      const angle = Math.PI / 2 + slot * GOLDEN_ANGLE;
+      const distance = 115 * Math.sqrt(slot + 1);
+      const px = anchor.px + Math.round(Math.cos(angle) * distance);
+      const py = anchor.py + Math.round(Math.sin(angle) * distance);
+      slot++;
+      if (free(px, py)) { point = save(address, px, py, signature); break; }
+    }
+    cache.endpointSlots.set(parent, slot);
+    placing.delete(address); placed.set(address, point);
+    return point;
+  };
+  for (const address of addresses) {
+    if (!backbone.has(address)) { placeEndpoint(address); }
+  }
+  // Hidden slice points remain available for stability, but don't retain
+  // deleted addresses forever on servers creating thousands of ephemeral nodes.
+  if (cache.positions.size > 30000) {
+    for (const address of cache.positions.keys()) {
+      if (!byAddress.has(address)) { cache.positions.delete(address); }
+    }
+    for (const address of cache.endpointSlots.keys()) {
+      if (!cache.positions.has(address)) { cache.endpointSlots.delete(address); }
+    }
+    for (const address of cache.backboneSlots.keys()) {
+      if (!cache.positions.has(address)) { cache.backboneSlots.delete(address); }
+    }
+  }
+  return new Map(addresses.map((address) => [address, placed.get(address)]));
 };

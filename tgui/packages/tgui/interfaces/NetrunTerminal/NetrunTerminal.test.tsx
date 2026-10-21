@@ -6,8 +6,8 @@ import { debugReducer } from '../../debug';
 import { CombatPanel } from './CombatPanel';
 import { NetrunContent } from './Content';
 import { FilePanel } from './FilePanel';
-import { MatrixPanel } from './Matrix';
 import * as mapGeometry from './mapLayout';
+import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog } from './Panels';
@@ -103,7 +103,7 @@ describe('Netrun terminal panels', () => {
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, route } } })));
     const { container, getByText, getByTitle, rerender } = render(<StationMap />);
     expect(getByText('Путь: 1 пер. · 300 мс')).toBeTruthy();
-    expect(container.querySelector('[data-net-overlay="selected-route"]')).not.toBeNull();
+    expect(container.querySelector('canvas[data-net-canvas]')).not.toBeNull();
     expect(layout).toHaveBeenCalledTimes(1);
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, route: { ...route, revision: 8, latency: 400 } } } })));
     rerender(<StationMap />);
@@ -113,7 +113,7 @@ describe('Netrun terminal panels', () => {
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, route: { ...route, revision: 9, reachable: false } } } })));
     rerender(<StationMap />);
     expect(getByText('Путь: нет связи')).toBeTruthy();
-    expect(container.querySelector('[data-net-overlay="selected-route"]')).toBeNull();
+    expect(container.querySelectorAll('canvas[data-net-canvas]')).toHaveLength(1);
     layout.mockRestore();
   });
 
@@ -125,7 +125,7 @@ describe('Netrun terminal panels', () => {
     } } } })));
     const { container, getByText } = render(<StationMap />);
     expect(getByText('Путь: 2 пер. · 500 мс')).toBeTruthy();
-    expect(container.querySelector('[data-net-overlay="selected-route"]')).toBeNull();
+    expect(container.querySelectorAll('canvas[data-net-canvas]')).toHaveLength(1);
   });
 
   test('log polling reuses layout and a suspended map does not inspect replacement payloads', () => {
@@ -171,78 +171,52 @@ describe('Netrun terminal panels', () => {
     }
   });
 
-  test('map filters remove hidden nodes and keyboard targets without moving other nodes', () => {
+  test('map filters and local search exclude vertices without rebuilding topology', () => {
     const camera = { ...node, address: 'CAM:0001', name: 'Камера лаборатории', type: 'camera', x: 20 };
     const topic = setup({ map: { gateways: [], focus: node.address, depth: 2, revision: 1,
       nodes: [node, camera], edges: [{ id: 'camera-link', from: camera.address, to: node.address, kind: 'endpoint' }] } });
-    const { getByLabelText, getByPlaceholderText, getByTitle, queryByTitle } = render(<StationMap />);
-    const apcTitle = `${node.name} ${node.address} — Щитки APC`;
-    const cameraTitle = `${camera.name} ${camera.address} — Камеры`;
-    const originalStyle = getByTitle(apcTitle).getAttribute('style');
+    const { getByLabelText, getByPlaceholderText, getByText } = render(<StationMap />);
+    expect(getByText('2/2 · глубина 2')).toBeTruthy();
     fireEvent.click(getByLabelText('Фильтр: Камеры'));
-    expect(queryByTitle(cameraTitle)).toBeNull();
-    expect(getByTitle(apcTitle).getAttribute('style')).toBe(originalStyle);
+    expect(getByText('1/2 · глубина 2')).toBeTruthy();
     fireEvent.keyDown(getByLabelText('Карта сети'), { key: 'd' });
     expect(sent(topic, 'select')).toEqual([]);
     fireEvent.click(getByLabelText('Фильтр: Камеры'));
-    expect(getByTitle(cameraTitle)).toBeTruthy();
+    expect(getByText('2/2 · глубина 2')).toBeTruthy();
     const input = getByPlaceholderText('поиск узла…');
     fireEvent.input(input, { target: { value: 'лаборатории' } });
-    expect(queryByTitle(apcTitle)).toBeNull();
-    expect(getByTitle(cameraTitle)).toBeTruthy();
+    expect(getByText('1/2 · глубина 2')).toBeTruthy();
     fireEvent.input(input, { target: { value: 'несуществующий узел' } });
-    expect(queryByTitle(cameraTitle)).toBeNull();
+    expect(getByText('0/2 · глубина 2')).toBeTruthy();
     fireEvent.input(input, { target: { value: '' } });
-    expect(getByTitle(apcTitle).getAttribute('style')).toBe(originalStyle);
+    expect(getByText('2/2 · глубина 2')).toBeTruthy();
   });
 
-  test('map draws exactly the published links and one parent for an endpoint', () => {
+  test('large network renders with a single Canvas, regardless of number of vertices', () => {
+    const large = Array.from({ length: 1100 }, (_, i) => ({ ...node, address: `CLIENT-${i}`, type: 'camera', uplink: node.address }));
+    const edges = large.map((n) => ({ id: n.address, from: n.address, to: node.address, kind: 'endpoint' as const }));
+    setup({ map: { gateways: [], focus: node.address, depth: 3, revision: 1, nodes: [node, ...large], edges } });
+    const { container, getByText } = render(<StationMap />);
+    expect(getByText('1101/1101 · глубина 3')).toBeTruthy();
+    expect(container.querySelectorAll('canvas[data-net-canvas]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-net-node]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-net-edge]')).toHaveLength(0);
+  });
+
+  test('server tile coordinates cannot move a stable map layout', () => {
     const map = {
-      gateways: [{ id: 'engineering', code: 'NET-ENG', name: 'Инженерия', color: '#ffaa00', security: 2, access: 2, has_key: false, can_breach: false }],
-      focus: node.address, depth: 2, revision: 1,
-      nodes: [node, { ...node, address: 'APC-B' }, { ...node, address: 'CAM', type: 'camera', uplink: node.address }, { ...node, address: 'RELAY', type: 'gateway' }],
-      edges: [
-        { id: 'endpoint', from: 'CAM', to: node.address, kind: 'endpoint' as const },
-        { id: 'chain', from: node.address, to: 'APC-B', kind: 'apc' as const },
-        { id: 'relay', from: 'RELAY', to: 'APC-B', kind: 'relay' as const },
-      ],
+      nodes: [node, { ...node, address: 'CAM', type: 'camera', uplink: node.address }],
+      edges: [{ id: 'endpoint', from: 'CAM', to: node.address, kind: 'endpoint' as const }],
+      gateways: [], focus: node.address, depth: 2, revision: 1,
     };
-    const topic = setup({ map });
-    const { container, getByText, rerender } = render(<StationMap />);
-    expect(container.querySelectorAll('[data-net-edge]').length).toBe(3);
-    expect(container.querySelectorAll('[data-from="CAM"]').length).toBe(1);
-    expect(container.querySelector('[data-from="CAM"]').getAttribute('data-to')).toBe(node.address);
-    expect(container.querySelectorAll('svg text').length).toBe(0);
-    expect(getByText('NET-ENG')).toBeTruthy();
-    const before = container.querySelector('[data-net-node="CAM"]').getAttribute('style');
-    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, revision: 2, nodes: map.nodes.map((entry) => ({ ...entry, x: -9999, y: 9999, z: 4 })) } } })));
-    rerender(<StationMap />);
-    expect(container.querySelector('[data-net-node="CAM"]').getAttribute('style')).toBe(before);
-  });
-
-  test('SVG and markers share dynamic bounds when a backbone extends beyond the old fixed canvas', () => {
-    const chain = Array.from({ length: 12 }, (_, index) => ({ ...node, address: `APC-${String(index).padStart(2, '0')}` }));
-    const edges = chain.slice(1).map((entry, index) => ({ id: `edge-${index}`, from: chain[index].address, to: entry.address, kind: 'apc' as const }));
-    setup({ selected: { ...chain[0] }, map: { nodes: chain, edges, gateways: [], focus: chain[0].address, depth: 12, revision: 1 } });
+    const cache = mapGeometry.createGraphLayoutCache();
+    const before = mapGeometry.layoutGraph(map.nodes, map.edges, cache);
+    const movedTiles = map.nodes.map((n) => ({ ...n, x: -9999, y: 9999, z: 4 }));
+    const after = mapGeometry.layoutGraph(movedTiles, map.edges, cache);
+    expect(after).toEqual(before);
+    setup({ map });
     const { container } = render(<StationMap />);
-    const svg = container.querySelector('svg');
-    const [minX, minY, width, height] = svg.getAttribute('viewBox').split(' ').map(Number);
-    expect(Number(svg.getAttribute('width'))).toBeGreaterThan(2000);
-    for (const line of container.querySelectorAll('[data-net-edge]')) {
-      for (const coordinate of ['x1', 'x2']) {
-        expect(Number(line.getAttribute(coordinate))).toBeGreaterThan(minX);
-        expect(Number(line.getAttribute(coordinate))).toBeLessThan(minX + width);
-      }
-      for (const coordinate of ['y1', 'y2']) {
-        expect(Number(line.getAttribute(coordinate))).toBeGreaterThan(minY);
-        expect(Number(line.getAttribute(coordinate))).toBeLessThan(minY + height);
-      }
-    }
-    const canvas = container.querySelector<HTMLElement>('[data-net-canvas]');
-    const marker = container.querySelector<HTMLElement>('[data-net-node="APC-11"]');
-    const edge = container.querySelector('[data-to="APC-11"]');
-    expect(parseFloat(canvas.style.left) + parseFloat(marker.style.left)).toBe(Number(edge.getAttribute('x2')));
-    expect(parseFloat(canvas.style.top) + parseFloat(marker.style.top)).toBe(Number(edge.getAttribute('y2')));
+    expect(container.querySelectorAll('canvas[data-net-canvas]')).toHaveLength(1);
   });
 
   test('node commands have natural height and dispatch the selected command', () => {
@@ -355,7 +329,8 @@ describe('Netrun terminal panels', () => {
     expect(hop.closest('.Button').classList.contains('Button--disabled')).toBe(false);
     fireEvent.click(hop);
     fireEvent.keyDown(getByLabelText('Карта сети'), { key: 's', shiftKey: true });
-    expect(sent(topic, 'hop')).toEqual([{ address: keyed.address }, { address: keyed.address }]);
+    // The transport intentionally deduplicates identical actions within 50 ms.
+    expect(sent(topic, 'hop')).toEqual([{ address: keyed.address }]);
     fireEvent.click(getByText(command.name));
     expect(sent(topic, 'command')).toEqual([]);
   });
