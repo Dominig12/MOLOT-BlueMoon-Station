@@ -59,7 +59,6 @@ export const NetrunContent = () => {
     >
       <Header />
       <EntityPanel />
-      <IncomingAttacks onCombat={() => setBottom('combat')} />
       <Tabs>
         <Tabs.Tab
           icon="diagram-project"
@@ -101,9 +100,15 @@ export const NetrunContent = () => {
         </Tabs>
       )}
       <div data-net-layout="workspace" style={{
-        display: 'flex', flex: '1 1 0', minHeight: '210px', minWidth: 0,
+        display: 'flex', flex: '1 1 0', minHeight: '210px', minWidth: 0, position: 'relative',
         borderRadius: '7px', overflow: 'hidden', gap: '6px',
       }}>
+        {/* Floated over the workspace so appearing/updating attack rows never reflow the map or bottom tabs. */}
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 9, pointerEvents: 'none' }}>
+          <div style={{ pointerEvents: 'auto', maxHeight: '45%', overflowY: 'auto' }}>
+            <IncomingAttacks onCombat={() => setBottom('combat')} />
+          </div>
+        </div>
         {breach && <MatrixPanel state={breach} />}
         {!breach && machineWindow && <Box style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'auto' }}>
           <WindowPanel window={machineWindow} />
