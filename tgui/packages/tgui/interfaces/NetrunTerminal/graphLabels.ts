@@ -25,7 +25,7 @@ class LabelOccupancy {
 export const layoutLabels = (nodes: PlacedNode[], view: GraphViewport, width: number, height: number,
   measure: (text: string) => number, priority: (node: PlacedNode) => number,
   textFor: (node: PlacedNode) => string = (node) => node.name): GraphLabel[] => {
-  if (view.zoom < .6) { return []; }
+  if (view.zoom < .5) { return []; }
   const occupied = new LabelOccupancy(), labels: GraphLabel[] = [];
   const radius = GRAPH_GLYPH_RADIUS * view.zoom;
   for (const node of nodes) {
@@ -36,7 +36,7 @@ export const layoutLabels = (nodes: PlacedNode[], view: GraphViewport, width: nu
     const point = view.project(node);
     const original = textFor(node);
     let text = original;
-    while (text.length && measure(text) > 160) { text = text.slice(0, -1); }
+    while (text.length && measure(text) > 200) { text = text.slice(0, -1); }
     if (text !== original) { text = `${text.slice(0, -1)}…`; }
     const labelWidth = measure(text) + 8, labelHeight = 19;
     const offsets = [[-labelWidth / 2, radius + 5], [radius + 5, -labelHeight / 2], [-labelWidth / 2, -radius - 5 - labelHeight], [-radius - 5 - labelWidth, -labelHeight / 2]];

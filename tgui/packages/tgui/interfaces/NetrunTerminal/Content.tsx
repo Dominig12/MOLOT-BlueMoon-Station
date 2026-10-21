@@ -100,7 +100,7 @@ export const NetrunContent = () => {
         </Tabs>
       )}
       <div data-net-layout="workspace" style={{
-        display: 'flex', flex: '1 1 0', minHeight: '210px', minWidth: 0, position: 'relative',
+        display: 'flex', flex: '1 1 0', minHeight: '300px', minWidth: 0, position: 'relative',
         borderRadius: '7px', overflow: 'hidden', gap: '6px',
       }}>
         {/* Floated over the workspace so appearing/updating attack rows never reflow the map or bottom tabs. */}
@@ -139,7 +139,7 @@ export const NetrunContent = () => {
         </div>
       </div>
       <div data-net-layout="bottom" style={{
-        display: 'flex', flex: '0 1 29%', minHeight: '150px', minWidth: 0, overflow: 'hidden',
+        display: 'flex', flex: '0 1 22%', minHeight: '128px', minWidth: 0, overflow: 'hidden',
         gap: '7px', alignItems: 'stretch',
       }}>
         <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column',

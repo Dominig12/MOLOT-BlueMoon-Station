@@ -22,7 +22,7 @@ export const graphAdjacency = (nodes: LayoutNode[], edges: NetEdge[]) => {
   return adjacency;
 };
 
-export const GRAPH_GAP = 96;
+export const GRAPH_GAP = 128;
 /** Shape, stroke, status badges and rings all remain inside this world-space radius. */
 export const GRAPH_GLYPH_RADIUS = 24;
 const key = (p: GraphPoint) => `${p.px},${p.py}`;

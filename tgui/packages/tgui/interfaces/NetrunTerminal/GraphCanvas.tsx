@@ -80,7 +80,7 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   const tooltipNode = tooltip ? scene.byAddress.get(tooltip.address) : null;
   return (
     <div ref={container} data-net-viewport role="application" aria-label="Карта сети"
-      style={{ position: 'relative', flex: '1 1 auto', minHeight: '140px', minWidth: 0, overflow: 'hidden', touchAction: 'none', cursor: 'grab', outline: 'none' }}
+      style={{ position: 'relative', flex: '1 1 auto', minHeight: '190px', minWidth: 0, overflow: 'hidden', touchAction: 'none', cursor: 'grab', outline: 'none' }}
       tabIndex={0}
       onPointerDown={(event) => {
         if (event.button !== 0) { return; }
