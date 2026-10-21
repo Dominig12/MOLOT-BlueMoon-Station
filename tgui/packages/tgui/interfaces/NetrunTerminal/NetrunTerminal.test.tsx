@@ -214,8 +214,10 @@ describe('Netrun terminal panels', () => {
     const rows = [...files.querySelectorAll<HTMLElement>('[data-net-file-row]')];
     expect(rows.length).toBe(2);
     for (const row of rows) {
-      expect(row.style.gridTemplateColumns).toBe('minmax(0, 1fr) 28px');
-      expect(row.querySelector<HTMLElement>('[data-net-file-actions]').style.gridTemplateColumns).toBe('28px');
+      // Actions sit in a horizontal flex row, not a vertical column.
+      const actions = row.querySelector<HTMLElement>('[data-net-file-actions]');
+      expect(actions.style.display).toBe('flex');
+      expect(actions.style.flexWrap).toBe('wrap');
     }
   });
 

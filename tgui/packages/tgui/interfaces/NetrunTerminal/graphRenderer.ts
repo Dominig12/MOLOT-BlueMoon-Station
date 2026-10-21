@@ -39,7 +39,8 @@ export class GraphRenderer {
     // One stroke per style prevents shared fanout trunks from accumulating opacity thousands of times.
     for (const group of groups.values()) {
       // Endpoint links are straight spokes from their APC: spokes sharing a hub never cross.
-      const segment = group.kind === 'endpoint' ? straight : elbow;
+      // A selected node's links are drawn with the classic right-angle elbow highlight instead.
+      const segment = group.selected ? elbow : group.kind === 'endpoint' ? straight : elbow;
       ctx.beginPath();
       let relayIndex = 0;
       for (const edge of group.edges) {

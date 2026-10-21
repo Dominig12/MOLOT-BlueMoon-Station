@@ -240,6 +240,16 @@ export const NodePanel = () => {
           onClick={() => act('hop', { address: selected.address })}
         />
       )}
+      {data.entity && data.entity.host !== selected.address && (
+        <Button
+          mt={1}
+          ml={1}
+          icon="route"
+          content="Пройти к узлу"
+          tooltip="Автопроход шаг за шагом по уже открытым узлам (online и с доступом пользователя или ключом) до выбранного."
+          onClick={() => act('travel', { address: selected.address })}
+        />
+      )}
       {can_breach && selected.access < 3 && (
         <Button
           mt={1}
@@ -278,20 +288,16 @@ const RemoteFile = (props: { file: NetFile; root: boolean }) => {
   const { act, data } = useBackend<NetrunData>();
   const { file, root } = props;
   return (
-    <Box mb={0.5} p={0.5} data-net-file-row="remote" style={{ fontFamily: 'monospace', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 28px', alignItems: 'start', gap: '8px', borderBottom: `1px solid ${THEME.line}` }}>
+    <Box mb={0.5} p={0.5} data-net-file-row="remote" style={{ fontFamily: 'monospace', borderBottom: `1px solid ${THEME.line}` }}>
       <Box style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
         <Icon name={fileIcon(file.kind)} mr={1} />
         {file.name}
-      <Box color={THEME.muted}>
-        [{file.size}]
+        <Box inline ml={1} color={THEME.muted}>[{file.size}]</Box>
       </Box>
-      </Box>
-      <Box data-net-file-actions="remote" style={{ display: 'grid', gridTemplateColumns: '28px', gridAutoRows: '24px', gap: '3px' }}>
-        <div>
+      <Box data-net-file-actions="remote" mt={0.5} style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
         {file.kind === 'text' && (
           <Button compact icon="eye" tooltip="Прочитать" onClick={() => act('read', { uid: file.uid })} />
         )}
-        </div>
         <Button compact icon="download" tooltip="Скачать" onClick={() => act('download', { uid: file.uid })} />
         {data.shard && (
           <Button

@@ -13,6 +13,8 @@
 	var/integrity = 100
 	var/max_integrity = 100
 	var/next_hop = 0
+	/// Очередь адресов автопрохода (travel_to): шагаем по ней по таймеру.
+	var/list/travel_queue
 	// Боевые состояния
 	var/combat_stun_until = 0
 	var/combat_shield_until = 0
@@ -52,8 +54,8 @@
 	if(!client)
 		return
 	to_chat(src, span_notice("Вы — процесс в сети станции. Мир виден через доступную оптику: камеры, киберглаза и взломанные HUD-очки. \
-		В окне устройства включите «Смотреть». Говорить и слышать можно через интеркомы — включите микрофон или динамик. Стрелки — переход \
-		к ближайшему узлу, кнопка «Сеть» открывает карту, взлом и переходы."))
+		В окне устройства включите «Смотреть». Говорить и слышать можно через интеркомы — включите микрофон или динамик. Кнопка «Сеть» \
+		открывает карту; переходы между узлами — Shift+WASD по положению на карте (наведя фокус на карту)."))
 	INVOKE_ASYNC(console, TYPE_PROC_REF(/datum, ui_interact), src)
 	update_vision()
 
@@ -132,27 +134,67 @@
 	enter_node(node)
 	return TRUE
 
-/mob/camera/netrun_entity/Move(NewLoc, direct)
-	if(!direct || !host_node?.network)
-		return FALSE
-	var/turf/here = get_turf(host_node.parent)
-	var/datum/component/netrun_node/best
-	var/best_dist = INFINITY
+/// Путь из соседних узлов, в каждый из которых процесс может войти (online + USER/ключ).
+/mob/camera/netrun_entity/proc/enterable_path(datum/component/netrun_node/target)
+	if(QDELETED(target) || !host_node)
+		return list()
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	for(var/address in graph.neighbors(host_node.address))
-		var/datum/component/netrun_node/node = graph.nodes[address]
-		var/turf/there = get_turf(node.parent)
-		if(!there || there.z != here.z || there == here)
-			continue
-		var/dist = get_dist(here, there)
-		if(dist >= best_dist || !(get_dir(here, there) & direct))
-			continue
-		if(!can_enter(node))
-			continue
-		best = node
-		best_dist = dist
-	if(best)
-		hop(best)
+	var/list/visited = list()
+	visited[host_node.address] = TRUE
+	var/list/came_from = list()
+	var/list/queue = list(host_node.address)
+	for(var/i = 1, i <= length(queue) && i <= 200, i++)
+		var/address = queue[i]
+		if(address == target.address)
+			var/list/path = list()
+			var/cursor = address
+			while(cursor && cursor != host_node.address)
+				path.Insert(1, cursor)
+				cursor = came_from[cursor]
+			return path
+		var/datum/component/netrun_node/current = graph.nodes[address]
+		for(var/neighbor in graph.neighbors(address))
+			if(visited[neighbor])
+				continue
+			var/datum/component/netrun_node/node = graph.nodes[neighbor]
+			if(QDELETED(node) || !netrun_link_available(current, node) || !node.is_online())
+				continue
+			if(console.node_level(node) < NETRUN_ACCESS_USER && !console.has_key(node.network, TRUE))
+				continue
+			visited[neighbor] = TRUE
+			came_from[neighbor] = address
+			queue += neighbor
+	return list()
+
+/// Автопроход по уже открытому пути: шаг за шагом к выбранному узлу.
+/mob/camera/netrun_entity/proc/travel_to(datum/component/netrun_node/target)
+	if(QDELETED(target) || target == host_node || !host_node || console.is_locked())
+		return FALSE
+	var/list/path = enterable_path(target)
+	if(!length(path))
+		return FALSE
+	travel_queue = path
+	travel_step()
+	return TRUE
+
+/mob/camera/netrun_entity/proc/travel_step()
+	if(!length(travel_queue) || QDELETED(src))
+		return
+	var/datum/component/netrun_node/next = SSnetrun.find_node(travel_queue[1])
+	travel_queue.Cut(1, 2)
+	if(!hop(next))
+		travel_queue = null
+		to_chat(src, span_warning("Автопроход прерван: следующий узел недоступен."))
+		return
+	if(length(travel_queue))
+		addtimer(CALLBACK(src, PROC_REF(travel_step)), 1.1 SECONDS)
+	else
+		to_chat(src, span_notice("Автопроход завершён."))
+
+/mob/camera/netrun_entity/Move(NewLoc, direct)
+	// Перемещение по сети идёт по положению узлов НА КАРТЕ, а не по их физическим
+	// координатам в мире. Раскладка карты известна только клиенту, поэтому WASD/переходы
+	// обрабатывает интерфейс карты (Shift+WASD), а не мировое движение камеры.
 	return FALSE
 
 /mob/camera/netrun_entity/forceMove(atom/destination)
@@ -441,6 +483,10 @@
 			var/datum/component/netrun_node/dest = SSnetrun.find_node(params["address"])
 			if(!entity.hop(dest))
 				log_line(entity.hop_denial(dest), "bad")
+			return TRUE
+		if("travel")
+			if(!entity.travel_to(SSnetrun.find_node(params["address"])))
+				log_line("Автопроход невозможен: нет открытого пути к узлу.", "bad")
 			return TRUE
 		if("return")
 			entity.return_to_body()
