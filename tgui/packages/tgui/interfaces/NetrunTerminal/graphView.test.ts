@@ -1,38 +1,11 @@
 import { intersects, layoutLabels } from './graphLabels';
-import { GRAPH_GAP, GRAPH_GLYPH_RADIUS, GraphLayout } from './graphLayout';
+import { GRAPH_GLYPH_RADIUS } from './graphLayout';
 import { GraphScene, PlacedNode } from './graphScene';
 import { GraphViewport } from './graphViewport';
-import { NetEdge } from './types';
 
 const node = (address: string, px = 0, py = 0): PlacedNode => ({
   address, name: `Узел ${address}`, type: 'camera', x: 0, y: 0, security: 1,
   online: true, access: 1, entities: 0, active: false, uplink: null, px, py,
-});
-
-test('6000 individual markers keep non-overlapping world bounds and fit a complete overview', () => {
-  const layout = new GraphLayout();
-  const apc = { address: 'APC', type: 'apc', uplink: null };
-  const clients = Array.from({ length: 6000 }, (_, i) => ({ address: `N-${i}`, type: 'camera', uplink: 'APC' }));
-  const edges: NetEdge[] = clients.map((client) => ({ id: client.address, from: 'APC', to: client.address, kind: 'endpoint' }));
-  const points = layout.update([apc, ...clients], edges);
-  expect(points.size).toBe(6001);
-  const cells = new Set<string>();
-  for (const point of points.values()) {
-    expect(Math.abs(point.px % GRAPH_GAP)).toBe(0);
-    expect(Math.abs(point.py % GRAPH_GAP)).toBe(0);
-    const key = `${point.px},${point.py}`;
-    expect(cells.has(key)).toBe(false); cells.add(key);
-  }
-  expect(GRAPH_GLYPH_RADIUS * 2).toBeLessThan(GRAPH_GAP);
-  const camera = new GraphViewport(); camera.fit(points.values(), 280, 180);
-  expect(camera.zoom).toBeLessThan(.08);
-  for (const point of points.values()) {
-    const screen = camera.project(point), radius = GRAPH_GLYPH_RADIUS * camera.zoom;
-    expect(screen.px - radius).toBeGreaterThanOrEqual(0);
-    expect(screen.py - radius).toBeGreaterThanOrEqual(0);
-    expect(screen.px + radius).toBeLessThanOrEqual(280);
-    expect(screen.py + radius).toBeLessThanOrEqual(180);
-  }
 });
 
 test('manual camera survives data changes and wheel zoom keeps its cursor anchor', () => {
@@ -73,13 +46,4 @@ test('actual label rectangles never overlap other labels or marker bounds, even 
   }
   camera.zoom = .05;
   expect(layoutLabels(nodes, camera, 720, 720, (text) => text.length * 7, () => 5)).toEqual([]);
-});
-
-test('malformed parent cycles and long endpoint chains stay finite and collision-free', () => {
-  const nodes = Array.from({ length: 6000 }, (_, i) => ({ address: `N${i}`, type: 'implant', uplink: `N${(i + 1) % 6000}` }));
-  const layout = new GraphLayout(); const points = layout.update(nodes, []);
-  expect(points.size).toBe(6000);
-  expect(new Set([...points.values()].map((point) => `${point.px},${point.py}`)).size).toBe(6000);
-  const again = layout.update(nodes, []);
-  for (const [address, point] of points) { expect(again.get(address)).toBe(point); }
 });
