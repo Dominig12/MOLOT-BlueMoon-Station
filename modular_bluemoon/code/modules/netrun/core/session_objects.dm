@@ -35,6 +35,8 @@
 	var/datum/netrun_console/owner
 	var/list/node_access = list()
 	var/list/network_access = list()
+	/// Адреса серверов сообщений, чей пароль уже извлечён этой сессией (разведданные, не грант).
+	var/list/server_passwords = list()
 
 /datum/netrun_access_session/New(datum/netrun_console/owner)
 	src.owner = owner
@@ -44,6 +46,7 @@
 	UnregisterSignal(SSnetrun, COMSIG_NETRUN_FIREWALL_CHANGED)
 	node_access.Cut()
 	network_access.Cut()
+	server_passwords.Cut()
 	owner = null
 	return ..()
 

@@ -127,6 +127,22 @@
 	bonus = 1
 	loot_weight = 0.2
 
+/datum/netrun_daemon/phantom
+	id = "phantom"
+	name = "phantom.exe"
+	desc = "Удлиняет окно «след потерян» после заметания следов: лёд дольше не перезахватывает процесс. Копии не усиливают эффект."
+	size = 3
+	bonus_kind = "phantom"
+	bonus = 1
+
+/datum/netrun_daemon/siphon
+	id = "siphon"
+	name = "siphon.exe"
+	desc = "Открывает команду массового слива: за один запрос копирует все читаемые файлы узла в память."
+	size = 3
+	bonus_kind = "siphon"
+	bonus = 1
+
 /// Guaranteed progress replaces the puzzle, not route/access validation or ICE.
 /datum/netrun_daemon/autobreach
 	id = "autobreach"
@@ -169,6 +185,16 @@
 	icon_state = "datadisk2"
 	preload_daemons = list("mapper")
 
+/obj/item/netrun_shard/phantom
+	name = "data shard (phantom.exe)"
+	icon_state = "datadisk2"
+	preload_daemons = list("phantom")
+
+/obj/item/netrun_shard/siphon
+	name = "data shard (siphon.exe)"
+	icon_state = "datadisk2"
+	preload_daemons = list("siphon")
+
 /obj/item/netrun_shard/skeleton
 	name = "data shard (skeleton.exe)"
 	desc = "Шард с редкой программой-отмычкой. Военного образца."
@@ -180,3 +206,48 @@
 	desc = "Набор программ опытного сетевика: буфер, разведка, разгон и заметание следов."
 	icon_state = "datadisk3"
 	preload_daemons = list("buffer", "icepick", "cloak", "mapper", "overclock", "scrub")
+
+// MARK: Лорные документы
+
+/// Пул архивных документов, которые раскладываются по серверам станции в начале раунда.
+/// Формат: list(имя_файла, текст).
+/proc/netrun_lore_documents()
+	return list(
+		list("служебная_записка.txt", "Кому: всем отделам. От: ИТ-службы.\n\nНапоминаем: передача ключей доступа ЛВС по открытым каналам запрещена. \
+			Инциденты последней недели (несанкционированные переходы в инженерной подсети) расследуются. Смените коды доступа."),
+		list("инцидент_0x4F.log", "АВТО-ОТЧЁТ СИСТЕМЫ ЗАЩИТЫ\nОбнаружен резидентный процесс в сегменте связи. Трассировка прервана: цель заместила следы. \
+			Патрульный процесс перенаправлен. Рекомендована ротация ключей."),
+		list("заметка.txt", "Если читаешь это — значит, добрался до сервера. Не доверяй \"официальным\" логам переговоров, их чистят. \
+			Настоящие копии я держу отдельно. Ищи шард с пометкой \"архив\"."),
+		list("протокол_резервирования.txt", "Серверы данных реплицируют техвеб раз в смену. При потере узла восстановление — с ближайшего реле. \
+			Пароль сервера сообщений хранится локально; при компрометации сбросить вручную."),
+		list("черновик_приказа.txt", "ПРОЕКТ. В связи с участившимися сетевыми вторжениями ввести патрулирование подсетей автономными процессами защиты (ICE). \
+			Санкционировать уничтожение неопознанных резидентных процессов."),
+		list("личный_дневник.txt", "День сорок второй в сети. Тело давно остыло, а я всё ещё здесь, между узлами. \
+			Говорят, если заместать следы достаточно часто, тебя перестанут искать. Пока работает."),
+		list("техзаметка.txt", "ЛВС теперь кластеризованы по отделам: один ключ открывает весь отдел. \
+			Удобно для нас, удобно и для них. Держите ключи при себе."),
+		list("перехват.txt", "...получено с сервера сообщений...\n\[ЗАШИФРОВАНО\]\nДля расшифровки нужен пароль сервера. Без него — только метаданные."),
+	)
+
+/// Разовая раскладка лорных документов по случайным серверным/терминальным узлам.
+/datum/controller/subsystem/netrun/proc/initialize_lore()
+	lore_initialized = TRUE
+	var/list/pool = netrun_lore_documents()
+	if(!length(pool))
+		return
+	var/list/hosts = list()
+	for(var/address in nodes_by_address)
+		var/datum/component/netrun_node/node = nodes_by_address[address]
+		if(QDELETED(node) || QDELETED(node.parent) || !node.file_store)
+			continue
+		if(node.node_type == NETRUN_NODE_SERVER || node.node_type == NETRUN_NODE_TERMINAL)
+			hosts += node
+	var/placed = 0
+	while(placed < NETRUN_MAX_LORE_FILES && length(hosts) && length(pool))
+		var/datum/component/netrun_node/node = pick_n_take(hosts)
+		var/list/doc = pick_n_take(pool)
+		var/datum/netrun_file/file = new(doc[1], NETRUN_FILE_TEXT, doc[2], 0)
+		node.file_store.insert(file, TRUE)
+		node.add_log("В хранилище обнаружен архивный документ: [doc[1]].")
+		placed++

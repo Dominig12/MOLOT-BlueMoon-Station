@@ -67,6 +67,10 @@
 // Враждебные процессы (ICE)
 #define NETRUN_ICE_SENTRY "sentry"
 #define NETRUN_ICE_HUNTER "hunter"
+/// Сколько персистентных патрульных процессов поднимается в начале раунда
+#define NETRUN_MAX_PATROLS 5
+/// Сколько лорных документов раскладывается по серверам станции в начале раунда
+#define NETRUN_MAX_LORE_FILES 8
 
 /// События расширений: источник сигнала — сущность или её консоль.
 #define COMSIG_NETRUN_ENTITY_NODE_CHANGED "netrun_entity_node_changed"
@@ -102,6 +106,8 @@
 #define NETRUN_TRACE_DECAY 0.5
 /// Блокировка точки подключения после полной трассировки
 #define NETRUN_TRACE_LOCKOUT (1 MINUTES)
+/// Окно «след потерян» после заметания следов: лёд не атакует и не перезахватывает цель
+#define NETRUN_DISENGAGE_GRACE (8 SECONDS)
 
 #define NETRUN_MAX_LOG 60
 #define NETRUN_MAX_CONSOLE_LOG 40

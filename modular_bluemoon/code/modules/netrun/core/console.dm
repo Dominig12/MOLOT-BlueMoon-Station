@@ -154,6 +154,13 @@
 /datum/netrun_console/proc/has_key(datum/netrun_network/network, fresh = FALSE)
 	return access_session.has_key(network, fresh)
 
+/// Пароль сервера сообщений — разведданные сессии: добывается взломом, открывает чтение сообщений.
+/datum/netrun_console/proc/knows_server_password(address)
+	return !isnull(access_session.server_passwords[address])
+
+/datum/netrun_console/proc/learn_server_password(address)
+	access_session.server_passwords[address] = TRUE
+
 /datum/netrun_access_session/proc/has_key(datum/netrun_network/network, fresh = FALSE)
 	if(!network)
 		return FALSE
@@ -400,26 +407,32 @@
 
 /datum/netrun_intrusion_session/proc/traced()
 	trace = 0
-	lockout_until = world.time + NETRUN_TRACE_LOCKOUT
-	owner.access_session.node_access.Cut()
-	owner.access_session.network_access.Cut()
 	QDEL_NULL(breach)
 	owner.map_view.invalidate()
-	owner.stop_watch()
-	owner.remote_session.windows.Cut()
-	owner.remote_session.active_window = null
 	var/where = get_area_name(owner.host, TRUE) || "неизвестно"
-	owner.log_line("ВАС ОТСЛЕДИЛИ. Соединение разорвано.", "bad")
 	SSnetrun.post_event("trace", null, owner.map_view.selected_address)
 	SSnetrun.ntnet_log("Нарушитель отслежен: точка [owner.origin], район: [where].", TRUE)
 	for(var/network_id in SSnetrun.networks)
 		var/datum/netrun_network/network = SSnetrun.networks[network_id]
 		if(!network.isolated)
 			network.add_log("Трассировка завершена: нарушитель в районе [where].")
-	// Система защиты высылает охотника к точке, откуда шло вторжение.
-	var/datum/component/netrun_node/near = owner.route_source()
-	if(near)
-		SSnetrun.dispatch_hunter(near)
+	var/mob/camera/netrun_entity/entity = owner.combat_self()
+	if(istype(entity))
+		// Сущность живёт в сети: её не выбрасывает, но защита поднимается и идёт к её узлу.
+		owner.log_line("ВАС ОБНАРУЖИЛИ! Заметайте следы, иначе процессы защиты доберутся до вас.", "bad")
+		SSnetrun.alert_defenses(entity.host_node, owner)
+	else
+		// Удалённая точка подключения: трассировка рвёт соединение и блокирует точку.
+		lockout_until = world.time + NETRUN_TRACE_LOCKOUT
+		owner.access_session.node_access.Cut()
+		owner.access_session.network_access.Cut()
+		owner.stop_watch()
+		owner.remote_session.windows.Cut()
+		owner.remote_session.active_window = null
+		owner.log_line("ВАС ОТСЛЕДИЛИ. Соединение разорвано.", "bad")
+		var/datum/component/netrun_node/near = owner.route_source()
+		if(near)
+			SSnetrun.dispatch_hunter(near)
 	owner.host?.netrun_traced(owner)
 
 /datum/netrun_console/proc/process_tick(delta)
@@ -542,7 +555,8 @@
 		owner.log_line("Взлом завершён: [finished.target_name], уровень [netrun_access_name(reward)].", "good")
 		if(clean)
 			trace = 0
-			owner.log_line("Следы заметены.", "good")
+			owner.disengage_combat()
+			owner.log_line("Следы заметены: трассировка сброшена, бой разорван.", "good")
 	qdel(finished)
 
 // MARK: Файлы

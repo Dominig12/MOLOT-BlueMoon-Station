@@ -28,21 +28,9 @@ SUBSYSTEM_DEF(netrun)
 		currentrun = consoles.Copy()
 		currentnodes = nodes_by_address.Copy()
 		currentice = ice_processes.Copy()
-	// Вложенный предмет не получает MOVED при перемещении носителя. Сверяем топологию
-	// независимо от открытых интерфейсов, не создавая сигнал на каждом контейнере.
-	while(length(currentnodes))
-		var/address = currentnodes[length(currentnodes)]
-		var/datum/component/netrun_node/node = currentnodes[address]
-		currentnodes.len--
-		if(!QDELETED(node))
-			node.join_network()
-			node.reconcile_state()
-		if(MC_TICK_CHECK)
-			return
-	// Publish new endpoints and carrier movement even when nobody opens a map.
-	// Active display routes are server-owned; execution still checks a fresh path.
-	ensure_topology().refresh_route_tables()
 	var/delta = wait / (1 SECONDS)
+	// Combat and open sessions go first: a heavy node sync must never starve ICE reactions
+	// or UI refresh, or a one-second fight would stretch to several real seconds under load.
 	while(length(currentice))
 		var/datum/netrun_ice/ice = currentice[length(currentice)]
 		currentice.len--
@@ -59,6 +47,26 @@ SUBSYSTEM_DEF(netrun)
 			console.flush_ui()
 		if(MC_TICK_CHECK)
 			return
+	// Вложенный предмет не получает MOVED при перемещении носителя. Сверяем топологию
+	// независимо от открытых интерфейсов, не создавая сигнал на каждом контейнере.
+	// Это односекундная сверка - она может безопасно уступить тик боевой части выше.
+	while(length(currentnodes))
+		var/address = currentnodes[length(currentnodes)]
+		var/datum/component/netrun_node/node = currentnodes[address]
+		currentnodes.len--
+		if(!QDELETED(node))
+			node.join_network()
+			node.reconcile_state()
+		if(MC_TICK_CHECK)
+			return
+	// Publish new endpoints and carrier movement even when nobody opens a map.
+	// Active display routes are server-owned; execution still checks a fresh path.
+	ensure_topology().refresh_route_tables()
+	// One-time passive patrol and lore seeding once the round's networks are populated.
+	if(!patrol_initialized && length(networks))
+		initialize_patrol()
+	if(!lore_initialized && length(nodes_by_address))
+		initialize_lore()
 
 /datum/controller/subsystem/netrun/proc/get_network(id)
 	if(!id)
@@ -83,20 +91,22 @@ SUBSYSTEM_DEF(netrun)
 		result.rebuild()
 	return result
 
-/// Keys belong to a particular APC, even when multiple APCs serve the same native area.
+/// ЛВС кластеризуется по отделу внутри физического сектора: все APC одного отдела делят
+/// одну сеть, ключ и защиту (= максимум среди узлов). Один ключ открывает весь отдел.
 /datum/controller/subsystem/netrun/proc/get_apc_network(datum/component/netrun_node/apc_node)
 	if(QDELETED(apc_node) || apc_node.node_type != NETRUN_NODE_APC)
 		return null
-	var/id = "apc_[apc_node.address]"
+	var/area/source_area
+	if(istype(apc_node.parent, /obj/machinery/power/apc))
+		var/obj/machinery/power/apc/apc = apc_node.parent
+		source_area = apc.area
+	if(!source_area)
+		source_area = get_area(apc_node.parent)
+	source_area = source_area?.base_area || source_area
+	var/sector = netrun_sector_for(get_turf(apc_node.parent))
+	var/id = "dept_[sector || "none"]:[netrun_department_key(source_area)]"
 	var/datum/netrun_network/network = networks[id]
 	if(!network)
-		var/area/source_area
-		if(istype(apc_node.parent, /obj/machinery/power/apc))
-			var/obj/machinery/power/apc/apc = apc_node.parent
-			source_area = apc.area
-		if(!source_area)
-			source_area = get_area(apc_node.parent)
-		source_area = source_area?.base_area || source_area
 		network = new(id, source_area)
 		networks[id] = network
 	return network

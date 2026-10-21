@@ -35,6 +35,8 @@
 	/// Для "sequence": порядок ячеек, которые надо нажать, и сколько уже пройдено
 	var/list/order = list()
 	var/progress = 0
+	/// Для "sequence": сколько нажатий даёт USER (чекпоинт); полный порядок даёт ROOT.
+	var/user_goal = 0
 
 /datum/netrun_breach/New(datum/netrun_console/console, target_kind, target_id, target_name, security)
 	src.console = console
@@ -161,7 +163,10 @@
 	for(var/i in 1 to size * size)
 		matrix += pick(codes)
 		used += FALSE
-	var/seq_len = clamp(3 + security, 3, 7)
+	// Чекпоинт USER нажатий, затем ещё несколько ячеек до ROOT: быстрый взломщик берёт ROOT,
+	// медленный (по истечении времени) сохраняет уже полученный USER.
+	user_goal = clamp(3 + security, 3, 7)
+	var/seq_len = min(size * size, user_goal + 2)
 	var/list/pool = list()
 	for(var/i in 1 to size * size)
 		pool += i
@@ -171,12 +176,14 @@
 		var/cell = pick(pool)
 		pool -= cell
 		order += cell
-	var/reward = NETRUN_ACCESS_USER
-	var/goal_name = "ТРАССИРОВКА"
+	user_goal = min(user_goal, length(order))
+	var/user_name = "ДОСТУП"
+	var/user_reward = NETRUN_ACCESS_USER
 	if(target_kind == "node" && console.daemon_bonus("skeleton"))
-		reward = NETRUN_ACCESS_ROOT
-		goal_name = "ОТМЫЧКА"
-	daemons += list(list("name" = goal_name, "reward" = reward, "sequence" = list(), "done" = FALSE))
+		user_name = "ОТМЫЧКА"
+		user_reward = NETRUN_ACCESS_ROOT
+	daemons += list(list("name" = user_name, "reward" = user_reward, "sequence" = list(), "done" = FALSE))
+	daemons += list(list("name" = "ROOT", "reward" = NETRUN_ACCESS_ROOT, "sequence" = list(), "done" = FALSE))
 	daemons += list(list("name" = "ЗАМЕСТИ СЛЕДЫ", "reward" = 0, "sequence" = list(), "done" = FALSE))
 
 /datum/netrun_breach/proc/choose_sequence(index)
@@ -188,10 +195,12 @@
 		return FALSE
 	used[index] = TRUE
 	progress++
-	if(progress >= length(order))
+	if(progress >= user_goal)
 		daemons[1]["done"] = TRUE
-		if(time_left() >= 12 SECONDS)
-			daemons[2]["done"] = TRUE
+	if(progress >= length(order))
+		daemons[2]["done"] = TRUE
+		if(time_left() >= 10 SECONDS)
+			daemons[3]["done"] = TRUE
 		finish()
 	return TRUE
 

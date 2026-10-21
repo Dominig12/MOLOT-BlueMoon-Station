@@ -148,6 +148,19 @@
 	trace = 4
 	icon = "ban"
 
+/datum/netrun_program/emp
+	id = "emp"
+	name = "emp.card"
+	desc = "Одноразовый ЭМИ-разряд: долгое оглушение цели. Сгорает после запуска, заметный след."
+	help = "Карточка расходуется при применении."
+	role = NETRUN_PROGRAM_STUN
+	power = 6 SECONDS
+	cooldown = 1 SECONDS
+	size = 3
+	consumable = TRUE
+	trace = 8
+	icon = "bolt-lightning"
+
 /datum/netrun_program/barrier
 	id = "barrier"
 	name = "barrier.exe"
@@ -159,6 +172,18 @@
 	needs_target = FALSE
 	trace = 2
 	icon = "shield-halved"
+
+/datum/netrun_program/fortify
+	id = "fortify"
+	name = "fortify.exe"
+	desc = "Тяжёлый защитный контур: входящий урон меньше на две трети на 5 секунд. Долгая перезарядка."
+	role = NETRUN_PROGRAM_SHIELD
+	power = 65
+	cooldown = 14 SECONDS
+	size = 4
+	needs_target = FALSE
+	trace = 2
+	icon = "shield"
 
 /datum/netrun_program/patch
 	id = "patch"
@@ -231,3 +256,15 @@
 	name = "data shard (blackout.exe)"
 	icon_state = "datadisk2"
 	preload_programs = list("blackout")
+
+/obj/item/netrun_shard/emp
+	name = "data shard (emp.card)"
+	desc = "Шард с одноразовым ЭМИ-разрядом для сетевого боя."
+	icon_state = "datadisk3"
+	preload_programs = list("emp")
+
+/obj/item/netrun_shard/fortify
+	name = "data shard (fortify.exe)"
+	desc = "Шард с тяжёлой защитной программой сетевика."
+	icon_state = "datadisk2"
+	preload_programs = list("fortify")

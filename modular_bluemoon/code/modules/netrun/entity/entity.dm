@@ -17,6 +17,8 @@
 	var/combat_stun_until = 0
 	var/combat_shield_until = 0
 	var/combat_shield_factor = 1
+	/// Пока активно - лёд считает след потерянным и не перезахватывает процесс (заметание следов).
+	var/combat_ignore_until = 0
 	var/datum/netrun_dive_link/dive_link
 	var/datum/action/innate/netrun_console/console_action
 	var/datum/action/innate/netrun_rename/rename_action
@@ -98,7 +100,30 @@
 	console.refresh_route_node(host_node)
 	console.refresh_route_node(node)
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	return (node.address in graph.neighbors(host_node.address)) && netrun_link_available(host_node, node) && (console.node_level(node) >= NETRUN_ACCESS_USER || console.has_key(node.network, TRUE))
+	if(!(node.address in graph.neighbors(host_node.address)) || !netrun_link_available(host_node, node))
+		return FALSE
+	// Свежий расчёт доступа через path-tree, минуя кэш уровней UI: иначе только что
+	// полученный USER может не учитываться до следующего обновления интерфейса.
+	var/datum/netrun_path_tree/tree = console.make_path_tree()
+	. = console.node_level(node, tree) >= NETRUN_ACCESS_USER || console.has_key(node.network, TRUE)
+	qdel(tree)
+
+/// Понятная причина отказа в переходе - для журнала консоли.
+/mob/camera/netrun_entity/proc/hop_denial(datum/component/netrun_node/node)
+	if(!node)
+		return "Переход невозможен: узел не найден."
+	if(!host_node)
+		return "Переход невозможен: нет текущего узла."
+	if(console.is_locked())
+		return "Переход невозможен: точка подключения заблокирована трассировкой."
+	if(is_stunned())
+		return "Переход невозможен: процесс оглушён."
+	if(world.time < next_hop)
+		return "Переход невозможен: перезарядка перехода."
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	if(!(node.address in graph.neighbors(host_node.address)) || !netrun_link_available(host_node, node))
+		return "Переход невозможен: узел не является прямым соседом или связь с ним недоступна."
+	return "Переход невозможен: нужен доступ ПОЛЬЗОВАТЕЛЯ к узлу или ключ его ЛВС."
 
 /mob/camera/netrun_entity/proc/hop(datum/component/netrun_node/node)
 	if(world.time < next_hop || is_stunned() || !can_enter(node))
@@ -286,12 +311,8 @@
 	take_integrity(20, "узел-носитель уничтожен")
 
 /mob/camera/netrun_entity/netrun_traced(datum/netrun_console/traced)
-	take_integrity(25, "ответный удар системы защиты")
-	if(QDELETED(src))
-		return
-	var/datum/netrun_network/public = SSnetrun.get_network(NETRUN_LAN_PUBLIC)
-	if(length(public.nodes))
-		enter_node(pick(public.nodes))
+	// Процесс не выбрасывает из узла: его предупреждают, что он обнаружен, и к нему идёт защита.
+	to_chat(src, span_userdanger("Система защиты вас обнаружила! Заметайте следы (демон «ЗАМЕСТИ СЛЕДЫ») или уходите — к вам направляются процессы защиты."))
 
 /mob/camera/netrun_entity/proc/dissolve()
 	if(QDELETED(src))
@@ -417,8 +438,9 @@
 	var/mob/camera/netrun_entity/entity = host
 	switch(action)
 		if("hop")
-			if(!entity.hop(SSnetrun.find_node(params["address"])))
-				log_line("Переход невозможен: нужен доступ ПОЛЬЗОВАТЕЛЯ к узлу.", "bad")
+			var/datum/component/netrun_node/dest = SSnetrun.find_node(params["address"])
+			if(!entity.hop(dest))
+				log_line(entity.hop_denial(dest), "bad")
 			return TRUE
 		if("return")
 			entity.return_to_body()

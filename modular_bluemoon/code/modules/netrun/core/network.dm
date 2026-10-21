@@ -52,38 +52,68 @@
 	UnregisterSignal(source, COMSIG_PARENT_QDELETING)
 	area = null
 
-/// Свойства ЛВС выводятся из типа отсека, в котором стоит её APC.
-/datum/netrun_network/proc/apply_area_profile(area/A)
-	name = "ЛВС: [A.name]"
-	short_name = copytext_char(A.name, 1, 10)
+/// Отдел, к которому относится отсек APC. ЛВС кластеризуется по отделу, а не по отдельному APC,
+/// поэтому все APC одного отдела делят одну сеть, ключ и защиту.
+/proc/netrun_department_key(area/A)
 	if(istype(A, /area/security))
-		security = 3
-		guest_access = list(ACCESS_SECURITY)
-		color = "#ff5050"
-	else if(istype(A, /area/command) || istype(A, /area/ai_monitored))
-		security = 4
-		guest_access = list(ACCESS_HEADS)
-		color = "#3cdc8c"
-	else if(istype(A, /area/engineering))
-		security = 2
-		guest_access = list(ACCESS_ENGINE, ACCESS_ENGINE_EQUIP)
-		color = "#f0a030"
-	else if(istype(A, /area/medical))
-		security = 2
-		guest_access = list(ACCESS_MEDICAL)
-		color = "#5bc0de"
-	else if(istype(A, /area/science))
-		security = 2
-		guest_access = list(ACCESS_RESEARCH, ACCESS_TOX, ACCESS_ROBOTICS)
-		color = "#b07cff"
-	else if(istype(A, /area/cargo))
-		security = 1
-		guest_access = list(ACCESS_CARGO)
-		color = "#c9a227"
-	else
-		security = 1
-		guest_access = list()
-		color = "#8b93a3"
+		return "security"
+	if(istype(A, /area/command) || istype(A, /area/ai_monitored))
+		return "command"
+	if(istype(A, /area/engineering))
+		return "engineering"
+	if(istype(A, /area/medical))
+		return "medical"
+	if(istype(A, /area/science))
+		return "science"
+	if(istype(A, /area/cargo))
+		return "cargo"
+	return "general"
+
+/// Свойства ЛВС выводятся из отдела отсека, в котором стоит её APC.
+/datum/netrun_network/proc/apply_area_profile(area/A)
+	switch(netrun_department_key(A))
+		if("security")
+			name = "ЛВС: Служба безопасности"
+			short_name = "СБ"
+			security = 3
+			guest_access = list(ACCESS_SECURITY)
+			color = "#ff5050"
+		if("command")
+			name = "ЛВС: Командование"
+			short_name = "КОМ"
+			security = 4
+			guest_access = list(ACCESS_HEADS)
+			color = "#3cdc8c"
+		if("engineering")
+			name = "ЛВС: Инженерный отдел"
+			short_name = "ИНЖ"
+			security = 2
+			guest_access = list(ACCESS_ENGINE, ACCESS_ENGINE_EQUIP)
+			color = "#f0a030"
+		if("medical")
+			name = "ЛВС: Медблок"
+			short_name = "МЕД"
+			security = 2
+			guest_access = list(ACCESS_MEDICAL)
+			color = "#5bc0de"
+		if("science")
+			name = "ЛВС: Научный отдел"
+			short_name = "НАУ"
+			security = 2
+			guest_access = list(ACCESS_RESEARCH, ACCESS_TOX, ACCESS_ROBOTICS)
+			color = "#b07cff"
+		if("cargo")
+			name = "ЛВС: Отдел снабжения"
+			short_name = "КАР"
+			security = 1
+			guest_access = list(ACCESS_CARGO)
+			color = "#c9a227"
+		else
+			name = "ЛВС: Общий сегмент"
+			short_name = "СЕГ"
+			security = 1
+			guest_access = list()
+			color = "#8b93a3"
 
 /datum/netrun_network/Destroy()
 	if(area)

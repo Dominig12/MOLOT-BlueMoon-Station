@@ -40,6 +40,26 @@
 /datum/netrun_console/proc/program_use(uid, target_ref)
 	return combat_context.use_program(uid, target_ref)
 
+/// Заметание следов разрывает бой: контакты сбрасываются, атакующий лёд снимает агро,
+/// отменяет подготовленную программу и не перезахватывает цель короткое время.
+/datum/netrun_console/proc/disengage_combat()
+	combat_context.clear_contacts()
+	var/grace = NETRUN_DISENGAGE_GRACE * (1 + daemon_bonus("phantom"))
+	var/datum/self = combat_self()
+	var/mob/camera/netrun_entity/entity = self
+	if(istype(entity))
+		entity.combat_ignore_until = world.time + grace
+	for(var/datum/netrun_ice/ice as anything in SSnetrun.ice_processes)
+		if(QDELETED(ice))
+			continue
+		var/datum/target = ice.pending_target()
+		var/datum/resolved_enemy = ice.enemy_ref?.resolve()
+		if(target == src || (self && (target == self || resolved_enemy == self)))
+			ice.cancel_program()
+			ice.enemy_ref = null
+			ice.next_attack = max(ice.next_attack, world.time + grace)
+	combat_context.changed()
+
 /datum/netrun_combat_contact
 	var/datum/weakref/ice_ref
 	var/datum/weakref/node_ref

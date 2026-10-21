@@ -118,7 +118,7 @@
 	command.execute(target_node, source.console)
 	TEST_ASSERT_EQUAL(json_encode(source.console.map_view.ping_route), json_encode(expected), "Ping highlighting must use the same APC route")
 
-/// Neighboring APCs keep distinct security domains while their sector routes without NTnet.
+/// Same-department APCs share one clustered LAN while their sector still routes without NTnet.
 /datum/unit_test/netrun_route_different_apcs/Run()
 	var/turf/origin = run_loc_floor_bottom_left
 	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
@@ -137,7 +137,7 @@
 	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/first_apc_node = first_apc.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/second_apc_node = second_apc.GetComponent(/datum/component/netrun_node)
-	TEST_ASSERT_NOTEQUAL(source_node.network, target_node.network, "Separate APC addresses must own separate security LANs even with the same engineering profile")
+	TEST_ASSERT_EQUAL(source_node.network, target_node.network, "APCs of the same department in one sector must share a single clustered LAN")
 	TEST_ASSERT_EQUAL(source_node.uplink_node(), first_apc_node, "The source must bind its nearest APC")
 	TEST_ASSERT_EQUAL(target_node.uplink_node(), second_apc_node, "The target must bind its nearest APC")
 	SSnetworks.station_network.setting_disabled = TRUE

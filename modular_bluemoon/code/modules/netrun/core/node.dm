@@ -40,7 +40,7 @@
 	if(!isatom(parent))
 		return COMPONENT_INCOMPATIBLE
 	src.node_type = node_type
-	src.command_ids = list("scan", "ping", "node_log", "extract") | (command_ids || list())
+	src.command_ids = list("scan", "ping", "node_log", "extract", "traceroute", "siphon", "spoof_log") | (command_ids || list())
 	base_security = security
 	src.required_access = required_access
 	if(storage_capacity)

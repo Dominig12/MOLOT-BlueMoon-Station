@@ -67,7 +67,7 @@
 	qdel(first)
 	SSnetrun.ensure_topology()
 	TEST_ASSERT_EQUAL(client_node.uplink_node(), closer_node, "Deleting the bound APC must release the dead binding and select remaining infrastructure")
-	TEST_ASSERT_NOTEQUAL(client_node.network, original_network, "Rebinding to a different APC must change the security domain")
+	TEST_ASSERT_EQUAL(client_node.network, original_network, "Rebinding to another APC of the same department keeps the clustered LAN security domain")
 
 /// Movement inside one root area preserves the cable; crossing a root area or sector rebinds it.
 /datum/unit_test/netrun_topology_binding_movement/Run()

@@ -136,6 +136,65 @@
 	addtimer(CALLBACK(console, TYPE_PROC_REF(/datum/netrun_console, ping_reply), node.address, lat, route_name), lat * 2)
 	return "[node.address]: пакет отправлен, [hops] прыжков…"
 
+/datum/netrun_command/traceroute
+	id = "traceroute"
+	name = "Трассировка маршрута"
+	desc = "Показать маршрут и задержку до узла по реальному графу сети."
+	access = NETRUN_ACCESS_GUEST
+	trace = 0
+	icon = "route"
+	works_offline = TRUE
+	ignores_latency = TRUE
+
+/datum/netrun_command/traceroute/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	if(!console.can_route(node))
+		return "[node.address]: нет маршрута."
+	var/datum/netrun_route/route = console.route_to(node)
+	var/list/lines = list("Маршрут до [node.get_name()] [node.address] — задержка ~[route.latency * 100] мс:")
+	var/step = 0
+	for(var/address in route.hops)
+		var/datum/component/netrun_node/hop = SSnetrun.find_node(address)
+		lines += "  [step++]. [hop ? "[hop.get_name()] " : ""][address]"
+	qdel(route)
+	return jointext(lines, "\n")
+
+/datum/netrun_command/siphon
+	id = "siphon"
+	name = "Слить файлы"
+	desc = "Скопировать все читаемые файлы узла в локальную память одним запросом."
+	help = "Нужен siphon.exe в памяти. Копирует столько файлов, сколько влезает в свободную память; остальные пропускаются."
+	access = NETRUN_ACCESS_USER
+	trace = 4
+	icon = "download"
+
+/datum/netrun_command/siphon/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	if(!console.daemon_bonus("siphon"))
+		return "Для массового слива нужен siphon.exe в памяти."
+	if(!node.file_store || !length(node.file_store.files))
+		return "На узле нет доступных файлов."
+	var/got = 0
+	for(var/datum/netrun_file/file as anything in node.file_store.files.Copy())
+		var/datum/netrun_file/duplicate = file.copy()
+		if(console.store_file(duplicate))
+			got++
+		else
+			qdel(duplicate)
+	return got ? "Слито файлов в память: [got]." : "Нет места в памяти для файлов узла."
+
+/datum/netrun_command/spoof_log
+	id = "spoof_log"
+	name = "Затереть журнал"
+	desc = "Стереть журнал сетевых событий этого узла, скрыв следы активности."
+	access = NETRUN_ACCESS_ROOT
+	trace = 5
+	icon = "eraser"
+	danger = TRUE
+
+/datum/netrun_command/spoof_log/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	node.logs.Cut()
+	node.add_log("Журнал очищен.")
+	return "Журнал узла затёрт."
+
 /datum/netrun_command/reboot
 	id = "reboot"
 	name = "Перезагрузить"
