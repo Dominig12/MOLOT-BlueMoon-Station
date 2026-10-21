@@ -113,10 +113,10 @@
 	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
 	entity.enter_node(host_node)
 	entity.console.operator = entity
-	entity.console.node_access[host_node.address] = NETRUN_ACCESS_USER
-	entity.console.node_access[remote_node.address] = NETRUN_ACCESS_USER
-	entity.console.watch_node = remote_node
-	entity.console.watch_viewer = entity
+	entity.console.access_session.node_access[host_node.address] = NETRUN_ACCESS_USER
+	entity.console.access_session.node_access[remote_node.address] = NETRUN_ACCESS_USER
+	entity.console.remote_session.watch_node = remote_node
+	entity.console.remote_session.watch_viewer = entity
 	TEST_ASSERT_EQUAL(entity.current_vision_target(), remote_camera, "An explicit stream did not take priority over the host's camera")
 	for(var/i in 1 to 3)
 		entity.console.process_tick(1)
@@ -124,7 +124,7 @@
 		TEST_ASSERT_EQUAL(entity.host_node, host_node, "Watching another stream moved the resident process into its source")
 	remote_camera.status = FALSE
 	entity.console.process_tick(1)
-	TEST_ASSERT_NULL(entity.console.watch_node, "An invalid camera stream retained its active watch session")
+	TEST_ASSERT_NULL(entity.console.remote_session.watch_node, "An invalid camera stream retained its active watch session")
 	TEST_ASSERT_EQUAL(entity.current_vision_target(), host_camera, "A disabled explicit source did not fall back to the accessible host camera")
 	TEST_ASSERT_EQUAL(entity.host_node, host_node, "Disabling a remote feed moved the process out of its host")
 	entity.leave_node()
@@ -145,22 +145,22 @@
 	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
 	entity.enter_node(host_node)
 	entity.console.operator = entity
-	entity.console.node_access[host_node.address] = NETRUN_ACCESS_USER
-	entity.console.node_access[glasses_node.address] = NETRUN_ACCESS_USER
-	entity.console.node_access[cyber_node.address] = NETRUN_ACCESS_USER
-	entity.console.watch_viewer = entity
-	entity.console.watch_node = glasses_node
+	entity.console.access_session.node_access[host_node.address] = NETRUN_ACCESS_USER
+	entity.console.access_session.node_access[glasses_node.address] = NETRUN_ACCESS_USER
+	entity.console.access_session.node_access[cyber_node.address] = NETRUN_ACCESS_USER
+	entity.console.remote_session.watch_viewer = entity
+	entity.console.remote_session.watch_node = glasses_node
 	TEST_ASSERT_EQUAL(entity.current_vision_target(), wearer, "A selected hacked HUD stream did not resolve its wearer")
 	TEST_ASSERT(wearer.dropItemToGround(glasses), "The actual HUD drop operation failed")
 	entity.console.process_tick(1)
-	TEST_ASSERT_NULL(entity.console.watch_node, "Dropping a HUD did not close its stream")
+	TEST_ASSERT_NULL(entity.console.remote_session.watch_node, "Dropping a HUD did not close its stream")
 	TEST_ASSERT_EQUAL(entity.current_vision_target(), host_camera, "Dropping the HUD did not restore the process's host view")
-	entity.console.watch_viewer = entity
-	entity.console.watch_node = cyber_node
+	entity.console.remote_session.watch_viewer = entity
+	entity.console.remote_session.watch_node = cyber_node
 	TEST_ASSERT_EQUAL(entity.current_vision_target(), wearer, "The process did not resolve the cybernetic eyes source")
 	eyes.Remove(TRUE)
 	entity.console.process_tick(1)
-	TEST_ASSERT_NULL(entity.console.watch_node, "Removing the actual eyes did not close their stream")
+	TEST_ASSERT_NULL(entity.console.remote_session.watch_node, "Removing the actual eyes did not close their stream")
 	TEST_ASSERT_EQUAL(entity.current_vision_target(), host_camera, "Removing the eyes did not restore the process's host view")
 	TEST_ASSERT_EQUAL(entity.host_node, host_node, "Invalidating equipment moved the resident process")
 	entity.leave_node()
@@ -175,10 +175,10 @@
 	var/datum/component/netrun_node/camera_node = camera.GetComponent(/datum/component/netrun_node)
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, viewer)
 	console.operator = viewer
-	console.wireless = FALSE
-	console.node_access[camera_node.address] = NETRUN_ACCESS_USER
-	console.watch_viewer = viewer
-	console.watch_node = camera_node
+	console.connection.wireless = FALSE
+	console.access_session.node_access[camera_node.address] = NETRUN_ACCESS_USER
+	console.remote_session.watch_viewer = viewer
+	console.remote_session.watch_node = camera_node
 	var/obj/effect/netrun_view_eye/eye = allocate(/obj/effect/netrun_view_eye, get_turf(camera), console)
 	// Native update_sight exits for clientless test mobs. Seed the values their real eyes contribute.
 	viewer.sight = viewer_eyes.sight_flags
@@ -199,13 +199,13 @@
 	TEST_ASSERT(wearer.equip_to_slot_if_possible(glasses, ITEM_SLOT_EYES, disable_warning = TRUE), "The night optics could not be worn")
 	world.PushUsr(wearer, CALLBACK(glasses, TYPE_PROC_REF(/atom, emag_act), wearer))
 	var/datum/component/netrun_node/glasses_node = glasses.GetComponent(/datum/component/netrun_node)
-	console.node_access[glasses_node.address] = NETRUN_ACCESS_USER
-	console.watch_node = glasses_node
+	console.access_session.node_access[glasses_node.address] = NETRUN_ACCESS_USER
+	console.remote_session.watch_node = glasses_node
 	TEST_ASSERT(eye.update_remote_sight(viewer), "The proxy did not handle a HUD optical source")
 	TEST_ASSERT_EQUAL(viewer.see_in_dark, glasses.darkness_view, "The native hook lost the selected source's night vision")
 	TEST_ASSERT_EQUAL(viewer.sight, glasses.vision_flags, "The native hook combined the viewer's X-ray eyes with another lens")
 
-	console.watch_node = camera_node
+	console.remote_session.watch_node = camera_node
 	camera.status = FALSE
 	viewer.sight = viewer_eyes.sight_flags
 	viewer.see_in_dark = viewer_eyes.see_in_dark
@@ -217,7 +217,7 @@
 	eye.get_remote_view_fullscreens(viewer)
 	TEST_ASSERT_NULL(viewer.fullscreens["remote_view"], "An invalid feed delegated the camera's overlay")
 	camera.status = TRUE
-	console.watch_viewer = wearer
+	console.remote_session.watch_viewer = wearer
 	viewer.sight = viewer_eyes.sight_flags
 	eye.update_remote_sight(viewer)
 	TEST_ASSERT_EQUAL(viewer.sight, 0, "A different viewer could reuse someone else's optical session")
@@ -238,19 +238,19 @@
 	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
 	entity.enter_node(host_node)
 	entity.console.operator = entity
-	entity.console.node_access[host_node.address] = NETRUN_ACCESS_USER
+	entity.console.access_session.node_access[host_node.address] = NETRUN_ACCESS_USER
 	first_console.operator = entity
-	first_console.node_access[first_node.address] = NETRUN_ACCESS_USER
-	first_console.watch_node = first_node
-	first_console.watch_viewer = entity
-	first_console.watch_eye = new(get_turf(first_camera), first_console)
-	var/obj/effect/netrun_view_eye/first_eye = first_console.watch_eye
+	first_console.access_session.node_access[first_node.address] = NETRUN_ACCESS_USER
+	first_console.remote_session.watch_node = first_node
+	first_console.remote_session.watch_viewer = entity
+	first_console.remote_session.watch_eye = new(get_turf(first_camera), first_console)
+	var/obj/effect/netrun_view_eye/first_eye = first_console.remote_session.watch_eye
 	second_console.operator = entity
-	second_console.node_access[second_node.address] = NETRUN_ACCESS_USER
-	second_console.watch_node = second_node
-	second_console.watch_viewer = entity
-	second_console.watch_eye = new(get_turf(second_camera), second_console)
-	var/obj/effect/netrun_view_eye/second_eye = second_console.watch_eye
+	second_console.access_session.node_access[second_node.address] = NETRUN_ACCESS_USER
+	second_console.remote_session.watch_node = second_node
+	second_console.remote_session.watch_viewer = entity
+	second_console.remote_session.watch_eye = new(get_turf(second_camera), second_console)
+	var/obj/effect/netrun_view_eye/second_eye = second_console.remote_session.watch_eye
 	entity.netrun_watch_console = second_console
 	TEST_ASSERT_EQUAL(entity.current_vision_target(), second_camera, "The active console did not own the entity's current optical target")
 	first_console.stop_watch()
@@ -260,19 +260,19 @@
 	TEST_ASSERT(!QDELETED(second_eye), "Stopping a retired console deleted the active proxy")
 
 	// Reproduce a late Destroy with stale watch state after another console has taken ownership.
-	first_console.watch_node = first_node
-	first_console.watch_viewer = entity
-	first_console.watch_eye = new(get_turf(first_camera), first_console)
-	first_eye = first_console.watch_eye
+	first_console.remote_session.watch_node = first_node
+	first_console.remote_session.watch_viewer = entity
+	first_console.remote_session.watch_eye = new(get_turf(first_camera), first_console)
+	first_eye = first_console.remote_session.watch_eye
 	QDEL_NULL(first_terminal.console)
 	TEST_ASSERT(QDELETED(first_console) && QDELETED(first_eye), "Destroying a retired console leaked its session or proxy")
 	TEST_ASSERT_EQUAL(entity.netrun_watch_console, second_console, "Destroying a retired console cleared ownership of the active session")
 	TEST_ASSERT_EQUAL(entity.current_vision_target(), second_camera, "Destroying a retired console changed the active stream")
-	TEST_ASSERT_EQUAL(second_console.watch_eye, second_eye, "Destroying a retired console replaced the active proxy")
+	TEST_ASSERT_EQUAL(second_console.remote_session.watch_eye, second_eye, "Destroying a retired console replaced the active proxy")
 	second_console.stop_watch()
 	TEST_ASSERT(QDELETED(second_eye), "Stopping the active session leaked its proxy")
 	TEST_ASSERT_NULL(entity.netrun_watch_console, "Stopping the active session did not clear its ownership pointer")
-	TEST_ASSERT_NULL(second_console.watch_node, "Stopping the active session retained its source")
+	TEST_ASSERT_NULL(second_console.remote_session.watch_node, "Stopping the active session retained its source")
 	TEST_ASSERT_EQUAL(entity.current_vision_target(), host_camera, "Stopping the final stream did not fall back to the entity's own accessible host")
 	TEST_ASSERT_EQUAL(entity.host_node, host_node, "Switching optical session ownership moved the resident process")
 	entity.leave_node()

@@ -162,6 +162,10 @@
 	var/sector = netrun_sector_for(position)
 	var/area/room = position ? get_area(position) : null
 	var/area/root_area = room?.base_area || room
+	// Personal endpoints can change co-located hosts while keeping their APC/LAN.
+	if(!is_infrastructure(node) && node.topology_turf != position)
+		node.topology_turf = position
+		invalidate()
 	if(is_infrastructure(node) && (node.topology_turf != position || (node.binding_checked && node.binding_sector != sector)))
 		node.topology_turf = position
 		infrastructure_changed()
@@ -183,6 +187,7 @@
 	node.binding_infra_revision = infrastructure_revision
 	if(previous != node.bound_apc)
 		invalidate()
+		node.notify_changed(NETRUN_CHANGED_BINDING)
 
 /datum/netrun_topology/proc/neighbors(address)
 	return adjacency[address] || list()
@@ -302,6 +307,7 @@
 	revision++
 	deferred_bindings = SSatoms.initialized != INITIALIZATION_INNEW_REGULAR
 	rebuilding = FALSE
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, revision)
 
 /datum/netrun_topology/Destroy()
 	clear_route_tables(TRUE)

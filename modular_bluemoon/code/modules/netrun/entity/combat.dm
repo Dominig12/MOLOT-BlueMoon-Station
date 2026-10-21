@@ -1,157 +1,306 @@
-/**
- * Сетевой бой. Участники - сущности (мобы) и ICE (датумы), стоящие в одном узле.
- * Оружие - боевые программы ("карточки") из памяти консоли: запуск по цели в узле,
- * у каждой своя перезарядка, часть расходуется. ICE бьёт в ответ на своём тике.
- *
- * Консоль ведёт бой в своём «боевом узле»: у сущности это узел-носитель, у терминала
- * или деки - выбранный узел, к которому есть маршрут и доступ.
- */
+/** A console owns one combat context; machine permissions never derive from combat contacts. */
 /datum/netrun_console
-	/// id программы = время, когда она снова доступна
-	var/list/program_cd = list()
-	/// Combat reaction is independent from a queued remote machine operation.
-	var/next_program = 0
+	var/datum/netrun_combat_context/combat_context
 
-/// Узел, в котором эта консоль может вести бой.
-/datum/netrun_console/proc/combat_node()
+/datum/netrun_console/proc/combat_node(datum/netrun_path_tree/tree)
 	var/datum/component/netrun_node/node = selected_node()
-	if(node && can_route(node) && node.is_online(node != jack) && node_level(node) >= NETRUN_ACCESS_GUEST)
+	if(node && can_route(node, tree) && node.is_online(node != connection.jack) && node_level(node, tree) >= NETRUN_ACCESS_GUEST)
 		return node
 	return null
 
-/datum/netrun_console/entity/combat_node()
+/datum/netrun_console/entity/combat_node(datum/netrun_path_tree/tree)
 	var/mob/camera/netrun_entity/entity = host
 	return entity?.host_node
 
-/// Собственная сущность консоли (для программ на себя). У терминала её нет.
 /datum/netrun_console/proc/combat_self()
 	return null
 
 /datum/netrun_console/entity/combat_self()
 	return host
 
-// MARK: Описание участников
-
-/proc/netrun_combatant_integrity(thing)
-	if(istype(thing, /mob/camera/netrun_entity))
-		var/mob/camera/netrun_entity/entity = thing
-		return list("cur" = round(entity.integrity), "max" = entity.max_integrity, "stunned" = entity.is_stunned(), "shielded" = world.time < entity.combat_shield_until)
-	if(istype(thing, /datum/netrun_ice))
-		var/datum/netrun_ice/ice = thing
-		return list("cur" = round(ice.integrity), "max" = ice.max_integrity, "stunned" = ice.is_stunned(), "shielded" = world.time < ice.combat_shield_until)
-	return null
-
-/proc/netrun_combatant_name(thing)
-	if(istype(thing, /mob/camera/netrun_entity))
-		var/mob/camera/netrun_entity/entity = thing
-		return entity.combat_name()
-	if(istype(thing, /datum/netrun_ice))
-		var/datum/netrun_ice/ice = thing
-		return ice.combat_name()
-	return "?"
-
-/// Список целей в боевом узле консоли (кроме себя).
-/datum/netrun_console/proc/combat_targets()
-	var/datum/component/netrun_node/node = combat_node()
-	. = list()
-	if(!node)
-		return
-	var/self = combat_self()
-	for(var/mob/camera/netrun_entity/entity as anything in node.entities)
-		if(entity == self || QDELETED(entity))
-			continue
-		var/list/hp = netrun_combatant_integrity(entity)
-		. += list(list(
-			"ref" = REF(entity),
-			"name" = entity.combat_name(),
-			"shielded" = hp["shielded"],
-			"kind" = "entity",
-			"hostile" = FALSE,
-			"integrity" = hp["cur"],
-			"max_integrity" = hp["max"],
-			"stunned" = hp["stunned"],
-		))
-	for(var/datum/netrun_ice/ice as anything in node.netrun_ice)
-		if(QDELETED(ice))
-			continue
-		var/list/hp = netrun_combatant_integrity(ice)
-		. += list(list(
-			"ref" = REF(ice),
-			"name" = ice.combat_name(),
-			"shielded" = hp["shielded"],
-			"kind" = "ice",
-			"hostile" = TRUE,
-			"integrity" = hp["cur"],
-			"max_integrity" = hp["max"],
-			"stunned" = hp["stunned"],
-			"programs" = ice.program_payload(),
-			"casting" = ice.casting_payload(),
-		))
-
-/// Доступные боевые программы и их готовность: сперва встроенная атака процесса, затем из памяти.
 /datum/netrun_console/proc/builtin_program_ids()
 	return combat_self() ? list("sting", "shell") : list()
 
+/datum/netrun_console/proc/combat_targets()
+	return combat_context.targets()
+
 /datum/netrun_console/proc/combat_programs()
+	return combat_context.programs()
+
+/datum/netrun_console/proc/combat_payload()
+	return combat_context.payload()
+
+/datum/netrun_console/proc/incoming_programs()
+	return combat_context.incoming()
+
+/// A puzzle hides the map, never the attacker's identity or the player's programs.
+/datum/netrun_console/proc/breach_combat_payload()
+	return combat_context.payload()
+
+/datum/netrun_console/proc/program_use(uid, target_ref)
+	return combat_context.use_program(uid, target_ref)
+
+/datum/netrun_combat_contact
+	var/datum/weakref/ice_ref
+	var/datum/weakref/node_ref
+	var/datum/weakref/network_ref
+	var/datum/weakref/breach_ref
+
+/datum/netrun_combat_contact/New(datum/netrun_ice/ice, datum/netrun_breach/breach)
+	ice_ref = WEAKREF(ice)
+	node_ref = WEAKREF(ice.node)
+	if(ice.node.network)
+		network_ref = WEAKREF(ice.node.network)
+	breach_ref = WEAKREF(breach)
+
+/datum/netrun_combat_contact/proc/valid_for(datum/netrun_console/console)
+	var/datum/netrun_ice/ice = ice_ref.resolve()
+	var/datum/component/netrun_node/node = node_ref.resolve()
+	var/datum/netrun_breach/breach = breach_ref.resolve()
+	return !QDELETED(ice) && !QDELETED(node) && !QDELETED(breach) && console.intrusion.breach == breach && !console.is_locked() && ice.node == node && node.network == network_ref?.resolve()
+
+/datum/netrun_combat_context
+	var/datum/netrun_console/console
+	/// Cooldowns belong to this session, not to the UI or the installed file.
+	var/list/program_cd = list()
+	var/next_program = 0
+	/// REF(ICE) -> contact. Contacts survive cast resolution and stun until the breach ends.
+	var/list/contacts = list()
+	/// Weak sources replace the previous global scan of every ICE on every UI update.
+	var/list/observed_ice = list()
+	var/datum/weakref/observed_breach
+
+/datum/netrun_combat_context/New(datum/netrun_console/console)
+	src.console = console
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_ICE_CAST_STARTED, PROC_REF(on_cast_started))
+
+/datum/netrun_combat_context/Destroy()
+	UnregisterSignal(SSnetrun, COMSIG_NETRUN_ICE_CAST_STARTED)
+	clear_contacts()
+	for(var/id in observed_ice)
+		var/datum/weakref/reference = observed_ice[id]
+		var/datum/netrun_ice/ice = reference.resolve()
+		if(ice)
+			UnregisterSignal(ice, list(COMSIG_NETRUN_COMBAT_CHANGED, COMSIG_NETRUN_ICE_NODE_CHANGED, COMSIG_PARENT_QDELETING))
+	observed_ice.Cut()
+	console = null
+	return ..()
+
+/datum/netrun_combat_context/proc/changed()
+	SEND_SIGNAL(console, COMSIG_NETRUN_COMBAT_CHANGED)
+
+/datum/netrun_combat_context/proc/observe(datum/netrun_ice/ice)
+	var/id = REF(ice)
+	if(observed_ice[id])
+		return
+	observed_ice[id] = WEAKREF(ice)
+	RegisterSignal(ice, COMSIG_NETRUN_COMBAT_CHANGED, PROC_REF(on_combat_changed))
+	RegisterSignal(ice, COMSIG_NETRUN_ICE_NODE_CHANGED, PROC_REF(on_ice_moved))
+	RegisterSignal(ice, COMSIG_PARENT_QDELETING, PROC_REF(on_ice_deleted))
+
+/datum/netrun_combat_context/proc/on_cast_started(datum/source, datum/netrun_ice/ice, datum/netrun_console/victim)
+	SIGNAL_HANDLER
+	if(victim != console)
+		return
+	observe(ice)
+	if(!console.combat_self() && ice.pending_program?.role == NETRUN_PROGRAM_TRACE)
+		register_attacker(ice, console.intrusion.breach)
+	changed()
+
+/datum/netrun_combat_context/proc/register_attacker(datum/netrun_ice/ice, datum/netrun_breach/breach)
+	if(QDELETED(breach) || !ice.node || ice.pending_target() != console || !ice.valid_trace_target(console))
+		return FALSE
+	if(observed_breach?.resolve() != breach)
+		clear_contacts()
+		observed_breach = WEAKREF(breach)
+		RegisterSignal(breach, COMSIG_PARENT_QDELETING, PROC_REF(on_breach_deleted))
+	var/id = REF(ice)
+	qdel(contacts[id])
+	contacts[id] = new /datum/netrun_combat_contact(ice, breach)
+	return TRUE
+
+/datum/netrun_combat_context/proc/clear_contacts()
+	var/datum/netrun_breach/breach = observed_breach?.resolve()
+	if(breach)
+		UnregisterSignal(breach, COMSIG_PARENT_QDELETING)
+	observed_breach = null
+	QDEL_LIST_ASSOC_VAL(contacts)
+	contacts = list()
+
+/datum/netrun_combat_context/proc/on_breach_deleted(datum/source)
+	SIGNAL_HANDLER
+	clear_contacts()
+	changed()
+
+/datum/netrun_combat_context/proc/on_combat_changed(datum/source)
+	SIGNAL_HANDLER
+	changed()
+
+/datum/netrun_combat_context/proc/on_ice_moved(datum/netrun_ice/source)
+	SIGNAL_HANDLER
+	var/id = REF(source)
+	qdel(contacts[id])
+	contacts -= id
+	changed()
+
+/datum/netrun_combat_context/proc/on_ice_deleted(datum/netrun_ice/source)
+	SIGNAL_HANDLER
+	on_ice_moved(source)
+	observed_ice -= REF(source)
+	UnregisterSignal(source, list(COMSIG_NETRUN_COMBAT_CHANGED, COMSIG_NETRUN_ICE_NODE_CHANGED, COMSIG_PARENT_QDELETING))
+
+/datum/netrun_combat_context/proc/prune_contacts()
+	for(var/id in contacts.Copy())
+		var/datum/netrun_combat_contact/contact = contacts[id]
+		if(!contact.valid_for(console))
+			qdel(contact)
+			contacts -= id
+
+/// Returns the same denial reason used by both the payload and the actual action.
+/datum/netrun_combat_context/proc/target_denial(datum/target, datum/netrun_path_tree/tree)
+	if(QDELETED(target) || target == console.combat_self())
+		return "Цель недоступна."
+	var/datum/component/netrun_combatant/combatant = target.get_netrun_combatant()
+	var/datum/component/netrun_node/node = combatant?.node()
+	if(!node)
+		return "Цель покинула узел."
+	if(console.is_locked())
+		return "Точка подключения заблокирована."
+	if(node == console.combat_node(tree))
+		return null
+	var/datum/netrun_combat_contact/contact = contacts[REF(target)]
+	if(!contact?.valid_for(console))
+		return "Нет активного боевого контакта."
+	if(!node.is_online(node != console.connection.jack))
+		return "Узел противника не отвечает."
+	if(!console.can_route(node, tree))
+		return "Нет маршрута к противнику."
+	return null
+
+/datum/netrun_combat_context/proc/targets()
+	prune_contacts()
+	var/datum/component/netrun_node/node = console.combat_node()
+	var/list/candidates = list()
+	if(node)
+		candidates |= node.entities || list()
+		candidates |= node.netrun_ice || list()
+	for(var/id in contacts)
+		var/datum/netrun_combat_contact/contact = contacts[id]
+		var/datum/netrun_ice/ice = contact.ice_ref.resolve()
+		if(ice)
+			candidates |= ice
 	. = list()
-	if(combat_self())
-		for(var/builtin_id in builtin_program_ids())
-			var/datum/netrun_program/builtin = SSnetrun.get_program(builtin_id)
-			if(!builtin)
-				continue
-			var/list/entry = builtin.ui_entry()
-			entry["uid"] = "builtin:[builtin_id]"
-			entry["builtin"] = TRUE
-			entry["ready_in"] = max(0, round(((program_cd[builtin.id] || 0) - world.time) / (1 SECONDS), 0.1))
-			. += list(entry)
-	for(var/datum/netrun_file/file as anything in all_files())
+	for(var/datum/target as anything in candidates)
+		if(QDELETED(target) || target == console.combat_self())
+			continue
+		var/datum/component/netrun_combatant/combatant = target.get_netrun_combatant()
+		if(!combatant)
+			continue
+		var/list/entry = combatant.ui_entry()
+		entry["unavailable_reason"] = target_denial(target)
+		. += list(entry)
+
+/datum/netrun_combat_context/proc/program_entry(datum/netrun_program/program, uid, builtin = FALSE)
+	var/list/entry = program.ui_entry()
+	entry["uid"] = uid
+	entry["builtin"] = builtin
+	entry["ready_in"] = max(0, round(((program_cd[program.id] || 0) - world.time) / (1 SECONDS), 0.1))
+	entry["unavailable_reason"] = !program.needs_target && !console.combat_self() ? "Нужна собственная сущность в сети." : null
+	return entry
+
+/datum/netrun_combat_context/proc/programs()
+	. = list()
+	for(var/id in console.builtin_program_ids())
+		var/datum/netrun_program/builtin = SSnetrun.get_program(id)
+		if(builtin)
+			. += list(program_entry(builtin, "builtin:[id]", TRUE))
+	for(var/datum/netrun_file/file as anything in console.all_files())
 		if(file.kind != NETRUN_FILE_PROGRAM)
 			continue
 		var/datum/netrun_program/program = SSnetrun.get_program(file.content)
-		if(!program || program.role == NETRUN_PROGRAM_TRACE)
-			continue
-		var/ready_at = program_cd[program.id] || 0
-		var/list/entry = program.ui_entry()
-		entry["uid"] = file.uid
-		entry["ready_in"] = max(0, round((ready_at - world.time) / (1 SECONDS), 0.1))
-		. += list(entry)
+		if(program && program.role != NETRUN_PROGRAM_TRACE)
+			. += list(program_entry(program, file.uid))
 
-/datum/netrun_console/proc/combat_payload()
-	var/datum/component/netrun_node/node = combat_node()
-	if(!node)
-		return null
-	var/self = combat_self()
-	var/list/self_hp = self ? netrun_combatant_integrity(self) : null
-	return list(
-		"node" = node.address,
-		"node_name" = node.get_name(),
-		"self" = self_hp ? list("integrity" = self_hp["cur"], "max_integrity" = self_hp["max"], "stunned" = self_hp["stunned"], "shielded" = self_hp["shielded"]) : null,
-		"targets" = combat_targets(),
-		"programs" = combat_programs(),
-		"incoming" = incoming_programs(),
-		"loot" = salvage_payload(),
-	)
-
-/datum/netrun_console/proc/incoming_programs()
+/datum/netrun_combat_context/proc/incoming()
 	. = list()
-	for(var/datum/netrun_ice/ice as anything in SSnetrun.ice_processes)
+	for(var/id in observed_ice)
+		var/datum/weakref/reference = observed_ice[id]
+		var/datum/netrun_ice/ice = reference.resolve()
 		if(QDELETED(ice) || !ice.pending_program)
 			continue
 		var/datum/target = ice.pending_target()
-		if(target != src && target != combat_self())
+		if(target != console && target != console.combat_self())
 			continue
 		var/list/entry = ice.casting_payload()
 		entry["source"] = ice.name
+		entry["source_ref"] = REF(ice)
+		entry["source_node"] = ice.node?.address
 		. += list(entry)
 
-/// Remote runners only need live attack warnings during a puzzle, without
-/// rebuilding the hidden map or querying all target permissions on every click.
-/datum/netrun_console/proc/breach_combat_payload()
-	if(combat_self())
-		return combat_payload()
-	return list("node" = breach.target_id, "node_name" = breach.target_name,
-		"self" = null, "targets" = list(), "programs" = list(),
-		"incoming" = incoming_programs(), "loot" = list())
+/datum/netrun_combat_context/proc/payload()
+	var/list/target_entries = targets()
+	var/list/incoming_entries = incoming()
+	var/datum/component/netrun_node/node = console.combat_node()
+	if(!node && !length(target_entries) && !length(incoming_entries))
+		return null
+	var/datum/self = console.combat_self()
+	var/list/hp = netrun_combatant_integrity(self)
+	return list("node" = node?.address, "node_name" = node?.get_name(),
+		"self" = hp ? list("integrity" = hp["cur"], "max_integrity" = hp["max"], "stunned" = hp["stunned"], "shielded" = hp["shielded"]) : null,
+		"targets" = target_entries, "programs" = programs(), "incoming" = incoming_entries, "loot" = console.salvage_payload())
+
+/datum/netrun_combat_context/proc/use_program(uid, target_ref)
+	if(console.is_locked() || world.time < next_program)
+		return FALSE
+	var/builtin = findtext("[uid]", "builtin:") == 1
+	var/datum/netrun_file/file
+	var/datum/netrun_program/program
+	if(builtin)
+		var/id = copytext("[uid]", length("builtin:") + 1)
+		if(!(id in console.builtin_program_ids()))
+			return FALSE
+		program = SSnetrun.get_program(id)
+	else
+		file = console.find_local_file(uid)
+		if(!file || file.kind != NETRUN_FILE_PROGRAM)
+			return FALSE
+		program = SSnetrun.get_program(file.content)
+	if(!program || program.role == NETRUN_PROGRAM_TRACE)
+		return FALSE
+	if(world.time < (program_cd[program.id] || 0))
+		console.log_line("[program.name]: идёт перезарядка.", "bad")
+		return FALSE
+	var/datum/self = console.combat_self()
+	var/list/hp = netrun_combatant_integrity(self)
+	if(hp?["stunned"])
+		console.log_line("Ваш процесс оглушён и не может запускать программы.", "bad")
+		return FALSE
+	var/datum/target = program.needs_target ? locate(target_ref) : self
+	if(!target)
+		console.log_line(program.needs_target ? "Цель недоступна." : "[program.name]: нужна собственная сущность в сети.", "bad")
+		return FALSE
+	prune_contacts()
+	var/datum/netrun_path_tree/tree = console.make_path_tree()
+	var/denial = program.needs_target ? target_denial(target, tree) : null
+	var/datum/component/netrun_combatant/combatant = target.get_netrun_combatant()
+	var/datum/component/netrun_node/node = combatant?.node()
+	if(!program.needs_target && (!node || node != console.combat_node(tree)))
+		denial = "Нет боевого контакта."
+	qdel(tree)
+	if(denial)
+		console.log_line(denial, "bad")
+		return FALSE
+	next_program = world.time + 0.5 SECONDS
+	program_cd[program.id] = world.time + program.cooldown
+	console.apply_program_effect(program, target, node)
+	if(program.trace)
+		console.add_trace(program.trace)
+	SSnetrun.post_event("intrusion", node.network?.id, node.address)
+	if(program.consumable)
+		console.delete_local_file(file)
+		console.log_line("Карточка [program.name] израсходована.", "average")
+	changed()
+	return TRUE
 
 /datum/netrun_console/proc/salvage_payload()
 	. = list()
@@ -177,73 +326,6 @@
 		return TRUE
 	return FALSE
 
-// MARK: Применение программ
-
-/datum/netrun_console/proc/program_use(uid, target_ref)
-	if(is_locked() || world.time < next_program)
-		return FALSE
-	// Встроенная атака не хранится в файле и не расходуется.
-	var/builtin = findtext("[uid]", "builtin:") == 1
-	var/datum/netrun_file/file
-	var/datum/netrun_program/program
-	if(builtin)
-		var/id = copytext("[uid]", length("builtin:") + 1)
-		if(!(id in builtin_program_ids()))
-			return FALSE
-		program = SSnetrun.get_program(id)
-		if(!program || !combat_self())
-			return FALSE
-	else
-		file = find_local_file(uid)
-		if(!file || file.kind != NETRUN_FILE_PROGRAM)
-			return FALSE
-		program = SSnetrun.get_program(file.content)
-	if(!program || program.role == NETRUN_PROGRAM_TRACE)
-		return FALSE
-	if(world.time < (program_cd[program.id] || 0))
-		log_line("[program.name]: идёт перезарядка.", "bad")
-		return FALSE
-	var/datum/component/netrun_node/node = combat_node()
-	if(!node)
-		log_line("Нет боевого контакта: выберите доступный узел с целью.", "bad")
-		return FALSE
-	var/self = combat_self()
-	if(istype(self, /mob/camera/netrun_entity))
-		var/mob/camera/netrun_entity/own = self
-		if(own.is_stunned())
-			log_line("Ваш процесс оглушён и не может запускать программы.", "bad")
-			return FALSE
-	var/target
-	if(program.needs_target)
-		target = locate(target_ref)
-		if(!netrun_combatant_in_node(target, node) || target == self)
-			log_line("Цель недоступна в этом узле.", "bad")
-			return FALSE
-	else
-		target = self
-		if(!target)
-			log_line("[program.name]: нужна собственная сущность в сети.", "bad")
-			return FALSE
-	next_program = world.time + 0.5 SECONDS
-	program_cd[program.id] = world.time + program.cooldown
-	apply_program_effect(program, target, node)
-	if(program.trace)
-		add_trace(program.trace)
-	SSnetrun.post_event("intrusion", node.network?.id, node.address)
-	if(program.consumable)
-		delete_local_file(file)
-		log_line("Карточка [program.name] израсходована.", "average")
-	return TRUE
-
-/proc/netrun_combatant_in_node(thing, datum/component/netrun_node/node)
-	if(istype(thing, /mob/camera/netrun_entity))
-		var/mob/camera/netrun_entity/entity = thing
-		return entity.host_node == node
-	if(istype(thing, /datum/netrun_ice))
-		var/datum/netrun_ice/ice = thing
-		return ice.node == node
-	return FALSE
-
 /datum/netrun_console/proc/apply_program_effect(datum/netrun_program/program, target, datum/component/netrun_node/node)
 	var/target_name = netrun_combatant_name(target)
 	netrun_apply_program(program, target, src)
@@ -258,37 +340,3 @@
 			log_line("[program.name]: целостность восстановлена.", "good")
 	node.touch()
 	node.add_log("[log_source()]: запущена программа [program.name].")
-
-// MARK: Диспетчеры эффектов (сущность или ICE)
-
-/proc/netrun_combatant_hit(thing, amount, reason, datum/netrun_console/attacker)
-	if(istype(thing, /mob/camera/netrun_entity))
-		var/mob/camera/netrun_entity/entity = thing
-		entity.apply_damage(amount, reason, attacker)
-	else if(istype(thing, /datum/netrun_ice))
-		var/datum/netrun_ice/ice = thing
-		ice.apply_damage(amount, reason, attacker)
-
-/proc/netrun_combatant_stun(thing, duration)
-	if(istype(thing, /mob/camera/netrun_entity))
-		var/mob/camera/netrun_entity/entity = thing
-		entity.apply_stun(duration)
-	else if(istype(thing, /datum/netrun_ice))
-		var/datum/netrun_ice/ice = thing
-		ice.apply_stun(duration)
-
-/proc/netrun_combatant_shield(thing, pct, duration)
-	if(istype(thing, /mob/camera/netrun_entity))
-		var/mob/camera/netrun_entity/entity = thing
-		entity.apply_shield(pct, duration)
-	else if(istype(thing, /datum/netrun_ice))
-		var/datum/netrun_ice/ice = thing
-		ice.apply_shield(pct, duration)
-
-/proc/netrun_combatant_heal(thing, amount)
-	if(istype(thing, /mob/camera/netrun_entity))
-		var/mob/camera/netrun_entity/entity = thing
-		entity.apply_heal(amount)
-	else if(istype(thing, /datum/netrun_ice))
-		var/datum/netrun_ice/ice = thing
-		ice.apply_heal(amount)

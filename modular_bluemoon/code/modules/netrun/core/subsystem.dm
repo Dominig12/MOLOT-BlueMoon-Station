@@ -27,6 +27,7 @@ SUBSYSTEM_DEF(netrun)
 	if(!resumed)
 		currentrun = consoles.Copy()
 		currentnodes = nodes_by_address.Copy()
+		currentice = ice_processes.Copy()
 	// Вложенный предмет не получает MOVED при перемещении носителя. Сверяем топологию
 	// независимо от открытых интерфейсов, не создавая сигнал на каждом контейнере.
 	while(length(currentnodes))
@@ -35,18 +36,27 @@ SUBSYSTEM_DEF(netrun)
 		currentnodes.len--
 		if(!QDELETED(node))
 			node.join_network()
+			node.reconcile_state()
 		if(MC_TICK_CHECK)
 			return
 	// Publish new endpoints and carrier movement even when nobody opens a map.
 	// Active display routes are server-owned; execution still checks a fresh path.
 	ensure_topology().refresh_route_tables()
-	process_ice()
 	var/delta = wait / (1 SECONDS)
+	while(length(currentice))
+		var/datum/netrun_ice/ice = currentice[length(currentice)]
+		currentice.len--
+		if(!QDELETED(ice))
+			ice.process_ai(delta)
+		if(MC_TICK_CHECK)
+			return
 	while(length(currentrun))
 		var/datum/netrun_console/console = currentrun[length(currentrun)]
 		currentrun.len--
 		if(!QDELETED(console))
+			console.access_session.process_events()
 			console.process_tick(delta)
+			console.flush_ui()
 		if(MC_TICK_CHECK)
 			return
 

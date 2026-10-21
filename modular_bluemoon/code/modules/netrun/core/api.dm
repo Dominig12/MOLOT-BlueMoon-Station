@@ -99,41 +99,12 @@
 	qdel(tree)
 	next_command = world.time + max(lat, 0.5 SECONDS)
 	log_line("[address]: [entry["name"]] — доставка ~[lat * 100] мс.")
-	if(!lat)
-		return do_remote_request(node, api, action, clean, node.network, operator)
-	addtimer(CALLBACK(src, PROC_REF(do_remote_request), node, api, action, clean, node.network, operator), lat)
-	return TRUE
+	var/datum/netrun_request/remote/request = new(src, node, api, action, clean, node.network, operator)
+	return request.send(lat)
 
 /datum/netrun_console/proc/do_remote_request(datum/component/netrun_node/node, datum/netrun_api/api, action, list/params, datum/netrun_network/sent_network, mob/sender)
-	if(!QDELETED(node))
-		node.join_network()
-	var/list/entry = api.actions[action]
-	var/datum/netrun_path_tree/tree = make_path_tree()
-	if(QDELETED(node) || !entry || !operator || sender != operator || node.network != sent_network || is_locked() || !can_route(node, tree) || !node.is_online() || node_level(node, tree) < entry["access"])
-		qdel(tree)
-		log_line("Запрос устройства отменён: связь или доступ изменились.", "bad")
-		return FALSE
-	// No routing snapshot survives the native call, which may yield or change topology.
-	var/illegal = legit_node_level(node, tree) < entry["access"]
-	qdel(tree)
-	var/atom/A = node.parent
-	// Синтетический контекст не открывает второе окно и не меняет права моба.
-	// Внутренние проверки и ограничения самой машины остаются штатными.
-	var/datum/tgui/request = new(operator, A, api.interface_name)
-	var/datum/ui_state/netrun_request/request_state = new(src, node)
-	request.state = request_state
-	request.status = UI_INTERACTIVE
-	world.PushUsr(operator, CALLBACK(A, TYPE_PROC_REF(/datum, ui_act), action, params, request, request.state))
-	qdel(request)
-	qdel(request_state)
-	node.touch()
-	node.add_log("[log_source()]: [entry["name"]][illegal ? " (без авторизации)" : ""].")
-	node.network?.add_log("[log_source()] -> [node.address]: [entry["name"]]", illegal)
-	log_game("NETRUN API: [key_name(operator)] [action] -> [node.address] [AREACOORD(A)]")
-	log_line("[node.address]: запрос передан интерфейсу устройства.", "good")
-	if(illegal)
-		add_trace(6 * node.get_security())
-	return TRUE
+	var/datum/netrun_request/remote/request = new(src, node, api, action, params, sent_network, sender)
+	return request.send()
 
 /// Контекст проверенного сетевого запроса: не раздаёт привилегии или доступ мобу.
 /datum/ui_state/netrun_request

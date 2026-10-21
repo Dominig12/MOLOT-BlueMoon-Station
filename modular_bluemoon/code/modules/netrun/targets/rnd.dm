@@ -69,7 +69,7 @@
 		qdel(file)
 		return "Нет места в хранилище. Очки не списаны."
 	server.stored_research.remove_point_list(stolen)
-	console.selected_file_uid = file.uid
+	console.inventory.selected_file_uid = file.uid
 	return "Слито очков: [total]. Данные записаны в хранилище."
 
 /datum/netrun_command/rnd_choke
@@ -135,7 +135,7 @@
 	if(!console.store_file(file))
 		qdel(file)
 		return "Нет места в хранилище."
-	console.selected_file_uid = file.uid
+	console.inventory.selected_file_uid = file.uid
 	return "Снят дамп техвеба: [length(ids)] узлов в [file.name]."
 
 /datum/netrun_command/rnd_push

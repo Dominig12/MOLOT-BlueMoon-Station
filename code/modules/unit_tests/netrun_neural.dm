@@ -72,7 +72,7 @@
 	var/datum/netrun_file/decoy = new("файл.txt", NETRUN_FILE_TEXT, "wrong file")
 	deck.console.store_file(selected)
 	deck.console.store_file(decoy)
-	deck.console.selected_file_uid = selected.uid
+	deck.console.inventory.selected_file_uid = selected.uid
 	var/datum/netrun_command/notify = SSnetrun.get_command("neural_notify")
 	TEST_ASSERT_NOTNULL(notify, "The neural notification command is not registered")
 	notify.execute(node, deck.console)
@@ -84,7 +84,7 @@
 	data.execute(node, deck.console)
 	var/datum/neural_interface_module/data/data_module = interface.modules["data"]
 	TEST_ASSERT_EQUAL(data_module.get_data_entry_value("NET:fayl.txt"), "Test &lt;selected&gt;", "A remote data label or value contains unsupported text")
-	deck.console.selected_file_uid = null
+	deck.console.inventory.selected_file_uid = null
 	var/count = length(log_module.logs)
 	TEST_ASSERT_NULL(notify.execute(node, deck.console), "The neural command silently fell back to a different file")
 	TEST_ASSERT_EQUAL(length(log_module.logs), count, "A failed notification wrote to the remote neural display")
@@ -107,7 +107,7 @@
 	var/data_y = text2num(replacetext(data_position[2], "CENTER", "")) * 32
 	TEST_ASSERT(netlink_y + module.maptext_height <= data_y - 8, "NETLINK overlaps the DATA module instead of sitting below it")
 	TEST_ASSERT(findtext(module.render(), "NTnet: OFFLINE"), "The panel's disconnected state is not in English")
-	entity.console.lockout_until = world.time + 10 SECONDS
+	entity.console.intrusion.lockout_until = world.time + 10 SECONDS
 	TEST_ASSERT(findtext(module.render(), "LOCKED: 10s"), "The panel's lockout state is not in English")
 
 /// A personal AI has its own client without receiving unrestricted station access.

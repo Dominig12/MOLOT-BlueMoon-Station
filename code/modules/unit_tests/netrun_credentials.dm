@@ -5,7 +5,10 @@
 	var/obj/item/computer_hardware/card_slot/slot = computer.get_modular_computer_part(MC_CARD)
 	if(!slot)
 		slot = allocate(/obj/item/computer_hardware/card_slot)
-		TEST_ASSERT(computer.install_component(slot), "The native card slot must install successfully")
+		// Native installation returns no success value; verify the resulting ownership.
+		computer.install_component(slot)
+	TEST_ASSERT_EQUAL(computer.get_modular_computer_part(MC_CARD), slot, "The native card slot must be installed in the actual primary bay")
+	TEST_ASSERT_EQUAL(slot.holder, computer, "The native card slot must belong to its actual host computer")
 	var/obj/item/card/id/card = allocate(/obj/item/card/id)
 	card.access = list(ACCESS_MEDICAL, ACCESS_RD)
 	TEST_ASSERT(slot.try_insert(card), "A real ID must enter the native RFID slot")
@@ -17,7 +20,7 @@
 	TEST_ASSERT_NOTNULL(command, "The credential extraction command must be registered")
 	TEST_ASSERT("extract_credentials" in node.all_command_ids(), "An occupied native slot must publish credential extraction")
 	TEST_ASSERT(!entity.console.do_command(node, command, command.id, TRUE, node.network, entity, "none"), "A traversal connection alone must not satisfy ROOT extraction")
-	entity.console.node_access[node.address] = NETRUN_ACCESS_ROOT
+	entity.console.access_session.node_access[node.address] = NETRUN_ACCESS_ROOT
 	TEST_ASSERT(entity.console.do_command(node, command, command.id, TRUE, node.network, entity, "none"), "A ROOT request must copy actual inserted ID credentials")
 	var/datum/netrun_file/access/file = entity.console.selected_local_file(NETRUN_FILE_ACCESS)
 	TEST_ASSERT(istype(file), "Extraction must save a real access file with independent ownership")
@@ -30,9 +33,9 @@
 	TEST_ASSERT(!(ACCESS_CARGO in file.accesses), "Copying a credential file must not share its access list")
 	TEST_ASSERT(slot.try_eject(forced = TRUE), "The actual ID must leave the native slot")
 	TEST_ASSERT(!("extract_credentials" in node.all_command_ids()), "An empty card slot must stop advertising stored credentials")
-	var/files_before = length(entity.console.storage)
+	var/files_before = length(entity.console.inventory.local_store.files)
 	command.execute(node, entity.console)
-	TEST_ASSERT_EQUAL(length(entity.console.storage), files_before, "An ID removed before execution must not generate phantom credentials")
+	TEST_ASSERT_EQUAL(length(entity.console.inventory.local_store.files), files_before, "An ID removed before execution must not generate phantom credentials")
 	var/obj/item/protected = allocate(/obj/item)
 	var/datum/component/netrun_node/protected_node = protected.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list(), 2, list(ACCESS_RD))
 	TEST_ASSERT_NULL(protected.netrun_credential_access(), "A machine's required access must not be treated as stored credentials")
@@ -48,6 +51,8 @@
 /// Wearable IDs and neural display carriers expose real card data, with no blanket silicon rights.
 /datum/unit_test/netrun_credentials_carbon_and_neural/Run()
 	var/mob/living/carbon/human/user = allocate(/mob/living/carbon/human)
+	var/obj/item/clothing/under/color/grey/uniform = allocate(/obj/item/clothing/under/color/grey)
+	TEST_ASSERT(user.equip_to_slot_if_possible(uniform, ITEM_SLOT_ICLOTHING, disable_warning = TRUE), "The native ID slot requires a real worn uniform")
 	var/obj/item/card/id/card = allocate(/obj/item/card/id)
 	card.access = list(ACCESS_MEDICAL)
 	TEST_ASSERT(user.equip_to_slot_if_possible(card, ITEM_SLOT_ID, disable_warning = TRUE), "The ID must be worn through the actual equipment system")
@@ -68,15 +73,15 @@
 	var/list/accesses = list(ACCESS_MEDICAL, ACCESS_RD, ACCESS_SECURITY, ACCESS_CARGO, ACCESS_ENGINE, ACCESS_ENGINE_EQUIP, ACCESS_MAINT_TUNNELS, ACCESS_HEADS, ACCESS_CHEMISTRY, ACCESS_TOX, ACCESS_ROBOTICS)
 	var/datum/netrun_file/access/file = new("crew.access", accesses)
 	TEST_ASSERT_EQUAL(file.size, 2, "Eleven real access IDs must occupy two memory cells")
-	entity.console.storage_capacity = 1
+	entity.console.inventory.local_store.capacity = 1
 	TEST_ASSERT(!entity.console.store_file(file), "Credentials must obey the same capacity checks as other files")
-	entity.console.storage_capacity = 2
+	entity.console.inventory.local_store.capacity = 2
 	TEST_ASSERT(entity.console.store_file(file), "A credential file must fit exactly in its required memory")
 	var/obj/item/netrun_shard/shard = allocate(/obj/item/netrun_shard)
-	entity.console.shard = shard
+	entity.console.inventory.shard = shard
 	TEST_ASSERT(entity.console.transfer_local_file(file, TRUE, TRUE), "Moving credentials to an attached shard must preserve access availability")
 	TEST_ASSERT(ACCESS_ROBOTICS in entity.console.user_access(TRUE), "A resident process must also read credentials from its attached shard")
-	entity.console.shard = null
+	entity.console.inventory.shard = null
 	TEST_ASSERT_EQUAL(length(entity.console.user_access(TRUE)), 0, "Detaching the only credential shard must immediately remove its authorizations")
 
 /// A LAN key permits adjacent movement, while USER machine actions still require separate credentials.

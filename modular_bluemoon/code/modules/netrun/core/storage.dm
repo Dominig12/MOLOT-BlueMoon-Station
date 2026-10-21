@@ -1,9 +1,5 @@
 // MARK: Локальные файлы и съёмная память
 
-/datum/netrun_console
-	/// Выбор хранится по UID: одинаковые имена не подменяют выбранный файл.
-	var/selected_file_uid
-
 /proc/netrun_file_name(value, fallback = "document.txt")
 	if(!istext(value))
 		return fallback
@@ -13,7 +9,7 @@
 	return max(1, CEILING(length_char(text) / 500, 1))
 
 /datum/netrun_console/proc/selected_local_file(required_kind, datum/netrun_request/request)
-	var/datum/netrun_file/file = find_local_file(request ? request.file_uid : selected_file_uid)
+	var/datum/netrun_file/file = find_local_file(request ? request.file_uid : inventory.selected_file_uid)
 	if(!file || (required_kind && file.kind != required_kind))
 		return null
 	return file
@@ -21,10 +17,10 @@
 /datum/netrun_console/proc/file_payload()
 	var/datum/netrun_file/file = selected_local_file()
 	if(!file)
-		selected_file_uid = null
+		inventory.selected_file_uid = null
 		return null
-	var/list/payload = file.ui_entry(selected_file_uid)
-	payload["source"] = (file in storage) ? "local" : "shard"
+	var/list/payload = file.ui_entry(inventory.selected_file_uid)
+	payload["source"] = (file in inventory.local_store.files) ? "local" : "shard"
 	payload["content"] = file.kind == NETRUN_FILE_TEXT ? file.content : null
 	payload["image"] = null
 	if(file.kind == NETRUN_FILE_PHOTO && file.picture)
@@ -47,13 +43,14 @@
 		return TRUE
 	switch(action)
 		if("file_select")
-			selected_file_uid = file.uid
+			inventory.selected_file_uid = file.uid
 		if("file_edit")
 			edit_text_file(file, params["content"])
 		if("file_rename")
 			file.name = netrun_file_name(params["name"], file.name)
 			if(file.picture)
 				file.picture.picture_name = file.name
+			inventory.store_for(file)?.notify_changed()
 			log_line("Файл переименован: [file.name].", "good")
 		if("file_copy", "file_move")
 			transfer_local_file(file, !!params["to_shard"], action == "file_move")
@@ -70,7 +67,7 @@
 		qdel(file)
 		log_line("На выбранном носителе нет места.", "bad")
 		return FALSE
-	selected_file_uid = file.uid
+	inventory.selected_file_uid = file.uid
 	log_line("Создан файл [file.name].", "good")
 	return TRUE
 
@@ -80,42 +77,39 @@
 	if(length_char(text) > 10000)
 		log_line("Текст слишком большой: максимум 10000 символов.", "bad")
 		return FALSE
-	var/list/source = (file in storage) ? storage : shard?.files
-	if(!source || !(file in source))
+	var/datum/netrun_file_store/source = inventory.store_for(file)
+	if(!source)
 		return FALSE
-	var/capacity = (file in storage) ? storage_capacity : shard.capacity
 	var/new_size = netrun_text_size(text)
-	if(netrun_storage_used(source) - file.size + new_size > capacity)
+	if(source.used() - file.size + new_size > source.capacity)
 		log_line("Для сохранения текста не хватает памяти.", "bad")
 		return FALSE
 	file.content = text
 	file.size = new_size
+	source.notify_changed()
 	log_line("Сохранён файл [file.name].", "good")
 	return TRUE
 
 /datum/netrun_console/proc/transfer_local_file(datum/netrun_file/file, to_shard, move = FALSE)
-	var/list/source = (file in storage) ? storage : shard?.files
-	var/list/destination = to_shard ? shard?.files : storage
-	if(!source || !(file in source) || !destination)
+	var/datum/netrun_file_store/source = inventory.store_for(file)
+	var/datum/netrun_file_store/destination = to_shard ? inventory.shard?.file_store : inventory.local_store
+	if(!source || !destination)
 		log_line("Носитель недоступен.", "bad")
 		return FALSE
 	if(source == destination && move)
 		log_line("Файл уже на выбранном носителе.")
 		return FALSE
-	var/capacity = to_shard ? shard.capacity : storage_capacity
-	if(netrun_storage_used(destination) + file.size > capacity)
+	if(!destination.can_fit(file))
 		log_line("На выбранном носителе нет места.", "bad")
 		return FALSE
-	if(move)
-		// Переносим сам датум только после всех проверок: UID и единственный владелец сохраняются.
-		source -= file
-		destination += file
-	else
-		var/datum/netrun_file/copied = file.copy()
+	var/datum/netrun_file/copied = source.transfer_to(destination, file, move)
+	if(!copied)
+		return FALSE
+	if(!move)
 		copied.name = netrun_file_name("Копия [file.name]")
 		if(copied.picture)
 			copied.picture.picture_name = copied.name
-		destination += copied
-		selected_file_uid = copied.uid
+		inventory.selected_file_uid = copied.uid
+		destination.notify_changed()
 	log_line("[move ? "Перемещён" : "Скопирован"] файл [file.name].", "good")
 	return TRUE

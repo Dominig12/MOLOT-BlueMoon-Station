@@ -36,7 +36,7 @@ export const IncomingAttacks = (props: { onCombat: () => void }) => {
   return (
     <Box p={1} mb={0.5} role="alert" style={{ border: `2px solid ${THEME.bad}`, background: THEME.bg }}>
       {incoming.map((attack, index) => (
-        <Box key={`${attack.source}-${attack.name}-${index}`} color={THEME.bad} bold>
+        <Box key={`${attack.source_ref ?? attack.source}-${attack.name}-${index}`} color={THEME.bad} bold>
           {attack.source} готовит {attack.name} · {attack.role === 'stun' ? `${attack.power / 10} с оглушения` : `${attack.power} ${attack.role === 'trace' ? 'трассировки' : 'урона'}`} · через {attack.remaining} с
         </Box>
       ))}
@@ -53,18 +53,12 @@ export const CombatPanel = () => {
   const { combat } = data;
   const [target, setTarget] = useState<string | null>(null);
 
-  // Держим выбранную цель, пока она ещё в узле.
+  // Preserve a usable selection and replace removed or disconnected targets in one update.
   const targets = combat?.targets ?? [];
   useEffect(() => {
-    if (target && !targets.some((t) => t.ref === target)) {
-      setTarget(null);
-    }
-    if (!target) {
-      const hostile = targets.find((t) => t.hostile);
-      if (hostile) {
-        setTarget(hostile.ref);
-      }
-    }
+    const usable = targets.find((t) => t.ref === target && !t.unavailable_reason)
+      ?? targets.find((t) => t.hostile && !t.unavailable_reason);
+    setTarget(usable?.ref ?? null);
   }, [targets, target]);
 
   if (!combat) {
@@ -76,11 +70,12 @@ export const CombatPanel = () => {
   }
 
   const programs = combat.programs ?? [];
+  const selectedTarget = targets.find((t) => t.ref === target);
   return (
     <Box style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, height: '100%', width: '100%', overflowY: 'auto', boxSizing: 'border-box', fontFamily: 'monospace' }} p={0.5}>
       <Box color={THEME.muted} fontSize="11px" mb={0.5}>
         <Icon name="crosshairs" mr={1} />
-        Узел боя: {combat.node_name} {combat.node}
+        {combat.node ? <>Узел боя: {combat.node_name} {combat.node}</> : 'Ответный бой'}
       </Box>
       {combat.self && (
         <Box mb={1} p={0.5} style={{ background: THEME.panel, border: `1px solid ${THEME.line}` }}>
@@ -94,7 +89,7 @@ export const CombatPanel = () => {
         </Box>
       )}
 
-      <Box color={THEME.muted} fontSize="10px" mb={0.5}>Процессы в узле</Box>
+      <Box color={THEME.muted} fontSize="10px" mb={0.5}>Цели и процессы</Box>
       {targets.length === 0 ? (
         <Box color={THEME.muted} mb={1}>Других процессов нет.</Box>
       ) : (
@@ -103,9 +98,9 @@ export const CombatPanel = () => {
             key={t.ref}
             mb={0.5}
             p={0.5}
-            onClick={() => setTarget(t.ref)}
+            onClick={() => !t.unavailable_reason && setTarget(t.ref)}
             style={{
-              cursor: 'pointer',
+              cursor: t.unavailable_reason ? 'default' : 'pointer',
               background: target === t.ref ? THEME.line : THEME.panel,
               border: `1px solid ${t.hostile ? THEME.bad : THEME.line}`,
             }}
@@ -117,6 +112,8 @@ export const CombatPanel = () => {
               {t.shielded ? <Box inline ml={1} color={THEME.accent}>щит</Box> : null}
               {target === t.ref ? <Box inline ml={1} color={THEME.accent}>● цель</Box> : null}
             </Box>
+            {t.node && <Box color={THEME.muted} fontSize="10px">{t.node_name} {t.node}</Box>}
+            {t.unavailable_reason && <Box color={THEME.warn} fontSize="11px">{t.unavailable_reason}</Box>}
             <IntegrityBar cur={t.integrity} max={t.max_integrity} />
             <Box fontSize="10px" color={THEME.muted}>
               {t.integrity}/{t.max_integrity}
@@ -139,14 +136,14 @@ export const CombatPanel = () => {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
           {programs.map((p) => {
             const onCd = p.ready_in > 0;
-            const needTarget = p.needs_target && !target;
+            const needTarget = p.needs_target && (!selectedTarget || !!selectedTarget.unavailable_reason);
             return (
               <Button
                 key={p.uid}
                 icon={p.icon}
-                disabled={onCd || needTarget || combat.self?.stunned}
+                disabled={onCd || needTarget || !!p.unavailable_reason || combat.self?.stunned || data.locked > 0}
                 color={ROLE_COLORS[p.role]}
-                tooltip={`${p.desc}${p.consumable ? ' (одноразовая)' : ''}${onCd ? ` · перезарядка ${p.ready_in}с` : ''}`}
+                tooltip={`${p.desc}${p.consumable ? ' (одноразовая)' : ''}${p.unavailable_reason ? ` · ${p.unavailable_reason}` : ''}${onCd ? ` · перезарядка ${p.ready_in}с` : ''}`}
                 onClick={() => act('program_use', { uid: p.uid, target: p.needs_target ? target : null })}
               >
                 {p.name.replace(/\.(exe|card)$/, '')}

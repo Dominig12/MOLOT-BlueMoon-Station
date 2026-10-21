@@ -80,11 +80,11 @@
 	TEST_ASSERT_NOTNULL(node, "The security camera must be a real network node")
 	TEST_ASSERT(far_turf in camera.get_visible_turfs(), "The distant marker must be in the camera's actual view")
 	var/datum/netrun_command/command = SSnetrun.get_command("cam_photo")
-	console.storage_capacity = 3
+	console.inventory.local_store.capacity = 3
 	command.execute(node, console)
-	TEST_ASSERT_EQUAL(length(console.storage), 0, "A full-range frame must not bypass its calculated memory requirement")
+	TEST_ASSERT_EQUAL(length(console.inventory.local_store.files), 0, "A full-range frame must not bypass its calculated memory requirement")
 	TEST_ASSERT(!camera.netrun_photographing && camera.netrun_next_photo == 0, "Insufficient memory must fail before exposing a frame or starting cooldown")
-	console.storage_capacity = 4
+	console.inventory.local_store.capacity = 4
 	command.execute(node, console)
 	var/datum/netrun_file/file = console.selected_local_file(NETRUN_FILE_PHOTO)
 	TEST_ASSERT_NOTNULL(file, "Capturing a working camera must produce a selected photo file")

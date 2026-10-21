@@ -93,9 +93,9 @@
 	if(!isnull(last_uplink) && uplink != last_uplink)
 		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, uplink ? "NTnet: connection restored." : "NTnet: connection lost.", uplink ? "SYNC" : "WARNING")
 	last_uplink = uplink
-	var/band = console.trace >= 80 ? 2 : console.trace >= 50 ? 1 : 0
+	var/band = console.intrusion.trace >= 80 ? 2 : console.intrusion.trace >= 50 ? 1 : 0
 	if(band > last_trace_band)
-		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Trace [round(console.trace)]%.", band == 2 ? "ALERT" : "WARNING")
+		SEND_SIGNAL(interface, COMSIG_NEURAL_INTERFACE_WRITE_LOG, "Trace [round(console.intrusion.trace)]%.", band == 2 ? "ALERT" : "WARNING")
 	last_trace_band = band
 	var/locked = console.is_locked()
 	if(locked && !last_locked)

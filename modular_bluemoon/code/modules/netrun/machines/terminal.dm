@@ -33,8 +33,8 @@ APC одной группы этажей связаны между собой. �
 /obj/machinery/computer/netrun_terminal/Initialize(mapload, obj/item/circuitboard/C)
 	. = ..()
 	console = new(src, NETRUN_ORIGIN_TERMINAL)
-	console.wireless = FALSE
-	console.storage_capacity = 12
+	console.connection.wireless = FALSE
+	console.inventory.local_store.capacity = 12
 	console.tgui_title = "Сетевой терминал"
 	console.store_file(new /datum/netrun_file("readme.txt", NETRUN_FILE_TEXT, netrun_manual_text()))
 	AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list("purge", "issue_key"), 2, list(ACCESS_NETWORK), 12)
@@ -90,15 +90,15 @@ APC одной группы этажей связаны между собой. �
 		capacity += bin.rating * 10
 	var/datum/component/netrun_node/node = AddComponent(/datum/component/netrun_node, NETRUN_NODE_SERVER, list("purge", "issue_key", "reboot"), server_security, server_access, capacity)
 	for(var/file_name in preload_files)
-		node.files += new /datum/netrun_file(file_name, NETRUN_FILE_TEXT, preload_files[file_name])
+		node.file_store.insert(new /datum/netrun_file(file_name, NETRUN_FILE_TEXT, preload_files[file_name]), TRUE)
 	for(var/daemon_id in preload_daemons)
 		var/datum/netrun_file/daemon_file = netrun_daemon_file(daemon_id)
 		if(daemon_file)
-			node.files += daemon_file
+			node.file_store.insert(daemon_file, TRUE)
 
 /obj/machinery/netrun_server/netrun_status()
 	var/datum/component/netrun_node/node = GetComponent(/datum/component/netrun_node)
-	. = list("Хранилище: [node.used_storage()] / [node.storage_capacity]")
+	. = list("Хранилище: [node.used_storage()] / [node.file_store.capacity]")
 
 /obj/machinery/netrun_server/examine(mob/user)
 	. = ..()

@@ -22,8 +22,8 @@
 	var/obj/item/netrun_shard/icepick/icepick_shard = allocate(/obj/item/netrun_shard/icepick)
 	var/obj/item/netrun_shard/cloak/cloak_shard = allocate(/obj/item/netrun_shard/cloak)
 	for(var/obj/item/netrun_shard/shard in list(buffer_shard, icepick_shard, cloak_shard))
-		TEST_ASSERT_EQUAL(length(shard.files), 1, "An individually printable daemon shard contains an unintended suite")
-		TEST_ASSERT(netrun_storage_used(shard.files) <= shard.capacity, "A printed program exceeds its shard capacity")
+		TEST_ASSERT_EQUAL(length(shard.file_store.files), 1, "An individually printable daemon shard contains an unintended suite")
+		TEST_ASSERT(netrun_storage_used(shard.file_store.files) <= shard.file_store.capacity, "A printed program exceeds its shard capacity")
 	var/list/definitions = SSnetrun.daemon_definitions()
 	var/found_extension = FALSE
 	for(var/list/entry as anything in definitions)
@@ -34,7 +34,7 @@
 /datum/unit_test/netrun_daemon_capacity_and_effects/Run()
 	var/obj/item/host = allocate(/obj/item)
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
-	console.storage_capacity = 4
+	console.inventory.local_store.capacity = 4
 	TEST_ASSERT(console.store_file(netrun_daemon_file("buffer")), "A daemon did not fit within available memory")
 	TEST_ASSERT(console.store_file(netrun_daemon_file("buffer")), "A second copy did not fit exactly in memory")
 	TEST_ASSERT_EQUAL(console.daemon_bonus("buffer"), 1, "Duplicate programs stacked their buffer effect")
@@ -42,9 +42,9 @@
 	TEST_ASSERT(!console.store_file(excess), "A daemon bypassed memory capacity")
 	qdel(excess)
 	var/obj/item/netrun_shard/shard = allocate(/obj/item/netrun_shard)
-	console.shard = shard
-	shard.files += netrun_daemon_file("unit-test-buffer")
+	console.inventory.shard = shard
+	shard.file_store.files += netrun_daemon_file("unit-test-buffer")
 	TEST_ASSERT_EQUAL(console.daemon_bonus("buffer"), 2, "An analogous program's stronger effect was ignored or summed")
-	shard.files += netrun_daemon_file("cloak")
+	shard.file_store.files += netrun_daemon_file("cloak")
 	TEST_ASSERT(abs(console.effective_trace_mult() - 0.7) < 0.001, "The registry changed the existing cloak trace reduction")
 	TEST_ASSERT_EQUAL(console.daemon_bonus("missing-effect"), 0, "An unknown effect received an unrelated daemon bonus")

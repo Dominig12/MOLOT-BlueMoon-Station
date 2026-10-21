@@ -116,7 +116,7 @@
 	TEST_ASSERT_EQUAL(source.console.latency_to(target_node), route.latency, "Command latency must use the same topology as the visible route")
 	var/datum/netrun_command/ping/command = SSnetrun.get_command("ping")
 	command.execute(target_node, source.console)
-	TEST_ASSERT_EQUAL(json_encode(source.console.ping_route), json_encode(expected), "Ping highlighting must use the same APC route")
+	TEST_ASSERT_EQUAL(json_encode(source.console.map_view.ping_route), json_encode(expected), "Ping highlighting must use the same APC route")
 
 /// Neighboring APCs keep distinct security domains while their sector routes without NTnet.
 /datum/unit_test/netrun_route_different_apcs/Run()
@@ -226,7 +226,7 @@
 	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
 	SSnetworks.station_network.setting_disabled = TRUE
-	source.console.wireless = TRUE
+	source.console.connection.wireless = TRUE
 	TEST_ASSERT(!source.console.can_route(target_node), "Two orphan endpoints must not gain a fictitious path from sharing a fallback LAN")
 	TEST_ASSERT(source.console.can_route(source_node), "A wireless client's own real endpoint must remain reachable without relays")
 	TEST_ASSERT_EQUAL(source.console.latency_to(source_node), 0, "The actual source endpoint must have zero loopback latency")

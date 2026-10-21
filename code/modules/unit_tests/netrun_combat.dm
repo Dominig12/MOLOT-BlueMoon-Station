@@ -8,14 +8,14 @@
 	TEST_ASSERT(!console.start_breach("node", node.address, TRUE), "Automatic hacking must require an actual daemon file")
 	TEST_ASSERT(console.store_file(netrun_daemon_file("autobreach")), "The daemon must occupy actual process memory")
 	TEST_ASSERT(console.start_breach("node", node.address, TRUE), "The installed daemon must start a normal reachable target")
-	var/datum/netrun_breach/automatic/job = console.breach
+	var/datum/netrun_breach/automatic/job = console.intrusion.breach
 	TEST_ASSERT(istype(job), "Automatic mode must use its own breach implementation")
 	TEST_ASSERT(job.duration >= 14 SECONDS && job.duration <= 30 SECONDS, "Node cracking must have a bounded, useful waiting period")
 	TEST_ASSERT(!job.choose(1), "Puzzle clicks must not accelerate automatic cracking")
 	job.finish()
 	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_GUEST, "Stopping early must never award USER")
 	TEST_ASSERT(console.start_breach("node", node.address, TRUE), "The daemon must remain usable after a cancelled attempt")
-	job = console.breach
+	job = console.intrusion.breach
 	job.deadline = world.time
 	job.finish()
 	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_USER, "An uninterrupted completed timer must guarantee USER without a random roll")
@@ -31,7 +31,7 @@
 	TEST_ASSERT(entity.console.start_breach("node", node.address, TRUE), "The actual daemon must start its job")
 	entity.console.delete_local_file(file)
 	entity.console.process_tick(1)
-	TEST_ASSERT_NULL(entity.console.breach, "Removing the only daemon copy must cancel the active automatic job")
+	TEST_ASSERT_NULL(entity.console.intrusion.breach, "Removing the only daemon copy must cancel the active automatic job")
 	TEST_ASSERT_EQUAL(entity.console.node_level(node), NETRUN_ACCESS_GUEST, "A revoked program must not grant delayed access")
 
 /// ICE programs warn first, share shield handling, and retain their own cooldowns.
@@ -69,15 +69,124 @@
 	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
 	entity.enter_node(node)
 	var/datum/netrun_ice/ice = allocate(/datum/netrun_ice, node)
-	entity.console.storage_capacity = 0
+	entity.console.inventory.local_store.capacity = 0
 	ice.drop_loot(entity.console)
 	TEST_ASSERT_EQUAL(length(node.salvage), 1, "A defeated sentry must leave a daemon even when the killer has no free memory")
 	var/datum/netrun_file/file = node.salvage[1]
 	TEST_ASSERT_EQUAL(file.kind, NETRUN_FILE_DAEMON, "The primary reward must be a usable daemon rather than only a combat card")
 	TEST_ASSERT(!entity.console.recover_salvage(file.uid), "Picking up debris must honor process memory capacity")
 	TEST_ASSERT(file in node.salvage, "A failed pickup must preserve the actual file")
-	entity.console.storage_capacity = file.size
+	entity.console.inventory.local_store.capacity = file.size
 	TEST_ASSERT(entity.console.recover_salvage(file.uid), "The resident entity must be able to obtain the daemon without USER rights on the host")
 	TEST_ASSERT_EQUAL(length(node.salvage), 0, "Successful pickup must transfer ownership out of the debris cache")
-	TEST_ASSERT(file in entity.console.storage, "The actual recovered file must be stored in process memory")
+	TEST_ASSERT(file in entity.console.inventory.local_store.files, "The actual recovered file must be stored in process memory")
 	TEST_ASSERT(!entity.console.recover_salvage(file.uid), "Repeating a pickup request must not duplicate the daemon")
+
+/// Real routes and a closed LAN reproduce the remote trace/empty combat regression.
+/datum/unit_test/netrun_remote_combat_contacts/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/engineering/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/target_spot = scene.take(get_step(origin, EAST), room)
+	var/turf/apc_spot = scene.take(get_step(origin, NORTH), room)
+	scene.machine(/obj/machinery/power/apc, apc_spot)
+	var/obj/item/source_host = allocate(/obj/item, origin)
+	source_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_DECK)
+	var/obj/item/target_host = allocate(/obj/item, target_spot)
+	var/datum/component/netrun_node/node = target_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, source_host, NETRUN_ORIGIN_DECK)
+	console.inventory.local_store.capacity = 32
+	SSnetrun.ensure_topology()
+	TEST_ASSERT(console.can_route(node), "The fixture must have a real APC route to the ICE")
+	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_NONE, "A foreign endpoint in the closed LAN must not already grant guest rights")
+	var/datum/netrun_file/strike = netrun_program_file("strike")
+	var/datum/netrun_file/blackout = netrun_program_file("blackout")
+	var/datum/netrun_file/barrier = netrun_program_file("barrier")
+	var/datum/netrun_file/patch = netrun_program_file("patch")
+	var/datum/netrun_file/trace_program = netrun_program_file("trace")
+	console.store_file(strike)
+	console.store_file(blackout)
+	console.store_file(barrier)
+	console.store_file(patch)
+	console.store_file(trace_program)
+	TEST_ASSERT(console.start_breach("network", node.network.id), "LAN cracking must begin without guest rights")
+	var/datum/netrun_ice/first = allocate(/datum/netrun_ice, node)
+	var/datum/netrun_ice/second = allocate(/datum/netrun_ice, node)
+	var/datum/netrun_ice/unrelated = allocate(/datum/netrun_ice, node)
+	var/datum/netrun_program/trace = SSnetrun.get_program("trace")
+	TEST_ASSERT(first.begin_program(trace, console), "The first sentry must announce its real trace")
+	TEST_ASSERT(second.begin_program(trace, console), "A second sentry must obtain an independent contact")
+	var/list/payload = console.breach_combat_payload()
+	TEST_ASSERT_EQUAL(length(payload["targets"]), 2, "The puzzle must expose both actual attackers and no unrelated ICE")
+	TEST_ASSERT_EQUAL(length(payload["incoming"]), 2, "Both announced attacks must remain visible")
+	TEST_ASSERT_EQUAL(length(payload["programs"]), 4, "Installed counterattacks remain available and player trace stays hidden")
+	var/list/incoming = payload["incoming"]
+	var/list/warning = incoming[1]
+	TEST_ASSERT_EQUAL(warning["source_ref"], REF(first), "Warnings must identify a real selectable source")
+	TEST_ASSERT_EQUAL(warning["source_node"], node.address, "A LAN warning must name the actual source node")
+	TEST_ASSERT(!console.program_use(strike.uid, REF(unrelated)), "An arbitrary ICE REF must not inherit a contact's access exemption")
+	TEST_ASSERT(!console.program_use("builtin:sting", REF(first)), "Remote consoles must not gain free entity attacks")
+	TEST_ASSERT(!console.program_use(trace_program.uid, REF(first)), "A stored trace file must remain ICE-only")
+	TEST_ASSERT(!console.program_use(barrier.uid, null), "A terminal or deck still has no entity to shield")
+	TEST_ASSERT(!console.program_use(patch.uid, null), "A terminal or deck still has no entity to repair")
+	TEST_ASSERT(!console.run_command(node, "purge"), "Combat contacts must not bypass ROOT machine command permissions")
+	TEST_ASSERT(console.program_use(blackout.uid, REF(first)), "The actual attacker can be stunned before LAN guest access is obtained")
+	TEST_ASSERT_NULL(first.pending_program, "The reply must cancel the prepared trace")
+	TEST_ASSERT_EQUAL(length(console.combat_targets()), 2, "Stun must not make the enemy disappear from the combat list")
+	second.attack_at = world.time
+	second.resolve_program()
+	TEST_ASSERT_EQUAL(length(console.combat_targets()), 2, "A completed cast and its cooldown must retain the contact")
+	console.map_view.selected_address = null
+	console.combat_context.next_program = world.time
+	TEST_ASSERT(console.program_use(strike.uid, REF(second)), "Selection changes and enemy cooldown do not prevent a reply")
+	var/datum/netrun_program/strike_definition = SSnetrun.get_program("strike")
+	TEST_ASSERT_EQUAL(second.integrity, second.max_integrity - strike_definition.power, "The response must apply the original program power")
+	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_NONE, "A successful counterattack must not award guest rights")
+	console.intrusion.breach.finish()
+	TEST_ASSERT_EQUAL(length(console.combat_targets()), 0, "Ending the breach must revoke every response contact")
+	console.combat_context.next_program = world.time
+	console.combat_context.program_cd.Cut()
+	TEST_ASSERT(!console.program_use(strike.uid, REF(second)), "A stale source REF must not outlive its breach")
+	TEST_ASSERT(console.start_breach("network", node.network.id), "A later breach must create an independent combat lifetime")
+	TEST_ASSERT_EQUAL(length(console.combat_targets()), 0, "A new breach must not inherit the previous attacker's exemption")
+	first.combat_stun_until = 0
+	first.program_cd.Cut()
+	TEST_ASSERT(first.begin_program(trace, console), "A fresh incoming trace may establish a new contact")
+	TEST_ASSERT_EQUAL(length(console.combat_targets()), 1, "Only the fresh attacker should appear in the new breach")
+	qdel(first)
+	TEST_ASSERT_EQUAL(length(console.combat_targets()), 0, "Deleting an attacker must immediately revoke the contact")
+
+/// Availability changes invalidate actions while the card remains readable until the breach ends.
+/datum/unit_test/netrun_remote_combat_route_lifecycle/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/engineering/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/target_spot = scene.take(get_step(origin, EAST), room)
+	var/turf/apc_spot = scene.take(get_step(origin, NORTH), room)
+	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, apc_spot)
+	var/obj/item/source_host = allocate(/obj/item, origin)
+	var/datum/component/netrun_node/source_node = source_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_DECK)
+	var/obj/item/target_host = allocate(/obj/item, target_spot)
+	var/datum/component/netrun_node/node = target_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, source_host, NETRUN_ORIGIN_DECK)
+	var/datum/netrun_file/strike = netrun_program_file("strike")
+	console.store_file(strike)
+	SSnetrun.ensure_topology()
+	TEST_ASSERT(console.start_breach("network", node.network.id), "The source must reach the LAN before the route failure")
+	var/datum/netrun_ice/ice = allocate(/datum/netrun_ice, node)
+	TEST_ASSERT(ice.begin_program(SSnetrun.get_program("trace"), console), "The real incoming trace must create the contact")
+	apc.set_machine_stat(BROKEN)
+	var/list/targets = console.combat_targets()
+	TEST_ASSERT_EQUAL(length(targets), 1, "Route failure must leave an identifiable opponent card")
+	var/list/target = targets[1]
+	TEST_ASSERT(target["unavailable_reason"], "A disconnected opponent must explain why a reply is disabled")
+	TEST_ASSERT(!console.program_use(strike.uid, REF(ice)), "The action must recheck the actual route, regardless of the last UI payload")
+	TEST_ASSERT_NULL(console.combat_context.program_cd["strike"], "A rejected reply must not spend cooldown")
+	apc.set_machine_stat(0)
+	TEST_ASSERT(console.program_use(strike.uid, REF(ice)), "Restoring the same route during the breach must restore the reply")
+	ice.enter_node(source_node)
+	TEST_ASSERT_EQUAL(length(console.combat_targets()), 0, "A moved attacker must not retain its original remote contact")
+	console.intrusion.lockout_until = world.time + 10 SECONDS
+	TEST_ASSERT(!console.program_use(strike.uid, REF(ice)), "Trace lockout must still reject every combat action")

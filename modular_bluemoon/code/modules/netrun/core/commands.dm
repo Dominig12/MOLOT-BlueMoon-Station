@@ -44,7 +44,7 @@
 		"icon" = icon,
 		"danger" = danger,
 		"access" = access,
-		"allowed" = level >= access && console.can_route(node) && (works_offline || node.is_online(node != console.jack)) && !console.is_locked(),
+		"allowed" = level >= access && console.can_route(node) && (works_offline || node.is_online(node != console.connection.jack)) && !console.is_locked(),
 		"illegal" = legit < access,
 		"trace" = legit < access ? round(trace * node.get_security() * console.effective_trace_mult()) : 0,
 	)
@@ -126,10 +126,10 @@
 	var/datum/netrun_route/route = console.route_to(node)
 	var/lat = route.latency
 	var/route_name = route.name
-	console.ping_route = route.hops.Copy()
+	console.map_view.ping_route = route.hops.Copy()
 	var/hops = max(0, length(route.hops) - 1)
 	qdel(route)
-	console.ping_at = world.time
+	console.map_view.ping_at = world.time
 	if(lat <= 0)
 		return "[node.address]: 0мс ([route_name])"
 	// Ответ приходит после того, как пакет дойдёт и вернётся

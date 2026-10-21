@@ -142,9 +142,12 @@ export type CombatTarget = {
   programs?: EnemyProgram[];
   shielded?: boolean;
   casting?: IncomingProgram | null;
+  node?: string | null;
+  node_name?: string | null;
+  unavailable_reason?: string | null;
 };
 
-export type IncomingProgram = { name: string; role: string; power: number; remaining: number; source?: string };
+export type IncomingProgram = { name: string; role: string; power: number; remaining: number; source?: string; source_ref?: string; source_node?: string | null };
 export type EnemyProgram = { name: string; desc: string; role: string; power: number; cooldown: number; windup: number; ready_in: number };
 
 export type CombatProgram = {
@@ -160,11 +163,12 @@ export type CombatProgram = {
   needs_target: boolean;
   icon: string;
   ready_in: number;
+  unavailable_reason?: string | null;
 };
 
 export type CombatState = {
-  node: string;
-  node_name: string;
+  node: string | null;
+  node_name: string | null;
   self: { integrity: number; max_integrity: number; stunned: boolean; shielded?: boolean } | null;
   targets: CombatTarget[];
   programs: CombatProgram[];
@@ -274,8 +278,10 @@ export type NetMap = {
   nodes: NetNode[];
   edges: NetEdge[];
   focus: string | null;
-  depth: number;
   revision: number;
+  /** Per-console projected graph generations; legacy snapshots use semantic comparison. */
+  structure_revision?: number;
+  state_revision?: number;
   /** Server-cached path to the selected target; latency is milliseconds. */
   route?: {
     route: string[];

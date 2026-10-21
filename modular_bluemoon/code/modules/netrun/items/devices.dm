@@ -17,9 +17,9 @@
 /obj/item/netrun_deck/Initialize(mapload)
 	. = ..()
 	console = new(src, NETRUN_ORIGIN_DECK)
-	console.wireless = TRUE
-	console.buffer_bonus = buffer_bonus
-	console.storage_capacity = storage_capacity
+	console.connection.wireless = TRUE
+	console.intrusion.buffer_bonus = buffer_bonus
+	console.inventory.local_store.capacity = storage_capacity
 	console.tgui_title = "Кибердека"
 	AddComponent(/datum/component/netrun_access_device, console, NETRUN_NODE_DECK)
 
@@ -31,9 +31,9 @@
 	. = ..()
 	if(world.time < burnt_until)
 		. += span_warning("Из корпуса тянет горелой изоляцией. Ещё [round((burnt_until - world.time) / (1 SECONDS))] сек.")
-	if(console?.jack)
-		. += span_notice("Кабель подключён к [console.jack.get_name()].")
-	. += span_notice("Буфер взлома: +[buffer_bonus]. Память: [console ? netrun_storage_used(console.storage) : 0]/[storage_capacity].")
+	if(console?.connection.jack)
+		. += span_notice("Кабель подключён к [console.connection.jack.get_name()].")
+	. += span_notice("Буфер взлома: +[buffer_bonus]. Память: [console ? netrun_storage_used(console.inventory.local_store.files) : 0]/[storage_capacity].")
 
 /obj/item/netrun_deck/attack_self(mob/user)
 	if(world.time < burnt_until)
@@ -54,7 +54,7 @@
 	var/datum/component/netrun_node/node = netrun_find_node(target)
 	if(!node)
 		return
-	if(console.jack == node)
+	if(console.connection.jack == node)
 		console.set_jack(null)
 		to_chat(user, span_notice("Вы выдёргиваете кабель из [target]."))
 		return
@@ -100,8 +100,8 @@
 /obj/item/organ/cyberimp/brain/netlink/Initialize(mapload)
 	. = ..()
 	console = new(src, NETRUN_ORIGIN_IMPLANT)
-	console.wireless = TRUE
-	console.storage_capacity = 6
+	console.connection.wireless = TRUE
+	console.inventory.local_store.capacity = 6
 	console.state_override = GLOB.conscious_state
 	console.tgui_title = "Нейролинк"
 	AddComponent(/datum/component/netrun_access_device, console, NETRUN_NODE_IMPLANT)
@@ -141,8 +141,8 @@
 	var/mob/camera/netrun_entity/entity = netrun_start_dive(owner, node)
 	if(entity)
 		// Доступы, добытые нейролинком, переходят в погружение
-		entity.console.node_access = console.node_access.Copy()
-		entity.console.network_access = console.network_access.Copy()
+		entity.console.access_session.node_access = console.access_session.node_access.Copy()
+		entity.console.access_session.network_access = console.access_session.network_access.Copy()
 
 /obj/item/organ/cyberimp/brain/netlink/netrun_traced(datum/netrun_console/traced)
 	if(!owner)

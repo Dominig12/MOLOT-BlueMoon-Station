@@ -9,8 +9,7 @@
 	/// Если задан - легальный ПОЛЬЗОВАТЕЛЬ только с одним из этих доступов, иначе проверяется доступ самой машины
 	var/list/required_access
 	/// Хранилище файлов узла
-	var/list/datum/netrun_file/files
-	var/storage_capacity = 0
+	var/datum/netrun_file_store/file_store
 	/// Recoverable process debris does not grant access to the machine's own files.
 	var/list/datum/netrun_file/salvage = list()
 	var/last_activity = -INFINITY
@@ -35,6 +34,7 @@
 	var/binding_infra_revision = -1
 	/// Infrastructure geometry changes invalidate the shared graph even inside one area.
 	var/turf/topology_turf
+	var/list/last_state
 
 /datum/component/netrun_node/Initialize(node_type, list/command_ids, security = 1, list/required_access, storage_capacity = 0)
 	if(!isatom(parent))
@@ -43,9 +43,8 @@
 	src.command_ids = list("scan", "ping", "node_log", "extract") | (command_ids || list())
 	base_security = security
 	src.required_access = required_access
-	src.storage_capacity = storage_capacity
 	if(storage_capacity)
-		files = list()
+		file_store = new(src, storage_capacity)
 	address = SSnetrun.make_address()
 	SSnetrun.nodes_by_address[address] = src
 	topology_turf = get_turf(parent)
@@ -55,18 +54,22 @@
 	else
 		topology.invalidate()
 	join_network()
+	notify_changed(NETRUN_CHANGED_BINDING)
 
 /datum/component/netrun_node/RegisterWithParent()
 	RegisterSignal(parent, COMSIG_ATOM_EMP_ACT, PROC_REF(on_emp))
+	RegisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN), PROC_REF(on_state_changed))
 	if(ismovable(parent))
 		RegisterSignal(parent, COMSIG_MOVABLE_MOVED, PROC_REF(on_moved))
 
 /datum/component/netrun_node/UnregisterFromParent()
 	UnregisterSignal(parent, list(COMSIG_ATOM_EMP_ACT, COMSIG_MOVABLE_MOVED))
+	UnregisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN))
 
 /datum/component/netrun_node/Destroy()
 	var/datum/netrun_topology/topology = SSnetrun.get_topology()
 	SSnetrun.nodes_by_address -= address
+	notify_changed(NETRUN_CHANGED_REMOVED)
 	topology.forget_node(src)
 	for(var/mob/camera/netrun_entity/entity as anything in entities)
 		entity.host_lost()
@@ -79,7 +82,7 @@
 	bound_host = null
 	binding_area = null
 	topology_turf = null
-	QDEL_LIST(files)
+	QDEL_NULL(file_store)
 	QDEL_LIST(salvage)
 	return ..()
 
@@ -101,6 +104,7 @@
 	network = new_net
 	network.nodes += src
 	add_log("Подключение к [network.code].")
+	notify_changed(NETRUN_CHANGED_BINDING)
 
 /datum/component/netrun_node/proc/leave_network()
 	if(!network)
@@ -108,16 +112,35 @@
 	network.add_log("Узел [address] отключён.")
 	network.nodes -= src
 	network = null
+	notify_changed(NETRUN_CHANGED_BINDING)
 
 /datum/component/netrun_node/proc/on_moved(datum/source)
 	SIGNAL_HANDLER
 	join_network()
+	notify_changed(NETRUN_CHANGED_BINDING)
+
+/datum/component/netrun_node/proc/on_state_changed(datum/source)
+	SIGNAL_HANDLER
+	notify_changed(NETRUN_CHANGED_STATE)
+
+/// The fallback samples only fields exposed by the graph, including timed states.
+/datum/component/netrun_node/proc/reconcile_state()
+	var/list/state = list(get_name(), is_online(), get_security(), length(entities), length(netrun_ice), world.time - last_activity < 5 SECONDS)
+	if(netrun_snapshot_equal(last_state, state))
+		return
+	last_state = state
+	notify_changed(NETRUN_CHANGED_STATE)
+
+/datum/component/netrun_node/proc/notify_changed(flags = NETRUN_CHANGED_STATE)
+	SEND_SIGNAL(src, COMSIG_NETRUN_NODE_CHANGED, src, flags)
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, src, flags)
 
 /datum/component/netrun_node/proc/on_emp(datum/source, severity)
 	SIGNAL_HANDLER
 	offline_until = max(offline_until, world.time + (severity >= 50 ? 60 SECONDS : 30 SECONDS))
 	for(var/mob/camera/netrun_entity/entity as anything in entities)
 		entity.take_integrity(severity >= 50 ? 40 : 20, "электромагнитный импульс")
+	notify_changed()
 
 /datum/component/netrun_node/proc/get_security()
 	var/firewall = world.time < firewall_until ? 2 : 0
@@ -128,18 +151,8 @@
 	firewall_until = world.time + duration
 	add_log("Поднят сетевой экран.")
 	network?.add_log("Узел [address]: активирован сетевой экран.")
-	for(var/datum/netrun_console/console as anything in SSnetrun.consoles)
-		if(QDELETED(console))
-			continue
-		if(console.node_access[address])
-			console.node_access -= address
-			console.add_trace(get_security() * 4)
-			console.log_line("[address]: сетевой экран сбросил ваш доступ.", "bad")
-		var/datum/netrun_breach/breach = console.breach
-		if(breach && breach.target_kind != "network" && breach.target_id == address)
-			console.log_line("[address]: взлом прерван сетевым экраном.", "bad")
-			console.add_trace(20)
-			QDEL_NULL(console.breach)
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_FIREWALL_CHANGED, src)
+	notify_changed()
 	SSnetrun.post_event("trace", null, address)
 
 /// Отвечает ли узел на удалённые запросы
@@ -155,6 +168,7 @@
 
 /datum/component/netrun_node/proc/touch()
 	last_activity = world.time
+	notify_changed()
 
 /datum/component/netrun_node/proc/add_log(text)
 	logs += "[STATION_TIME_TIMESTAMP("hh:mm:ss", world.time)] [text]"
@@ -183,9 +197,7 @@
 		console.ui_commands[address] = .
 
 /datum/component/netrun_node/proc/used_storage()
-	. = 0
-	for(var/datum/netrun_file/file as anything in files)
-		. += file.size
+	return file_store?.used() || 0
 
 /// Every endpoint, including a real relay, has at most one cached APC attachment.
 /datum/component/netrun_node/proc/uplink_node()

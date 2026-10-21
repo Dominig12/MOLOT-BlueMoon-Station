@@ -99,8 +99,9 @@
 	icon = 'icons/obj/module.dmi'
 	icon_state = "datadisk1"
 	w_class = WEIGHT_CLASS_TINY
-	var/list/datum/netrun_file/files = list()
-	var/capacity = 8
+	var/datum/netrun_file_store/file_store
+	/// Initial configuration only; writable state lives in file_store.capacity.
+	var/initial_capacity = 8
 	/// Что записано на шард при создании: list(тип файла = содержимое) или id демонов
 	var/list/preload_daemons
 	/// Боевые программы, записанные на шард при создании (id из реестра /datum/netrun_program)
@@ -108,23 +109,24 @@
 
 /obj/item/netrun_shard/Initialize(mapload)
 	. = ..()
+	file_store = new(src, initial_capacity)
 	for(var/id in preload_daemons)
 		var/datum/netrun_file/file = netrun_daemon_file(id)
 		if(file)
-			files += file
+			file_store.insert(file, TRUE)
 	for(var/id in preload_programs)
 		var/datum/netrun_file/file = netrun_program_file(id)
 		if(file)
-			files += file
+			file_store.insert(file, TRUE)
 
 /obj/item/netrun_shard/Destroy()
-	QDEL_LIST(files)
+	QDEL_NULL(file_store)
 	return ..()
 
 /obj/item/netrun_shard/examine(mob/user)
 	. = ..()
-	. += span_notice("Занято [netrun_storage_used(files)] из [capacity] ячеек.")
-	for(var/datum/netrun_file/file as anything in files)
+	. += span_notice("Занято [file_store.used()] из [file_store.capacity] ячеек.")
+	for(var/datum/netrun_file/file as anything in file_store.files)
 		. += span_notice("— [file.name]")
 
 /obj/item/netrun_shard/daemons

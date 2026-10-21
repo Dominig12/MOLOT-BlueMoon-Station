@@ -132,18 +132,24 @@
 	return table.copy()
 
 /datum/netrun_console/proc/route_source()
-	if(ui_routes)
-		return ui_routes.source
-	return physical_route_source()
+	return connection.route_source()
+
+/datum/netrun_connection/proc/route_source()
+	if(owner.ui_routes)
+		return owner.ui_routes.source
+	return owner.physical_route_source()
 
 /datum/netrun_console/proc/physical_route_source()
-	if(jack && jack_valid())
-		return refresh_route_node(jack)
-	var/datum/component/netrun_node/source = refresh_route_node(netrun_find_node(host))
+	return connection.physical_route_source()
+
+/datum/netrun_connection/proc/physical_route_source()
+	if(jack && owner.jack_valid())
+		return owner.refresh_route_node(jack)
+	var/datum/component/netrun_node/source = owner.refresh_route_node(netrun_find_node(owner.host))
 	if(source)
 		return source
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	return graph.nearest_apc(get_turf(host))
+	return graph.nearest_apc(get_turf(owner.host))
 
 /datum/netrun_console/entity/physical_route_source()
 	var/mob/camera/netrun_entity/entity = host
@@ -151,51 +157,66 @@
 
 /// Nested items can cross an area with their carrier without receiving MOVED.
 /datum/netrun_console/proc/refresh_route_node(datum/component/netrun_node/node)
+	return connection.refresh_route_node(node)
+
+/datum/netrun_connection/proc/refresh_route_node(datum/component/netrun_node/node)
 	if(QDELETED(node) || QDELETED(node.parent))
 		return null
 	var/datum/netrun_network/previous = node.network
 	node.join_network()
 	if(previous != node.network)
-		network_level_cache?.Cut()
+		owner.network_level_cache?.Cut()
 	return node
 
 /datum/netrun_console/proc/path_tree()
-	if(ui_routes)
-		return ui_routes
-	return make_path_tree()
+	return connection.path_tree()
+
+/datum/netrun_connection/proc/path_tree()
+	if(owner.ui_routes)
+		return owner.ui_routes
+	return owner.make_path_tree()
 
 /// Explicit request trees are local variables, so concurrent yielding device
 /// operations cannot borrow another request's path or an old UI snapshot.
 /datum/netrun_console/proc/make_path_tree(use_stored_routes = FALSE)
+	return connection.make_path_tree(use_stored_routes)
+
+/datum/netrun_connection/proc/make_path_tree(use_stored_routes = FALSE)
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	var/datum/component/netrun_node/start = physical_route_source()
+	var/datum/component/netrun_node/start = owner.physical_route_source()
 	// A source can move its nested node while being resolved.
 	graph = SSnetrun.ensure_topology()
 	var/datum/netrun_path_tree/tree = use_stored_routes ? graph.route_snapshot(start) : new(graph, start)
-	var/turf/here = get_turf(host)
-	if(wireless && origin != NETRUN_ORIGIN_ENTITY && !jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z))))
+	var/turf/here = get_turf(owner.host)
+	if(wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z))))
 		tree.reached.Cut()
-		if(start && start == netrun_find_node(host))
+		if(start && start == netrun_find_node(owner.host))
 			tree.reached[start.address] = TRUE
 	return tree
 
 /datum/netrun_console/proc/release_path_tree(datum/netrun_path_tree/tree)
-	if(tree != ui_routes)
+	return connection.release_path_tree(tree)
+
+/datum/netrun_connection/proc/release_path_tree(datum/netrun_path_tree/tree)
+	if(tree != owner.ui_routes)
 		qdel(tree)
 
 /datum/netrun_console/proc/route_to(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
+	return connection.route_to(node, tree)
+
+/datum/netrun_connection/proc/route_to(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
 	var/datum/netrun_route/route = new
-	node = refresh_route_node(node)
+	node = owner.refresh_route_node(node)
 	if(!node)
 		return route
 	var/owns_tree = !tree
 	if(owns_tree)
-		tree = path_tree()
+		tree = owner.path_tree()
 	var/list/addresses = tree.addresses_to(node.address)
 	if(!length(addresses))
 		route.latency = 3
 		if(owns_tree)
-			release_path_tree(tree)
+			owner.release_path_tree(tree)
 		return route
 	for(var/address in addresses)
 		route.hops += list(list("kind" = "node", "ref" = address))
@@ -203,9 +224,9 @@
 		route.name = "прямое подключение"
 	else
 		route.name = tree.remote[node.address] ? "через реле NTnet" : "цепочка APC"
-		route.latency = tree.costs[node.address] + (wireless && origin != NETRUN_ORIGIN_ENTITY && !jack_valid() ? 1 : 0)
-		if(daemon_bonus("overclock"))
+		route.latency = tree.costs[node.address] + (wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() ? 1 : 0)
+		if(owner.daemon_bonus("overclock"))
 			route.latency = max(1, round(route.latency / 3))
 	if(owns_tree)
-		release_path_tree(tree)
+		owner.release_path_tree(tree)
 	return route

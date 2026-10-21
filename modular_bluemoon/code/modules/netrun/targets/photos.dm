@@ -36,7 +36,7 @@
 	if(camera.netrun_photographing || world.time < camera.netrun_next_photo)
 		return "Камера ещё сохраняет предыдущий кадр."
 	var/photo_size = camera.netrun_photo_storage_size()
-	if(netrun_storage_used(console.storage) + photo_size > console.storage_capacity)
+	if(netrun_storage_used(console.inventory.local_store.files) + photo_size > console.inventory.local_store.capacity)
 		return "Для фотографии нужно [photo_size] ячейки свободной памяти."
 	camera.netrun_photographing = TRUE
 	camera.netrun_next_photo = world.time + 5 SECONDS
@@ -63,7 +63,7 @@
 	if(!console.store_file(file))
 		qdel(file)
 		return "Не хватает места для сохранения кадра."
-	console.selected_file_uid = file.uid
+	console.inventory.selected_file_uid = file.uid
 	return "Фотография сохранена: [file.name]."
 
 /// Временный рендерер: использует captureimage, но передаёт picture в файл вместо печати.

@@ -59,7 +59,7 @@
 	return world.time >= burnt_until
 
 /obj/item/netrun_deck/netrun_status()
-	return list("Память: [netrun_storage_used(console.storage)]/[storage_capacity]", "Кабель: [console.jack ? console.jack.address : "не подключён"]")
+	return list("Память: [netrun_storage_used(console.inventory.local_store.files)]/[storage_capacity]", "Кабель: [console.connection.jack ? console.connection.jack.address : "не подключён"]")
 
 /obj/item/organ/cyberimp/brain/netlink/netrun_owner_access(datum/netrun_console/source)
 	return owner && netrun_console_owner(source) == owner ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_NONE
@@ -87,7 +87,7 @@
 	var/datum/netrun_console/target = device?.console
 	if(!target)
 		return
-	return "Связь с NTnet: [target.has_uplink() ? "есть" : "нет"].\nСессия: [target.is_locked() ? "заблокирована" : "активна"], трассировка [round(target.trace)]%.\nПамять: [netrun_storage_used(target.storage)]/[target.storage_capacity]."
+	return "Связь с NTnet: [target.has_uplink() ? "есть" : "нет"].\nСессия: [target.is_locked() ? "заблокирована" : "активна"], трассировка [round(target.intrusion.trace)]%.\nПамять: [netrun_storage_used(target.inventory.local_store.files)]/[target.inventory.local_store.capacity]."
 
 /datum/netrun_command/session_sever
 	id = "session_sever"
@@ -103,10 +103,10 @@
 	var/datum/netrun_console/target = device?.console
 	if(!target)
 		return
-	target.lockout_until = max(target.lockout_until, world.time + 30 SECONDS)
-	target.node_access.Cut()
-	target.network_access.Cut()
-	QDEL_NULL(target.breach)
+	target.intrusion.lockout_until = max(target.intrusion.lockout_until, world.time + 30 SECONDS)
+	target.access_session.node_access.Cut()
+	target.access_session.network_access.Cut()
+	QDEL_NULL(target.intrusion.breach)
 	target.set_jack(null)
 	target.stop_watch()
 	target.log_line("Сессия разорвана внешней сетевой командой.", "bad")

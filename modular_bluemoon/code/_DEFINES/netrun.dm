@@ -76,6 +76,27 @@
 /// Нелегальный сетевой доступ к кибернетическому узлу носителя: (datum/netrun_console, datum/component/netrun_node)
 #define COMSIG_NETRUN_IMPLANT_INTRUSION "netrun_implant_intrusion"
 
+/// Domain notifications. Handlers invalidate caches; they must not serialize UI.
+/// SSnetrun and node: (node, changed_flags).
+#define COMSIG_NETRUN_NODE_CHANGED "netrun_node_changed"
+/// SSnetrun: (revision), after a complete structural graph commit.
+#define COMSIG_NETRUN_TOPOLOGY_CHANGED "netrun_topology_changed"
+/// SSnetrun: (node), before affected sessions revoke grants.
+#define COMSIG_NETRUN_FIREWALL_CHANGED "netrun_firewall_changed"
+/// File store / inventory: no payload; the source owns its current contents.
+#define COMSIG_NETRUN_STORAGE_CHANGED "netrun_storage_changed"
+#define COMSIG_NETRUN_INVENTORY_CHANGED "netrun_inventory_changed"
+/// ICE and console: combat state changed.
+#define COMSIG_NETRUN_COMBAT_CHANGED "netrun_combat_changed"
+/// SSnetrun: (ice, victim), emitted only after an attack is actually queued.
+#define COMSIG_NETRUN_ICE_CAST_STARTED "netrun_ice_cast_started"
+/// ICE: (old_node, new_node).
+#define COMSIG_NETRUN_ICE_NODE_CHANGED "netrun_ice_node_changed"
+#define NETRUN_CHANGED_STATE (1<<0)
+#define NETRUN_CHANGED_BINDING (1<<1)
+#define NETRUN_CHANGED_OCCUPANTS (1<<2)
+#define NETRUN_CHANGED_REMOVED (1<<3)
+
 #define NETRUN_TRACE_MAX 100
 /// Сколько трассировки спадает за секунду простоя
 #define NETRUN_TRACE_DECAY 0.5

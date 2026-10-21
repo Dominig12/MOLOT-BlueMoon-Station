@@ -26,7 +26,7 @@ describe('incremental network graph layout', () => {
       .toEqual(layoutGraph(nodes, edges, createGraphLayoutCache()));
   });
 
-  test('revealing and hiding graph slices preserves all previously placed vertices', () => {
+  test('additions preserve points and deletion immediately releases cached vertices', () => {
     const cache = createGraphLayoutCache();
     const original = layoutGraph(nodes, edges, cache);
     const expanded = [...nodes, { address: 'APC-C', type: 'apc', uplink: null }, { address: 'NEW', type: 'camera', uplink: 'APC-A' }];
@@ -36,8 +36,10 @@ describe('incremental network graph layout', () => {
     const revealed = layoutGraph(expanded, addedEdges, cache);
     for (const node of nodes) { expect(revealed.get(node.address)).toEqual(original.get(node.address)); }
     layoutGraph(nodes.slice(0, 1), [], cache);
+    expect(cache.positions.size).toBe(1);
+    expect(cache.positions.get('APC-A')).toBe(original.get('APC-A'));
     const restored = layoutGraph(expanded, addedEdges, cache);
-    expect(restored).toEqual(revealed);
+    expect(restored.size).toBe(expanded.length);
     expect(layoutGraph(expanded, addedEdges, cache).get('NEW')).toBe(restored.get('NEW'));
   });
 
@@ -72,7 +74,7 @@ describe('incremental network graph layout', () => {
     expect(layout.get('CLIENT').binding).toContain('endpoint:APC-B:');
   });
 
-  test('SVG bounds contain negative and far-away graph coordinates without changing the world origin', () => {
+  test('graph bounds contain negative and far-away coordinates without changing the world origin', () => {
     const points = [{ px: -1800, py: -900 }, { px: 16000, py: 4200 }];
     const bounds = graphBounds(points);
     expect(bounds.minX).toBeLessThan(points[0].px);

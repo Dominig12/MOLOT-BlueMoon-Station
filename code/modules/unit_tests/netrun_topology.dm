@@ -157,7 +157,7 @@
 	TEST_ASSERT_EQUAL(topology.revision, previous_revision, "A temporary APC failure must not rebuild the structural graph")
 	TEST_ASSERT_EQUAL(json_encode(topology.edges), previous_edges, "An offline APC must retain the cached tree's edges")
 
-/// Public map depth follows edges: a far two-hop peer appears while a nearby three-hop peer does not.
+/// The full permitted map follows connectivity, independently of distance or old BFS depth.
 /datum/unit_test/netrun_topology_map_depth_and_latency/Run()
 	var/turf/origin = run_loc_floor_bottom_left
 	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
@@ -189,15 +189,15 @@
 	for(var/obj/machinery/power/apc/apc as anything in list(first, second, third))
 		var/datum/component/netrun_node/node = apc.GetComponent(/datum/component/netrun_node)
 		TEST_ASSERT(source.console.store_file(new /datum/netrun_file("[node.address].key", NETRUN_FILE_KEY, node.network.passcode, 1, node.network.id)), "The public map test needs legitimate keys for its security domains")
-	source.console.selected_address = source_node.address
+	source.console.map_view.selected_address = source_node.address
 	var/list/payload = source.console.ui_data(null)
 	TEST_ASSERT(netrun_map_has_node(payload, far_node.address), "A two-edge peer must be loaded even when physically far away")
-	TEST_ASSERT(!netrun_map_has_node(payload, three_hops_node.address), "A physically adjacent peer outside the two-edge graph neighborhood must remain unloaded")
+	TEST_ASSERT(netrun_map_has_node(payload, three_hops_node.address), "A permitted peer beyond the old two-edge neighborhood must be included")
 	TEST_ASSERT_EQUAL(source.console.latency_to(far_node), source.console.latency_to(near_node), "Equal graph paths must have equal latency regardless of tile distance")
 	TEST_ASSERT(source.console.latency_to(three_hops_node) > source.console.latency_to(far_node), "An extra APC edge must increase latency even when its target is physically close")
 	TEST_ASSERT(source.console.store_file(netrun_daemon_file("mapper")), "The mapper daemon must fit in the test console")
 	payload = source.console.ui_data(null)
-	TEST_ASSERT(netrun_map_has_node(payload, three_hops_node.address), "Mapper must extend the actual graph neighborhood beyond two edges")
+	TEST_ASSERT(netrun_map_has_node(payload, three_hops_node.address), "Installing mapper must preserve already permitted distant endpoints")
 
 /// Permissions do not let an entity jump over intermediate graph nodes.
 /datum/unit_test/netrun_topology_entity_neighbors/Run()
@@ -253,6 +253,8 @@
 	TEST_ASSERT(!(apc_node.network.code in node_addresses), "Combining breach targets must not append network codes to the shared node-address pool")
 	var/datum/netrun_file/key = new("medical.key", NETRUN_FILE_KEY, target_node.network.passcode, 1, target_node.network.id)
 	TEST_ASSERT(source.console.store_file(key), "The legitimate network key must fit in memory")
+	TEST_ASSERT(key in source.console.all_files(TRUE), "The new key must belong to the current inventory before its UI projection is requested")
+	TEST_ASSERT(source.console.has_key(target_node.network, TRUE), "Fresh key authorization must recognize the stored file before generating CLI disclosure")
 	payload = source.console.ui_data(null)
 	cli = payload["cli"]
 	pools = cli["completions"]
@@ -296,7 +298,7 @@
 	stored = graph.route_tables[source_node.address]
 	TEST_ASSERT(stored.revision > previous_revision, "The scheduled refresh must advance the retained route revision")
 	TEST_ASSERT(!stored.reached[target_node.address], "A refreshed server table must remove a path through broken infrastructure")
-	source.console.selected_address = target_node.address
+	source.console.map_view.selected_address = target_node.address
 	var/list/payload = source.console.ui_data(null)
 	var/list/map = payload["map"]
 	var/list/selected_route = map["route"]

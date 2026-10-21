@@ -109,8 +109,8 @@
 	if(!user)
 		return FALSE
 	var/list/settings = list("see_in_dark" = 2, "sight" = 0, "see_invisible" = SEE_INVISIBLE_LIVING)
-	if(!QDELETED(console) && console.watch_viewer == user && console.watch_target())
-		var/atom/source = console.watch_node.parent
+	if(!QDELETED(console) && console.remote_session.watch_viewer == user && console.watch_target())
+		var/atom/source = console.remote_session.watch_node.parent
 		settings = source.netrun_view_settings()
 	user.sight = settings["sight"]
 	user.see_in_dark = settings["see_in_dark"]
@@ -118,7 +118,7 @@
 	return TRUE
 
 /obj/effect/netrun_view_eye/get_remote_view_fullscreens(mob/user)
-	if(QDELETED(console) || console.watch_viewer != user)
+	if(QDELETED(console) || console.remote_session.watch_viewer != user)
 		return
 	var/atom/target = console.watch_target()
 	return target?.get_remote_view_fullscreens(user)

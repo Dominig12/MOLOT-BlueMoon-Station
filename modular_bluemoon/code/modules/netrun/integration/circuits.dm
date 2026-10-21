@@ -38,11 +38,11 @@
 /obj/item/integrated_circuit/input/netrun_link/do_work()
 	var/datum/component/netrun_node/node = SSnetrun.find_node(get_pin_data(IC_INPUT, 1))
 	var/command_id = lowertext(trim("[get_pin_data(IC_INPUT, 2)]"))
-	QDEL_LIST(console.storage)
+	console.inventory.local_store.clear()
 	if(node?.network)
 		var/key = "[get_pin_data(IC_INPUT, 3)]"
 		if(length(key))
-			console.storage += new /datum/netrun_file("key", NETRUN_FILE_KEY, uppertext(trim(key)), 1, node.network.id)
+			console.inventory.local_store.insert(new /datum/netrun_file("key", NETRUN_FILE_KEY, uppertext(trim(key)), 1, node.network.id))
 	console.log.Cut()
 	var/success = node && console.run_command(node, command_id)
 	var/list/last = length(console.log) ? console.log[length(console.log)] : null
@@ -54,8 +54,8 @@
 /datum/netrun_console/circuit
 	name = "сетевой мост"
 	origin = NETRUN_ORIGIN_CIRCUIT
-	can_breach = FALSE
-	storage_capacity = 1
+	initial_can_breach = FALSE
+	initial_storage_capacity = 1
 
 /datum/netrun_console/circuit/New(atom/host, origin)
 	. = ..()

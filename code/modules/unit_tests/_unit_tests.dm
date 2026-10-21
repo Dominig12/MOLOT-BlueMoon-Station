@@ -325,6 +325,8 @@
 #include "modular_map_loader.dm" //SPLURT EDIT
 #include "netrun.dm"
 #include "netrun_combat.dm"
+#include "netrun_inventory.dm"
+#include "netrun_map_updates.dm"
 #include "netrun_photos.dm"
 #include "netrun_routes.dm"
 #include "netrun_topology.dm"

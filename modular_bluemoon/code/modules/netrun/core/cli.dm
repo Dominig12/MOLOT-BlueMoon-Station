@@ -180,10 +180,10 @@
 	if(!network || !console.can_reach(network))
 		console.log_line("Сеть недоступна.", "bad")
 		return
-	console.viewed_network_id = network.id
-	console.selected_network = network.id
-	console.selected_address = null
-	console.active_window = null
+	console.map_view.viewed_network_id = network.id
+	console.map_view.selected_network = network.id
+	console.map_view.selected_address = null
+	console.remote_session.active_window = null
 	console.log_line("Открыта сеть [network.code].")
 
 /datum/netrun_cli_command/net/completions(datum/netrun_console/console, partial)
@@ -201,10 +201,10 @@
 	if(!node || !console.node_visible(node))
 		console.log_line("Узел не найден или нет доступа.", "bad")
 		return
-	console.selected_address = node.address
-	console.selected_network = null
-	console.active_window = null
-	console.viewed_network_id = null
+	console.map_view.selected_address = node.address
+	console.map_view.selected_network = null
+	console.remote_session.active_window = null
+	console.map_view.viewed_network_id = null
 	console.log_line("Выбран [node.get_name()] [node.address].")
 
 /datum/netrun_cli_command/sel/completions(datum/netrun_console/console, partial)
@@ -216,10 +216,10 @@
 	category = "Навигация"
 
 /datum/netrun_cli_command/nodes/execute(datum/netrun_console/console, list/words, raw)
-	var/datum/netrun_network/network = SSnetrun.networks[console.selected_network || console.viewed_network_id]
+	var/datum/netrun_network/network = SSnetrun.networks[console.map_view.selected_network || console.map_view.viewed_network_id]
 	if(!network)
 		var/datum/component/netrun_node/node = console.selected_node()
-		network = node?.network || console.jack?.network
+		network = node?.network || console.connection.jack?.network
 	if(!network || console.network_level(network) < NETRUN_ACCESS_GUEST)
 		console.log_line("Нет открытой сети.", "bad")
 		return
@@ -250,14 +250,14 @@
 	category = "Навигация"
 
 /datum/netrun_cli_command/close/execute(datum/netrun_console/console, list/words, raw)
-	var/address = length(words) > 1 ? uppertext(words[2]) : console.active_window
-	if(!(address in console.windows))
+	var/address = length(words) > 1 ? uppertext(words[2]) : console.remote_session.active_window
+	if(!(address in console.remote_session.windows))
 		console.log_line("Такая вкладка не открыта.", "bad")
 		return
 	console.close_window(address)
 
 /datum/netrun_cli_command/close/completions(datum/netrun_console/console, partial)
-	return console.windows.Copy()
+	return console.remote_session.windows.Copy()
 
 /datum/netrun_cli_command/info
 	id = "info"
@@ -265,10 +265,10 @@
 	category = "Общие"
 
 /datum/netrun_cli_command/info/execute(datum/netrun_console/console, list/words, raw)
-	console.log_line("Точка: [console.name] ([console.origin]); [console.wireless ? "беспроводная связь" : "проводная связь"].", "label")
-	console.log_line("NTnet: [console.has_uplink() ? "связь есть" : "нет связи"]. Трассировка: [round(console.trace, 0.1)]%.")
+	console.log_line("Точка: [console.name] ([console.origin]); [console.connection.wireless ? "беспроводная связь" : "проводная связь"].", "label")
+	console.log_line("NTnet: [console.has_uplink() ? "связь есть" : "нет связи"]. Трассировка: [round(console.intrusion.trace, 0.1)]%.")
 	if(console.is_locked())
-		console.log_line("Блокировка: [round((console.lockout_until - world.time) / (1 SECONDS))] с.", "bad")
+		console.log_line("Блокировка: [round((console.intrusion.lockout_until - world.time) / (1 SECONDS))] с.", "bad")
 	var/datum/component/netrun_node/node = console.selected_node()
 	if(node)
 		console.log_line("Цель: [node.get_name()] [node.address], доступ [netrun_access_name(console.node_level(node))], сеть [node.network?.code].")
@@ -344,7 +344,7 @@
 	if(network)
 		console.start_breach("network", network.id)
 	else
-		console.start_breach("node", token || console.selected_address)
+		console.start_breach("node", token || console.map_view.selected_address)
 
 /datum/netrun_cli_command/breach/completions(datum/netrun_console/console, partial)
 	var/list/node_addresses = console.cli_completion_values("nodes")
@@ -372,9 +372,9 @@
 	category = "Память"
 
 /datum/netrun_cli_command/mem/execute(datum/netrun_console/console, list/words, raw)
-	console.log_line("Память: [netrun_storage_used(console.storage)]/[console.storage_capacity]")
-	if(console.shard)
-		console.log_line("Шард [console.shard.name]: [netrun_storage_used(console.shard.files)]/[console.shard.capacity]")
+	console.log_line("Память: [netrun_storage_used(console.inventory.local_store.files)]/[console.inventory.local_store.capacity]")
+	if(console.inventory.shard)
+		console.log_line("Шард [console.inventory.shard.name]: [netrun_storage_used(console.inventory.shard.file_store.files)]/[console.inventory.shard.file_store.capacity]")
 
 /datum/netrun_cli_command/daemons
 	id = "daemons"

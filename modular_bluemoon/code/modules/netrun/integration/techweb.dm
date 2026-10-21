@@ -37,7 +37,7 @@
 	if(!console.store_file(file))
 		qdel(file)
 		return "Нет места для файла привязки."
-	console.selected_file_uid = file.uid
+	console.inventory.selected_file_uid = file.uid
 	return "Привязка сохранена в [file.name]. Файл можно скопировать на шард и перенести."
 
 /datum/netrun_command/web_bind

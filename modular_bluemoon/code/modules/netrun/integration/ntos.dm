@@ -29,9 +29,9 @@
 		QDEL_NULL(console)
 	if(!console)
 		console = new(computer, NETRUN_ORIGIN_NTOS)
-		console.wireless = TRUE
-		console.can_breach = allow_breach
-		console.storage_capacity = 4
+		console.connection.wireless = TRUE
+		console.intrusion.can_breach = allow_breach
+		console.inventory.local_store.capacity = 4
 	return console
 
 /datum/computer_file/program/netrun/ui_data(mob/user)

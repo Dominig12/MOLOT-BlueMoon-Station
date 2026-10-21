@@ -46,7 +46,7 @@ const setup = (overrides: Partial<NetrunData> = {}) => {
       storage: { files: [], used: 0, capacity: 10 }, shard: null,
       breach: null, entity: null, combat: null, chat: { handle: 'runner', messages: [] },
       web: null, windows: [], window: null,
-      map: { gateways: [], focus: node.address, depth: 2, revision: 1,
+      map: { gateways: [], focus: node.address, revision: 1,
         nodes: [node, { ...node, address: 'BBBB:0002', x: 20 }],
         edges: [{ id: 'apc-link', from: node.address, to: 'BBBB:0002', kind: 'apc' }] },
       selected_network: null, ping_route: null,
@@ -62,6 +62,31 @@ const sent = (topic, action: string) => topic.mock.calls
   .map((call) => JSON.parse(call[0].payload));
 
 describe('Netrun terminal panels', () => {
+  test('projected state revisions repaint without layout and structural revisions replace nodes and links', () => {
+    const layout = jest.spyOn(mapGeometry, 'layoutGraph');
+    const initial = { gateways: [], focus: node.address, revision: 1, structure_revision: 4, state_revision: 10,
+      nodes: [node], edges: [] };
+    const topic = setup({ map: initial });
+    const { getByText, rerender } = render(<StationMap />);
+    expect(layout).toHaveBeenCalledTimes(1);
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...initial, state_revision: 11, nodes: [{ ...node, online: false }] } } })));
+    rerender(<StationMap />);
+    expect(layout).toHaveBeenCalledTimes(1);
+    const added = { ...node, address: 'NEW', type: 'camera', uplink: node.address };
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...initial, structure_revision: 5, state_revision: 12,
+      nodes: [node, added], edges: [{ id: 'new-link', from: node.address, to: 'NEW', kind: 'endpoint' }] } } })));
+    rerender(<StationMap />);
+    expect(getByText('2/2 · вся доступная сеть')).toBeTruthy();
+    expect(layout).toHaveBeenCalledTimes(2);
+    fireEvent.click(getByText('Упорядочить'));
+    expect(layout).toHaveBeenCalledTimes(3);
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...initial, structure_revision: 6, state_revision: 13 } } })));
+    rerender(<StationMap />);
+    expect(getByText('1/1 · вся доступная сеть')).toBeTruthy();
+    expect(layout).toHaveBeenCalledTimes(4);
+    layout.mockRestore();
+  });
+
   test('automatic breach explicitly sends its mode and shows waiting progress instead of cells', () => {
     const topic = setup({ can_autobreach: true, selected: { ...node, access: 1 } });
     const panel = render(<NodePanel />);
@@ -173,31 +198,31 @@ describe('Netrun terminal panels', () => {
 
   test('map filters and local search exclude vertices without rebuilding topology', () => {
     const camera = { ...node, address: 'CAM:0001', name: 'Камера лаборатории', type: 'camera', x: 20 };
-    const topic = setup({ map: { gateways: [], focus: node.address, depth: 2, revision: 1,
+    const topic = setup({ map: { gateways: [], focus: node.address, revision: 1,
       nodes: [node, camera], edges: [{ id: 'camera-link', from: camera.address, to: node.address, kind: 'endpoint' }] } });
     const { getByLabelText, getByPlaceholderText, getByText } = render(<StationMap />);
-    expect(getByText('2/2 · глубина 2')).toBeTruthy();
+    expect(getByText('2/2 · вся доступная сеть')).toBeTruthy();
     fireEvent.click(getByLabelText('Фильтр: Камеры'));
-    expect(getByText('1/2 · глубина 2')).toBeTruthy();
+    expect(getByText('1/2 · вся доступная сеть')).toBeTruthy();
     fireEvent.keyDown(getByLabelText('Карта сети'), { key: 'd' });
     expect(sent(topic, 'select')).toEqual([]);
     fireEvent.click(getByLabelText('Фильтр: Камеры'));
-    expect(getByText('2/2 · глубина 2')).toBeTruthy();
+    expect(getByText('2/2 · вся доступная сеть')).toBeTruthy();
     const input = getByPlaceholderText('поиск узла…');
     fireEvent.input(input, { target: { value: 'лаборатории' } });
-    expect(getByText('1/2 · глубина 2')).toBeTruthy();
+    expect(getByText('1/2 · вся доступная сеть')).toBeTruthy();
     fireEvent.input(input, { target: { value: 'несуществующий узел' } });
-    expect(getByText('0/2 · глубина 2')).toBeTruthy();
+    expect(getByText('0/2 · вся доступная сеть')).toBeTruthy();
     fireEvent.input(input, { target: { value: '' } });
-    expect(getByText('2/2 · глубина 2')).toBeTruthy();
+    expect(getByText('2/2 · вся доступная сеть')).toBeTruthy();
   });
 
   test('large network renders with a single Canvas, regardless of number of vertices', () => {
     const large = Array.from({ length: 1100 }, (_, i) => ({ ...node, address: `CLIENT-${i}`, type: 'camera', uplink: node.address }));
     const edges = large.map((n) => ({ id: n.address, from: n.address, to: node.address, kind: 'endpoint' as const }));
-    setup({ map: { gateways: [], focus: node.address, depth: 3, revision: 1, nodes: [node, ...large], edges } });
+    setup({ map: { gateways: [], focus: node.address, revision: 1, nodes: [node, ...large], edges } });
     const { container, getByText } = render(<StationMap />);
-    expect(getByText('1101/1101 · глубина 3')).toBeTruthy();
+    expect(getByText('1101/1101 · вся доступная сеть')).toBeTruthy();
     expect(container.querySelectorAll('canvas[data-net-canvas]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-net-node]')).toHaveLength(0);
     expect(container.querySelectorAll('[data-net-edge]')).toHaveLength(0);
@@ -207,7 +232,7 @@ describe('Netrun terminal panels', () => {
     const map = {
       nodes: [node, { ...node, address: 'CAM', type: 'camera', uplink: node.address }],
       edges: [{ id: 'endpoint', from: 'CAM', to: node.address, kind: 'endpoint' as const }],
-      gateways: [], focus: node.address, depth: 2, revision: 1,
+      gateways: [], focus: node.address, revision: 1,
     };
     const cache = mapGeometry.createGraphLayoutCache();
     const before = mapGeometry.layoutGraph(map.nodes, map.edges, cache);
@@ -295,7 +320,7 @@ describe('Netrun terminal panels', () => {
     const topic = setup({
       selected: { ...node, address: 'Z-SELECTED' },
       entity: { name: 'Process', integrity: 100, max_integrity: 100, host: 'A-HOST', host_name: 'Host', diving: false },
-      map: { gateways: [], focus: 'A-HOST', depth: 2, revision: 1, nodes: [
+      map: { gateways: [], focus: 'A-HOST', revision: 1, nodes: [
         { ...node, address: 'Z-SELECTED' }, { ...node, address: 'A-HOST' },
         { ...node, address: 'B-LOCKED', access: 1 }, { ...node, address: 'C-OFFLINE', online: false },
         { ...node, address: 'D-TARGET' }, { ...node, address: 'E-NONNEIGHBOR' },
@@ -321,7 +346,7 @@ describe('Netrun terminal panels', () => {
     const topic = setup({ selected: keyed,
       entity: { name: 'Process', integrity: 100, max_integrity: 100, host: host.address, host_name: 'Host', diving: false },
       map: { nodes: [host, keyed], edges: [{ id: 'keyed-neighbor', from: host.address, to: keyed.address, kind: 'endpoint' }],
-        gateways: [], focus: host.address, depth: 2, revision: 1 },
+        gateways: [], focus: host.address, revision: 1 },
     });
     const { getByLabelText, getByText } = render(<><StationMap /><NodePanel /></>);
     expect(getByText(command.name).closest('.Button').classList.contains('Button--disabled')).toBe(true);

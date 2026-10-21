@@ -25,7 +25,7 @@
 	TEST_ASSERT_EQUAL(chip.console.legit_node_level(node), NETRUN_ACCESS_USER, "The scanned matching access must authorize USER without granting ROOT")
 	TEST_ASSERT(chip.console.run_command(node, "apc_lighting"), "The actual scanned ID must enable legal synchronous automation")
 	TEST_ASSERT_NOTEQUAL(apc.lighting, initial_lighting, "Authorized automation must change the real APC channel")
-	TEST_ASSERT_EQUAL(chip.console.trace, 0, "Legal circuit automation must not accumulate intrusion trace")
+	TEST_ASSERT_EQUAL(chip.console.intrusion.trace, 0, "Legal circuit automation must not accumulate intrusion trace")
 	assembly.remove_component(chip)
 	TEST_ASSERT_EQUAL(length(chip.console.user_access(TRUE)), 0, "Removing the bridge must revoke its access to assembly credentials")
 	TEST_ASSERT(!chip.console.run_command(node, "apc_lighting"), "A detached bridge must not keep the previous assembly's USER authorization")

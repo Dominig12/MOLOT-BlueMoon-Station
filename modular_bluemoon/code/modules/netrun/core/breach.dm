@@ -43,7 +43,7 @@
 	src.target_name = target_name
 	src.security = clamp(security - console.daemon_bonus("icepick"), 1, 5)
 	size = 5 + (src.security >= 3) + (src.security >= 5)
-	buffer_size = 4 + round(src.security / 2) + console.buffer_bonus + console.daemon_bonus("buffer")
+	buffer_size = 4 + round(src.security / 2) + console.intrusion.buffer_bonus + console.daemon_bonus("buffer")
 	buffer_size = min(buffer_size, size * 2)
 	deadline = world.time + (45 SECONDS) - (src.security * 4 SECONDS) + (console.daemon_bonus("extend") * (10 SECONDS))
 	if(target_kind == "network")
@@ -79,7 +79,7 @@
 	if(!node)
 		return FALSE
 	node.join_network()
-	return node.network == target_network && console.can_route(node) && node.is_online(node != console.jack) && console.node_level(node) >= NETRUN_ACCESS_GUEST
+	return node.network == target_network && console.can_route(node) && node.is_online(node != console.connection.jack) && console.node_level(node) >= NETRUN_ACCESS_GUEST
 
 /datum/netrun_breach/proc/cell(row, col)
 	return (row - 1) * size + col
@@ -311,8 +311,8 @@
 		return
 	if(world.time < deadline)
 		finished = TRUE
-		if(console?.breach == src)
-			console.breach = null
+		if(console?.intrusion.breach == src)
+			console.intrusion.breach = null
 			console.log_line("Автовзлом прерван: доступ не получен, накопленная трассировка сохранена.", "average")
 		qdel(src)
 		return

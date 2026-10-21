@@ -47,18 +47,18 @@
 /datum/neural_interface_module/netrun/proc/render_lines()
 	var/write = line("├─ NETLINK", separator_color)
 	if(console.is_locked())
-		write += line("└ LOCKED: [round((console.lockout_until - world.time) / (1 SECONDS))]s", "#ef4444ff")
+		write += line("└ LOCKED: [round((console.intrusion.lockout_until - world.time) / (1 SECONDS))]s", "#ef4444ff")
 		return write
 	var/uplink = console.has_uplink()
 	write += line("└ NTnet: [uplink ? "ONLINE" : "OFFLINE"]", uplink ? "#10b981ff" : "#ef4444ff")
-	var/filled = round(console.trace / 10)
-	var/trace_color = console.trace > 66 ? "#ef4444ff" : console.trace > 33 ? "#f59e0bff" : "#4ad1fa86"
-	write += line("└ TRACE \[[netrun_repeat("█", filled)][netrun_repeat("·", 10 - filled)]\] [round(console.trace)]%", trace_color)
+	var/filled = round(console.intrusion.trace / 10)
+	var/trace_color = console.intrusion.trace > 66 ? "#ef4444ff" : console.intrusion.trace > 33 ? "#f59e0bff" : "#4ad1fa86"
+	write += line("└ TRACE \[[netrun_repeat("█", filled)][netrun_repeat("·", 10 - filled)]\] [round(console.intrusion.trace)]%", trace_color)
 	var/datum/component/netrun_node/node = console.selected_node()
 	if(node)
 		write += line("└ TARGET: [node.address] [netrun_neural_access_name(console.node_level(node))]", "#a78bffff")
-	if(console.breach)
-		write += line("└ BREACH: [length(console.breach.buffer)]/[console.breach.buffer_size] · [round(console.breach.time_left() / (1 SECONDS))]s", "#d8ff4a")
+	if(console.intrusion.breach)
+		write += line("└ BREACH: [length(console.intrusion.breach.buffer)]/[console.intrusion.breach.buffer_size] · [round(console.intrusion.breach.time_left() / (1 SECONDS))]s", "#d8ff4a")
 	if(length(console.listening))
 		write += line("└ STREAMS: [length(console.listening)]", "#06b6d4ff")
 	return write
@@ -130,9 +130,9 @@
 	if(!isnull(last_uplink) && uplink != last_uplink)
 		owner.write_log(uplink ? "NTnet: connection restored" : "NTnet: connection lost", uplink ? "SYNC" : "WARNING")
 	last_uplink = uplink
-	var/band = console.trace >= 80 ? 2 : console.trace >= 50 ? 1 : 0
+	var/band = console.intrusion.trace >= 80 ? 2 : console.intrusion.trace >= 50 ? 1 : 0
 	if(band > last_trace_band)
-		owner.write_log("Trace [round(console.trace)]%", band == 2 ? "ALERT" : "WARNING")
+		owner.write_log("Trace [round(console.intrusion.trace)]%", band == 2 ? "ALERT" : "WARNING")
 	last_trace_band = band
 	var/locked = console.is_locked()
 	if(locked && !last_locked)

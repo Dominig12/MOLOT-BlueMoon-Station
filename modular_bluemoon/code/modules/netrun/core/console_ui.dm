@@ -2,8 +2,6 @@
 	/// Если задано - состояние tgui для этой консоли (импланты, сущности)
 	var/datum/ui_state/state_override
 	var/tgui_title = "Сетевой терминал"
-	/// Поисковый запрос по всей сети (для прокладки маршрута к ещё не открытым узлам)
-	var/search_query
 
 /datum/netrun_console/ui_state(mob/user)
 	if(state_override)
@@ -21,7 +19,7 @@
 	// Matrix clicks need no global discovery pass. The live delivery/finish
 	// checks own fresh trees; this snapshot only describes the visible panel.
 	refresh_route_node(selected_node())
-	ui_routes = breach ? null : make_path_tree(TRUE)
+	ui_routes = intrusion.breach ? null : make_path_tree(TRUE)
 	access_cache = user_access()
 	network_level_cache = list()
 	ui_node_levels = list()
@@ -48,21 +46,21 @@
 /datum/netrun_console/proc/build_ui_data(mob/user)
 	var/list/data = list()
 	data["origin"] = origin
-	data["wireless"] = wireless
-	if(!breach || world.time >= ui_uplink_refresh)
+	data["wireless"] = connection.wireless
+	if(!intrusion.breach || world.time >= ui_uplink_refresh)
 		ui_uplink_value = has_uplink()
 		ui_uplink_refresh = world.time + 1 SECONDS
 	data["uplink"] = ui_uplink_value
-	data["trace"] = round(trace, 0.1)
-	data["locked"] = is_locked() ? round((lockout_until - world.time) / (1 SECONDS)) : 0
-	data["can_breach"] = can_breach
-	data["can_autobreach"] = can_breach && !!daemon_bonus("autobreach")
+	data["trace"] = round(intrusion.trace, 0.1)
+	data["locked"] = is_locked() ? round((intrusion.lockout_until - world.time) / (1 SECONDS)) : 0
+	data["can_breach"] = intrusion.can_breach
+	data["can_autobreach"] = intrusion.can_breach && !!daemon_bonus("autobreach")
 	data["log"] = log
-	data["jack"] = jack ? list("address" = jack.address, "name" = jack.get_name()) : null
+	data["jack"] = connection.jack ? list("address" = connection.jack.address, "name" = connection.jack.get_name()) : null
 	data["host_actions"] = host_actions()
 	// Matrix clicks must not rebuild the hidden graph, global autocomplete,
 	// selected-node command help or the native machine UI behind the puzzle.
-	if(breach)
+	if(intrusion.breach)
 		data["networks"] = ui_network_catalog || list()
 		data["view"] = null
 		data["web"] = null
@@ -74,9 +72,9 @@
 		data["waypoint"] = null
 		data["storage"] = storage_payload()
 		data["shard"] = shard_payload()
-		data["breach"] = breach.ui_payload()
+		data["breach"] = intrusion.breach.ui_payload()
 		data["entity"] = entity_data()
-		data["combat"] = breach_combat_payload()
+		data["combat"] = combat_payload()
 		data["chat"] = chat_data()
 		data["cli"] = cli_payload(FALSE)
 		data["windows"] = windows_payload()
@@ -103,7 +101,7 @@
 			"reachable" = reachable,
 			"access" = network_level(network),
 			"has_key" = has_key(network),
-			"can_breach" = can_breach && reachable && network_level(network) < NETRUN_ACCESS_GUEST,
+			"can_breach" = intrusion.can_breach && reachable && network_level(network) < NETRUN_ACCESS_GUEST,
 			"nodes" = length(network.nodes),
 		))
 	if(web_browsing() && has_uplink() && SSntnet.is_enabled())
@@ -125,19 +123,19 @@
 	data["networks"] = networks
 	ui_network_catalog = networks
 
-	if(viewed_network_id == "web" && web_browsing())
+	if(map_view.viewed_network_id == "web" && web_browsing())
 		data["view"] = null
 		data["selected"] = null
 		data["web"] = web_payload()
 		data["storage"] = storage_payload()
 		data["shard"] = shard_payload()
-		data["breach"] = breach?.ui_payload()
+		data["breach"] = intrusion.breach?.ui_payload()
 		data["entity"] = entity_data()
 		data["combat"] = combat_payload()
 		data["chat"] = chat_data()
 		data["cli"] = cli_payload()
 		data["windows"] = windows_payload()
-		data["window"] = active_window ? window_payload() : null
+		data["window"] = remote_session.active_window ? window_payload() : null
 		data["map"] = null
 		data["selected_network"] = null
 		data["ping_route"] = null
@@ -170,20 +168,20 @@
 				"security" = lan.security,
 				"access" = lan_level,
 				"has_key" = has_key(lan),
-				"can_breach" = can_breach && lan_level < NETRUN_ACCESS_GUEST,
+				"can_breach" = intrusion.can_breach && lan_level < NETRUN_ACCESS_GUEST,
 			)
 		selected["logs"] = level >= NETRUN_ACCESS_USER ? node.logs.Copy() : list()
 		var/atom/A = node.parent
 		selected["status"] = level >= NETRUN_ACCESS_USER ? A.netrun_status() : list()
-		if(node.files && level >= NETRUN_ACCESS_USER)
+		if(node.file_store && level >= NETRUN_ACCESS_USER)
 			var/list/files = list()
-			for(var/datum/netrun_file/file as anything in node.files)
+			for(var/datum/netrun_file/file as anything in node.file_store.files)
 				files += list(file.ui_entry())
 			selected["files"] = files
-			selected["storage"] = list("used" = node.used_storage(), "capacity" = node.storage_capacity)
+			selected["storage"] = list("used" = node.used_storage(), "capacity" = node.file_store?.capacity)
 	data["selected"] = selected
 
-	var/datum/netrun_network/selnet = SSnetrun.networks[selected_network]
+	var/datum/netrun_network/selnet = SSnetrun.networks[map_view.selected_network]
 	if(selnet)
 		var/snlevel = network_level(selnet)
 		data["selected_network"] = list(
@@ -194,7 +192,7 @@
 			"security" = selnet.security,
 			"access" = snlevel,
 			"has_key" = has_key(selnet),
-			"can_breach" = can_breach && snlevel < NETRUN_ACCESS_GUEST,
+			"can_breach" = intrusion.can_breach && snlevel < NETRUN_ACCESS_GUEST,
 			"log" = snlevel >= NETRUN_ACCESS_USER ? selnet.logs.Copy(max(1, length(selnet.logs) - 14)) : list(),
 		)
 	else
@@ -203,14 +201,14 @@
 	data["storage"] = storage_payload()
 	data["shard"] = shard_payload()
 
-	data["breach"] = breach?.ui_payload()
+	data["breach"] = intrusion.breach?.ui_payload()
 	data["entity"] = entity_data()
 	data["combat"] = combat_payload()
 	data["chat"] = chat_data()
 	data["cli"] = cli_payload()
 	data["windows"] = windows_payload()
-	data["window"] = active_window ? window_payload() : null
-	data["ping_route"] = (ping_route && world.time - ping_at < 6 SECONDS) ? ping_route : null
+	data["window"] = remote_session.active_window ? window_payload() : null
+	data["ping_route"] = (map_view.ping_route && world.time - map_view.ping_at < 6 SECONDS) ? map_view.ping_route : null
 	data["events"] = SSnetrun.recent_events()
 	data["search"] = search_payload()
 	return data
@@ -218,9 +216,9 @@
 /// Поиск по всей сети: находит достижимые узлы по имени/адресу, чтобы проложить
 /// к ним маршрут даже если они ещё не открыты на карте. Доступ к узлу этим не выдаётся.
 /datum/netrun_console/proc/search_payload()
-	if(!search_query)
+	if(!map_view.search_query)
 		return null
-	var/query = lowertext(search_query)
+	var/query = lowertext(map_view.search_query)
 	. = list()
 	var/count = 0
 	for(var/address in SSnetrun.nodes_by_address)
@@ -246,9 +244,9 @@
 /// Дополнительные кнопки носителя (выдернуть провод, вынуть шард, вернуться в тело...)
 /datum/netrun_console/proc/host_actions()
 	. = list()
-	if(jack)
+	if(connection.jack)
 		. += list(list("id" = "unjack", "name" = "Выдернуть провод", "icon" = "plug-circle-xmark"))
-	if(shard)
+	if(inventory.shard)
 		. += list(list("id" = "eject_shard", "name" = "Извлечь шард", "icon" = "eject"))
 
 /// Данные для режима сущности - переопределяется у консоли сущности
@@ -264,107 +262,11 @@
 	return route_source()
 
 /datum/netrun_console/proc/map_payload()
-	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	var/datum/component/netrun_node/focus = map_focus_node()
-	var/depth = max(0, map_depth) + (daemon_bonus("mapper") ? 2 : 0)
-	// Reuse the structural BFS for a fixed focus/depth/topology. This is only
-	// a list of addresses; online state, visibility and access remain live.
-	var/focus_address = focus?.address
-	var/list/queue
-	if(map_slice_addresses && map_slice_revision == graph.revision && map_slice_focus == focus_address && map_slice_depth == depth)
-		queue = map_slice_addresses
-	else
-		var/list/distances = list()
-		queue = list()
-		if(focus)
-			distances[focus.address] = 0
-			queue += focus.address
-		for(var/i = 1, i <= length(queue), i++)
-			var/address = queue[i]
-			if(distances[address] >= depth)
-				continue
-			for(var/neighbor in graph.neighbors(address))
-				if(!isnull(distances[neighbor]))
-					continue
-				distances[neighbor] = distances[address] + 1
-				queue += neighbor
-		map_slice_addresses = queue
-		map_slice_revision = graph.revision
-		map_slice_focus = focus_address
-		map_slice_depth = depth
-	var/list/shown = list()
-	var/list/map_nodes = list()
-	var/list/networks = list()
-	var/reveal_all = daemon_bonus("mapper")
-	for(var/address in queue)
-		var/datum/component/netrun_node/node = graph.nodes[address]
-		if(QDELETED(node) || !can_route(node) || (!reveal_all && !node_visible(node)))
-			continue
-		var/list/entry = node.ui_entry(src)
-		entry["network"] = node.network?.id
-		entry["sector"] = node.binding_sector
-		entry["neighbor_count"] = length(graph.neighbors(address))
-		map_nodes += list(entry)
-		shown[address] = TRUE
-		if(node.network)
-			networks[node.network.id] = node.network
-	// Узлы вдоль пеленга и выбранного маршрута показываем целиком, даже за пределами
-	// глубины карты - чтобы путь от текущего узла до цели рисовался без разрывов.
-	for(var/address in route_reveal_addresses(focus))
-		if(shown[address])
-			continue
-		var/datum/component/netrun_node/node = graph.nodes[address]
-		if(QDELETED(node) || !can_route(node))
-			continue
-		var/list/entry = node.ui_entry(src)
-		entry["network"] = node.network?.id
-		entry["sector"] = node.binding_sector
-		entry["neighbor_count"] = length(graph.neighbors(address))
-		map_nodes += list(entry)
-		shown[address] = TRUE
-		if(node.network)
-			networks[node.network.id] = node.network
-	var/list/edges = list()
-	var/list/edge_ids = list()
-	for(var/address in shown)
-		for(var/neighbor in graph.neighbors(address))
-			if(!shown[neighbor])
-				continue
-			var/list/edge = graph.edge_between(address, neighbor)
-			if(!edge || edge_ids[edge["id"]])
-				continue
-			edge_ids[edge["id"]] = TRUE
-			var/list/entry = edge.Copy()
-			entry["online"] = netrun_link_available(graph.nodes[address], graph.nodes[neighbor])
-			edges += list(entry)
-	var/list/gateways = list()
-	for(var/network_id in networks)
-		var/datum/netrun_network/network = networks[network_id]
-		var/level = network_level(network)
-		gateways += list(list(
-			"id" = network.id,
-			"code" = network.code,
-			"name" = network.name,
-			"color" = network.color,
-			"security" = network.security,
-			"access" = level,
-			"has_key" = has_key(network),
-			"can_breach" = can_breach && level < NETRUN_ACCESS_GUEST,
-		))
-	return list(
-		"nodes" = map_nodes,
-		"edges" = edges,
-		"gateways" = gateways,
-		"focus" = focus?.address,
-		"depth" = depth,
-		"revision" = graph.revision,
-		"route" = map_route_payload(selected_node() || focus),
-	)
+	return map_view.payload()
 
-/// Адреса всех узлов на пеленге и на выбранном маршруте - их карта показывает целиком.
 /datum/netrun_console/proc/route_reveal_addresses(datum/component/netrun_node/focus)
 	. = list()
-	var/datum/component/netrun_node/waypoint = waypoint_address ? SSnetrun.find_node(waypoint_address) : null
+	var/datum/component/netrun_node/waypoint = map_view.waypoint_address ? SSnetrun.find_node(map_view.waypoint_address) : null
 	if(waypoint && can_route(waypoint))
 		var/datum/netrun_route/route = route_to(waypoint)
 		for(var/list/hop as anything in route.hops)
@@ -396,11 +298,11 @@
 
 /// Network travel uses hops and node addresses, independently of physical tile distance.
 /datum/netrun_console/proc/waypoint_payload()
-	if(!waypoint_address)
+	if(!map_view.waypoint_address)
 		return null
-	var/datum/component/netrun_node/node = SSnetrun.find_node(waypoint_address)
+	var/datum/component/netrun_node/node = SSnetrun.find_node(map_view.waypoint_address)
 	if(QDELETED(node) || QDELETED(node.parent))
-		waypoint_address = null
+		map_view.waypoint_address = null
 		return null
 	var/datum/netrun_route/route = route_to(node)
 	var/list/addresses = list()
@@ -419,17 +321,17 @@
 
 /datum/netrun_console/proc/storage_payload()
 	var/list/local = list()
-	for(var/datum/netrun_file/file as anything in storage)
-		local += list(file.ui_entry(selected_file_uid))
-	return list("files" = local, "used" = netrun_storage_used(storage), "capacity" = storage_capacity)
+	for(var/datum/netrun_file/file as anything in inventory.local_store.files)
+		local += list(file.ui_entry(inventory.selected_file_uid))
+	return list("files" = local, "used" = netrun_storage_used(inventory.local_store.files), "capacity" = inventory.local_store.capacity)
 
 /datum/netrun_console/proc/shard_payload()
-	if(!shard)
+	if(!inventory.shard)
 		return null
 	var/list/shard_files = list()
-	for(var/datum/netrun_file/file as anything in shard.files)
-		shard_files += list(file.ui_entry(selected_file_uid))
-	return list("name" = shard.name, "files" = shard_files, "used" = netrun_storage_used(shard.files), "capacity" = shard.capacity)
+	for(var/datum/netrun_file/file as anything in inventory.shard.file_store.files)
+		shard_files += list(file.ui_entry(inventory.selected_file_uid))
+	return list("name" = inventory.shard.name, "files" = shard_files, "used" = netrun_storage_used(inventory.shard.file_store.files), "capacity" = inventory.shard.file_store.capacity)
 
 // MARK: Мост «сайты NTnet в терминале» (только чтение, данные из SSntnet)
 
@@ -450,30 +352,31 @@
 		"site" = null,
 		"page" = null,
 	)
-	var/list/site = web_site_id ? SSntnet.sites[web_site_id] : null
+	var/list/site = remote_session.web_site_id ? SSntnet.sites[remote_session.web_site_id] : null
 	if(!site)
-		web_site_id = null
-		web_slug = null
+		remote_session.web_site_id = null
+		remote_session.web_slug = null
 		return payload
 	var/list/pages = list()
 	for(var/list/page as anything in site["pages"])
 		pages += list(list("slug" = page["slug"], "title" = page["title"]))
-	payload["site"] = list("id" = web_site_id, "domain" = site["domain"], "title" = site["title"], "pages" = pages)
-	if(!web_slug)
+	payload["site"] = list("id" = remote_session.web_site_id, "domain" = site["domain"], "title" = site["title"], "pages" = pages)
+	if(!remote_session.web_slug)
 		return payload
-	SSntnet.request_page(web_site_id, web_slug)
-	var/cache_key = json_encode(list(web_site_id, web_slug))
+	SSntnet.request_page(remote_session.web_site_id, remote_session.web_slug)
+	var/cache_key = json_encode(list(remote_session.web_site_id, remote_session.web_slug))
 	var/list/cached = SSntnet.pages[cache_key]
 	payload["page"] = list(
-		"slug" = web_slug,
-		"title" = cached ? cached["title"] : web_slug,
+		"slug" = remote_session.web_slug,
+		"title" = cached ? cached["title"] : remote_session.web_slug,
 		"text" = cached ? cached["text"] : null,
-		"loading" = !cached && !SSntnet.page_failed(web_site_id, web_slug),
-		"failed" = SSntnet.page_failed(web_site_id, web_slug),
+		"loading" = !cached && !SSntnet.page_failed(remote_session.web_site_id, remote_session.web_slug),
+		"failed" = SSntnet.page_failed(remote_session.web_site_id, remote_session.web_slug),
 	)
 	return payload
 
 /datum/netrun_console/ui_act(action, list/params, datum/tgui/ui, datum/ui_state/state)
+	invalidate_ui()
 	. = ..()
 	if(.)
 		return
@@ -482,47 +385,47 @@
 		return TRUE
 	switch(action)
 		if("view_network")
-			active_window = null
+			remote_session.active_window = null
 			if(params["id"] == "web" && web_browsing())
-				viewed_network_id = "web"
+				map_view.viewed_network_id = "web"
 			else
-				viewed_network_id = null
+				map_view.viewed_network_id = null
 			return TRUE
 		if("select_network")
 			var/datum/netrun_network/network = SSnetrun.networks[params["id"]]
 			if(network && can_reach(network))
-				selected_network = network.id
-				selected_address = null
+				map_view.selected_network = network.id
+				map_view.selected_address = null
 			return TRUE
 		if("set_waypoint")
 			var/datum/component/netrun_node/node = SSnetrun.find_node(params["address"])
 			// Пеленг можно ставить на любой достижимый узел, даже ещё не открытый на карте.
 			if(node && (node_visible(node) || can_route(node)))
-				waypoint_address = node.address
+				map_view.waypoint_address = node.address
 				log_line("Пеленг на [node.get_name()] [node.address].", "label")
 			else
 				log_line("К этому узлу нет маршрута для пеленга.", "bad")
 			return TRUE
 		if("clear_waypoint")
-			waypoint_address = null
+			map_view.waypoint_address = null
 			return TRUE
 		if("focus_host")
 			var/datum/component/netrun_node/here = route_source()
 			if(here)
-				selected_address = here.address
-				selected_network = null
+				map_view.selected_address = here.address
+				map_view.selected_network = null
 			return TRUE
 		if("search")
 			var/text = params["text"]
-			search_query = istext(text) ? trim(copytext_char(sanitize(text), 1, 40)) : null
-			if(!length(search_query))
-				search_query = null
+			map_view.search_query = istext(text) ? trim(copytext_char(sanitize(text), 1, 40)) : null
+			if(!length(map_view.search_query))
+				map_view.search_query = null
 			return TRUE
 		if("select")
 			var/datum/component/netrun_node/node = SSnetrun.find_node(params["address"])
 			if(node && node_visible(node))
-				selected_address = node.address
-				selected_network = null
+				map_view.selected_address = node.address
+				map_view.selected_network = null
 			return TRUE
 		if("window_open")
 			open_window(params["address"])
@@ -531,10 +434,10 @@
 			close_window(params["address"])
 			return TRUE
 		if("window_focus")
-			if(params["address"] in windows)
-				active_window = params["address"]
-				selected_address = active_window
-				selected_network = null
+			if(params["address"] in remote_session.windows)
+				remote_session.active_window = params["address"]
+				map_view.selected_address = remote_session.active_window
+				map_view.selected_network = null
 			return TRUE
 		if("remote_act")
 			remote_request(params["address"], params["request"], params["arguments"])
@@ -552,10 +455,10 @@
 			recover_salvage(params["uid"])
 			return TRUE
 		if("breach_pick")
-			breach?.choose(text2num("[params["index"]]"))
+			intrusion.breach?.choose(text2num("[params["index"]]"))
 			return TRUE
 		if("breach_abort")
-			breach?.finish()
+			intrusion.breach?.finish()
 			return TRUE
 		if("program_use")
 			program_use(params["uid"], params["target"])
@@ -590,18 +493,18 @@
 			return TRUE
 		if("web_site")
 			if(SSntnet.sites[params["id"]])
-				web_site_id = params["id"]
-				web_slug = SSntnet.has_page(web_site_id, "index") ? "index" : null
+				remote_session.web_site_id = params["id"]
+				remote_session.web_slug = SSntnet.has_page(remote_session.web_site_id, "index") ? "index" : null
 			return TRUE
 		if("web_page")
-			if(web_site_id && SSntnet.has_page(web_site_id, params["slug"]))
-				web_slug = params["slug"]
+			if(remote_session.web_site_id && SSntnet.has_page(remote_session.web_site_id, params["slug"]))
+				remote_session.web_slug = params["slug"]
 			return TRUE
 		if("web_back")
-			if(web_slug)
-				web_slug = null
+			if(remote_session.web_slug)
+				remote_session.web_slug = null
 			else
-				web_site_id = null
+				remote_session.web_site_id = null
 			return TRUE
 		else
 			return host_act(action, params, ui.user)
@@ -618,20 +521,20 @@
 			return TRUE
 
 /datum/netrun_console/proc/insert_shard(obj/item/netrun_shard/new_shard, mob/user)
-	if(shard)
+	if(inventory.shard)
 		to_chat(user, span_warning("Разъём уже занят."))
 		return FALSE
 	if(user && !user.transferItemToLoc(new_shard, host))
 		return FALSE
-	shard = new_shard
-	log_line("Шард подключён: [shard.name].")
+	inventory.set_shard(new_shard)
+	log_line("Шард подключён: [inventory.shard.name].")
 	return TRUE
 
 /datum/netrun_console/proc/eject_shard(mob/user)
-	if(!shard)
+	if(!inventory.shard)
 		return
-	var/obj/item/netrun_shard/old = shard
-	shard = null
+	var/obj/item/netrun_shard/old = inventory.shard
+	inventory.set_shard(null)
 	old.forceMove(get_turf(host))
 	if(user && isliving(user))
 		user.put_in_hands(old)
@@ -640,14 +543,14 @@
 // MARK: Файловые операции
 
 /datum/netrun_console/proc/remote_file(datum/component/netrun_node/node, uid)
-	for(var/datum/netrun_file/file as anything in node?.files)
+	for(var/datum/netrun_file/file as anything in node?.file_store?.files)
 		if(file.uid == uid)
 			return file
 
 /datum/netrun_console/proc/transfer_from_node(uid, to_shard, datum/component/netrun_node/node, delivered = FALSE)
 	if(!delivered)
 		return queue_file_request("download", selected_node(), uid, to_shard)
-	if(!node?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != jack) || !can_route(node))
+	if(!node?.file_store?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != connection.jack) || !can_route(node))
 		return
 	var/datum/netrun_file/file = remote_file(node, uid)
 	if(!file)
@@ -668,15 +571,15 @@
 /datum/netrun_console/proc/transfer_to_node(uid, datum/component/netrun_node/node, delivered = FALSE)
 	if(!delivered)
 		return queue_file_request("upload", selected_node(), uid)
-	if(!node?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != jack) || !can_route(node))
+	if(!node?.file_store?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != connection.jack) || !can_route(node))
 		return
 	var/datum/netrun_file/file = find_local_file(uid)
 	if(!file)
 		return
-	if(node.used_storage() + file.size > node.storage_capacity)
+	if(node.used_storage() + file.size > node.file_store?.capacity)
 		log_line("На узле нет места.", "bad")
 		return
-	node.files += file.copy()
+	node.file_store.insert(file.copy())
 	node.touch()
 	node.add_log("[log_source()]: загружен [file.name].")
 	log_line("Загружено: [file.name].", "good")
@@ -688,12 +591,12 @@
 /datum/netrun_console/proc/delete_from_node(uid, datum/component/netrun_node/node, delivered = FALSE)
 	if(!delivered)
 		return queue_file_request("delete", selected_node(), uid)
-	if(!node?.files || node_level(node) < NETRUN_ACCESS_ROOT || !node.is_online(node != jack) || !can_route(node))
+	if(!node?.file_store?.files || node_level(node) < NETRUN_ACCESS_ROOT || !node.is_online(node != connection.jack) || !can_route(node))
 		return
 	var/datum/netrun_file/file = remote_file(node, uid)
 	if(!file)
 		return
-	node.files -= file
+	node.file_store.remove(file)
 	log_line("Удалено с узла: [file.name].", "average")
 	node.add_log("[log_source()]: удалён [file.name].")
 	node.network?.add_log("[log_source()] удалил [file.name] с [node.address]")
@@ -704,23 +607,26 @@
 /// Один путь доставки файлов для кнопок, CLI и будущих клиентов.
 /datum/netrun_console/proc/queue_file_request(action, datum/component/netrun_node/node, uid, to_shard = FALSE)
 	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
-	if(!node?.files || !can_route(node) || node_level(node) < required || !node.is_online(node != jack) || is_locked() || world.time < next_command)
+	if(!node?.file_store?.files || !can_route(node) || node_level(node) < required || !node.is_online(node != connection.jack) || is_locked() || world.time < next_command)
 		return FALSE
 	var/lat = latency_to(node)
 	next_command = world.time + max(lat, 0.5 SECONDS)
-	if(!lat)
-		return deliver_file_request(action, node, uid, to_shard, node.network, operator)
-	log_line("[node.address]: файловый запрос отправлен, ~[lat * 100] мс.")
-	addtimer(CALLBACK(src, PROC_REF(deliver_file_request), action, node, uid, to_shard, node.network, operator), lat)
-	return TRUE
+	if(lat)
+		log_line("[node.address]: файловый запрос отправлен, ~[lat * 100] мс.")
+	var/datum/netrun_request/file/packet = new(src, node, action, uid, to_shard, node.network, operator)
+	return packet.send(lat)
 
 /datum/netrun_console/proc/deliver_file_request(action, datum/component/netrun_node/node, uid, to_shard, datum/netrun_network/sent_network, mob/sender)
 	if(QDELETED(node))
 		return FALSE
 	node.join_network()
-	if(sender != operator || node.network != sent_network || is_locked() || !can_route(node) || !node.is_online(node != jack))
+	var/datum/netrun_path_tree/tree = make_path_tree()
+	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
+	if(sender != operator || node.network != sent_network || is_locked() || !can_route(node, tree) || !node.is_online(node != connection.jack) || node_level(node, tree) < required)
+		qdel(tree)
 		log_line("Файловый запрос отменён: соединение изменилось.", "bad")
 		return FALSE
+	qdel(tree)
 	switch(action)
 		if("download")
 			transfer_from_node(uid, to_shard, node, TRUE)

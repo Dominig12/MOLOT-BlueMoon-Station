@@ -66,20 +66,22 @@
 	leave_node()
 	node = new_node
 	LAZYADD(new_node.netrun_ice, src)
+	SEND_SIGNAL(src, COMSIG_NETRUN_ICE_NODE_CHANGED, null, new_node)
 	return TRUE
 
 /datum/netrun_ice/proc/leave_node()
 	cancel_program()
 	if(!node)
 		return
+	var/datum/component/netrun_node/old_node = node
 	LAZYREMOVE(node.netrun_ice, src)
 	node = null
+	SEND_SIGNAL(src, COMSIG_NETRUN_ICE_NODE_CHANGED, old_node, null)
 
 /// Узел уничтожен: сторож гибнет вместе с ним, охотник пробует перепрыгнуть.
 /datum/netrun_ice/proc/host_lost()
 	var/datum/netrun_network/network = node?.network
-	LAZYREMOVE(node?.netrun_ice, src)
-	node = null
+	leave_node()
 	if(kind == NETRUN_ICE_SENTRY)
 		qdel(src)
 		return
@@ -127,17 +129,22 @@
 	integrity -= amount
 	if(integrity <= 0)
 		destroyed(attacker)
+	else
+		SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
 
 /datum/netrun_ice/proc/apply_stun(duration)
 	combat_stun_until = max(combat_stun_until, world.time + duration)
 	cancel_program()
+	SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
 
 /datum/netrun_ice/proc/apply_shield(pct, duration)
 	combat_shield_until = world.time + duration
 	combat_shield_factor = clamp(1 - pct / 100, 0.1, 1)
+	SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
 
 /datum/netrun_ice/proc/apply_heal(amount)
 	integrity = min(max_integrity, integrity + amount)
+	SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
 
 /datum/netrun_ice/proc/destroyed(datum/netrun_console/killer)
 	if(QDELETED(src))
@@ -199,7 +206,7 @@
 	if(drop_turf)
 		var/obj/item/netrun_shard/shard = new(drop_turf)
 		shard.name = "data shard ([loot.name])"
-		shard.files += loot
+		shard.file_store.insert(loot, TRUE)
 		killer?.log_line("Нет места в памяти - лут выпал физическим шардом.", "average")
 		return
 	qdel(loot)
@@ -267,7 +274,7 @@
 /datum/netrun_ice/proc/valid_trace_target(datum/netrun_console/console)
 	if(!istype(console) || QDELETED(console))
 		return FALSE
-	var/datum/netrun_breach/breach = console?.breach
+	var/datum/netrun_breach/breach = console?.intrusion.breach
 	return !QDELETED(console) && !console.is_locked() && breach && ((breach.target_kind == "network" && node?.network && breach.target_id == node.network.id) || (breach.target_kind != "network" && breach.target_id == node?.address))
 
 /datum/netrun_ice/proc/begin_program(datum/netrun_program/program, datum/target)
@@ -286,14 +293,19 @@
 		to_chat(entity, span_userdanger("[name] готовит [program.name]: до срабатывания [program.windup / (1 SECONDS)] с! Щит, оглушение или переход помогут избежать атаки."))
 	else if(istype(target, /datum/netrun_console))
 		victim = target
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_ICE_CAST_STARTED, src, victim)
+	SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
 	victim?.log_line("[name] готовит [program.name], срабатывание через [program.windup / (1 SECONDS)] с.", "bad")
 	node.add_log("[name]: подготовка [program.name].")
 	return TRUE
 
 /datum/netrun_ice/proc/cancel_program()
+	var/had_program = !!pending_program
 	pending_program = null
 	pending_target_ref = null
 	attack_at = 0
+	if(had_program)
+		SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
 
 /datum/netrun_ice/proc/resolve_program()
 	if(!pending_program)
@@ -398,9 +410,3 @@
 		return
 	spawn_ice(near, NETRUN_ICE_HUNTER)
 
-/datum/controller/subsystem/netrun/proc/process_ice()
-	var/delta = wait / (1 SECONDS)
-	for(var/datum/netrun_ice/ice as anything in ice_processes)
-		if(QDELETED(ice))
-			continue
-		ice.process_ai(delta)

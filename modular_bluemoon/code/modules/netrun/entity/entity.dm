@@ -17,19 +17,13 @@
 	var/combat_stun_until = 0
 	var/combat_shield_until = 0
 	var/combat_shield_factor = 1
-	/// Маршрут погружения: цепочка адресов узлов от точки входа
-	var/list/route_chain = list()
-	/// Адрес узла-точки входа при погружении (куда нужно вернуться телу)
-	var/dive_entry_address
-	/// Момент, с которого потеряна связь с точкой входа (0 - связь есть)
-	var/severed_at = 0
-	/// Тело нетраннера, если это погружение
-	var/mob/living/carbon/dive_body
+	var/datum/netrun_dive_link/dive_link
 	var/datum/action/innate/netrun_console/console_action
 	var/datum/action/innate/netrun_rename/rename_action
 
 /mob/camera/netrun_entity/Initialize(mapload, datum/component/netrun_node/start)
 	. = ..()
+	dive_link = new(src)
 	console = new(src, NETRUN_ORIGIN_ENTITY)
 	RegisterSignal(src, COMSIG_MOB_ALLOWED, PROC_REF(on_credential_access_check))
 	SSnetrun.entities += src
@@ -39,7 +33,7 @@
 	rename_action.Grant(src)
 	if(start)
 		// Initial residency authorizes only this host, without opening its LAN.
-		console.node_access[start.address] = NETRUN_ACCESS_USER
+		console.access_session.node_access[start.address] = NETRUN_ACCESS_USER
 		enter_node(start)
 
 /mob/camera/netrun_entity/Destroy()
@@ -48,8 +42,7 @@
 	QDEL_NULL(console)
 	QDEL_NULL(console_action)
 	QDEL_NULL(rename_action)
-	if(dive_body)
-		release_body()
+	QDEL_NULL(dive_link)
 	return ..()
 
 /mob/camera/netrun_entity/Login()
@@ -67,7 +60,7 @@
 	. += "Целостность: [integrity]/[max_integrity]"
 	. += "Узел: [host_node ? "[host_node.get_name()] [host_node.address]" : "нет"]"
 	if(console)
-		. += "Трассировка: [round(console.trace)]%"
+		. += "Трассировка: [round(console.intrusion.trace)]%"
 
 // MARK: Узлы
 
@@ -78,24 +71,17 @@
 	host_node = node
 	LAZYADD(node.entities, src)
 	abstract_move(get_turf(node.parent))
-	console.viewed_network_id = node.network?.id
-	console.selected_address = node.address
+	console.map_view.viewed_network_id = node.network?.id
+	console.map_view.selected_address = node.address
 	node.touch()
 	update_vision()
-	track_route(node)
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_NODE_CHANGED, null, node)
 	return TRUE
 
 /// Запоминаем пройденный путь погружения. При возврате на уже пройденный узел
 /// петля срезается - цепочка остаётся кратчайшей фактически пройденной.
 /mob/camera/netrun_entity/proc/track_route(datum/component/netrun_node/node)
-	if(!dive_body || !node?.address)
-		return
-	var/existing = route_chain.Find(node.address)
-	if(existing)
-		route_chain.Cut(existing + 1)
-	else
-		route_chain += node.address
+	return dive_link.track_route(node)
 
 /mob/camera/netrun_entity/proc/leave_node()
 	if(!host_node)
@@ -153,88 +139,26 @@
 		var/turf/T = get_turf(host_node.parent)
 		if(T && loc != T)
 			abstract_move(T)
-	if(integrity < max_integrity && world.time - console.last_illegal > 20 SECONDS)
+	if(integrity < max_integrity && world.time - console.intrusion.last_illegal > 20 SECONDS)
 		integrity = min(max_integrity, integrity + delta * 0.5)
-	if(dive_body)
-		dive_body.SetUnconscious(5 SECONDS)
-		check_dive_link(delta)
-		if(QDELETED(src))
-			return
+	dive_link.process_tick(delta)
+	if(QDELETED(src))
+		return
 	update_vision()
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_TICK, delta)
 
 /// Есть ли ещё физический маршрут от текущего узла назад к точке входа погружения.
 /mob/camera/netrun_entity/proc/dive_link_intact()
-	if(!dive_entry_address)
-		return TRUE
-	var/datum/component/netrun_node/entry = SSnetrun.find_node(dive_entry_address)
-	if(QDELETED(entry) || QDELETED(entry.parent))
-		return FALSE
-	if(!host_node)
-		return FALSE
-	if(host_node == entry)
-		return TRUE
-	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	var/list/queue = list(host_node.address)
-	var/list/seen = list()
-	seen[host_node.address] = TRUE
-	for(var/i = 1, i <= length(queue), i++)
-		var/address = queue[i]
-		var/datum/component/netrun_node/current = graph.nodes[address]
-		if(QDELETED(current) || !current.is_online())
-			continue
-		for(var/neighbor in graph.neighbors(address))
-			if(seen[neighbor])
-				continue
-			if(!netrun_link_available(current, graph.nodes[neighbor]))
-				continue
-			if(neighbor == entry.address)
-				return TRUE
-			seen[neighbor] = TRUE
-			queue += neighbor
-	return FALSE
+	return dive_link.link_intact()
 
 /// Обрезали маршрут к телу: сначала нарастающий урон мозгу, затем - либо гибель
 /// тела с остаточным процессом в сети, либо жёсткий аварийный выход.
 /mob/camera/netrun_entity/proc/check_dive_link(delta)
-	if(!dive_body)
-		return
-	if(dive_link_intact())
-		if(severed_at)
-			severed_at = 0
-			to_chat(src, span_notice("Канал связи с телом восстановлен."))
-		return
-	if(!severed_at)
-		severed_at = world.time
-		to_chat(src, span_userdanger("СВЯЗЬ С ТЕЛОМ ПОТЕРЯНА! Маршрут к точке входа обрезан — срочно восстановите путь!"))
-		SEND_SOUND(src, sound('sound/machines/warning-buzzer.ogg', volume = 60))
-	var/mob/living/carbon/body = dive_body
-	body.adjustOrganLoss(ORGAN_SLOT_BRAIN, 3 * delta)
-	var/severed_for = world.time - severed_at
-	if(severed_for < 15 SECONDS)
-		return
-	// Точка входа уничтожена безвозвратно - тело гибнет, процесс остаётся в сети.
-	var/datum/component/netrun_node/entry = SSnetrun.find_node(dive_entry_address)
-	if(QDELETED(entry) || QDELETED(entry.parent))
-		to_chat(src, span_userdanger("Точка входа уничтожена. Ваше тело гибнет, а процесс остаётся заперт в сети."))
-		body.adjustOrganLoss(ORGAN_SLOT_BRAIN, 80)
-		body.death()
-		strand_in_network()
-		return
-	// Путь восстановить ещё можно, но система рвёт соединение с тяжёлым уроном мозгу.
-	to_chat(src, span_userdanger("Аварийный разрыв соединения!"))
-	body.adjustOrganLoss(ORGAN_SLOT_BRAIN, 55)
-	return_to_body()
+	return dive_link.check_link(delta)
 
 /// Процесс теряет связь с мёртвым телом и остаётся самостоятельной сущностью в сети.
 /mob/camera/netrun_entity/proc/strand_in_network()
-	if(!dive_body)
-		return
-	release_body()
-	dive_entry_address = null
-	severed_at = 0
-	set_net_name("GHOST-[uppertext(copytext(md5("[world.time][rand(1, 99999)]"), 1, 5))]", "Заблудший процесс")
-	to_chat(src, span_warning("Вы больше не связаны с телом. Вы — процесс, застрявший в сети станции."))
+	return dive_link.strand_in_network()
 
 // MARK: Зрение через доступные оптические устройства
 
@@ -242,7 +166,7 @@
 	// An explicitly opened stream takes priority over the entity's physical host.
 	var/datum/netrun_console/view_console = netrun_watch_console || console
 	if(view_console?.watch_target())
-		return view_console.watch_node.parent
+		return view_console.remote_session.watch_node.parent
 	if(QDELETED(host_node) || !host_node.is_online())
 		return null
 	if(console.node_level(host_node) < NETRUN_ACCESS_USER)
@@ -261,8 +185,8 @@
 	var/atom/eye = source?.netrun_view_target()
 	if(eye)
 		var/datum/netrun_console/view_console = netrun_watch_console || console
-		if(view_console?.watch_target() && view_console.watch_eye)
-			eye = view_console.watch_eye
+		if(view_console?.watch_target() && view_console.remote_session.watch_eye)
+			eye = view_console.remote_session.watch_eye
 		if(blinded)
 			clear_fullscreen("netrun_blind")
 			blinded = FALSE
@@ -369,9 +293,9 @@
 /mob/camera/netrun_entity/proc/dissolve()
 	if(QDELETED(src))
 		return
-	if(dive_body)
+	if(dive_link.body)
 		to_chat(src, span_userdanger("Связь с сетью разорвана! Вас выбрасывает обратно в тело."))
-		var/mob/living/carbon/body = dive_body
+		var/mob/living/carbon/body = dive_link.body
 		return_to_body()
 		body.adjustOrganLoss(ORGAN_SLOT_BRAIN, 30)
 		body.Paralyze(10 SECONDS)
@@ -431,42 +355,17 @@
 		return
 	var/mob/camera/netrun_entity/entity = new(get_turf(start.parent), start)
 	entity.set_net_name(body.real_name, "Нетраннер")
-	entity.dive_body = body
-	entity.dive_entry_address = start.address
-	entity.route_chain = list(start.address)
-	entity.RegisterSignal(body, COMSIG_MOB_APPLY_DAMAGE, TYPE_PROC_REF(/mob/camera/netrun_entity, on_body_damage))
-	entity.RegisterSignal(body, COMSIG_LIVING_DEATH, TYPE_PROC_REF(/mob/camera/netrun_entity, on_body_death))
+	entity.dive_link.attach(body, start)
 	body.SetUnconscious(5 SECONDS)
 	body.mind.transfer_to(entity)
 	body.visible_message(span_notice("[body] обмякает, глаза закатываются под веки."))
 	return entity
 
-/mob/camera/netrun_entity/proc/on_body_damage(datum/source, damage, damagetype)
-	SIGNAL_HANDLER
-	if(damage < 5 || !(damagetype in list(BRUTE, BURN)))
-		return
-	to_chat(src, span_userdanger("Ваше тело ранено! Аварийный выход из сети!"))
-	INVOKE_ASYNC(src, PROC_REF(return_to_body))
-
-/mob/camera/netrun_entity/proc/on_body_death(datum/source)
-	SIGNAL_HANDLER
-	INVOKE_ASYNC(src, PROC_REF(return_to_body))
-
 /mob/camera/netrun_entity/proc/return_to_body()
-	if(!dive_body)
-		return
-	var/mob/living/carbon/body = dive_body
-	release_body()
-	if(mind)
-		mind.transfer_to(body)
-	body.SetUnconscious(0)
-	if(body.stat != DEAD)
-		to_chat(body, span_notice("Вы выныриваете из сети. Голова гудит."))
-	qdel(src)
+	return dive_link.return_to_body()
 
 /mob/camera/netrun_entity/proc/release_body()
-	UnregisterSignal(dive_body, list(COMSIG_MOB_APPLY_DAMAGE, COMSIG_LIVING_DEATH))
-	dive_body = null
+	return dive_link.release_body()
 
 // MARK: Консоль сущности
 
@@ -474,7 +373,7 @@
 	name = "сознание"
 	origin = NETRUN_ORIGIN_ENTITY
 	tgui_title = "Сеть"
-	storage_capacity = 10
+	initial_storage_capacity = 10
 
 /datum/netrun_console/entity/New(atom/host, origin)
 	. = ..()
@@ -508,7 +407,7 @@
 /datum/netrun_console/entity/host_actions()
 	. = ..()
 	var/mob/camera/netrun_entity/entity = host
-	if(entity?.dive_body)
+	if(entity?.dive_link.body)
 		. += list(list("id" = "return", "name" = "Вернуться в тело", "icon" = "person-walking-arrow-right"))
 
 /datum/netrun_console/entity/host_act(action, list/params, mob/user)
@@ -533,7 +432,7 @@
 		"max_integrity" = entity.max_integrity,
 		"host" = entity.host_node?.address,
 		"host_name" = entity.host_node?.get_name(),
-		"diving" = !!entity.dive_body,
+		"diving" = !!entity.dive_link.body,
 	)
 
 /datum/action/innate/netrun_console

@@ -52,37 +52,46 @@
 // MARK: Консоль: окна
 
 /datum/netrun_console/proc/open_window(address)
+	return remote_session.open_window(address)
+
+/datum/netrun_remote_session/proc/open_window(address)
 	var/datum/component/netrun_node/node = SSnetrun.find_node(address)
-	if(!node || !node_visible(node))
+	if(!node || !owner.node_visible(node))
 		return FALSE
 	if(!(address in windows))
 		if(length(windows) >= NETRUN_MAX_WINDOWS)
 			windows.Cut(1, 2)
 		windows += address
 	active_window = address
-	selected_address = address
-	selected_network = null
+	owner.map_view.selected_address = address
+	owner.map_view.selected_network = null
 	return TRUE
 
 /datum/netrun_console/proc/close_window(address)
+	return remote_session.close_window(address)
+
+/datum/netrun_remote_session/proc/close_window(address)
 	windows -= address
 	if(watch_node?.address == address)
-		stop_watch()
+		owner.stop_watch()
 	if(active_window == address)
 		active_window = length(windows) ? windows[length(windows)] : null
-		selected_address = active_window
-		selected_network = null
+		owner.map_view.selected_address = active_window
+		owner.map_view.selected_network = null
 
 /datum/netrun_console/proc/window_payload()
+	return remote_session.window_payload()
+
+/datum/netrun_remote_session/proc/window_payload()
 	var/datum/component/netrun_node/node = SSnetrun.find_node(active_window)
 	if(!node)
 		active_window = null
 		return null
-	var/level = node_level(node)
+	var/level = owner.node_level(node)
 	var/atom/A = node.parent
 	var/list/extra = list()
-	for(var/list/entry as anything in A.netrun_window_actions(src, node))
-		entry["allowed"] = level >= (entry["access"] || NETRUN_ACCESS_GUEST) && can_route(node) && node.is_online() && !is_locked()
+	for(var/list/entry as anything in A.netrun_window_actions(owner, node))
+		entry["allowed"] = level >= (entry["access"] || NETRUN_ACCESS_GUEST) && owner.can_route(node) && node.is_online() && !owner.is_locked()
 		extra += list(entry)
 	var/datum/netrun_network/network = node.network
 	return list(
@@ -91,20 +100,23 @@
 		"type" = node.node_type,
 		"online" = node.is_online(),
 		"access" = level,
-		"legit" = legit_node_level(node),
+		"legit" = owner.legit_node_level(node),
 		"security" = node.get_security(),
-		"can_breach" = can_breach && level >= NETRUN_ACCESS_GUEST && level < NETRUN_ACCESS_ROOT && can_route(node),
-		"network" = network ? list("id" = network.id, "name" = network.name, "code" = network.code, "access" = network_level(network), "can_breach" = can_breach && can_reach(network) && network_level(network) < NETRUN_ACCESS_GUEST) : null,
-		"fields" = level >= NETRUN_ACCESS_USER ? A.netrun_window_fields(src, node) : list(),
-		"commands" = node.command_entries(src),
+		"can_breach" = owner.intrusion.can_breach && level >= NETRUN_ACCESS_GUEST && level < NETRUN_ACCESS_ROOT && owner.can_route(node),
+		"network" = network ? list("id" = network.id, "name" = network.name, "code" = network.code, "access" = owner.network_level(network), "can_breach" = owner.intrusion.can_breach && owner.can_reach(network) && owner.network_level(network) < NETRUN_ACCESS_GUEST) : null,
+		"fields" = level >= NETRUN_ACCESS_USER ? A.netrun_window_fields(owner, node) : list(),
+		"commands" = node.command_entries(owner),
 		"logs" = level >= NETRUN_ACCESS_USER ? node.logs.Copy() : list(),
-		"remote" = remote_payload(node),
+		"remote" = owner.remote_payload(node),
 		"extra" = extra,
-		"feed" = level >= NETRUN_ACCESS_USER ? A.netrun_window_feed(src, node) : null,
+		"feed" = level >= NETRUN_ACCESS_USER ? A.netrun_window_feed(owner, node) : null,
 		"watching" = watch_node == node,
 	)
 
 /datum/netrun_console/proc/windows_payload()
+	return remote_session.windows_payload()
+
+/datum/netrun_remote_session/proc/windows_payload()
 	. = list()
 	for(var/address in windows.Copy())
 		var/datum/component/netrun_node/node = SSnetrun.find_node(address)
@@ -116,107 +128,112 @@
 		. += list(list("address" = address, "title" = node.get_name(), "type" = node.node_type, "online" = node.is_online()))
 
 /datum/netrun_console/proc/window_act(address, action, list/params)
-	var/datum/component/netrun_node/node = refresh_route_node(SSnetrun.find_node(address))
+	return remote_session.window_act(address, action, params)
+
+/datum/netrun_remote_session/proc/window_act(address, action, list/params)
+	var/datum/component/netrun_node/node = owner.refresh_route_node(SSnetrun.find_node(address))
 	if(!node)
 		return
-	var/datum/netrun_path_tree/tree = make_path_tree()
-	if(node_level(node, tree) < NETRUN_ACCESS_GUEST || !can_route(node, tree) || is_locked())
+	var/datum/netrun_path_tree/tree = owner.make_path_tree()
+	if(owner.node_level(node, tree) < NETRUN_ACCESS_GUEST || !owner.can_route(node, tree) || owner.is_locked())
 		qdel(tree)
 		return
 	// Команда узла - обычный сетевой запрос с задержкой и трассировкой
 	if(action in node.all_command_ids())
 		qdel(tree)
-		run_command(node, action)
+		owner.run_command(node, action)
 		return
 	// Оконное действие машины
-	if(world.time < next_command || !node.is_online())
+	if(world.time < owner.next_command || !node.is_online())
 		qdel(tree)
 		return
-	var/list/entry = window_action(node, action)
-	if(!entry || node_level(node, tree) < (entry["access"] || NETRUN_ACCESS_GUEST))
+	var/list/entry = owner.window_action(node, action)
+	if(!entry || owner.node_level(node, tree) < (entry["access"] || NETRUN_ACCESS_GUEST))
 		qdel(tree)
-		log_line("Действие окна не разрешено.", "bad")
+		owner.log_line("Действие окна не разрешено.", "bad")
 		return
-	var/lat = latency_to(node, tree)
+	var/lat = owner.latency_to(node, tree)
 	qdel(tree)
-	next_command = world.time + max(0.5 SECONDS, lat)
-	addtimer(CALLBACK(src, PROC_REF(do_window_act), node, action, params.Copy(), node.network, operator), max(1, lat))
-	log_line("[node.address]: запрос «[entry["name"]]» отправлен, ~[lat * 100] мс.")
+	owner.next_command = world.time + max(0.5 SECONDS, lat)
+	owner.log_line("[node.address]: запрос «[entry["name"]]» отправлен, ~[lat * 100] мс.")
+	var/datum/netrun_request/window/packet = new(owner, node, action, params, node.network, owner.operator)
+	return packet.send(max(1, lat))
 
 /datum/netrun_console/proc/window_action(datum/component/netrun_node/node, action)
+	return remote_session.window_action(node, action)
+
+/datum/netrun_remote_session/proc/window_action(datum/component/netrun_node/node, action)
 	var/atom/A = node.parent
-	for(var/list/entry as anything in A.netrun_window_actions(src, node))
+	for(var/list/entry as anything in A.netrun_window_actions(owner, node))
 		if(entry["id"] == action)
 			return entry
 
 /datum/netrun_console/proc/do_window_act(datum/component/netrun_node/node, action, list/params, datum/netrun_network/sent_network, mob/sender)
+	return remote_session.do_window_act(node, action, params, sent_network, sender)
+
+/datum/netrun_remote_session/proc/do_window_act(datum/component/netrun_node/node, action, list/params, datum/netrun_network/sent_network, mob/sender)
 	if(!QDELETED(node))
 		node.join_network()
-	var/datum/netrun_path_tree/tree = make_path_tree()
-	if(QDELETED(node) || is_locked() || !can_route(node, tree) || !node.is_online() || node.network != sent_network || sender != operator)
+	var/datum/netrun_path_tree/tree = owner.make_path_tree()
+	if(QDELETED(node) || owner.is_locked() || !owner.can_route(node, tree) || !node.is_online() || node.network != sent_network || sender != owner.operator)
 		qdel(tree)
-		log_line("Запрос окна отменён: связь изменилась.", "bad")
+		owner.log_line("Запрос окна отменён: связь изменилась.", "bad")
 		return
-	var/list/entry = window_action(node, action)
+	var/list/entry = owner.window_action(node, action)
 	var/required = entry?["access"] || NETRUN_ACCESS_GUEST
-	if(!entry || node_level(node, tree) < required)
+	if(!entry || owner.node_level(node, tree) < required)
 		qdel(tree)
 		return
 	// The native window action owns its execution context and may yield.
-	var/illegal = legit_node_level(node, tree) < required
+	var/illegal = owner.legit_node_level(node, tree) < required
 	qdel(tree)
 	var/atom/A = node.parent
-	var/result = world.PushUsr(operator, CALLBACK(A, TYPE_PROC_REF(/atom, netrun_window_act), src, node, action, params))
+	var/result = world.PushUsr(owner.operator, CALLBACK(A, TYPE_PROC_REF(/atom, netrun_window_act), owner, node, action, params))
 	if(!isnull(result))
-		log_line(result)
-	node.add_log("[log_source()]: [entry["name"]][illegal ? " (без авторизации)" : ""].")
-	node.network?.add_log("[log_source()] -> [node.address]: [entry["name"]]", illegal)
+		owner.log_line(result)
+	node.add_log("[owner.log_source()]: [entry["name"]][illegal ? " (без авторизации)" : ""].")
+	node.network?.add_log("[owner.log_source()] -> [node.address]: [entry["name"]]", illegal)
 	if(illegal)
-		add_trace(4 * node.get_security())
+		owner.add_trace(4 * node.get_security())
 
 // MARK: Видеопотоки
 
 /// Revalidate the source on every tick, including worn optics and disabled implants.
 /datum/netrun_console/proc/watch_target()
-	if(QDELETED(watch_node) || QDELETED(operator) || watch_viewer != operator || is_locked())
+	return remote_session.watch_target()
+
+/datum/netrun_remote_session/proc/watch_target()
+	if(QDELETED(watch_node) || QDELETED(owner.operator) || watch_viewer != owner.operator || owner.is_locked())
 		return null
-	if(!watch_node.is_online() || !can_route(watch_node) || node_level(watch_node) < NETRUN_ACCESS_USER)
+	if(!watch_node.is_online() || !owner.can_route(watch_node) || owner.node_level(watch_node) < NETRUN_ACCESS_USER)
 		return null
 	var/atom/source = watch_node.parent
 	return source.netrun_view_target()
 
 /datum/netrun_console/proc/start_watch(datum/component/netrun_node/node)
-	if(!operator?.client || QDELETED(node))
+	return remote_session.start_watch(node)
+
+/datum/netrun_remote_session/proc/start_watch(datum/component/netrun_node/node)
+	if(!owner.operator?.client || QDELETED(node))
 		return FALSE
-	stop_watch()
-	watch_viewer = operator
+	owner.stop_watch()
+	watch_viewer = owner.operator
 	watch_node = node
-	var/atom/eye = watch_target()
+	var/atom/eye = owner.watch_target()
 	if(!eye)
-		stop_watch()
+		owner.stop_watch()
 		return FALSE
-	if(operator.netrun_watch_console && operator.netrun_watch_console != src)
-		operator.netrun_watch_console.stop_watch()
-	operator.netrun_watch_console = src
-	watch_eye = new(get_turf(eye), src)
-	operator.reset_perspective(watch_eye)
-	if(istype(operator, /mob/camera/netrun_entity))
-		var/mob/camera/netrun_entity/entity = operator
+	if(owner.operator.netrun_watch_console && owner.operator.netrun_watch_console != owner)
+		owner.operator.netrun_watch_console.stop_watch()
+	owner.operator.netrun_watch_console = owner
+	watch_eye = new(get_turf(eye), owner)
+	owner.operator.reset_perspective(watch_eye)
+	if(istype(owner.operator, /mob/camera/netrun_entity))
+		var/mob/camera/netrun_entity/entity = owner.operator
 		entity.update_vision()
 	return TRUE
 
 /datum/netrun_console/proc/stop_watch()
-	var/mob/previous_viewer = watch_viewer
-	var/owns_perspective = previous_viewer?.client?.eye == watch_eye && watch_eye
-	if(previous_viewer?.netrun_watch_console == src)
-		previous_viewer.netrun_watch_console = null
-	watch_viewer = null
-	watch_node = null
-	QDEL_NULL(watch_eye)
-	if(owns_perspective && previous_viewer?.client)
-		previous_viewer.reset_perspective(null)
-		if(istype(previous_viewer, /mob/camera/netrun_entity))
-			var/mob/camera/netrun_entity/entity = previous_viewer
-			entity.update_vision()
+	return remote_session.stop_watch()
 
 #undef NETRUN_MAX_WINDOWS

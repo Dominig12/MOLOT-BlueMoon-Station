@@ -11,7 +11,7 @@
 	var/datum/component/netrun_node/node = target.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list(), 2, list(ACCESS_RD))
 	var/datum/component/techweb_holder/holder = target.AddComponent(/datum/component/techweb_holder)
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
-	console.wireless = FALSE
+	console.connection.wireless = FALSE
 	console.set_jack(node)
 	TEST_ASSERT(console.open_window(node.address), "A physically connected node must open a window")
 	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_GUEST, "Physical connection alone must not grant USER on a protected node")
@@ -23,7 +23,7 @@
 	var/datum/netrun_file/key = new("research.key", NETRUN_FILE_KEY, node.network.passcode, 1, node.network.id)
 	TEST_ASSERT(console.store_file(key), "The legitimate network key must fit in memory")
 	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_GUEST, "A LAN key must grant traversal without granting USER machine actions")
-	console.node_access[node.address] = NETRUN_ACCESS_USER
+	console.access_session.node_access[node.address] = NETRUN_ACCESS_USER
 	var/list/payload = console.ui_data(null)
 	var/list/selected = payload["selected"]
 	var/list/window = console.window_payload()
@@ -33,7 +33,7 @@
 	var/list/bind_entry = netrun_command_entry(window["commands"], "web_bind")
 	TEST_ASSERT(copy_entry["allowed"], "A separate node USER grant must enable the USER command in the window")
 	TEST_ASSERT(!bind_entry["allowed"], "A node USER grant must not enable a ROOT command")
-	console.node_access[node.address] = NETRUN_ACCESS_ROOT
+	console.access_session.node_access[node.address] = NETRUN_ACCESS_ROOT
 	window = console.window_payload()
 	bind_entry = netrun_command_entry(window["commands"], "web_bind")
 	TEST_ASSERT(bind_entry["allowed"], "Obtaining ROOT must immediately update the contextual window")
@@ -45,24 +45,24 @@
 	var/obj/item/host = allocate(/obj/item)
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
 	var/obj/item/netrun_shard/shard = allocate(/obj/item/netrun_shard)
-	console.shard = shard
-	console.storage_capacity = 2
-	shard.capacity = 1
+	console.inventory.shard = shard
+	console.inventory.local_store.capacity = 2
+	shard.file_store.capacity = 1
 	var/datum/netrun_file/document = new("report.txt", NETRUN_FILE_TEXT, "original", 2)
 	TEST_ASSERT(console.store_file(document), "The source file must fit exactly in local memory")
 	var/original_uid = document.uid
 	TEST_ASSERT(!console.transfer_local_file(document, TRUE, TRUE), "A move to an undersized shard must fail")
-	TEST_ASSERT(document in console.storage, "A rejected move must retain the original file")
-	TEST_ASSERT(!(document in shard.files), "A rejected move must not install a second owner")
+	TEST_ASSERT(document in console.inventory.local_store.files, "A rejected move must retain the original file")
+	TEST_ASSERT(!(document in shard.file_store.files), "A rejected move must not install a second owner")
 	TEST_ASSERT(!QDELETED(document), "A rejected move must not delete the source")
-	shard.capacity = 2
+	shard.file_store.capacity = 2
 	TEST_ASSERT(console.transfer_local_file(document, TRUE, TRUE), "A move must accept a file that exactly fills the destination")
-	TEST_ASSERT(!(document in console.storage) && (document in shard.files), "A moved file must belong only to the shard")
+	TEST_ASSERT(!(document in console.inventory.local_store.files) && (document in shard.file_store.files), "A moved file must belong only to the shard")
 	TEST_ASSERT_EQUAL(document.uid, original_uid, "Moving a file must preserve its stable UID")
-	TEST_ASSERT_EQUAL(netrun_storage_used(console.storage), 0, "The move must release source capacity")
-	TEST_ASSERT_EQUAL(netrun_storage_used(shard.files), 2, "The move must charge destination capacity")
+	TEST_ASSERT_EQUAL(netrun_storage_used(console.inventory.local_store.files), 0, "The move must release source capacity")
+	TEST_ASSERT_EQUAL(netrun_storage_used(shard.file_store.files), 2, "The move must charge destination capacity")
 	TEST_ASSERT(console.transfer_local_file(document, FALSE, TRUE), "The same file must move back into local memory")
-	TEST_ASSERT((document in console.storage) && !(document in shard.files), "The return move must release shard ownership")
+	TEST_ASSERT((document in console.inventory.local_store.files) && !(document in shard.file_store.files), "The return move must release shard ownership")
 	TEST_ASSERT(console.transfer_local_file(document, TRUE, FALSE), "Copying to the shard must create a separate file")
 	var/datum/netrun_file/copied = console.selected_local_file()
 	TEST_ASSERT_NOTNULL(copied, "The new copy must become the selected local file")
@@ -71,13 +71,13 @@
 	TEST_ASSERT(console.edit_text_file(copied, "edited copy"), "The copied text must remain editable")
 	TEST_ASSERT_EQUAL(document.content, "original", "Editing the copy must preserve the source")
 	console.delete_local_file(copied)
-	TEST_ASSERT(!QDELETED(document) && (document in console.storage), "Deleting the shard copy must preserve the source file")
+	TEST_ASSERT(!QDELETED(document) && (document in console.inventory.local_store.files), "Deleting the shard copy must preserve the source file")
 
 /// Rich file payloads survive copying without either deleting the other's photograph or techweb.
 /datum/unit_test/netrun_rich_file_copy/Run()
 	var/obj/item/host = allocate(/obj/item)
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
-	console.storage_capacity = 10
+	console.inventory.local_store.capacity = 10
 	var/datum/netrun_file/photo = new("frame.png", NETRUN_FILE_PHOTO, "", 3)
 	photo.picture = new /datum/picture("frame", "camera frame", icon('icons/effects/camera_image_base.dmi'), null, 32, 32, FALSE, "original caption")
 	TEST_ASSERT(console.store_file(photo), "The original picture must fit in memory")
@@ -114,41 +114,41 @@
 	var/datum/techweb/web = allocate(/datum/techweb)
 	SEND_SIGNAL(target, COMSIG_ATOM_SET_TECHWEB, web)
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
-	console.wireless = FALSE
+	console.connection.wireless = FALSE
 	console.set_jack(node)
 	var/datum/netrun_file/key = new("research.key", NETRUN_FILE_KEY, node.network.passcode, 1, node.network.id)
 	TEST_ASSERT(console.store_file(key), "The delivery test needs a legitimate LAN traversal key")
-	console.node_access[node.address] = NETRUN_ACCESS_USER
+	console.access_session.node_access[node.address] = NETRUN_ACCESS_USER
 	var/datum/netrun_network/sent_network = node.network
 	var/datum/netrun_command/command = SSnetrun.get_command("web_copy")
 	TEST_ASSERT(console.do_command(node, command, "web_copy", FALSE, sent_network, null, "none"), "An unchanged authorized request must execute")
-	var/files_before = length(console.storage)
+	var/files_before = length(console.inventory.local_store.files)
 
 	console.set_jack(null)
 	host.moveToNullspace()
 	TEST_ASSERT(!console.can_route(node), "Removing the cable and physical host must actually remove the route")
 	TEST_ASSERT(!console.do_command(node, command, "web_copy", FALSE, sent_network, null, "none"), "A request must be cancelled when its route disappears")
-	TEST_ASSERT_EQUAL(length(console.storage), files_before, "A cancelled request must not copy research data")
+	TEST_ASSERT_EQUAL(length(console.inventory.local_store.files), files_before, "A cancelled request must not copy research data")
 	host.forceMove(run_loc_floor_bottom_left)
 	console.set_jack(node)
 	TEST_ASSERT(console.can_route(node), "Restoring the physical connection must restore the route")
 	console.delete_local_file(key)
-	console.node_access -= node.address
-	files_before = length(console.storage)
+	console.access_session.node_access -= node.address
+	files_before = length(console.inventory.local_store.files)
 	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_GUEST, "Removing the node's USER grant must revoke machine authorization")
 	TEST_ASSERT(!console.do_command(node, command, "web_copy", FALSE, sent_network, null, "none"), "A request must be cancelled when its authorization expires")
-	TEST_ASSERT_EQUAL(length(console.storage), files_before, "An unauthorized delivery must not create a file")
+	TEST_ASSERT_EQUAL(length(console.inventory.local_store.files), files_before, "An unauthorized delivery must not create a file")
 
 	// The callback still carries the previous LAN while the target is attached to its current one.
 	// Leave real turf classification intact so delivery may refresh join_network() itself.
 	var/datum/netrun_network/previous_network = allocate(/datum/netrun_network, "unit-test-netrun-[REF(src)]")
 	var/datum/netrun_file/current_key = new("current.key", NETRUN_FILE_KEY, node.network.passcode, 1, node.network.id)
 	TEST_ASSERT(console.store_file(current_key), "The current network key must fit in memory")
-	console.node_access[node.address] = NETRUN_ACCESS_USER
+	console.access_session.node_access[node.address] = NETRUN_ACCESS_USER
 	TEST_ASSERT(console.can_route(node) && console.node_level(node) >= NETRUN_ACCESS_USER, "The current LAN must be independently reachable and authorized")
-	files_before = length(console.storage)
+	files_before = length(console.inventory.local_store.files)
 	TEST_ASSERT(!console.do_command(node, command, "web_copy", FALSE, previous_network, null, "none"), "A request sent to the previous LAN must not follow the node into another LAN")
-	TEST_ASSERT_EQUAL(length(console.storage), files_before, "A cancelled old-LAN request must not create a file")
+	TEST_ASSERT_EQUAL(length(console.inventory.local_store.files), files_before, "A cancelled old-LAN request must not create a file")
 
 /// A command in flight must use its chosen UID even when the operator selects a different file.
 /datum/unit_test/netrun_delivery_keeps_file_selection/Run()
@@ -159,19 +159,19 @@
 	var/datum/techweb/first_web = allocate(/datum/techweb)
 	var/datum/techweb/second_web = allocate(/datum/techweb)
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
-	console.wireless = FALSE
+	console.connection.wireless = FALSE
 	console.set_jack(node)
-	console.node_access[node.address] = NETRUN_ACCESS_ROOT
+	console.access_session.node_access[node.address] = NETRUN_ACCESS_ROOT
 	var/datum/netrun_file/first = new("first.link", NETRUN_FILE_TECHWEB_LINK, "first", 1)
 	first.techweb_ref = WEAKREF(first_web)
 	var/datum/netrun_file/second = new("second.link", NETRUN_FILE_TECHWEB_LINK, "second", 1)
 	second.techweb_ref = WEAKREF(second_web)
 	TEST_ASSERT(console.store_file(first) && console.store_file(second), "Both candidate link files must fit in memory")
-	console.selected_file_uid = second.uid
+	console.inventory.selected_file_uid = second.uid
 	var/datum/netrun_command/command = SSnetrun.get_command("web_bind")
 	TEST_ASSERT(console.do_command(node, command, "web_bind", TRUE, node.network, null, first.uid), "A request with a live captured UID must execute")
 	TEST_ASSERT_EQUAL(netrun_atom_techweb(target), first_web, "Changing the UI selection must not change an already sent request")
-	TEST_ASSERT_EQUAL(console.selected_file_uid, second.uid, "Delivering the request must preserve the user's newer UI selection")
+	TEST_ASSERT_EQUAL(console.inventory.selected_file_uid, second.uid, "Delivering the request must preserve the user's newer UI selection")
 	var/deleted_uid = first.uid
 	console.delete_local_file(first)
 	console.do_command(node, command, "web_bind", TRUE, node.network, null, deleted_uid)
@@ -204,9 +204,9 @@
 		node = turret.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TURRET, list(), 2, list())
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
 	console.operator = allocate(/mob)
-	console.wireless = FALSE
+	console.connection.wireless = FALSE
 	console.set_jack(node)
-	console.node_access[node.address] = NETRUN_ACCESS_ROOT
+	console.access_session.node_access[node.address] = NETRUN_ACCESS_ROOT
 	TEST_ASSERT(console.can_route(node) && node.is_online(), "The real turret fixture must be reachable and online")
 	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_ROOT, "The test operator must have enough rights for published turret controls")
 	var/original_locked = turret.locked
@@ -223,7 +223,7 @@
 	var/obj/item/target = allocate(/obj/item)
 	var/datum/component/netrun_node/node = target.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list(), 2, list())
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
-	console.wireless = TRUE
+	console.connection.wireless = TRUE
 	console.set_jack(node)
 	TEST_ASSERT(console.jack_valid(), "A cable to the same turf must be valid")
 	TEST_ASSERT_EQUAL(console.latency_to(node), 0, "A direct cable must avoid relay latency")
@@ -240,7 +240,7 @@
 	var/obj/item/target = allocate(/obj/item)
 	var/datum/component/netrun_node/node = target.AddComponent(/datum/component/netrun_node, NETRUN_NODE_SERVER, list(), 5, list())
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
-	console.wireless = FALSE
+	console.connection.wireless = FALSE
 	console.set_jack(node)
 	var/security = node.network.breach_security()
 	TEST_ASSERT(security >= node.get_security(), "A gateway must account for its strongest member")

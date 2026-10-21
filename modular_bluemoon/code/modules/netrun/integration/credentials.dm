@@ -114,5 +114,5 @@
 	if(!length(file.accesses) || !console.store_file(file))
 		qdel(file)
 		return "Недостаточно памяти для сохранения учётных данных."
-	console.selected_file_uid = file.uid
+	console.inventory.selected_file_uid = file.uid
 	return "Учётные данные сохранены: [length(file.accesses)] доступов, [file.size] ячеек."

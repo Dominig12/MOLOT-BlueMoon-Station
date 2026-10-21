@@ -1,8 +1,9 @@
-import { KeyboardEvent, memo, useCallback, useMemo, useRef, useState } from 'react';
+import { KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input } from '../../components';
 import { GraphCanvas, GraphCanvasHandle } from './GraphCanvas';
+import { GraphLayout } from './graphLayout';
 import { createGraphLayoutCache, graphAdjacency, graphNeighborhood, GraphPoint, layoutGraph } from './mapLayout';
 import {
   ACCESS_NAMES, NetEdge, NetEvent, NetMap, NetNode, NetrunData, NODE_ICONS,
@@ -58,19 +59,20 @@ const MapSnapshot = memo(({ input, act }: { input: MapInput; act: Act }) => {
   // Structural hash excludes mutable activity/access/route/trace fields.
   // The server's topology revision alone is not sufficient: a graph slice can
   // change with search/focus/reveal even when its global revision stays fixed.
-  const topologyKey = JSON.stringify([
+  const topologyKey = input.map?.structure_revision === undefined ? JSON.stringify([
     input.map?.revision, rawNodes.map((node) => [node.address, node.type, node.uplink]),
     rawEdges.map((edge) => [edge.id, edge.from, edge.to, edge.kind]),
-  ]);
-  const nodes = useSemanticValue(rawNodes, JSON.stringify(rawNodes.map((node) => [
+  ]) : String(input.map.structure_revision);
+  const stateKey = input.map?.state_revision;
+  const nodes = useSemanticValue(rawNodes, stateKey === undefined ? JSON.stringify(rawNodes.map((node) => [
     node.address, node.type, node.uplink, node.name, node.network, node.sector,
     node.online, node.access, node.entities, node.ice, node.active, node.can_hop,
-  ])));
-  const edges = useSemanticValue(rawEdges, JSON.stringify(rawEdges));
+  ])) : `${topologyKey}:${stateKey}`);
+  const edges = useSemanticValue(rawEdges, stateKey === undefined ? JSON.stringify(rawEdges) : `${topologyKey}:${stateKey}`);
   const gateways = useSemanticValue(input.map?.gateways ?? [], JSON.stringify(input.map?.gateways ?? []));
   const storedRoute = useSemanticValue(input.map?.route ?? null, JSON.stringify(input.map?.route ?? null));
   const map = useMemo(() => input.map ? { ...input.map, nodes, edges, gateways, route: storedRoute } : null,
-    [!!input.map, input.map?.focus, input.map?.depth, nodes, edges, gateways, storedRoute]);
+    [!!input.map, input.map?.focus, input.map?.revision, input.map?.structure_revision, stateKey, nodes, edges, gateways, storedRoute]);
   const pingRoute = useSemanticValue(input.pingRoute, JSON.stringify(input.pingRoute));
   const events = useSemanticValue(input.events, JSON.stringify(input.events));
   const waypoint = useSemanticValue(input.waypoint, JSON.stringify(input.waypoint));
@@ -83,17 +85,26 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
     map, topologyKey, pingRoute, events, waypoint, search } = props;
   const viewport = useRef<GraphCanvasHandle>(null);
   const [layoutCache] = useState(createGraphLayoutCache);
+  const [arrangement, setArrangement] = useState(0);
   const [query, setQuery] = useState('');
   const [focusNearby, setFocusNearby] = useState(false);
   const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>({});
   const nodes = map?.nodes ?? EMPTY_NODES;
   const edges = map?.edges ?? EMPTY_EDGES;
-  const positions = useMemo(() => layoutGraph(nodes, edges, layoutCache), [topologyKey, layoutCache]);
+  const positions = useMemo(() => layoutGraph(nodes, edges, layoutCache), [topologyKey, layoutCache, arrangement]);
+  useEffect(() => { if (arrangement) { viewport.current?.fit(); } }, [arrangement]);
   const adjacency = useMemo(() => graphAdjacency(nodes, edges), [topologyKey]);
   const liveAdjacency = useMemo(() => graphAdjacency(nodes, edges.filter((edge) => edge.online !== false)), [topologyKey, edges]);
   const placed = useMemo<Placed[]>(() => nodes.map((node) => ({ ...node, ...positions.get(node.address) })), [nodes, positions]);
   const byAddress = useMemo(() => new Map(placed.map((node) => [node.address, node])), [placed]);
   const gateways = useMemo(() => new Map((map?.gateways ?? []).map((gateway) => [gateway.id, gateway])), [map?.gateways]);
+  const gatewaySectors = useMemo(() => {
+    const sectors = new Map<string, string>();
+    for (const node of nodes) {
+      if (node.network && node.sector) { sectors.set(node.network, node.sector.replace('sector:', 'S')); }
+    }
+    return sectors;
+  }, [nodes]);
   const types = useMemo(() => [...new Set(nodes.map((node) => node.type))].sort(), [nodes]);
   const nearby = useMemo(() => focusNearby && selectedAddress ? graphNeighborhood(adjacency, selectedAddress, 2) : null,
     [focusNearby, selectedAddress, adjacency]);
@@ -160,9 +171,11 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
         <Button compact icon="crosshairs" tooltip="К выбранному узлу" disabled={!selectedAddress}
           onClick={() => selectedAddress && viewport.current?.center(selectedAddress)} />
         <Button compact icon="expand" tooltip="Вместить все отфильтрованные узлы" onClick={() => viewport.current?.fit()} />
+        <Button compact icon="diagram-project" content="Упорядочить" tooltip="Заново компактно разместить всю доступную сеть"
+          onClick={() => { new GraphLayout(layoutCache).clear(); setArrangement((value) => value + 1); }} />
         <Box style={{ flex: '1 1 auto', minWidth: 0 }} />
         <Box color={THEME.muted} fontSize="10px" style={{ whiteSpace: 'nowrap' }}>
-          {visibleNodes.length}/{nodes.length} · глубина {map.depth}
+          {visibleNodes.length}/{nodes.length} · вся доступная сеть
         </Box>
         {map.route && <StoredRouteStatus route={map.route} />}
       </Box>
@@ -172,7 +185,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
           tooltip={NODE_NAMES[type] || type}
           onClick={() => setDisabledTypes((old) => ({ ...old, [type]: !old[type] }))} />))}
         <Box ml={1} style={{ width: '1px', alignSelf: 'stretch', background: THEME.line, flexShrink: 0 }} />
-        {(map.gateways ?? []).map((gateway) => (<Button key={gateway.id} compact content={gateway.code}
+        {(map.gateways ?? []).map((gateway) => (<Button key={gateway.id} compact content={[gateway.code, gatewaySectors.get(gateway.id)].filter(Boolean).join(' · ')}
           icon={gateway.has_key ? 'key' : gateway.access ? 'network-wired' : 'lock'}
           selected={selectedNetwork === gateway.id}
           tooltip={`${gateway.name} · ${ACCESS_NAMES[gateway.access]} · защита ${gateway.security}`}
@@ -200,6 +213,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
         entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || []}
         pingRoute={pingAddresses} events={events} onSelect={onSelect} />
       <Box p={0.5} color={THEME.muted} fontSize="10px" style={{ flexShrink: 0, borderTop: `1px solid ${THEME.line}`, background: '#0d222d' }}>
+        □ APC · ◇ сервер/терминал · ○ устройство · розовый — процесс · красное кольцо — ICE<br />
         ЛКМ — выбрать · потянуть — переместить · колесо — масштаб · WASD — выбор{hasEntity ? ' · Shift+WASD — переход' : ''}
       </Box>
     </Box>
@@ -212,7 +226,4 @@ const StoredRouteStatus = memo(({ route }: { route: NonNullable<NetMap['route']>
                                                                                         </Box>));
 const WaypointRoute = ({ wp, onClear, onNext }: { wp: Waypoint; onClear: () => void; onNext: (address: string) => void }) => (<Box inline
   color={wp.lost || !wp.reachable ? THEME.bad : THEME.accent} fontSize="10px">
-  <Icon name="route" mr={1} />{wp.name} · {wp.lost ? 'цель потеряна' : wp.reachable ? `${wp.hops} переходов` : 'нет маршрута'}
-  {wp.next && <Button compact ml={1} icon="arrow-right" content="Следующий узел" onClick={() => onNext(wp.next)} />}
-  <Button compact icon="xmark" ml={1} onClick={onClear} />
-                                                                                                                              </Box>);
+  <Icon name="route" mr={1} />{wp.name} · {wp.lost ? 'цель потеряна' : wp.reachable ? `${wp.hops} переходов` : 'нет маршру
