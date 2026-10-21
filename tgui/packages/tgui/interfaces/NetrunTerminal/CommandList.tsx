@@ -15,15 +15,27 @@ export const CommandList = (props: {
       </Box>
     );
   }
+  // A uniform grid: every request is the same width and height, icons and labels
+  // align in a column, and long names ellipsize instead of stretching the button.
   return (
-    <Box style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+    <Box
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(116px, 1fr))',
+        gridAutoRows: '24px',
+        gap: '4px',
+      }}
+    >
       {commands.map((command) => (
         <Button
           key={command.id}
+          fluid
+          ellipsis
           icon={command.icon}
           content={command.name}
           color={command.danger ? 'bad' : command.illegal ? 'average' : undefined}
           disabled={disabled || !command.allowed}
+          style={{ height: '100%', margin: 0, lineHeight: '24px', textAlign: 'left' }}
           tooltip={
             (command.help || command.desc || '') + '\n' +
             `Нужно: ${ACCESS_NAMES[command.access]}.` +

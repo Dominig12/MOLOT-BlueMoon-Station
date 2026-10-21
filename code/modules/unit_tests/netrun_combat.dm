@@ -51,7 +51,8 @@
 	entity.apply_shield(50, 5 SECONDS)
 	ice.attack_at = world.time
 	ice.resolve_program()
-	TEST_ASSERT_EQUAL(entity.integrity, initial_integrity - strike.power * 0.5, "ICE damage must use the same shield-aware dispatcher as player damage")
+	var/expected_hit = round(strike.power * ice.damage_factor) * 0.5
+	TEST_ASSERT_EQUAL(entity.integrity, initial_integrity - expected_hit, "ICE damage must use the same shield-aware dispatcher, scaled by the ICE damage factor")
 	ice.next_attack = world.time
 	TEST_ASSERT(!ice.begin_program(strike, entity), "The program's own cooldown must prevent another immediate cast")
 	ice.program_cd.Cut()
@@ -59,7 +60,7 @@
 	ice.apply_stun(2 SECONDS)
 	TEST_ASSERT_NULL(ice.pending_program, "Stunning ICE must interrupt its prepared program")
 	ice.resolve_program()
-	TEST_ASSERT_EQUAL(entity.integrity, initial_integrity - strike.power * 0.5, "An interrupted program must not deal later damage")
+	TEST_ASSERT_EQUAL(entity.integrity, initial_integrity - expected_hit, "An interrupted program must not deal later damage")
 	TEST_ASSERT(!entity.console.program_use("builtin:logic_bomb", REF(ice)), "A forged builtin UID must not conjure a consumable program")
 
 /// Entity acquisition is real loot, and a full inventory does not silently lose it.

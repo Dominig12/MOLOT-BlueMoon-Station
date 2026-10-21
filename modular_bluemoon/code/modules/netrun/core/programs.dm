@@ -81,8 +81,8 @@
 	name = "sting"
 	desc = "Встроенный процессорный удар. Слабый, но бесплатный и не теряется."
 	role = NETRUN_PROGRAM_ATTACK
-	power = 11
-	cooldown = 2.5 SECONDS
+	power = 16
+	cooldown = 2 SECONDS
 	size = 0
 	trace = 2
 	icon = "hand-fist"
@@ -184,10 +184,12 @@
 	icon = "fingerprint"
 
 /// Shared effect dispatcher: ICE cannot bypass entity shields with raw damage.
-/proc/netrun_apply_program(datum/netrun_program/program, target, datum/netrun_console/attacker)
+/// damage_scale lets ICE hit softer than a player running the same program file,
+/// without weakening the player's own copy of that program.
+/proc/netrun_apply_program(datum/netrun_program/program, target, datum/netrun_console/attacker, damage_scale = 1)
 	switch(program.role)
 		if(NETRUN_PROGRAM_ATTACK)
-			netrun_combatant_hit(target, program.power, "программа [program.name]", attacker)
+			netrun_combatant_hit(target, round(program.power * damage_scale), "программа [program.name]", attacker)
 		if(NETRUN_PROGRAM_STUN)
 			netrun_combatant_stun(target, program.power)
 		if(NETRUN_PROGRAM_SHIELD)

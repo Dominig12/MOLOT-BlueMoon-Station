@@ -14,8 +14,10 @@
 	var/name = "ICE"
 	var/datum/component/netrun_node/node
 	var/kind = NETRUN_ICE_SENTRY
-	var/integrity = 120
-	var/max_integrity = 120
+	var/integrity = 90
+	var/max_integrity = 90
+	/// ICE hits softer than a runner with the same program, so a dive is survivable.
+	var/damage_factor = 0.78
 	/// Programs are registry definitions, with the same power and cooldown as player files.
 	var/list/program_ids = list("strike", "barrier", "trace")
 	var/list/program_cd = list()
@@ -319,7 +321,7 @@
 	var/datum/netrun_program/program = pending_program
 	cancel_program()
 	next_attack = world.time + 0.5 SECONDS
-	netrun_apply_program(program, target, null)
+	netrun_apply_program(program, target, null, damage_factor)
 	SSnetrun.post_event("intrusion", null, node?.address)
 	if(!QDELETED(target) && istype(target, /mob/camera/netrun_entity))
 		var/mob/camera/netrun_entity/entity = target

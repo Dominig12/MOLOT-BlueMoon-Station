@@ -139,8 +139,11 @@
 		var/turf/T = get_turf(host_node.parent)
 		if(T && loc != T)
 			abstract_move(T)
-	if(integrity < max_integrity && world.time - console.intrusion.last_illegal > 20 SECONDS)
-		integrity = min(max_integrity, integrity + delta * 0.5)
+	// A slow self-repair even mid-fight, faster once the heat is off, so a single
+	// mistake no longer means certain death against ICE.
+	if(integrity < max_integrity)
+		var/calm = world.time - console.intrusion.last_illegal > 20 SECONDS
+		integrity = min(max_integrity, integrity + delta * (calm ? 0.5 : 0.25))
 	dive_link.process_tick(delta)
 	if(QDELETED(src))
 		return
@@ -280,10 +283,10 @@
 		dissolve()
 		return
 	enter_node(pick(candidates))
-	take_integrity(30, "узел-носитель уничтожен")
+	take_integrity(20, "узел-носитель уничтожен")
 
 /mob/camera/netrun_entity/netrun_traced(datum/netrun_console/traced)
-	take_integrity(40, "ответный удар системы защиты")
+	take_integrity(25, "ответный удар системы защиты")
 	if(QDELETED(src))
 		return
 	var/datum/netrun_network/public = SSnetrun.get_network(NETRUN_LAN_PUBLIC)
