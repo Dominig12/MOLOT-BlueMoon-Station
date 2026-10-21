@@ -12,19 +12,28 @@
 
 /datum/controller/subsystem/netrun
 	var/list/datum/netrun_api/apis
+	/// Adapter selection depends only on the atom type. A wrapper also caches no match.
+	var/list/api_type_cache
 
 /datum/controller/subsystem/netrun/proc/get_api(atom/A)
 	if(!A)
 		return
 	if(!apis)
 		apis = list()
+		api_type_cache = list()
 		for(var/datum/netrun_api/path as anything in subtypesof(/datum/netrun_api))
 			if(initial(path.atom_type))
 				apis += new path
+	if(!api_type_cache)
+		api_type_cache = list()
+	var/list/cached = api_type_cache[A.type]
+	if(cached)
+		return cached[1]
 	var/datum/netrun_api/best
 	for(var/datum/netrun_api/api as anything in apis)
 		if(istype(A, api.atom_type) && (!best || ispath(api.atom_type, best.atom_type)))
 			best = api
+	api_type_cache[A.type] = list(best)
 	return best
 
 /datum/netrun_api/proc/clean_params(action, list/input)
@@ -72,16 +81,22 @@
 	return api?.payload(node.parent, src, node)
 
 /datum/netrun_console/proc/remote_request(address, action, list/arguments)
-	var/datum/component/netrun_node/node = SSnetrun.find_node(address)
+	var/datum/component/netrun_node/node = refresh_route_node(SSnetrun.find_node(address))
 	var/datum/netrun_api/api = node ? SSnetrun.get_api(node.parent) : null
 	var/list/entry = api?.actions[action]
-	if(!entry || !can_route(node) || !node.is_online() || is_locked() || node_level(node) < entry["access"] || world.time < next_command)
+	if(!entry)
+		return FALSE
+	var/datum/netrun_path_tree/tree = make_path_tree()
+	if(!can_route(node, tree) || !node.is_online() || is_locked() || node_level(node, tree) < entry["access"] || world.time < next_command)
+		qdel(tree)
 		return FALSE
 	var/list/clean = api.clean_params(action, arguments || list())
 	if(isnull(clean))
+		qdel(tree)
 		log_line("Некорректные параметры запроса [action].", "bad")
 		return FALSE
-	var/lat = latency_to(node)
+	var/lat = latency_to(node, tree)
+	qdel(tree)
 	next_command = world.time + max(lat, 0.5 SECONDS)
 	log_line("[address]: [entry["name"]] — доставка ~[lat * 100] мс.")
 	if(!lat)
@@ -93,9 +108,14 @@
 	if(!QDELETED(node))
 		node.join_network()
 	var/list/entry = api.actions[action]
-	if(QDELETED(node) || !entry || !operator || sender != operator || node.network != sent_network || is_locked() || !can_route(node) || !node.is_online() || node_level(node) < entry["access"])
+	var/datum/netrun_path_tree/tree = make_path_tree()
+	if(QDELETED(node) || !entry || !operator || sender != operator || node.network != sent_network || is_locked() || !can_route(node, tree) || !node.is_online() || node_level(node, tree) < entry["access"])
+		qdel(tree)
 		log_line("Запрос устройства отменён: связь или доступ изменились.", "bad")
 		return FALSE
+	// No routing snapshot survives the native call, which may yield or change topology.
+	var/illegal = legit_node_level(node, tree) < entry["access"]
+	qdel(tree)
 	var/atom/A = node.parent
 	// Синтетический контекст не открывает второе окно и не меняет права моба.
 	// Внутренние проверки и ограничения самой машины остаются штатными.
@@ -106,7 +126,6 @@
 	world.PushUsr(operator, CALLBACK(A, TYPE_PROC_REF(/datum, ui_act), action, params, request, request.state))
 	qdel(request)
 	qdel(request_state)
-	var/illegal = legit_node_level(node) < entry["access"]
 	node.touch()
 	node.add_log("[log_source()]: [entry["name"]][illegal ? " (без авторизации)" : ""].")
 	node.network?.add_log("[log_source()] -> [node.address]: [entry["name"]]", illegal)
@@ -128,9 +147,13 @@
 /datum/ui_state/netrun_request/can_use_topic(src_object, mob/user)
 	var/datum/netrun_console/console = console_ref?.resolve()
 	var/datum/component/netrun_node/node = node_ref?.resolve()
-	if(!console || !node || node.parent != src_object || console.operator != user || console.is_locked() || !console.can_route(node) || !node.is_online() || console.node_level(node) < NETRUN_ACCESS_USER)
+	if(!console || !node || node.parent != src_object || console.operator != user || console.is_locked() || !node.is_online())
 		return UI_CLOSE
-	return UI_INTERACTIVE
+	node.join_network()
+	var/datum/netrun_path_tree/tree = console.make_path_tree()
+	var/allowed = console.can_route(node, tree) && console.node_level(node, tree) >= NETRUN_ACCESS_USER
+	qdel(tree)
+	return allowed ? UI_INTERACTIVE : UI_CLOSE
 
 /datum/netrun_console/proc/apply_firmware_bypass(datum/component/netrun_node/node)
 	var/datum/netrun_api/api = SSnetrun.get_api(node.parent)

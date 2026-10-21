@@ -19,7 +19,7 @@ export const NodePanel = () => {
       <Section
         title={net.code}
         scrollable
-        style={{ maxHeight: '620px', overflowY: 'auto' }}
+        style={{ minHeight: '100%', overflowY: 'auto' }}
         buttons={<Icon name="network-wired" />}
       >
         <LabeledList>
@@ -68,7 +68,7 @@ export const NodePanel = () => {
   }
   if (!selected) {
     return (
-      <Section title="Сети" scrollable style={{ maxHeight: '620px', overflowY: 'auto' }}>
+      <Section title="Сети" scrollable style={{ minHeight: '100%', overflowY: 'auto' }}>
         <Box color={THEME.muted} mb={1}>
           Выберите узел на карте или подберите доступ к сети.
         </Box>
@@ -125,7 +125,7 @@ export const NodePanel = () => {
     <Section
       title={selected.name}
       scrollable
-      style={{ maxHeight: '620px', overflowY: 'auto' }}
+      style={{ minHeight: '100%', overflowY: 'auto' }}
       buttons={
         <Box inline>
           <Button
@@ -196,8 +196,8 @@ export const NodePanel = () => {
           icon="person-walking-arrow-right"
           color="good"
           content="Перейти в узел"
-          disabled={selected.access < 2 || !selected.online}
-          tooltip="Нужен доступ ПОЛЬЗОВАТЕЛЯ"
+          disabled={!(selected.can_hop ?? (selected.access >= 2 && selected.online))}
+          tooltip="Нужно разрешение на переход в соседний узел: доступ пользователя или ключ сети."
           onClick={() => act('hop', { address: selected.address })}
         />
       )}
@@ -217,9 +217,11 @@ export const NodePanel = () => {
             Хранилище узла: {selected.storage?.used}/{selected.storage?.capacity}
           </Box>
           {selected.files.length === 0 && <Box color={THEME.muted}>Пусто.</Box>}
+          <div data-net-files="remote" style={{ maxHeight: '40vh', minHeight: 0, overflowY: 'auto', paddingRight: '4px' }}>
           {selected.files.map((file) => (
             <RemoteFile key={file.uid} file={file} root={selected.access >= 3} />
           ))}
+          </div>
         </Box>
       )}
       {!!selected.logs?.length && (
@@ -236,16 +238,20 @@ const RemoteFile = (props: { file: NetFile; root: boolean }) => {
   const { act, data } = useBackend<NetrunData>();
   const { file, root } = props;
   return (
-    <Box mb={0.5} style={{ fontFamily: 'monospace' }}>
-      <Icon name={fileIcon(file.kind)} mr={1} />
-      {file.name}
-      <Box inline color={THEME.muted} ml={1}>
+    <Box mb={0.5} p={0.5} data-net-file-row="remote" style={{ fontFamily: 'monospace', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 28px', alignItems: 'start', gap: '8px', borderBottom: `1px solid ${THEME.line}` }}>
+      <Box style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+        <Icon name={fileIcon(file.kind)} mr={1} />
+        {file.name}
+      <Box color={THEME.muted}>
         [{file.size}]
       </Box>
-      <Box inline style={{ float: 'right' }}>
+      </Box>
+      <Box data-net-file-actions="remote" style={{ display: 'grid', gridTemplateColumns: '28px', gridAutoRows: '24px', gap: '3px' }}>
+        <div>
         {file.kind === 'text' && (
           <Button compact icon="eye" tooltip="Прочитать" onClick={() => act('read', { uid: file.uid })} />
         )}
+        </div>
         <Button compact icon="download" tooltip="Скачать" onClick={() => act('download', { uid: file.uid })} />
         {data.shard && (
           <Button

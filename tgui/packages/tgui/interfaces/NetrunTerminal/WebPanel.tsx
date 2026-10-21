@@ -22,7 +22,7 @@ export const WebPanel = (props: { web: WebState }) => {
       <Section
         title={web.site.domain}
         scrollable
-        style={{ maxHeight: '620px', overflowY: 'auto' }}
+        style={{ minHeight: '100%', overflowY: 'auto' }}
         buttons={
           <Button icon="arrow-left" content="Назад" onClick={() => act('web_back')} />
         }
@@ -37,7 +37,7 @@ export const WebPanel = (props: { web: WebState }) => {
   }
 
   return (
-    <Section title="NTnet — сайты" scrollable style={{ maxHeight: '620px', overflowY: 'auto' }}>
+    <Section title="NTnet — сайты" scrollable style={{ minHeight: '100%', overflowY: 'auto' }}>
       {web.sites.length === 0 && (
         <Box color={THEME.muted}>В индексе нет опубликованных сайтов.</Box>
       )}

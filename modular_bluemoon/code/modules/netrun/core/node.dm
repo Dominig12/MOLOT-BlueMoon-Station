@@ -138,11 +138,15 @@
 
 /// Одинаковый набор действий для карточки, вкладки и других клиентов.
 /datum/component/netrun_node/proc/command_entries(datum/netrun_console/console)
+	if(console.ui_commands && islist(console.ui_commands[address]))
+		return console.ui_commands[address]
 	. = list()
 	for(var/command_id in all_command_ids())
 		var/datum/netrun_command/command = SSnetrun.get_command(command_id)
 		if(command)
 			. += list(command.ui_entry(src, console, command_id))
+	if(console.ui_commands)
+		console.ui_commands[address] = .
 
 /datum/component/netrun_node/proc/used_storage()
 	. = 0
@@ -159,7 +163,7 @@
 /datum/component/netrun_node/proc/ui_entry(datum/netrun_console/console)
 	var/turf/T = get_turf(parent)
 	var/datum/component/netrun_node/uplink = uplink_node()
-	return list(
+	. = list(
 		"address" = address,
 		"name" = get_name(),
 		"type" = node_type,
@@ -173,6 +177,9 @@
 		"active" = world.time - last_activity < 5 SECONDS,
 		"uplink" = uplink?.address,
 	)
+	if(console.origin == NETRUN_ORIGIN_ENTITY && istype(console.host, /mob/camera/netrun_entity))
+		var/mob/camera/netrun_entity/entity = console.host
+		.["can_hop"] = entity.can_enter(src)
 
 /// Найти узел на атоме или внутри него (для подключения деки и сканеров)
 /proc/netrun_find_node(atom/A)

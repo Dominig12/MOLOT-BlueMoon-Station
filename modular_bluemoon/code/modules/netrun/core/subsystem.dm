@@ -37,6 +37,9 @@ SUBSYSTEM_DEF(netrun)
 			node.join_network()
 		if(MC_TICK_CHECK)
 			return
+	// Publish new endpoints and carrier movement even when nobody opens a map.
+	// Active display routes are server-owned; execution still checks a fresh path.
+	ensure_topology().refresh_route_tables()
 	var/delta = wait / (1 SECONDS)
 	while(length(currentrun))
 		var/datum/netrun_console/console = currentrun[length(currentrun)]
@@ -63,6 +66,8 @@ SUBSYSTEM_DEF(netrun)
 
 /datum/controller/subsystem/netrun/proc/ensure_topology()
 	var/datum/netrun_topology/result = get_topology()
+	if(result.deferred_bindings && SSatoms.initialized == INITIALIZATION_INNEW_REGULAR)
+		result.invalidate()
 	if(result.dirty && !result.rebuilding)
 		result.rebuild()
 	return result

@@ -3,6 +3,18 @@ import { NetEdge } from './types';
 /** Layout input deliberately excludes station coordinates. */
 type LayoutNode = { address: string; type: string; uplink?: string | null };
 export type GraphPoint = { px: number; py: number };
+export const graphBounds = (points: Iterable<GraphPoint>, padding = 100) => {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.px); minY = Math.min(minY, point.py);
+    maxX = Math.max(maxX, point.px); maxY = Math.max(maxY, point.py);
+  }
+  if (!Number.isFinite(minX)) { minX = minY = maxX = maxY = 0; }
+  return { minX: minX - padding, minY: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 };
+};
 type CachedPoint = GraphPoint & { binding: string };
 export type GraphLayoutCache = {
   positions: Map<string, CachedPoint>;
@@ -71,9 +83,19 @@ export const layoutGraph = (nodes: LayoutNode[], edges: NetEdge[], cache: GraphL
   const adjacency = graphAdjacency(nodes, edges);
   const backbone = new Set(nodes.filter((node) => ['apc', 'gateway', 'relay'].includes(node.type)).map((node) => node.address));
   const parents = new Map<string, string>();
+  for (const node of nodes) {
+    if (node.uplink && !backbone.has(node.address)) { parents.set(node.address, node.uplink); }
+  }
   for (const edge of edges) {
     if (!byAddress.has(edge.from) || !byAddress.has(edge.to)) { continue; }
-    if (edge.kind === 'endpoint') { parents.set(edge.from, edge.to); }
+    // Edge endpoints are canonicalized by address, not directed child -> APC.
+    // The authoritative binding may also point outside the current graph slice.
+    if (edge.kind === 'endpoint') {
+      const from = byAddress.get(edge.from);
+      const to = byAddress.get(edge.to);
+      if (from.type === 'apc' && !backbone.has(to.address) && !parents.has(to.address)) { parents.set(to.address, from.address); }
+      if (to.type === 'apc' && !backbone.has(from.address) && !parents.has(from.address)) { parents.set(from.address, to.address); }
+    }
     else { backbone.add(edge.from); backbone.add(edge.to); }
   }
   const binding = (node: LayoutNode) => {

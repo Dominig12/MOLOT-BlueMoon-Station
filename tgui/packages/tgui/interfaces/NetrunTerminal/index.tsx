@@ -4,7 +4,7 @@ import { NetrunContent } from './Content';
 export const NetrunTerminal = () => {
   return (
     <Window width={1040} height={780} theme="ntos">
-      <Window.Content scrollable>
+      <Window.Content fitted>
         <NetrunContent />
       </Window.Content>
     </Window>

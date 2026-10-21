@@ -5354,6 +5354,7 @@
 #include "modular_bluemoon\code\modules\netrun\integration\access_devices.dm"
 #include "modular_bluemoon\code\modules\netrun\integration\circuits.dm"
 #include "modular_bluemoon\code\modules\netrun\integration\comms.dm"
+#include "modular_bluemoon\code\modules\netrun\integration\credentials.dm"
 #include "modular_bluemoon\code\modules\netrun\integration\datafiles.dm"
 #include "modular_bluemoon\code\modules\netrun\integration\entity_neural.dm"
 #include "modular_bluemoon\code\modules\netrun\integration\machine_api.dm"

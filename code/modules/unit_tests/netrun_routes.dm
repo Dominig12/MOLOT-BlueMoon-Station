@@ -197,8 +197,11 @@
 	)
 	TEST_ASSERT_EQUAL(json_encode(route.hops), json_encode(expected), "A cross-sector route must contain both real relay nodes and no abstract hub")
 	TEST_ASSERT(route.latency > 0, "Remote communication must include relay latency")
+	var/datum/netrun_topology/topology = SSnetrun.ensure_topology()
+	var/previous_revision = topology.revision
 	second_relay.enabled = FALSE
 	TEST_ASSERT(!source.console.can_route(target_node), "A working relay only at the source must not reach a disconnected target sector")
+	TEST_ASSERT_EQUAL(topology.revision, previous_revision, "A dynamic relay failure must invalidate live routing without rebuilding structural edges")
 	second_relay.enabled = TRUE
 	relay.enabled = FALSE
 	TEST_ASSERT(!source.console.can_route(target_node), "A working relay only at the destination must not reach a disconnected source sector")

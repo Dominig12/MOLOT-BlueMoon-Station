@@ -1,4 +1,4 @@
-import { createGraphLayoutCache, graphAdjacency, graphNeighborhood, graphPath, layoutGraph } from './mapLayout';
+import { createGraphLayoutCache, graphAdjacency, graphBounds, graphNeighborhood, graphPath, layoutGraph } from './mapLayout';
 import { NetEdge } from './types';
 
 const nodes = [
@@ -32,8 +32,7 @@ describe('incremental network graph layout', () => {
     const expanded = [...nodes, { address: 'APC-C', type: 'apc', uplink: null }, { address: 'NEW', type: 'camera', uplink: 'APC-A' }];
     const addedEdges: NetEdge[] = [...edges,
       { id: 'new-apc', from: 'APC-B', to: 'APC-C', kind: 'apc' },
-      { id: 'new-client', from: 'NEW', to: 'APC-A', kind: 'endpoint' },
-    ];
+      { id: 'new-client', from: 'NEW', to: 'APC-A', kind: 'endpoint' }];
     const revealed = layoutGraph(expanded, addedEdges, cache);
     for (const node of nodes) { expect(revealed.get(node.address)).toEqual(original.get(node.address)); }
     layoutGraph(nodes.slice(0, 1), [], cache);
@@ -46,12 +45,45 @@ describe('incremental network graph layout', () => {
     const cache = createGraphLayoutCache();
     const before = layoutGraph(nodes, edges, cache);
     const rebound = edges.map((edge) => edge.id === 'client' ? { ...edge, to: 'APC-B' } : edge);
-    // Explicit wiring takes precedence even if legacy uplink metadata is stale.
-    const after = layoutGraph(nodes, rebound, cache);
+    // The endpoint moves with its authoritative binding, without shifting peers.
+    const reboundNodes = nodes.map((node) => node.address === 'CLIENT' ? { ...node, uplink: 'APC-B' } : node);
+    const after = layoutGraph(reboundNodes, rebound, cache);
     expect(after.get('CLIENT')).not.toEqual(before.get('CLIENT'));
     expect(after.get('CLIENT').binding).toContain('endpoint:APC-B:');
     for (const address of ['APC-A', 'APC-B', 'RELAY']) { expect(after.get(address)).toEqual(before.get(address)); }
     expect(after.get('CLIENT').py).toBeGreaterThan(after.get('APC-B').py);
+  });
+
+  test('canonical sorted endpoint links preserve the authoritative APC binding in both address orders', () => {
+    for (const address of ['0-CLIENT', 'Z-CLIENT']) {
+      const client = { address, type: 'terminal', uplink: 'APC-A' };
+      const [from, to] = [address, 'APC-A'].sort();
+      const cache = createGraphLayoutCache();
+      const layout = layoutGraph([nodes[0], client], [{ id: 'canonical', from, to, kind: 'endpoint' }], cache);
+      expect(layout.get(address).binding).toContain('endpoint:APC-A:');
+      expect(layout.get('APC-A').binding).toBe('backbone');
+      const parent = layout.get('APC-A');
+      const point = layout.get(address);
+      expect(point.py).toBeGreaterThan(parent.py);
+    }
+    const cache = createGraphLayoutCache();
+    const reboundNodes = nodes.map((node) => node.address === 'CLIENT' ? { ...node, uplink: 'APC-B' } : node);
+    const layout = layoutGraph(reboundNodes, edges, cache);
+    expect(layout.get('CLIENT').binding).toContain('endpoint:APC-B:');
+  });
+
+  test('SVG bounds contain negative and far-away graph coordinates without changing the world origin', () => {
+    const points = [{ px: -1800, py: -900 }, { px: 16000, py: 4200 }];
+    const bounds = graphBounds(points);
+    expect(bounds.minX).toBeLessThan(points[0].px);
+    expect(bounds.minY).toBeLessThan(points[0].py);
+    expect(bounds.minX + bounds.width).toBeGreaterThan(points[1].px);
+    expect(bounds.minY + bounds.height).toBeGreaterThan(points[1].py);
+    for (const point of points) {
+      const local = { x: point.px - bounds.minX, y: point.py - bounds.minY };
+      expect(bounds.minX + local.x).toBe(point.px);
+      expect(bounds.minY + local.y).toBe(point.py);
+    }
   });
 
   test('graph neighborhoods and paths contain only published edges', () => {

@@ -58,6 +58,17 @@
 	/// Кеш на время одного ui_data: доступы оператора и уровни сетей
 	var/list/access_cache
 	var/list/network_level_cache
+	/// Read-only caches expire with a UI snapshot; execution never trusts these.
+	var/list/ui_node_levels
+	var/list/ui_legit_levels
+	var/list/ui_latency
+	var/list/ui_commands
+	var/list/ui_keys
+	var/list/ui_bonuses
+	var/list/ui_files
+	var/list/ui_network_catalog
+	var/ui_uplink_value = FALSE
+	var/ui_uplink_refresh = -INFINITY
 
 /datum/netrun_console/New(atom/host, origin)
 	src.host = host
@@ -107,57 +118,70 @@
 			break
 	release_path_tree(tree)
 
-/datum/netrun_console/proc/can_reach(datum/netrun_network/network)
+/datum/netrun_console/proc/can_reach(datum/netrun_network/network, datum/netrun_path_tree/tree)
 	if(!network)
 		return FALSE
-	var/datum/netrun_path_tree/tree = path_tree()
+	var/owns_tree = !tree
+	if(owns_tree)
+		tree = path_tree()
 	. = FALSE
 	for(var/datum/component/netrun_node/node as anything in network.nodes)
 		if(tree.reached[node.address])
 			. = TRUE
 			break
-	release_path_tree(tree)
+	if(owns_tree)
+		release_path_tree(tree)
 
 /datum/netrun_console/proc/is_locked()
 	return world.time < lockout_until
 
 // MARK: Доступ
 
-/datum/netrun_console/proc/user_access()
-	return access_cache || netrun_mob_access(operator)
+/datum/netrun_console/proc/user_access(fresh = FALSE)
+	return (!fresh && access_cache) || netrun_mob_access(operator)
 
-/datum/netrun_console/proc/has_key(datum/netrun_network/network)
-	for(var/datum/netrun_file/file as anything in all_files())
+/datum/netrun_console/proc/has_key(datum/netrun_network/network, fresh = FALSE)
+	if(!fresh && ui_keys && !isnull(ui_keys[network.id]))
+		return ui_keys[network.id]
+	. = FALSE
+	for(var/datum/netrun_file/file as anything in all_files(fresh))
 		if(file.kind == NETRUN_FILE_KEY && file.network_id == network.id && file.content == network.passcode)
-			return TRUE
-	return FALSE
+			. = TRUE
+			break
+	if(!fresh && ui_keys)
+		ui_keys[network.id] = .
 
-/datum/netrun_console/proc/legit_network_level(datum/netrun_network/network)
-	if(has_key(network))
-		return NETRUN_ACCESS_USER
-	return network.legit_guest(user_access()) ? NETRUN_ACCESS_GUEST : NETRUN_ACCESS_NONE
+/datum/netrun_console/proc/legit_network_level(datum/netrun_network/network, fresh = FALSE)
+	if(has_key(network, fresh))
+		return NETRUN_ACCESS_GUEST
+	return network.legit_guest(user_access(fresh)) ? NETRUN_ACCESS_GUEST : NETRUN_ACCESS_NONE
 
-/datum/netrun_console/proc/network_level(datum/netrun_network/network)
-	if(network_level_cache && !isnull(network_level_cache[network.id]))
+/datum/netrun_console/proc/network_level(datum/netrun_network/network, datum/netrun_path_tree/tree)
+	if(!tree && network_level_cache && !isnull(network_level_cache[network.id]))
 		return network_level_cache[network.id]
-	if(!can_reach(network) || is_locked())
+	if(!can_reach(network, tree) || is_locked())
 		. = NETRUN_ACCESS_NONE
 	else
-		. = max(network_access[network.id] || 0, legit_network_level(network))
+		. = max(network_access[network.id] || 0, legit_network_level(network, !!tree))
 		if(network in home_networks())
 			. = max(., NETRUN_ACCESS_GUEST)
-	if(network_level_cache)
+	if(!tree && network_level_cache)
 		network_level_cache[network.id] = .
 
-/datum/netrun_console/proc/legit_node_level(datum/component/netrun_node/node)
+/datum/netrun_console/proc/legit_node_level(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
+	if(!tree && ui_legit_levels && !isnull(ui_legit_levels[node.address]))
+		return ui_legit_levels[node.address]
+	. = compute_legit_node_level(node, !!tree)
+	if(!tree && ui_legit_levels)
+		ui_legit_levels[node.address] = .
+
+/datum/netrun_console/proc/compute_legit_node_level(datum/component/netrun_node/node, fresh = FALSE)
 	if(!node.network)
 		return NETRUN_ACCESS_NONE
-	. = legit_network_level(node.network) ? NETRUN_ACCESS_GUEST : NETRUN_ACCESS_NONE
+	. = legit_network_level(node.network, fresh) ? NETRUN_ACCESS_GUEST : NETRUN_ACCESS_NONE
 	var/atom/target = node.parent
 	. = max(., target.netrun_owner_access(src))
-	if(has_key(node.network))
-		. = max(., NETRUN_ACCESS_USER)
-	var/list/access = user_access()
+	var/list/access = user_access(fresh)
 	if(!length(access))
 		return
 	var/user_ok
@@ -176,16 +200,23 @@
 	if((ACCESS_CAPTAIN in access) || (ACCESS_NETWORK in access))
 		. = NETRUN_ACCESS_ROOT
 
-/datum/netrun_console/proc/node_level(datum/component/netrun_node/node)
+/datum/netrun_console/proc/node_level(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
 	if(!node?.network || is_locked())
 		return NETRUN_ACCESS_NONE
-	var/net_level = network_level(node.network)
+	if(!tree && ui_node_levels && !isnull(ui_node_levels[node.address]))
+		return ui_node_levels[node.address]
+	. = compute_node_level(node, tree)
+	if(!tree && ui_node_levels)
+		ui_node_levels[node.address] = .
+
+/datum/netrun_console/proc/compute_node_level(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
+	var/net_level = network_level(node.network, tree)
 	var/atom/target = node.parent
 	var/owner_level = target.netrun_owner_access(src)
-	var/local_endpoint = node == route_source()
-	if(net_level < NETRUN_ACCESS_GUEST && !local_endpoint && (!owner_level || !can_route(node)))
+	var/local_endpoint = node == (tree ? tree.source : route_source())
+	if(net_level < NETRUN_ACCESS_GUEST && !local_endpoint && (!owner_level || !can_route(node, tree)))
 		return NETRUN_ACCESS_NONE
-	. = max(NETRUN_ACCESS_GUEST, owner_level, net_level, node_access[node.address] || 0, legit_node_level(node))
+	. = max(NETRUN_ACCESS_GUEST, owner_level, net_level, node_access[node.address] || 0, legit_node_level(node, tree))
 	if(node == jack)
 		. = max(., NETRUN_ACCESS_GUEST)
 
@@ -204,6 +235,7 @@
 	if(world.time < next_command)
 		return FALSE
 	next_command = world.time + 0.5 SECONDS
+	node = refresh_route_node(node)
 	if(!node || !(command_id in node.all_command_ids()))
 		return FALSE
 	var/datum/netrun_command/command = SSnetrun.get_command(command_id)
@@ -212,20 +244,25 @@
 	if(is_locked())
 		log_line("Точка подключения заблокирована.", "bad")
 		return FALSE
-	if(!can_route(node))
+	var/datum/netrun_path_tree/tree = make_path_tree()
+	if(!can_route(node, tree))
+		qdel(tree)
 		log_line("[node.address]: нет маршрута к узлу.", "bad")
 		return FALSE
 	if(!command.works_offline && !node.is_online(node != jack))
+		qdel(tree)
 		log_line("[node.address]: узел не отвечает.", "bad")
 		return FALSE
-	var/level = node_level(node)
+	var/level = node_level(node, tree)
 	if(level < command.access)
+		qdel(tree)
 		log_line("[node.address]: недостаточно прав для «[command.name]».", "bad")
 		return FALSE
-	var/illegal = legit_node_level(node) < command.access
+	var/illegal = legit_node_level(node, tree) < command.access
 	node.touch()
 	// Задержка маршрута: прямое/близкое подключение - почти мгновенно, дальнее через реле - с лагом.
-	var/lat = command.ignores_latency ? 0 : latency_to(node)
+	var/lat = command.ignores_latency ? 0 : latency_to(node, tree)
+	qdel(tree)
 	if(lat <= 0)
 		log_line("> [command_id] @ [node.address]")
 		return do_command(node, command, command_id, illegal, node.network, operator, selected_file_uid || "none")
@@ -242,13 +279,17 @@
 	node.join_network()
 	if(is_locked())
 		return FALSE
-	if(sender != operator || !can_route(node) || node.network != sent_network || !(command_id in node.all_command_ids()) || node_level(node) < command.access)
+	var/datum/netrun_path_tree/tree = make_path_tree()
+	if(sender != operator || !can_route(node, tree) || node.network != sent_network || !(command_id in node.all_command_ids()) || node_level(node, tree) < command.access)
+		qdel(tree)
 		log_line("[node.address]: запрос отменён — маршрут, оператор или права изменились.", "bad")
 		return FALSE
 	if(!command.works_offline && !node.is_online(node != jack))
+		qdel(tree)
 		log_line("[node.address]: узел не отвечает.", "bad")
 		return FALSE
-	illegal = legit_node_level(node) < command.access
+	illegal = legit_node_level(node, tree) < command.access
+	qdel(tree)
 	var/datum/netrun_request/request = new(file_uid)
 	var/result = world.PushUsr(operator, CALLBACK(command, TYPE_PROC_REF(/datum/netrun_command, execute), node, src, netrun_command_arg(command_id), request))
 	qdel(request)
@@ -265,13 +306,16 @@
 	return TRUE
 
 /// Есть ли вообще маршрут к узлу (иначе узел отрезан - подключиться нельзя)
-/datum/netrun_console/proc/can_route(datum/component/netrun_node/node)
+/datum/netrun_console/proc/can_route(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
 	node = refresh_route_node(node)
 	if(!node)
 		return FALSE
-	var/datum/netrun_path_tree/tree = path_tree()
+	var/owns_tree = !tree
+	if(owns_tree)
+		tree = path_tree()
 	. = !!tree.reached[node.address]
-	release_path_tree(tree)
+	if(owns_tree)
+		release_path_tree(tree)
 
 /// Ответ ping приходит после round-trip
 /datum/netrun_console/proc/ping_reply(address, lat, route_name)
@@ -282,10 +326,14 @@
 	log_line("[address]: [lat * 2 * 100]мс туда-обратно ([route_name]).", "good")
 
 /// Задержка маршрута до узла в децисекундах: 0 - прямое/рядом, больше - дальше и через реле
-/datum/netrun_console/proc/latency_to(datum/component/netrun_node/node)
-	var/datum/netrun_route/route = route_to(node)
+/datum/netrun_console/proc/latency_to(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
+	if(!tree && ui_latency && node && !isnull(ui_latency[node.address]))
+		return ui_latency[node.address]
+	var/datum/netrun_route/route = route_to(node, tree)
 	. = route.latency
 	qdel(route)
+	if(!tree && ui_latency && node)
+		ui_latency[node.address] = .
 
 /datum/netrun_console/proc/log_source()
 	if(operator && !wireless)
@@ -427,7 +475,9 @@
 
 // MARK: Файлы
 
-/datum/netrun_console/proc/all_files()
+/datum/netrun_console/proc/all_files(fresh = FALSE)
+	if(!fresh && ui_files)
+		return ui_files
 	. = storage.Copy()
 	if(shard)
 		. += shard.files
@@ -455,6 +505,8 @@
 
 /// Бонус от установленных демонов (каждый тип считается один раз)
 /datum/netrun_console/proc/daemon_bonus(id)
+	if(ui_bonuses && !isnull(ui_bonuses[id]))
+		return ui_bonuses[id]
 	. = 0
 	for(var/datum/netrun_file/file as anything in all_files())
 		if(file.kind != NETRUN_FILE_DAEMON)
@@ -462,6 +514,8 @@
 		var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(file.content)
 		if(daemon && daemon.bonus_kind == id)
 			. = max(., daemon.bonus)
+	if(ui_bonuses)
+		ui_bonuses[id] = .
 
 /datum/netrun_console/proc/effective_trace_mult()
 	return trace_mult * max(0.1, 1 - daemon_bonus("cloak"))

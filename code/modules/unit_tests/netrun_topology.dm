@@ -6,6 +6,36 @@
 			return TRUE
 	return FALSE
 
+/// Map initialization registers an early distant APC, then a client, then its actual nearest APC.
+/datum/unit_test/netrun_topology_mapload_binding_order/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/early_spot = scene.take(run_loc_floor_top_right, room)
+	var/turf/nearest_spot = scene.take(get_step(origin, NORTH), room)
+	var/list/created = list()
+	SSatoms.map_loader_begin()
+	var/obj/machinery/power/apc/early = new(early_spot)
+	created += early
+	var/obj/machinery/computer/netrun_terminal/client = new(origin)
+	created += client
+	var/obj/machinery/power/apc/nearest = new(nearest_spot)
+	created += nearest
+	SSatoms.map_loader_stop()
+	scene.owned += created
+	SSatoms.InitializeAtoms(created)
+	for(var/obj/machinery/machine as anything in created)
+		machine.set_machine_stat(0)
+	SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/client_node = client.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/nearest_node = nearest.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT_EQUAL(client_node.uplink_node(), nearest_node, "A maploaded client must choose the nearest APC after all mapped infrastructure is registered, rather than retaining the early distant APC")
+	var/obj/machinery/power/apc/later = scene.machine(/obj/machinery/power/apc, origin)
+	SSnetrun.ensure_topology()
+	TEST_ASSERT_EQUAL(client_node.uplink_node(), nearest_node, "After normal startup a newly installed closer APC must preserve the established binding")
+	TEST_ASSERT(!QDELETED(later), "The closer post-startup fixture must exist when binding stability is checked")
+
 /// Endpoints initialized before map infrastructure must acquire one structural, stable uplink.
 /datum/unit_test/netrun_topology_binding_lifecycle/Run()
 	var/turf/origin = run_loc_floor_bottom_left
@@ -120,6 +150,12 @@
 	var/datum/component/netrun_node/relay_apc = relay_node.uplink_node()
 	TEST_ASSERT_NOTNULL(relay_apc, "A real quantum relay must have a structural APC uplink")
 	TEST_ASSERT(relay_apc.address in relay_neighbors, "The published relay edge must match the relay's cached APC binding")
+	var/previous_revision = topology.revision
+	var/previous_edges = json_encode(topology.edges)
+	fourth.set_machine_stat(BROKEN)
+	SSnetrun.ensure_topology()
+	TEST_ASSERT_EQUAL(topology.revision, previous_revision, "A temporary APC failure must not rebuild the structural graph")
+	TEST_ASSERT_EQUAL(json_encode(topology.edges), previous_edges, "An offline APC must retain the cached tree's edges")
 
 /// Public map depth follows edges: a far two-hop peer appears while a nearby three-hop peer does not.
 /datum/unit_test/netrun_topology_map_depth_and_latency/Run()
@@ -180,10 +216,127 @@
 	var/datum/component/netrun_node/apc_node = apc.GetComponent(/datum/component/netrun_node)
 	var/mob/camera/netrun_entity/entity = new(origin, source_node)
 	scene.owned.Insert(1, entity)
-	TEST_ASSERT(entity.console.store_file(new /datum/netrun_file("local.key", NETRUN_FILE_KEY, apc_node.network.passcode, 1, apc_node.network.id)), "The entity needs a legitimate USER key")
+	TEST_ASSERT(entity.console.store_file(new /datum/netrun_file/access("network-engineer.access", list(ACCESS_NETWORK, ACCESS_ENGINE_EQUIP))), "The entity needs actual matching credentials for actions independently of LAN traversal")
 	TEST_ASSERT(entity.console.node_level(peer_node) >= NETRUN_ACCESS_USER, "The peer must be authorized independently of graph adjacency")
 	TEST_ASSERT(!entity.can_enter(peer_node), "An entity must not jump directly between two endpoints behind the same APC")
 	TEST_ASSERT(entity.can_enter(apc_node), "The immediate online APC neighbor must be eligible")
 	TEST_ASSERT(entity.hop(apc_node), "A legal hop must enter the adjacent APC")
 	TEST_ASSERT_EQUAL(entity.host_node, apc_node, "The successful hop must update the entity's actual host")
 	TEST_ASSERT(entity.can_enter(peer_node), "After entering the APC its endpoint must become an immediate neighbor")
+
+/// Shared CLI pools keep protected endpoints hidden and cannot retain a revoked key across updates.
+/datum/unit_test/netrun_cli_completion_access_scope/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/engineering = scene.room(/area/engineering/netrun_route_test)
+	var/area/medical = scene.room(/area/medical/netrun_route_test)
+	scene.take(origin, engineering)
+	var/turf/first_apc_spot = scene.take(get_step(origin, NORTH), engineering)
+	var/turf/target_spot = scene.take(locate(origin.x + 4, origin.y, origin.z), medical)
+	var/turf/second_apc_spot = scene.take(get_step(target_spot, NORTH), medical)
+	scene.machine(/obj/machinery/power/apc, first_apc_spot)
+	var/obj/machinery/power/apc/medical_apc = scene.machine(/obj/machinery/power/apc, second_apc_spot)
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, target_spot)
+	SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/apc_node = medical_apc.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT(source.console.can_route(target_node), "The protected endpoint must be physically reachable before testing disclosure")
+	TEST_ASSERT(source.console.store_file(netrun_daemon_file("mapper")), "The mapper must fit so map visibility cannot accidentally grant CLI disclosure")
+	var/list/payload = source.console.ui_data(null)
+	var/list/cli = payload["cli"]
+	var/list/pools = cli["completions"]
+	var/list/node_addresses = pools["nodes"]
+	TEST_ASSERT_NOTNULL(node_addresses, "The public CLI payload must expose its shared address completion pool")
+	TEST_ASSERT(!(target_node.address in node_addresses), "Mapper must not leak a locked endpoint into ordinary CLI completion")
+	TEST_ASSERT(apc_node.address in node_addresses, "The protected LAN's structural APC must remain discoverable")
+	TEST_ASSERT(!(apc_node.network.code in node_addresses), "Combining breach targets must not append network codes to the shared node-address pool")
+	var/datum/netrun_file/key = new("medical.key", NETRUN_FILE_KEY, target_node.network.passcode, 1, target_node.network.id)
+	TEST_ASSERT(source.console.store_file(key), "The legitimate network key must fit in memory")
+	payload = source.console.ui_data(null)
+	cli = payload["cli"]
+	pools = cli["completions"]
+	node_addresses = pools["nodes"]
+	TEST_ASSERT(target_node.address in node_addresses, "The next UI update must include an endpoint revealed by its legitimate key")
+	source.console.delete_local_file(key)
+	payload = source.console.ui_data(null)
+	cli = payload["cli"]
+	pools = cli["completions"]
+	node_addresses = pools["nodes"]
+	TEST_ASSERT(!(target_node.address in node_addresses), "A shared completion cache must expire with the request and honor key revocation on the next update")
+
+/// Display paths are retained on the server, copied for clients, and refreshed
+/// periodically; a stale display path must never authorize a real request.
+/datum/unit_test/netrun_server_route_tables/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/apc_spot = scene.take(get_step(origin, NORTH), room)
+	var/turf/target_spot = scene.take(get_step(origin, EAST), room)
+	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, apc_spot)
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, target_spot)
+	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/netrun_path_tree/snapshot = source.console.make_path_tree(TRUE)
+	allocated += snapshot
+	var/datum/netrun_path_tree/stored = graph.route_tables[source_node.address]
+	TEST_ASSERT_NOTNULL(stored, "Opening a map must retain its routing table on the server")
+	TEST_ASSERT_NOTEQUAL(snapshot, stored, "A UI request must receive a copy rather than own the retained routing table")
+	snapshot.reached.Cut()
+	TEST_ASSERT(stored.reached[target_node.address], "A client-specific routing restriction must not mutate the shared server table")
+	var/previous_revision = stored.revision
+	apc.set_machine_stat(BROKEN)
+	TEST_ASSERT(stored.reached[target_node.address], "The previous display snapshot must remain stable until its scheduled refresh")
+	TEST_ASSERT(!source.console.can_route(target_node), "A real request must immediately detect a broken APC without trusting the retained display path")
+	graph.route_refresh_at = world.time
+	graph.refresh_route_tables()
+	stored = graph.route_tables[source_node.address]
+	TEST_ASSERT(stored.revision > previous_revision, "The scheduled refresh must advance the retained route revision")
+	TEST_ASSERT(!stored.reached[target_node.address], "A refreshed server table must remove a path through broken infrastructure")
+	source.console.selected_address = target_node.address
+	var/list/payload = source.console.ui_data(null)
+	var/list/map = payload["map"]
+	var/list/selected_route = map["route"]
+	TEST_ASSERT(!selected_route["reachable"], "The map must publish the selected target's unreachable server route, rather than a fictitious direct path")
+	graph.route_used[source_node.address] = world.time - 3 * SSnetrun.wait
+	graph.route_refresh_at = world.time
+	graph.refresh_route_tables()
+	TEST_ASSERT_NULL(graph.route_tables[source_node.address], "An inactive map's routing table must expire instead of doing BFS forever")
+
+/// Nested targets need no movement signal: the subsystem's membership poll
+/// invalidates their cached paths, and the next server snapshot uses the new APC.
+/datum/unit_test/netrun_server_routes_carried_target/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/first_room = scene.room(/area/netrun_route_test)
+	var/area/second_room = scene.room(/area/netrun_route_test)
+	scene.take(origin, first_room)
+	var/turf/first_spot = scene.take(get_step(origin, NORTH), first_room)
+	var/turf/second_spot = scene.take(locate(origin.x + 4, origin.y, origin.z), second_room)
+	var/turf/second_apc_spot = scene.take(get_step(second_spot, NORTH), second_room)
+	scene.machine(/obj/machinery/power/apc, first_spot)
+	var/obj/machinery/power/apc/second = scene.machine(/obj/machinery/power/apc, second_apc_spot)
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/obj/item/carrier = allocate(/obj/item, origin)
+	var/obj/item/target = allocate(/obj/item, carrier)
+	var/datum/component/netrun_node/target_node = target.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/component/netrun_node/second_node = second.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_path_tree/before = source.console.make_path_tree(TRUE)
+	allocated += before
+	var/list/old_path = before.addresses_to(target_node.address)
+	carrier.forceMove(second_spot)
+	TEST_ASSERT_EQUAL(target_node.binding_area, first_room, "Moving a carrier must not fake a MOVED signal on its nested item")
+	target_node.join_network() // The same membership poll used by SSnetrun.fire().
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	graph.refresh_route_tables()
+	var/datum/netrun_path_tree/after = source.console.make_path_tree(TRUE)
+	allocated += after
+	var/list/new_path = after.addresses_to(target_node.address)
+	TEST_ASSERT_EQUAL(target_node.bound_apc, second_node, "The periodic membership poll must bind a carried target to its destination APC")
+	TEST_ASSERT_NOTEQUAL(json_encode(old_path), json_encode(new_path), "The retained route must change after a carried target crosses its root area")
+	TEST_ASSERT_EQUAL(after.previous[target_node.address], second_node.address, "The saved route's final forwarding hop must be the new APC")
+	TEST_ASSERT_NOTNULL(graph.route_tables[source_node.address], "The changed path must remain stored on the server after the UI copy is released")

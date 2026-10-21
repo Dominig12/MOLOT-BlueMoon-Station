@@ -1,3 +1,5 @@
+import { memo, useCallback, useMemo } from 'react';
+
 import { useBackend } from '../../backend';
 import { Box, Button, Stack } from '../../components';
 import { MatrixState, NetrunData, THEME } from './types';
@@ -7,18 +9,19 @@ const LIME = '#d8ff4a';
 /** Головоломка-сетка: игрок выбирает клетки по очереди в строке и столбце */
 export const MatrixPanel = (props: { state: MatrixState }) => {
   const { act } = useBackend<NetrunData>();
-  const { state } = props;
-  const rows: number[][] = [];
-  for (let r = 0; r < state.size; r++) {
-    const row: number[] = [];
-    for (let c = 0; c < state.size; c++) {
-      row.push(r * state.size + c);
-    }
-    rows.push(row);
-  }
+  const signature = JSON.stringify(props.state);
+  const state = useMemo(() => props.state, [signature]);
+  return <MatrixView state={state} act={act} />;
+};
+
+const MatrixView = memo((props: { state: MatrixState; act: (action: string, payload?: object) => void }) => {
+  const { state, act } = props;
+  const rows = useMemo(() => Array.from({ length: state.size }, (_, row) =>
+    Array.from({ length: state.size }, (_, column) => row * state.size + column)), [state.size]);
+  const onPick = useCallback((index: number) => act('breach_pick', { index: index + 1 }), [act]);
   return (
-    <Box p={1} style={{ background: THEME.bg, border: `1px solid ${LIME}55` }}>
-      <Stack align="center" mb={1}>
+    <Box p={1} style={{ background: THEME.bg, border: `1px solid ${LIME}55`, display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: '220px', boxSizing: 'border-box', overflow: 'auto' }}>
+      <Stack align="center" mb={1} style={{ flexShrink: 0 }}>
         <Stack.Item grow>
           <Box color={LIME} bold style={{ fontFamily: 'monospace' }}>
             {state.target}
@@ -37,9 +40,9 @@ export const MatrixPanel = (props: { state: MatrixState }) => {
           </Box>
         </Stack.Item>
       </Stack>
-      <Stack>
-        <Stack.Item>
-          <table style={{ borderCollapse: 'collapse' }}>
+      <Stack style={{ flex: '1 1 auto', minHeight: '160px', flexWrap: 'wrap' }}>
+        <Stack.Item grow basis="50%" style={{ minWidth: '190px' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', height: '100%' }}>
             <tbody>
               {rows.map((row, r) => (
                 <tr key={r}>
@@ -48,7 +51,8 @@ export const MatrixPanel = (props: { state: MatrixState }) => {
                       key={index}
                       code={state.cells[index].code}
                       active={state.cells[index].active}
-                      onClick={() => act('breach_pick', { index: index + 1 })}
+                      index={index}
+                      onPick={onPick}
                     />
                   ))}
                 </tr>
@@ -56,7 +60,7 @@ export const MatrixPanel = (props: { state: MatrixState }) => {
             </tbody>
           </table>
         </Stack.Item>
-        <Stack.Item grow ml={2}>
+        <Stack.Item grow basis="40%" ml={2} style={{ minWidth: '190px' }}>
           <Box color={THEME.muted} fontSize="11px" mb={0.5}>
             БУФЕР
           </Box>
@@ -104,21 +108,22 @@ export const MatrixPanel = (props: { state: MatrixState }) => {
       </Stack>
     </Box>
   );
-};
+});
 
-const GridCell = (props: {
+const GridCell = memo((props: {
   code: string | null;
   active: boolean;
-  onClick: () => void;
+  index: number;
+  onPick: (index: number) => void;
 }) => {
-  const { code, active, onClick } = props;
+  const { code, active, index, onPick } = props;
   const clickable = active && !!code;
   return (
     <td
-      onClick={clickable ? onClick : undefined}
+      onClick={clickable ? () => onPick(index) : undefined}
       style={{
-        width: '34px',
-        height: '28px',
+        minWidth: '24px',
+        minHeight: '24px',
         textAlign: 'center',
         fontFamily: 'monospace',
         fontSize: '14px',
@@ -131,4 +136,4 @@ const GridCell = (props: {
       {code || '[ ]'}
     </td>
   );
-};
+});

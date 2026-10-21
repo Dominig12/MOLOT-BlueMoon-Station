@@ -45,6 +45,7 @@
 // Типы файлов
 #define NETRUN_FILE_TEXT "text"
 #define NETRUN_FILE_KEY "key"
+#define NETRUN_FILE_ACCESS "access"
 #define NETRUN_FILE_DAEMON "daemon"
 #define NETRUN_FILE_SEED "seed"
 #define NETRUN_FILE_TECHWEB "techweb"

@@ -66,7 +66,7 @@ const FileEditor = (props: { onCreated?: () => void }) => {
       ) : file?.preview ? (
         <Box mt={0.5} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{file.preview}</Box>
       ) : null}
-      <Box mt={0.5}>
+      <Box mt={0.5} style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
         {!file ? (
           <>
             {data.shard && <Button compact icon="sd-card" content="На шард" selected={toShard} onClick={() => setToShard(!toShard)} />}

@@ -19,7 +19,7 @@ export const WindowPanel = (props: { window: MachineWindow }) => {
     <Section
       title={w.title}
       scrollable
-      style={{ minHeight: '240px', maxHeight: '620px', overflowY: 'auto' }}
+      style={{ height: '100%', minHeight: '100%', boxSizing: 'border-box', overflowY: 'auto' }}
       buttons={
         <Box inline>
           <Icon name={NODE_ICONS[w.type] || 'window-maximize'} mr={1} />

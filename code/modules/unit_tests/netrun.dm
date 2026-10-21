@@ -22,7 +22,8 @@
 
 	var/datum/netrun_file/key = new("research.key", NETRUN_FILE_KEY, node.network.passcode, 1, node.network.id)
 	TEST_ASSERT(console.store_file(key), "The legitimate network key must fit in memory")
-	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_USER, "A legitimate key grants USER without fabricated ID access")
+	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_GUEST, "A LAN key must grant traversal without granting USER machine actions")
+	console.node_access[node.address] = NETRUN_ACCESS_USER
 	var/list/payload = console.ui_data(null)
 	var/list/selected = payload["selected"]
 	var/list/window = console.window_payload()
@@ -30,8 +31,8 @@
 	TEST_ASSERT_EQUAL(json_encode(selected["commands"]), json_encode(window["commands"]), "The node card and window must share command availability and help")
 	var/list/copy_entry = netrun_command_entry(window["commands"], "web_copy")
 	var/list/bind_entry = netrun_command_entry(window["commands"], "web_bind")
-	TEST_ASSERT(copy_entry["allowed"], "The key must enable the USER command in the window")
-	TEST_ASSERT(!bind_entry["allowed"], "The same key must not enable a ROOT command")
+	TEST_ASSERT(copy_entry["allowed"], "A separate node USER grant must enable the USER command in the window")
+	TEST_ASSERT(!bind_entry["allowed"], "A node USER grant must not enable a ROOT command")
 	console.node_access[node.address] = NETRUN_ACCESS_ROOT
 	window = console.window_payload()
 	bind_entry = netrun_command_entry(window["commands"], "web_bind")
@@ -116,7 +117,8 @@
 	console.wireless = FALSE
 	console.set_jack(node)
 	var/datum/netrun_file/key = new("research.key", NETRUN_FILE_KEY, node.network.passcode, 1, node.network.id)
-	TEST_ASSERT(console.store_file(key), "The delivery test needs a legitimate USER key")
+	TEST_ASSERT(console.store_file(key), "The delivery test needs a legitimate LAN traversal key")
+	console.node_access[node.address] = NETRUN_ACCESS_USER
 	var/datum/netrun_network/sent_network = node.network
 	var/datum/netrun_command/command = SSnetrun.get_command("web_copy")
 	TEST_ASSERT(console.do_command(node, command, "web_copy", FALSE, sent_network, null, "none"), "An unchanged authorized request must execute")
@@ -131,8 +133,9 @@
 	console.set_jack(node)
 	TEST_ASSERT(console.can_route(node), "Restoring the physical connection must restore the route")
 	console.delete_local_file(key)
+	console.node_access -= node.address
 	files_before = length(console.storage)
-	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_GUEST, "Removing the key must actually revoke USER")
+	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_GUEST, "Removing the node's USER grant must revoke machine authorization")
 	TEST_ASSERT(!console.do_command(node, command, "web_copy", FALSE, sent_network, null, "none"), "A request must be cancelled when its authorization expires")
 	TEST_ASSERT_EQUAL(length(console.storage), files_before, "An unauthorized delivery must not create a file")
 
@@ -141,6 +144,7 @@
 	var/datum/netrun_network/previous_network = allocate(/datum/netrun_network, "unit-test-netrun-[REF(src)]")
 	var/datum/netrun_file/current_key = new("current.key", NETRUN_FILE_KEY, node.network.passcode, 1, node.network.id)
 	TEST_ASSERT(console.store_file(current_key), "The current network key must fit in memory")
+	console.node_access[node.address] = NETRUN_ACCESS_USER
 	TEST_ASSERT(console.can_route(node) && console.node_level(node) >= NETRUN_ACCESS_USER, "The current LAN must be independently reachable and authorized")
 	files_before = length(console.storage)
 	TEST_ASSERT(!console.do_command(node, command, "web_copy", FALSE, previous_network, null, "none"), "A request sent to the previous LAN must not follow the node into another LAN")

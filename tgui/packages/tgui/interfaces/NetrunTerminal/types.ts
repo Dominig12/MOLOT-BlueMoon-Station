@@ -8,6 +8,7 @@ export type NetNode = {
   security: number;
   online: boolean;
   access: number;
+  can_hop?: boolean;
   entities: number;
   active: boolean;
   uplink: string | null;
@@ -137,7 +138,9 @@ export type NetrunData = {
       desc: string;
       category?: string;
       completions?: string[];
+      completion_key?: string;
     }[];
+    completions?: Record<string, string[]>;
   };
   windows: WindowTab[];
   window: MachineWindow | null;
@@ -201,6 +204,14 @@ export type NetMap = {
   focus: string | null;
   depth: number;
   revision: number;
+  /** Server-cached path to the selected target; latency is milliseconds. */
+  route?: {
+    route: string[];
+    hops: number;
+    latency: number;
+    revision: number;
+    reachable: boolean;
+  } | null;
 };
 
 export type SelectedNetwork = {

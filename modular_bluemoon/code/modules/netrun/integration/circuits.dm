@@ -1,9 +1,10 @@
-/// Сетевой мост для интегральных схем: команды узлам по ключу ЛВС. Взламывать не умеет.
+/// Сетевой мост использует штатные ID-доступы сборки; ключ ЛВС открывает только обнаружение.
 /obj/item/integrated_circuit/input/netrun_link
 	name = "network node uplink"
-	desc = "Отправляет команды узлам локальных сетей станции. Нужен ключ ЛВС - его выпускает сетевой терминал."
+	desc = "Отправляет разрешённые команды узлам сети. Ключ ЛВС открывает обнаружение; права на управление проверяются отдельно."
 	extended_desc = "Адрес узла в формате XXXX:XXXX, id команды (например door_open, apc_breaker, cam_toggle) и ключ ЛВС. \
-	Без ключа схема работает только на гостевых командах вроде scan. Результат выполнения - на первом выходе."
+		Ключ ЛВС не выдаёт права управления машиной. Для них отсканируйте подходящую ID-карту штатным ID card reader в этой сборке. \
+		Результат выполнения - на первом выходе."
 	icon_state = "signal"
 	complexity = 6
 	cooldown_per_use = 2 SECONDS
@@ -66,8 +67,19 @@
 	if(source?.network)
 		. += source.network
 
-/datum/netrun_console/circuit/user_access()
-	return list()
+/datum/netrun_console/circuit/user_access(fresh = FALSE)
+	var/obj/item/integrated_circuit/chip = host
+	if(!istype(chip) || QDELETED(chip))
+		return list()
+	var/obj/item/electronic_assembly/assembly = chip.assembly
+	if(QDELETED(assembly) || !(chip in assembly.assembly_components))
+		return list()
+	// The native card reader populates this same card for assembly Bump()/pathfinding.
+	var/obj/item/card/id/card = assembly.access_card
+	if(QDELETED(card) || card.loc != assembly)
+		return list()
+	var/list/accesses = card.GetAccess()
+	return accesses ? accesses.Copy() : list()
 
 /datum/netrun_console/circuit/log_source()
 	return "интегральная схема"
@@ -76,7 +88,7 @@
 	// Схема работает только легально: без нужного доступа команда просто не выполняется
 	var/datum/netrun_command/command = SSnetrun.get_command(command_id)
 	if(command && node && legit_node_level(node) < command.access)
-		log_line("Недостаточно прав: нужен ключ ЛВС.", "bad")
+		log_line("Недостаточно прав: ключ ЛВС даёт только гостевой вход. Отсканируйте подходящую ID-карту считывателем этой сборки.", "bad")
 		return FALSE
 	next_command = 0
 	return ..()
@@ -87,5 +99,5 @@
 /datum/netrun_console/circuit/add_trace(amount)
 	return
 
-/datum/netrun_console/circuit/latency_to(datum/component/netrun_node/node)
+/datum/netrun_console/circuit/latency_to(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
 	return 0

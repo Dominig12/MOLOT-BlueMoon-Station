@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { ReactNode, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Icon, Stack, Tabs } from '../../components';
@@ -27,12 +27,19 @@ export const NetrunContent = () => {
   const { breach, web, windows, window: machineWindow } = data;
   const webAvailable = data.networks.some((n) => n.id === 'web');
   const [bottom, setBottom] = useState<'console' | 'chat'>('console');
+  const mapHidden = !!(breach || machineWindow || web);
   return (
     <Box
       style={{
         color: THEME.text,
         background: THEME.panel,
-        minHeight: '100%',
+        height: '100%',
+        minHeight: 0,
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        boxSizing: 'border-box',
+        overflow: 'auto',
         padding: '6px',
       }}
     >
@@ -78,20 +85,21 @@ export const NetrunContent = () => {
           ))}
         </Tabs>
       )}
+      <div data-net-layout="workspace" style={{ display: 'flex', flex: '1 1 65%', minHeight: '220px', minWidth: 0, overflow: 'hidden' }}>
       {breach && <MatrixPanel state={breach} />}
       {!breach && machineWindow && (
-        <Box style={{ minHeight: '360px' }}>
+        <Box style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'auto' }}>
           <WindowPanel window={machineWindow} />
         </Box>
       )}
       {!breach && !machineWindow && web && (
-        <Box style={{ minHeight: '360px' }}>
+        <Box style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'auto' }}>
           <WebPanel web={web} />
         </Box>
       )}
-      <div style={{ display: breach || machineWindow || web ? 'none' : 'flex', flexWrap: 'wrap', alignItems: 'stretch', gap: '6px' }}>
-        <div style={{ flex: '2 1 440px', minWidth: 0 }}>
-          <StationMap />
+      <div style={{ display: mapHidden ? 'none' : 'flex', flex: '1 1 auto', width: '100%', minHeight: 0, overflow: 'auto', flexWrap: 'wrap', alignItems: 'stretch', gap: '6px' }}>
+        <div style={{ flex: '2 1 440px', minWidth: 0, minHeight: '220px', height: '100%' }}>
+          <StationMap suspended={mapHidden} />
         </div>
           <div
             style={{
@@ -99,16 +107,18 @@ export const NetrunContent = () => {
               minWidth: '240px',
               maxWidth: '520px',
               flex: '1 1 280px',
-              minHeight: '360px',
+              height: '100%',
+              minHeight: '220px',
               resize: 'horizontal',
               overflow: 'auto',
             }}
           >
-            <NodePanel />
+            <NodeSidebar suspended={mapHidden} />
           </div>
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
-        <div style={{ flex: '2 1 440px', minWidth: 0 }}>
+      </div>
+      <div data-net-layout="bottom" style={{ display: 'flex', flex: '0 1 35%', minHeight: '160px', overflow: 'auto', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+        <div style={{ flex: '2 1 440px', minWidth: 0, minHeight: '150px', display: 'flex', flexDirection: 'column' }}>
           <Tabs>
             <Tabs.Tab icon="terminal" selected={bottom === 'console'} onClick={() => setBottom('console')}>
               Консоль
@@ -117,16 +127,22 @@ export const NetrunContent = () => {
               #noosphere
             </Tabs.Tab>
           </Tabs>
-          <div style={{ display: bottom === 'console' ? 'block' : 'none' }}><ConsoleLog /></div>
-          <div style={{ display: bottom === 'chat' ? 'block' : 'none' }}><NetChat /></div>
+          <div style={{ display: bottom === 'console' ? 'flex' : 'none', flex: '1 1 auto', minHeight: 0 }}><ConsoleLog /></div>
+          <div style={{ display: bottom === 'chat' ? 'flex' : 'none', flex: '1 1 auto', minHeight: 0 }}><NetChat /></div>
         </div>
-        <div style={{ flex: '1 1 270px', minWidth: '240px' }}>
+        <div style={{ flex: '1 1 270px', minWidth: '240px', minHeight: '150px', height: '100%', overflow: 'auto' }}>
           <StoragePanel />
         </div>
       </div>
       <Legend />
     </Box>
   );
+};
+
+const NodeSidebar = (props: { suspended: boolean }) => {
+  const content = useRef<ReactNode>(null);
+  if (!props.suspended) { content.current = <NodePanel />; }
+  return content.current;
 };
 
 const Header = () => {

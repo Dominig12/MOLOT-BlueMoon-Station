@@ -5,6 +5,7 @@ import { backendReducer, backendUpdate } from '../../backend';
 import { debugReducer } from '../../debug';
 import { NetrunContent } from './Content';
 import { FilePanel } from './FilePanel';
+import * as mapGeometry from './mapLayout';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog } from './Panels';
@@ -59,6 +60,82 @@ const sent = (topic, action: string) => topic.mock.calls
   .map((call) => JSON.parse(call[0].payload));
 
 describe('Netrun terminal panels', () => {
+  test('stored route generations update status and overlay without recomputing graph geometry', () => {
+    const layout = jest.spyOn(mapGeometry, 'layoutGraph');
+    const topic = setup();
+    const map = topic.store.getState().backend.data.map;
+    const route = { route: [node.address, 'BBBB:0002'], hops: 1, latency: 300, revision: 7, reachable: true };
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, route } } })));
+    const { container, getByText, getByTitle, rerender } = render(<StationMap />);
+    expect(getByText('Путь: 1 пер. · 300 мс')).toBeTruthy();
+    expect(container.querySelector('[data-net-overlay="selected-route"]')).not.toBeNull();
+    expect(layout).toHaveBeenCalledTimes(1);
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, route: { ...route, revision: 8, latency: 400 } } } })));
+    rerender(<StationMap />);
+    expect(getByText('Путь: 1 пер. · 400 мс')).toBeTruthy();
+    expect(getByTitle('Сохранённый маршрут #8')).toBeTruthy();
+    expect(layout).toHaveBeenCalledTimes(1);
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, route: { ...route, revision: 9, reachable: false } } } })));
+    rerender(<StationMap />);
+    expect(getByText('Путь: нет связи')).toBeTruthy();
+    expect(container.querySelector('[data-net-overlay="selected-route"]')).toBeNull();
+    layout.mockRestore();
+  });
+
+  test('a stored path never draws a shortcut across missing intermediate vertices', () => {
+    const topic = setup();
+    const map = topic.store.getState().backend.data.map;
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, route: {
+      route: [node.address, 'NOT-IN-SLICE', 'BBBB:0002'], hops: 2, latency: 500, revision: 1, reachable: true,
+    } } } })));
+    const { container, getByText } = render(<StationMap />);
+    expect(getByText('Путь: 2 пер. · 500 мс')).toBeTruthy();
+    expect(container.querySelector('[data-net-overlay="selected-route"]')).toBeNull();
+  });
+
+  test('log polling reuses layout and a suspended map does not inspect replacement payloads', () => {
+    const layout = jest.spyOn(mapGeometry, 'layoutGraph');
+    const topic = setup();
+    const { rerender } = render(<StationMap />);
+    expect(layout).toHaveBeenCalledTimes(1);
+    const currentMap = topic.store.getState().backend.data.map;
+    act(() => topic.store.dispatch(backendUpdate({ data: {
+      map: { ...currentMap, nodes: currentMap.nodes.map((entry) => ({ ...entry })) },
+      trace: 15, log: [{ text: 'New log entry', kind: 'label' }],
+    } })));
+    rerender(<StationMap />);
+    expect(layout).toHaveBeenCalledTimes(1);
+    rerender(<StationMap suspended />);
+    const replacement = Object.defineProperty({ ...currentMap }, 'nodes', {
+      get: () => { throw new Error('A suspended map must not read the graph'); },
+    });
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: replacement } })));
+    rerender(<StationMap suspended />);
+    expect(layout).toHaveBeenCalledTimes(1);
+    layout.mockRestore();
+  });
+
+  test('workspace and map consume available height and remote file controls stay in aligned scrolling rows', () => {
+    setup({ selected: { ...node, access: 3, files: [
+      { uid: 'text', name: 'Очень длинное имя файла с заметкой для передачи.txt', kind: 'text', size: 1, preview: null },
+      { uid: 'photo', name: 'Фото.png', kind: 'photo', size: 2, preview: null },
+    ] } });
+    const { container } = render(<NetrunContent />);
+    const workspace = container.querySelector<HTMLElement>('[data-net-layout="workspace"]');
+    const map = container.querySelector<HTMLElement>('[data-net-layout="map"]');
+    expect(workspace.style.flex).toContain('1 1');
+    expect(map.style.height).toBe('100%');
+    expect(container.querySelector<HTMLElement>('[aria-label="Карта сети"]').style.flex).toContain('1 1');
+    const files = container.querySelector<HTMLElement>('[data-net-files="remote"]');
+    expect(files.style.overflowY).toBe('auto');
+    const rows = [...files.querySelectorAll<HTMLElement>('[data-net-file-row]')];
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      expect(row.style.gridTemplateColumns).toBe('minmax(0, 1fr) 28px');
+      expect(row.querySelector<HTMLElement>('[data-net-file-actions]').style.gridTemplateColumns).toBe('28px');
+    }
+  });
+
   test('map filters remove hidden nodes and keyboard targets without moving other nodes', () => {
     const camera = { ...node, address: 'CAM:0001', name: 'Камера лаборатории', type: 'camera', x: 20 };
     const topic = setup({ map: { gateways: [], focus: node.address, depth: 2, revision: 1,
@@ -106,6 +183,31 @@ describe('Netrun terminal panels', () => {
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, revision: 2, nodes: map.nodes.map((entry) => ({ ...entry, x: -9999, y: 9999, z: 4 })) } } })));
     rerender(<StationMap />);
     expect(container.querySelector('[data-net-node="CAM"]').getAttribute('style')).toBe(before);
+  });
+
+  test('SVG and markers share dynamic bounds when a backbone extends beyond the old fixed canvas', () => {
+    const chain = Array.from({ length: 12 }, (_, index) => ({ ...node, address: `APC-${String(index).padStart(2, '0')}` }));
+    const edges = chain.slice(1).map((entry, index) => ({ id: `edge-${index}`, from: chain[index].address, to: entry.address, kind: 'apc' as const }));
+    setup({ selected: { ...chain[0] }, map: { nodes: chain, edges, gateways: [], focus: chain[0].address, depth: 12, revision: 1 } });
+    const { container } = render(<StationMap />);
+    const svg = container.querySelector('svg');
+    const [minX, minY, width, height] = svg.getAttribute('viewBox').split(' ').map(Number);
+    expect(Number(svg.getAttribute('width'))).toBeGreaterThan(2000);
+    for (const line of container.querySelectorAll('[data-net-edge]')) {
+      for (const coordinate of ['x1', 'x2']) {
+        expect(Number(line.getAttribute(coordinate))).toBeGreaterThan(minX);
+        expect(Number(line.getAttribute(coordinate))).toBeLessThan(minX + width);
+      }
+      for (const coordinate of ['y1', 'y2']) {
+        expect(Number(line.getAttribute(coordinate))).toBeGreaterThan(minY);
+        expect(Number(line.getAttribute(coordinate))).toBeLessThan(minY + height);
+      }
+    }
+    const canvas = container.querySelector<HTMLElement>('[data-net-canvas]');
+    const marker = container.querySelector<HTMLElement>('[data-net-node="APC-11"]');
+    const edge = container.querySelector('[data-to="APC-11"]');
+    expect(parseFloat(canvas.style.left) + parseFloat(marker.style.left)).toBe(Number(edge.getAttribute('x2')));
+    expect(parseFloat(canvas.style.top) + parseFloat(marker.style.top)).toBe(Number(edge.getAttribute('y2')));
   });
 
   test('node commands have natural height and dispatch the selected command', () => {
@@ -201,6 +303,26 @@ describe('Netrun terminal panels', () => {
     const canvas = getByLabelText('Карта сети');
     fireEvent.keyDown(canvas, { key: 'd', shiftKey: true });
     expect(sent(topic, 'hop')).toEqual([{ address: 'D-TARGET' }]);
+  });
+
+  test('a LAN key permits a guest to hop without enabling machine commands', () => {
+    const host = { ...node, address: 'A-HOST' };
+    const keyed = { ...node, address: 'KEY-CLIENT', type: 'camera', uplink: host.address,
+      access: 1, legit: 1, can_hop: true, commands: [{ ...command, allowed: false }] };
+    const topic = setup({ selected: keyed,
+      entity: { name: 'Process', integrity: 100, max_integrity: 100, host: host.address, host_name: 'Host', diving: false },
+      map: { nodes: [host, keyed], edges: [{ id: 'keyed-neighbor', from: host.address, to: keyed.address, kind: 'endpoint' }],
+        gateways: [], focus: host.address, depth: 2, revision: 1 },
+    });
+    const { getByLabelText, getByText } = render(<><StationMap /><NodePanel /></>);
+    expect(getByText(command.name).closest('.Button').classList.contains('Button--disabled')).toBe(true);
+    const hop = getByText('Перейти в узел');
+    expect(hop.closest('.Button').classList.contains('Button--disabled')).toBe(false);
+    fireEvent.click(hop);
+    fireEvent.keyDown(getByLabelText('Карта сети'), { key: 's', shiftKey: true });
+    expect(sent(topic, 'hop')).toEqual([{ address: keyed.address }, { address: keyed.address }]);
+    fireEvent.click(getByText(command.name));
+    expect(sent(topic, 'command')).toEqual([]);
   });
 
   test('a rejected file creation and later polling preserve the entire draft', () => {

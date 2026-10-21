@@ -16,25 +16,68 @@
 		ui.open()
 
 /datum/netrun_console/ui_data(mob/user)
-	ui_routes = path_tree()
+	// Matrix clicks need no global discovery pass. The live delivery/finish
+	// checks own fresh trees; this snapshot only describes the visible panel.
+	refresh_route_node(selected_node())
+	ui_routes = breach ? null : make_path_tree(TRUE)
 	access_cache = user_access()
 	network_level_cache = list()
+	ui_node_levels = list()
+	ui_legit_levels = list()
+	ui_latency = list()
+	ui_commands = list()
+	ui_keys = list()
+	ui_bonuses = list()
+	ui_files = all_files()
+	ui_completion_cache = list()
 	. = build_ui_data(user)
 	access_cache = null
 	network_level_cache = null
+	ui_node_levels = null
+	ui_legit_levels = null
+	ui_latency = null
+	ui_commands = null
+	ui_keys = null
+	ui_bonuses = null
+	ui_files = null
+	ui_completion_cache = null
 	QDEL_NULL(ui_routes)
 
 /datum/netrun_console/proc/build_ui_data(mob/user)
 	var/list/data = list()
 	data["origin"] = origin
 	data["wireless"] = wireless
-	data["uplink"] = has_uplink()
+	if(!breach || world.time >= ui_uplink_refresh)
+		ui_uplink_value = has_uplink()
+		ui_uplink_refresh = world.time + 1 SECONDS
+	data["uplink"] = ui_uplink_value
 	data["trace"] = round(trace, 0.1)
 	data["locked"] = is_locked() ? round((lockout_until - world.time) / (1 SECONDS)) : 0
 	data["can_breach"] = can_breach
 	data["log"] = log
 	data["jack"] = jack ? list("address" = jack.address, "name" = jack.get_name()) : null
 	data["host_actions"] = host_actions()
+	// Matrix clicks must not rebuild the hidden graph, global autocomplete,
+	// selected-node command help or the native machine UI behind the puzzle.
+	if(breach)
+		data["networks"] = ui_network_catalog || list()
+		data["view"] = null
+		data["web"] = null
+		data["map"] = null
+		data["selected"] = null
+		data["selected_network"] = null
+		data["ping_route"] = null
+		data["events"] = null
+		data["waypoint"] = null
+		data["storage"] = storage_payload()
+		data["shard"] = shard_payload()
+		data["breach"] = breach.ui_payload()
+		data["entity"] = entity_data()
+		data["chat"] = chat_data()
+		data["cli"] = cli_payload(FALSE)
+		data["windows"] = windows_payload()
+		data["window"] = null
+		return data
 	data["file"] = file_payload()
 
 	var/list/networks = list()
@@ -76,6 +119,7 @@
 			"nodes" = length(SSntnet.catalog),
 		))
 	data["networks"] = networks
+	ui_network_catalog = networks
 
 	if(viewed_network_id == "web" && web_browsing())
 		data["view"] = null
@@ -86,7 +130,7 @@
 		data["breach"] = breach?.ui_payload()
 		data["entity"] = entity_data()
 		data["chat"] = chat_data()
-		data["cli"] = list("verbs" = cli_verbs())
+		data["cli"] = cli_payload()
 		data["windows"] = windows_payload()
 		data["window"] = active_window ? window_payload() : null
 		data["map"] = null
@@ -143,7 +187,7 @@
 	data["breach"] = breach?.ui_payload()
 	data["entity"] = entity_data()
 	data["chat"] = chat_data()
-	data["cli"] = list("verbs" = cli_verbs())
+	data["cli"] = cli_payload()
 	data["windows"] = windows_payload()
 	data["window"] = active_window ? window_payload() : null
 	data["ping_route"] = (ping_route && world.time - ping_at < 6 SECONDS) ? ping_route : null
@@ -205,12 +249,18 @@
 		if(node.network)
 			networks[node.network.id] = node.network
 	var/list/edges = list()
-	for(var/list/edge as anything in graph.edges)
-		if(!shown[edge["from"]] || !shown[edge["to"]])
-			continue
-		var/list/entry = edge.Copy()
-		entry["online"] = netrun_link_available(graph.nodes[edge["from"]], graph.nodes[edge["to"]])
-		edges += list(entry)
+	var/list/edge_ids = list()
+	for(var/address in shown)
+		for(var/neighbor in graph.neighbors(address))
+			if(!shown[neighbor])
+				continue
+			var/list/edge = graph.edge_between(address, neighbor)
+			if(!edge || edge_ids[edge["id"]])
+				continue
+			edge_ids[edge["id"]] = TRUE
+			var/list/entry = edge.Copy()
+			entry["online"] = netrun_link_available(graph.nodes[address], graph.nodes[neighbor])
+			edges += list(entry)
 	var/list/gateways = list()
 	for(var/network_id in networks)
 		var/datum/netrun_network/network = networks[network_id]
@@ -232,7 +282,25 @@
 		"focus" = focus?.address,
 		"depth" = depth,
 		"revision" = graph.revision,
+		"route" = map_route_payload(selected_node() || focus),
 	)
+
+/// The client receives the selected route, not the whole server routing table.
+/datum/netrun_console/proc/map_route_payload(datum/component/netrun_node/target)
+	if(!target)
+		return null
+	var/datum/netrun_path_tree/tree = path_tree()
+	var/list/addresses = tree.addresses_to(target.address)
+	var/datum/netrun_route/route = route_to(target, tree)
+	. = list(
+		"route" = addresses,
+		"hops" = max(0, length(addresses) - 1),
+		"latency" = route.latency * 100,
+		"revision" = tree.revision,
+		"reachable" = !!length(addresses),
+	)
+	qdel(route)
+	release_path_tree(tree)
 
 /// Network travel uses hops and node addresses, independently of physical tile distance.
 /datum/netrun_console/proc/waypoint_payload()

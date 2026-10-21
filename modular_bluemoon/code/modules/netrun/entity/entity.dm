@@ -21,12 +21,15 @@
 /mob/camera/netrun_entity/Initialize(mapload, datum/component/netrun_node/start)
 	. = ..()
 	console = new(src, NETRUN_ORIGIN_ENTITY)
+	RegisterSignal(src, COMSIG_MOB_ALLOWED, PROC_REF(on_credential_access_check))
 	SSnetrun.entities += src
 	console_action = new
 	console_action.Grant(src)
 	rename_action = new
 	rename_action.Grant(src)
 	if(start)
+		// Initial residency authorizes only this host, without opening its LAN.
+		console.node_access[start.address] = NETRUN_ACCESS_USER
 		enter_node(start)
 
 /mob/camera/netrun_entity/Destroy()
@@ -82,10 +85,12 @@
 
 /// Можно ли перепрыгнуть в узел
 /mob/camera/netrun_entity/proc/can_enter(datum/component/netrun_node/node)
-	if(!node || node == host_node || !host_node)
+	if(!node || node == host_node || !host_node || console.is_locked())
 		return FALSE
+	console.refresh_route_node(host_node)
+	console.refresh_route_node(node)
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	return (node.address in graph.neighbors(host_node.address)) && netrun_link_available(host_node, node) && console.node_level(node) >= NETRUN_ACCESS_USER
+	return (node.address in graph.neighbors(host_node.address)) && netrun_link_available(host_node, node) && (console.node_level(node) >= NETRUN_ACCESS_USER || console.has_key(node.network, TRUE))
 
 /mob/camera/netrun_entity/proc/hop(datum/component/netrun_node/node)
 	if(world.time < next_hop || !can_enter(node))
@@ -354,8 +359,10 @@
 /datum/netrun_console/entity/has_uplink()
 	return ..()
 
-/datum/netrun_console/entity/user_access()
-	return list()
+/datum/netrun_console/entity/user_access(fresh = FALSE)
+	if(!fresh && access_cache)
+		return access_cache
+	return credential_access(fresh)
 
 /datum/netrun_console/entity/log_source()
 	return "резидентный процесс"

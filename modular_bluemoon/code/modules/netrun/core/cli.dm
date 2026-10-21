@@ -13,6 +13,8 @@
 	var/desc = ""
 	/// Раздел в справке
 	var/category = "Общие"
+	/// Stable UI pool key for verbs sharing the same completion values.
+	var/completion_group
 
 /// Подробная справка - список строк. По умолчанию из desc + usage; команды могут дополнять.
 /datum/netrun_cli_command/proc/detailed_help(datum/netrun_console/console)
@@ -29,6 +31,10 @@
 // MARK: Реестр и диспетчер
 
 /datum/controller/subsystem/netrun/var/list/cli_commands
+
+/datum/netrun_console
+	/// One UI serialization only; caller clears it when the request has finished.
+	var/list/ui_completion_cache
 
 /datum/controller/subsystem/netrun/proc/get_cli_commands()
 	if(!cli_commands)
@@ -61,6 +67,51 @@
 	for(var/verb_name in SSnetrun.get_cli_commands())
 		var/datum/netrun_cli_command/command = SSnetrun.cli_commands[verb_name]
 		. += list(list("id" = command.id, "args" = command.args, "desc" = command.desc, "category" = command.category, "completions" = command.completions(src, "")))
+
+/// Send shared address lists once rather than serializing one copy for each CLI verb.
+/// Breach-only UI updates may request metadata without traversing completion candidates.
+/datum/netrun_console/proc/cli_payload(include_completions = TRUE)
+	var/list/verbs = list()
+	var/list/pools = list()
+	for(var/verb_name in SSnetrun.get_cli_commands())
+		var/datum/netrun_cli_command/command = SSnetrun.cli_commands[verb_name]
+		var/group = command.completion_group || command.id
+		verbs += list(list("id" = command.id, "args" = command.args, "desc" = command.desc, "category" = command.category, "completion_key" = group))
+		if(include_completions && !(group in pools))
+			pools[group] = command.completions(src, "")
+	return list("verbs" = verbs, "completions" = pools)
+
+/// Address and network completion share one projection of the current reachable graph.
+/// Returned lists are read-only: callers combining categories must copy before appending.
+/datum/netrun_console/proc/cli_completion_values(kind)
+	if(islist(ui_completion_cache?[kind]))
+		return ui_completion_cache[kind]
+	// Standalone help/completion callers also get one bounded routing snapshot.
+	var/owns_routes = !ui_routes
+	if(owns_routes)
+		ui_routes = path_tree()
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/list/node_addresses = list()
+	var/list/network_codes = list()
+	var/list/seen_networks = list()
+	for(var/address in ui_routes.reached)
+		var/datum/component/netrun_node/node = graph.nodes[address]
+		if(QDELETED(node) || QDELETED(node.parent) || !node.network)
+			continue
+		var/datum/netrun_network/network = node.network
+		if(!seen_networks[network.id])
+			seen_networks[network.id] = TRUE
+			network_codes += network.code
+		// Keep the original CLI disclosure policy. Mapper alone does not reveal
+		// locked endpoint addresses through these shared completion lists.
+		if(network_level(network) >= NETRUN_ACCESS_GUEST || node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY))
+			node_addresses += node.address
+	if(owns_routes)
+		QDEL_NULL(ui_routes)
+	if(ui_completion_cache)
+		ui_completion_cache["nodes"] = node_addresses
+		ui_completion_cache["networks"] = network_codes
+	return kind == "nodes" ? node_addresses : network_codes
 
 // MARK: help
 
@@ -113,6 +164,7 @@
 
 /datum/netrun_cli_command/net
 	id = "net"
+	completion_group = "networks"
 	args = "\[код|id\]"
 	desc = "Список доступных сетей или открыть одну."
 	category = "Навигация"
@@ -135,14 +187,11 @@
 	console.log_line("Открыта сеть [network.code].")
 
 /datum/netrun_cli_command/net/completions(datum/netrun_console/console, partial)
-	. = list()
-	for(var/network_id in SSnetrun.networks)
-		var/datum/netrun_network/network = SSnetrun.networks[network_id]
-		if(console.can_reach(network))
-			. += network.code
+	return console.cli_completion_values("networks")
 
 /datum/netrun_cli_command/sel
 	id = "sel"
+	completion_group = "nodes"
 	args = "<адрес>"
 	desc = "Выбрать узел по адресу."
 	category = "Навигация"
@@ -159,11 +208,7 @@
 	console.log_line("Выбран [node.get_name()] [node.address].")
 
 /datum/netrun_cli_command/sel/completions(datum/netrun_console/console, partial)
-	. = list()
-	for(var/address in SSnetrun.nodes_by_address)
-		var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
-		if(console.can_route(node) && (console.network_level(node.network) >= NETRUN_ACCESS_GUEST || node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)))
-			. += node.address
+	return console.cli_completion_values("nodes")
 
 /datum/netrun_cli_command/nodes
 	id = "nodes"
@@ -183,6 +228,7 @@
 
 /datum/netrun_cli_command/open
 	id = "open"
+	completion_group = "nodes"
 	args = "\[адрес\]"
 	desc = "Открыть выбранный узел или указанный адрес во вкладке."
 	category = "Навигация"
@@ -271,6 +317,7 @@
 
 /datum/netrun_cli_command/ping
 	id = "ping"
+	completion_group = "nodes"
 	args = "\[адрес\]"
 	desc = "Задержка маршрута до узла."
 	category = "Действия"
@@ -286,6 +333,7 @@
 
 /datum/netrun_cli_command/breach
 	id = "breach"
+	completion_group = "targets"
 	args = "\[адрес|код сети\]"
 	desc = "Запустить подбор доступа."
 	category = "Действия"
@@ -299,13 +347,9 @@
 		console.start_breach("node", token || console.selected_address)
 
 /datum/netrun_cli_command/breach/completions(datum/netrun_console/console, partial)
-	var/list/registry = SSnetrun.get_cli_commands()
-	var/datum/netrun_cli_command/command = registry["sel"]
-	. = command.completions(console, partial)
-	for(var/network_id in SSnetrun.networks)
-		var/datum/netrun_network/network = SSnetrun.networks[network_id]
-		if(console.can_reach(network))
-			. += network.code
+	var/list/node_addresses = console.cli_completion_values("nodes")
+	. = node_addresses.Copy()
+	. += console.cli_completion_values("networks")
 
 // MARK: Память
 

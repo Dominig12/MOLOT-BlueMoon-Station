@@ -22,8 +22,11 @@
 	var/list/nodes = list()
 	var/list/adjacency = list()
 	var/list/edges = list()
+	var/list/edge_lookup = list()
 	var/dirty = TRUE
 	var/rebuilding = FALSE
+	var/revision = 0
+	var/deferred_bindings = FALSE
 	var/infrastructure_revision = 0
 	var/indexed_revision = -1
 	var/list/apcs_by_sector = list()
@@ -51,6 +54,8 @@
 		infrastructure_changed()
 	else
 		invalidate()
+	if(node.node_type != NETRUN_NODE_APC)
+		return
 	for(var/address in SSnetrun.nodes_by_address)
 		var/datum/component/netrun_node/dependent = SSnetrun.nodes_by_address[address]
 		if(dependent.bound_apc == node)
@@ -121,9 +126,14 @@
 	var/sector = netrun_sector_for(position)
 	var/area/room = position ? get_area(position) : null
 	var/area/root_area = room?.base_area || room
-	if(is_infrastructure(node) && node.topology_turf != position)
+	if(is_infrastructure(node) && (node.topology_turf != position || (node.binding_checked && node.binding_sector != sector)))
 		node.topology_turf = position
 		infrastructure_changed()
+	// Map initialization order must not pin a machine to an early, distant APC.
+	// The first normal graph build binds all mapped endpoints after registration.
+	if(!node.binding_checked && SSatoms.initialized != INITIALIZATION_INNEW_REGULAR)
+		deferred_bindings = TRUE
+		return
 	var/context_changed = !node.binding_checked || node.binding_area != root_area || node.binding_sector != sector
 	var/datum/component/netrun_node/previous = node.bound_apc
 	var/valid_binding = !QDELETED(previous) && previous.node_type == NETRUN_NODE_APC && SSnetrun.nodes_by_address[previous.address] == previous && sector && netrun_sector_for(get_turf(previous.parent)) == sector
@@ -141,6 +151,9 @@
 /datum/netrun_topology/proc/neighbors(address)
 	return adjacency[address] || list()
 
+/datum/netrun_topology/proc/edge_between(first, second)
+	return edge_lookup["[first]>[second]"]
+
 /// All edges are undirected and canonicalized by address, including endpoint bindings.
 /datum/netrun_topology/proc/add_edge(first, second, kind)
 	if(!first || !second || first == second || !nodes[first] || !nodes[second])
@@ -154,42 +167,50 @@
 	first_neighbors += second
 	var/list/second_neighbors = adjacency[second]
 	second_neighbors += first
-	edges += list(list("id" = "[kind]:[first]>[second]", "from" = first, "to" = second, "kind" = kind))
+	var/list/edge = list("id" = "[kind]:[first]>[second]", "from" = first, "to" = second, "kind" = kind)
+	edges += list(edge)
+	edge_lookup["[first]>[second]"] = edge
+	edge_lookup["[second]>[first]"] = edge
 
-/// Deterministic Prim tree per sector: exactly N-1 APC links, including offline infrastructure.
+/// Deterministic Prim tree. Each newly joined APC updates the frontier once:
+/// O(A^2) distance comparisons, with no repeated all-pairs scans per edge.
 /datum/netrun_topology/proc/connect_apcs(list/addresses)
 	if(length(addresses) < 2)
 		return
-	var/list/joined = list(addresses[1])
 	var/list/pending = addresses.Copy(2)
+	var/list/distances = list()
+	var/list/parents = list()
+	var/latest = addresses[1]
 	while(length(pending))
-		var/best_from
-		var/best_to
+		var/datum/component/netrun_node/joined_node = nodes[latest]
+		var/turf/joined_turf = get_turf(joined_node.parent)
+		for(var/address in pending)
+			var/datum/component/netrun_node/candidate = nodes[address]
+			var/distance = netrun_topology_distance(joined_turf, get_turf(candidate.parent))
+			if(isnull(distances[address]) || distance < distances[address] || (distance == distances[address] && sorttext(latest, parents[address]) == 1))
+				distances[address] = distance
+				parents[address] = latest
+		var/best
 		var/best_distance = INFINITY
-		// Both sets stay sorted. Loop order resolves all equal-distance ties deterministically.
-		for(var/from_address in joined)
-			var/datum/component/netrun_node/from_node = nodes[from_address]
-			for(var/to_address in pending)
-				var/datum/component/netrun_node/to_node = nodes[to_address]
-				var/distance = netrun_topology_distance(get_turf(from_node.parent), get_turf(to_node.parent))
-				if(distance < best_distance)
-					best_distance = distance
-					best_from = from_address
-					best_to = to_address
-		if(!best_to)
+		for(var/address in pending)
+			if(distances[address] < best_distance)
+				best = address
+				best_distance = distances[address]
+		if(!best)
 			break
-		add_edge(best_from, best_to, "apc")
-		pending -= best_to
-		joined += best_to
-		joined = sort_list(joined)
+		add_edge(parents[best], best, "apc")
+		pending -= best
+		latest = best
 
 /datum/netrun_topology/proc/rebuild()
 	if(rebuilding)
 		return
 	rebuilding = TRUE
+	clear_route_tables()
 	nodes = list()
 	adjacency = list()
 	edges = list()
+	edge_lookup = list()
 	var/list/addresses = sort_list(SSnetrun.nodes_by_address.Copy())
 	// A carrier can move infrastructure without a MOVED signal on the nested machine.
 	// Refresh every infrastructure position before any endpoint consults the spatial index.
@@ -231,12 +252,16 @@
 	for(var/address in adjacency)
 		adjacency[address] = sort_list(adjacency[address])
 	dirty = FALSE
+	revision++
+	deferred_bindings = SSatoms.initialized != INITIALIZATION_INNEW_REGULAR
 	rebuilding = FALSE
 
 /datum/netrun_topology/Destroy()
+	clear_route_tables(TRUE)
 	nodes.Cut()
 	adjacency.Cut()
 	edges.Cut()
+	edge_lookup.Cut()
 	apcs_by_sector.Cut()
 	relay_addresses.Cut()
 	nearest_by_turf.Cut()

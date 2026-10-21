@@ -1,10 +1,10 @@
-import { KeyboardEvent, useEffect, useRef, useState } from 'react';
+import { KeyboardEvent, memo, useEffect, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input, Section } from '../../components';
 import { FilePanel } from './FilePanel';
 import { fileFormat, fileIcon } from './NodePanel';
-import { NetFile, NetrunData, THEME } from './types';
+import { LogLine, NetFile, NetrunData, THEME } from './types';
 
 const KIND_COLORS: Record<string, string> = {
   good: THEME.good,
@@ -12,6 +12,16 @@ const KIND_COLORS: Record<string, string> = {
   average: THEME.warn,
   label: THEME.text,
 };
+
+const LogLines = memo((props: { lines: LogLine[] }) => (<>{props.lines.map((line, index) => (
+  <div key={index} style={{ color: KIND_COLORS[line.kind] || THEME.text, whiteSpace: 'pre-wrap' }}>
+    {line.time && <span style={{ color: THEME.muted }}>{line.time} </span>}
+    {line.text}
+  </div>
+))}
+                                                        </>), (before, after) => before.lines.length === after.lines.length
+  && before.lines.every((line, index) => line.text === after.lines[index].text
+    && line.kind === after.lines[index].kind && line.time === after.lines[index].time));
 
 const commonPrefix = (items: string[]): string => {
   if (!items.length) {
@@ -40,12 +50,9 @@ export const ConsoleLog = () => {
     if (scroller.current) {
       scroller.current.scrollTop = scroller.current.scrollHeight;
     }
-  }, [data.log.length]);
+  }, [data.log.length, data.log[data.log.length - 1]?.time, data.log[data.log.length - 1]?.text]);
 
   const entries = data.cli?.verbs ?? [];
-  const verbs = entries.map((v) => v.id);
-  const addresses = (data.map?.nodes ?? data.view?.nodes ?? []).map((n) => n.address);
-  const codes = data.networks.map((n) => n.code);
 
   const submit = () => {
     const text = value.trim();
@@ -63,10 +70,14 @@ export const ConsoleLog = () => {
   };
 
   const complete = () => {
+    const verbs = entries.map((v) => v.id);
+    const addresses = (data.map?.nodes ?? data.view?.nodes ?? []).map((n) => n.address);
+    const codes = data.networks.map((n) => n.code);
     const tokens = value.split(' ');
     const last = tokens[tokens.length - 1];
     const verb = tokens[0].toLowerCase();
-    const registered = entries.find((entry) => entry.id === verb)?.completions;
+    const entry = entries.find((candidate) => candidate.id === verb);
+    const registered = (entry?.completion_key ? data.cli?.completions?.[entry.completion_key] : undefined) ?? entry?.completions;
     const commands = (data.window?.commands ?? data.selected?.commands ?? []).map((c) => c.id);
     const files = [...data.storage.files, ...(data.shard?.files ?? [])].map((f) => f.name);
     const fallback = verb === 'run' ? commands
@@ -130,7 +141,7 @@ export const ConsoleLog = () => {
   };
 
   return (
-    <Box style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
+    <Box data-net-layout="console" style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, display: 'flex', flexDirection: 'column', height: '100%', width: '100%', minHeight: 0, boxSizing: 'border-box' }}>
       <Box color={THEME.muted} p={0.5} fontSize="10px">
         <Button compact icon="question" content="help" onClick={() => act('cli', { text: 'help' })} />
         {' '}help &lt;команда&gt; — подробная справка · ↑/↓ история · Tab дополнение
@@ -138,21 +149,15 @@ export const ConsoleLog = () => {
       <div
         ref={scroller}
         style={{
-          height: '140px',
+          flex: '1 1 auto',
           minHeight: '70px',
-          resize: 'vertical',
           overflowY: 'auto',
           padding: '4px 6px',
           fontFamily: 'monospace',
           fontSize: '11px',
         }}
       >
-        {data.log.map((line, i) => (
-          <div key={i} style={{ color: KIND_COLORS[line.kind] || THEME.text, whiteSpace: 'pre-wrap' }}>
-            {line.time && <span style={{ color: THEME.muted }}>{line.time} </span>}
-            {line.text}
-          </div>
-        ))}
+        <LogLines lines={data.log} />
       </div>
       <input
         value={value}
@@ -185,7 +190,7 @@ export const StoragePanel = () => {
   const { storage, shard, selected } = data;
   const canUpload = !!selected?.files && selected.access >= 2;
   return (
-    <Section title={`Память ${storage.used}/${storage.capacity}`} scrollable style={{ maxHeight: '540px', overflowY: 'auto' }}>
+    <Section title={`Память ${storage.used}/${storage.capacity}`} scrollable style={{ height: '100%', minHeight: '100%', boxSizing: 'border-box', overflowY: 'auto' }}>
       <FileList files={storage.files} canUpload={canUpload} />
       {shard && (
         <Box mt={1}>
@@ -214,7 +219,7 @@ const FileList = (props: { files: NetFile[]; canUpload: boolean }) => {
     return <Box color={THEME.muted}>Пусто.</Box>;
   }
   return (
-    <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+    <div data-net-files="local" style={{ maxHeight: '25vh', minHeight: 0, overflowY: 'auto' }}>
       {props.files.map((file) => (
         <Box
           key={file.uid}
@@ -224,26 +229,32 @@ const FileList = (props: { files: NetFile[]; canUpload: boolean }) => {
             fontFamily: 'monospace',
             background: file.selected ? THEME.line : THEME.bg,
             border: `1px solid ${THEME.line}`,
-            display: 'flex',
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) 78px',
+            gap: '6px',
             alignItems: 'center',
             cursor: 'pointer',
           }}
           onClick={() => act('file_select', { uid: file.uid })}
         >
-          <Icon name={fileIcon(file.kind)} mr={1} color={THEME.accent} />
           <Box style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <Icon name={fileIcon(file.kind)} mr={1} color={THEME.accent} />
             {file.name}
             <Box inline ml={1} color={THEME.muted} fontSize="9px">
               {fileFormat(file.name, file.kind)} · {file.size}
             </Box>
           </Box>
-          {file.kind === 'text' && (
+          <div data-net-file-actions="local" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 24px)', gridAutoRows: '24px', gap: '3px' }}>
+          <div>{file.kind === 'text' && (
             <Button compact icon="eye" tooltip="Открыть" onClick={(e) => { e.stopPropagation(); act('read', { uid: file.uid }); }} />
           )}
-          {props.canUpload && (
+          </div>
+          <div>{props.canUpload && (
             <Button compact icon="upload" tooltip="Загрузить на узел" onClick={(e) => { e.stopPropagation(); act('upload', { uid: file.uid }); }} />
           )}
+          </div>
           <Button compact icon="trash" color="transparent" tooltip="Удалить" onClick={(e) => { e.stopPropagation(); act('delete_local', { uid: file.uid }); }} />
+          </div>
         </Box>
       ))}
     </div>
@@ -298,13 +309,12 @@ export const NetChat = () => {
     }
   }, [chat.messages.length]);
   return (
-    <Box style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
+    <Box style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, display: 'flex', flexDirection: 'column', height: '100%', width: '100%', minHeight: 0 }}>
       <div
         ref={scroller}
         style={{
-          height: '140px',
+          flex: '1 1 auto',
           minHeight: '70px',
-          resize: 'vertical',
           overflowY: 'auto',
           padding: '4px 6px',
           fontFamily: 'monospace',

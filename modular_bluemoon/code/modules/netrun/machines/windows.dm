@@ -116,21 +116,29 @@
 		. += list(list("address" = address, "title" = node.get_name(), "type" = node.node_type, "online" = node.is_online()))
 
 /datum/netrun_console/proc/window_act(address, action, list/params)
-	var/datum/component/netrun_node/node = SSnetrun.find_node(address)
-	if(!node || node_level(node) < NETRUN_ACCESS_GUEST || !can_route(node) || is_locked())
+	var/datum/component/netrun_node/node = refresh_route_node(SSnetrun.find_node(address))
+	if(!node)
+		return
+	var/datum/netrun_path_tree/tree = make_path_tree()
+	if(node_level(node, tree) < NETRUN_ACCESS_GUEST || !can_route(node, tree) || is_locked())
+		qdel(tree)
 		return
 	// Команда узла - обычный сетевой запрос с задержкой и трассировкой
 	if(action in node.all_command_ids())
+		qdel(tree)
 		run_command(node, action)
 		return
 	// Оконное действие машины
 	if(world.time < next_command || !node.is_online())
+		qdel(tree)
 		return
 	var/list/entry = window_action(node, action)
-	if(!entry || node_level(node) < (entry["access"] || NETRUN_ACCESS_GUEST))
+	if(!entry || node_level(node, tree) < (entry["access"] || NETRUN_ACCESS_GUEST))
+		qdel(tree)
 		log_line("Действие окна не разрешено.", "bad")
 		return
-	var/lat = latency_to(node)
+	var/lat = latency_to(node, tree)
+	qdel(tree)
 	next_command = world.time + max(0.5 SECONDS, lat)
 	addtimer(CALLBACK(src, PROC_REF(do_window_act), node, action, params.Copy(), node.network, operator), max(1, lat))
 	log_line("[node.address]: запрос «[entry["name"]]» отправлен, ~[lat * 100] мс.")
@@ -144,18 +152,23 @@
 /datum/netrun_console/proc/do_window_act(datum/component/netrun_node/node, action, list/params, datum/netrun_network/sent_network, mob/sender)
 	if(!QDELETED(node))
 		node.join_network()
-	if(QDELETED(node) || is_locked() || !can_route(node) || !node.is_online() || node.network != sent_network || sender != operator)
+	var/datum/netrun_path_tree/tree = make_path_tree()
+	if(QDELETED(node) || is_locked() || !can_route(node, tree) || !node.is_online() || node.network != sent_network || sender != operator)
+		qdel(tree)
 		log_line("Запрос окна отменён: связь изменилась.", "bad")
 		return
 	var/list/entry = window_action(node, action)
 	var/required = entry?["access"] || NETRUN_ACCESS_GUEST
-	if(!entry || node_level(node) < required)
+	if(!entry || node_level(node, tree) < required)
+		qdel(tree)
 		return
+	// The native window action owns its execution context and may yield.
+	var/illegal = legit_node_level(node, tree) < required
+	qdel(tree)
 	var/atom/A = node.parent
 	var/result = world.PushUsr(operator, CALLBACK(A, TYPE_PROC_REF(/atom, netrun_window_act), src, node, action, params))
 	if(!isnull(result))
 		log_line(result)
-	var/illegal = legit_node_level(node) < required
 	node.add_log("[log_source()]: [entry["name"]][illegal ? " (без авторизации)" : ""].")
 	node.network?.add_log("[log_source()] -> [node.address]: [entry["name"]]", illegal)
 	if(illegal)
