@@ -299,42 +299,108 @@
 /datum/netrun_topology/proc/connect_apcs(list/addresses)
 	if(length(addresses) < 2)
 		return
-	var/list/pairs = list()
+	// Keep only the K closest pairs for each APC, not every O(N^2) candidate.
+	// The union exactly matches the original sorted quota-selection pass.
+	var/list/nearest = list()
 	var/list/components = list()
-	var/list/selected = list()
+	var/list/input_order = list()
+	var/list/positions = list()
+	var/limit = max(1, NETRUN_APC_NEIGHBORS)
 	for(var/i in 1 to length(addresses))
 		var/address = addresses[i]
+		nearest[address] = list()
 		components[address] = address
-		selected[address] = 0
-		var/datum/component/netrun_node/first = nodes[address]
+		input_order[address] = i
+		var/datum/component/netrun_node/apc = nodes[address]
+		positions[address] = get_turf(apc.parent)
+	for(var/i in 1 to length(addresses))
+		var/first = addresses[i]
+		var/list/first_nearest = nearest[first]
 		for(var/j = i + 1, j <= length(addresses), j++)
-			var/datum/component/netrun_node/second = nodes[addresses[j]]
-			pairs += list(list("from" = address, "to" = second.address,
-				"distance" = netrun_topology_distance(get_turf(first.parent), get_turf(second.parent))))
-	sortTim(pairs, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
-	for(var/list/pair as anything in pairs)
+			var/second = addresses[j]
+			var/list/second_nearest = nearest[second]
+			var/distance = netrun_topology_distance(positions[first], positions[second])
+			var/list/first_worst = length(first_nearest) >= limit ? first_nearest[length(first_nearest)] : null
+			var/list/second_worst = length(second_nearest) >= limit ? second_nearest[length(second_nearest)] : null
+			if(first_worst && second_worst && distance > first_worst["distance"] && distance > second_worst["distance"])
+				continue
+			var/list/pair = list("from" = first, "to" = second, "distance" = distance)
+			if(!first_worst || cmp_netrun_physical_edge(pair, first_worst) < 0)
+				first_nearest += list(pair)
+				sortTim(first_nearest, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
+				if(length(first_nearest) > limit)
+					first_nearest.len = limit
+			if(!second_worst || cmp_netrun_physical_edge(pair, second_worst) < 0)
+				second_nearest += list(pair)
+				sortTim(second_nearest, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
+				if(length(second_nearest) > limit)
+					second_nearest.len = limit
+	// Deduplicate each selected pair and preserve deterministic edge ordering.
+	var/list/candidate_pairs = list()
+	var/list/seen_pairs = list()
+	for(var/address in addresses)
+		var/list/listing = nearest[address]
+		for(var/list/pair as anything in listing)
+			var/key = "[pair["from"]]>[pair["to"]]"
+			if(seen_pairs[key])
+				continue
+			seen_pairs[key] = TRUE
+			candidate_pairs += list(pair)
+	sortTim(candidate_pairs, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
+	for(var/list/pair as anything in candidate_pairs)
 		var/first = pair["from"]
 		var/second = pair["to"]
-		var/chosen = FALSE
-		if(selected[first] < NETRUN_APC_NEIGHBORS)
-			selected[first]++
-			chosen = TRUE
-		if(selected[second] < NETRUN_APC_NEIGHBORS)
-			selected[second]++
-			chosen = TRUE
-		if(!chosen)
-			continue
 		add_edge(first, second, "apc")
 		components[apc_component(components, second)] = apc_component(components, first)
-	for(var/list/pair as anything in pairs)
-		var/first = pair["from"]
-		var/second = pair["to"]
-		var/first_root = apc_component(components, first)
-		var/second_root = apc_component(components, second)
-		if(first_root == second_root)
-			continue
-		add_edge(first, second, "apc")
-		components[second_root] = first_root
+	// Join any disconnected clusters using the cheapest next bridge. Every APC
+	// enters the connected set only once, so this is O(N^2) time, O(N) memory.
+	var/initial_root = apc_component(components, addresses[1])
+	var/list/attached = list()
+	var/list/unattached = list()
+	for(var/address in addresses)
+		if(apc_component(components, address) == initial_root)
+			attached[address] = TRUE
+		else
+			unattached[address] = TRUE
+	if(!length(unattached))
+		return
+	var/list/best_bridges = list()
+	for(var/from_address in attached)
+		for(var/to_address in unattached)
+			var/first = input_order[from_address] < input_order[to_address] ? from_address : to_address
+			var/second = first == from_address ? to_address : from_address
+			var/list/pair = list("from" = first, "to" = second,
+				"distance" = netrun_topology_distance(positions[first], positions[second]))
+			var/list/current = best_bridges[to_address]
+			if(!current || cmp_netrun_physical_edge(pair, current) < 0)
+				best_bridges[to_address] = pair
+	while(length(unattached))
+		var/list/bridge
+		for(var/to_address in unattached)
+			var/list/candidate = best_bridges[to_address]
+			if(!bridge || cmp_netrun_physical_edge(candidate, bridge) < 0)
+				bridge = candidate
+		if(!bridge)
+			break
+		add_edge(bridge["from"], bridge["to"], "apc")
+		var/new_root = apc_component(components, bridge["to"])
+		var/list/just_attached = list()
+		for(var/address in unattached)
+			if(apc_component(components, address) == new_root)
+				just_attached += address
+		for(var/address in just_attached)
+			unattached -= address
+			attached[address] = TRUE
+			best_bridges -= address
+		for(var/from_address in just_attached)
+			for(var/to_address in unattached)
+				var/first = input_order[from_address] < input_order[to_address] ? from_address : to_address
+				var/second = first == from_address ? to_address : from_address
+				var/list/pair = list("from" = first, "to" = second,
+					"distance" = netrun_topology_distance(positions[first], positions[second]))
+				var/list/current = best_bridges[to_address]
+				if(!current || cmp_netrun_physical_edge(pair, current) < 0)
+					best_bridges[to_address] = pair
 
 /datum/netrun_topology/proc/rebuild()
 	if(rebuilding)

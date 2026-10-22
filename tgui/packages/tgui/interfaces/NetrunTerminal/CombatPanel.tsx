@@ -90,6 +90,15 @@ export const CombatPanel = () => {
         <Icon name="crosshairs" mr={1} />
         {combat.node ? <>Узел боя: {combat.node_name} {combat.node}</> : 'Ответный бой'}
       </Box>
+      {!!combat.incoming?.length && (
+        <Box mb={1} p={0.5} style={{ border: `1px solid ${THEME.bad}`, background: THEME.panel }}>
+          {combat.incoming.map((attack, index) => (
+            <Box key={`${attack.source_ref ?? attack.source}-${attack.name}-${index}`} color={THEME.bad}>
+              {attack.source} готовит {attack.name} · через {attack.remaining} с
+            </Box>
+          ))}
+        </Box>
+      )}
       {combat.self && (
         <Box mb={1} p={0.5} style={{ background: THEME.panel, border: `1px solid ${THEME.line}` }}>
           <Box color={THEME.accent}>

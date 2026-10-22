@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Stack, Tabs } from '../../components';
-import { CombatPanel, IncomingAttacks } from './CombatPanel';
+import { CombatPanel } from './CombatPanel';
 import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
@@ -35,7 +35,6 @@ export const NetrunContent = () => {
   const previousPage = useRef<WorkspaceView>(page === 'breach' ? 'terminal' : page);
   const hadBreach = useRef(!!breach);
   const incomingCount = data.combat?.incoming?.length ?? 0;
-  const threats = (data.combat?.targets ?? []).filter((target) => target.hostile).length;
   const webAvailable = data.networks.some((network) => network.id === 'web') || !!web;
 
   const navigate = (next: WorkspaceView) => {
@@ -75,9 +74,8 @@ export const NetrunContent = () => {
     { id: 'files', icon: 'folder-open' },
     { id: 'pinned', icon: 'thumbtack', count: windows.length },
   ];
-  if (data.combat || incomingCount || page === 'combat') {
-    tabs.push({ id: 'combat', icon: 'crosshairs', count: threats || incomingCount });
-  }
+  // Keep the tab in a fixed place; a new ICE cast must not insert/remove controls.
+  tabs.push({ id: 'combat', icon: 'crosshairs' });
   if (breach) { tabs.push({ id: 'breach', icon: 'key' }); }
   if (webAvailable || page === 'web') { tabs.push({ id: 'web', icon: 'globe' }); }
 
@@ -95,7 +93,6 @@ export const NetrunContent = () => {
           ))}
         </Tabs>
       </div>
-      <IncomingAttacks compact onCombat={() => navigate('combat')} />
       <div data-net-layout="workspace" style={{ display: 'flex', flex: '1 1 0', minHeight: 0, minWidth: 0,
         position: 'relative', borderRadius: '7px', overflow: 'hidden' }}>
         <WorkspacePage id="terminal" active={page}>

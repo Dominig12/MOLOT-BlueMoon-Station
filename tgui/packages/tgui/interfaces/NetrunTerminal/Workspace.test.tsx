@@ -149,18 +149,23 @@ describe('Netrun workspace pages', () => {
     expect(editor.value).toBe('Сохранить после взлома');
   });
 
-  test('incoming attacks stay visible without replacing a draft and open a full combat page on demand', () => {
+  test('incoming ICE casts never insert a top banner or move the active workspace', () => {
     const { panel, page, update, topic } = setup({ workspace_view: 'files' });
     fireEvent.click(within(page('files')).getByText('Новый текстовый файл'));
     const editor = page('files').querySelector('textarea');
     fireEvent.change(editor, { target: { value: 'Не терять фокус' } });
+    const workspace = panel.container.querySelector('[data-net-layout="workspace"]');
+    const combatTab = panel.getByText('Бой').closest('[role="tab"]');
     update({ combat: { node: null, node_name: null, self: null, targets: [], programs: [],
       incoming: [{ source: 'ICE-SENTRY', source_ref: 'ice-1', name: 'trace.exe', role: 'trace', power: 6, remaining: 3 }] } });
     expect(panel.getByRole('tabpanel', { name: 'Файлы' })).toBeTruthy();
-    expect(panel.getByRole('alert').textContent).toContain('ICE-SENTRY готовит trace.exe');
-    expect(panel.getByRole('alert').style.position).not.toBe('absolute');
-    fireEvent.click(panel.getByText('Открыть бой'));
+    expect(panel.queryByRole('alert')).toBeNull();
+    expect(panel.container.querySelector('[data-net-layout="workspace"]')).toBe(workspace);
+    expect(panel.getByText('Бой !').closest('[role="tab"]')).toBe(combatTab);
+    expect(editor.value).toBe('Не терять фокус');
+    fireEvent.click(panel.getByText('Бой'));
     expect(panel.getByRole('tabpanel', { name: 'Бой' })).toBeTruthy();
+    expect(panel.getByText(/ICE-SENTRY готовит trace.exe/)).toBeTruthy();
     expect(actions(topic, 'workspace_view').slice(-1)[0]).toEqual({ page: 'combat' });
     expect(editor.value).toBe('Не терять фокус');
   });

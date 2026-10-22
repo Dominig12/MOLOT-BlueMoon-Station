@@ -23,6 +23,10 @@ SUBSYSTEM_DEF(netrun)
 	var/list/timed_nodes = list()
 	var/last_processed_nodes = 0
 	var/last_processed_consoles = 0
+	/// Topology rebuild instrumentation; timing only while adaptive profiling is armed.
+	var/topology_rebuilds = 0
+	var/topology_rebuild_ms = 0
+	var/topology_rebuild_peak_ms = 0
 	/// Counters in the subsystem status panel (since world startup).
 	var/camera_feed_scans = 0
 	var/camera_feed_cache_hits = 0
@@ -42,7 +46,7 @@ SUBSYSTEM_DEF(netrun)
 	var/datum/netrun_topology/topology
 
 /datum/controller/subsystem/netrun/stat_entry(msg)
-	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles] F:[camera_feed_scans]/[camera_feed_cache_hits] R:[camera_route_borrows] W:[wire_session_sweeps]"
+	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles] T:[topology_rebuilds] F:[camera_feed_scans]/[camera_feed_cache_hits] R:[camera_route_borrows] W:[wire_session_sweeps]"
 	if(profile_armed)
 		msg += " Cam ms total/max F:[round(camera_feed_scan_ms, 0.1)]/[round(camera_feed_scan_max_ms, 0.1)] R:[round(camera_route_check_ms, 0.1)]/[round(camera_route_check_max_ms, 0.1)]"
 	return ..()
@@ -193,7 +197,14 @@ SUBSYSTEM_DEF(netrun)
 	if(result.deferred_bindings && SSatoms.initialized == INITIALIZATION_INNEW_REGULAR)
 		result.invalidate()
 	if(result.dirty && !result.rebuilding)
+		var/rebuild_started = profile_armed ? TICK_USAGE : 0
 		result.rebuild()
+		topology_rebuilds++
+		if(profile_armed)
+			var/rebuild_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - rebuild_started))
+			topology_rebuild_ms += rebuild_ms
+			topology_rebuild_peak_ms = max(topology_rebuild_peak_ms, rebuild_ms)
+			profile_note("topology/rebuild", rebuild_ms, result)
 	return result
 
 /// ЛВС кластеризуется по отделу внутри физического сектора: все APC одного отдела делят
