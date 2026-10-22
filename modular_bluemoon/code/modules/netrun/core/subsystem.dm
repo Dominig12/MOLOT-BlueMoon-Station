@@ -22,6 +22,16 @@
 /datum/netrun_task/proc/target()
 	return target_ref?.resolve()
 
+/// Aggregate statistics without keeping references to processed objects.
+/datum/netrun_task_profile
+	var/calls = 0
+	var/total_ms = 0
+	var/peak_ms = 0
+	var/average_ms = 0
+	var/total_wait_ds = 0
+	var/peak_wait_ds = 0
+	var/overdue = 0
+
 /// Tasks are merged by kind and target; tombstones allow cheap promotions.
 /datum/netrun_task_scheduler
 	var/list/by_key = list()
@@ -42,6 +52,16 @@
 	var/last_executed = 0
 	var/average_ms = 0.1
 	var/max_task_ms = 0
+	/// Keys are task kinds; values are /datum/netrun_task_profile.
+	var/list/profiles = list()
+	var/list/executed_by_priority = list(0, 0, 0)
+	var/list/peak_queued_by_priority = list(0, 0, 0)
+	var/list/max_wait_by_priority = list(0, 0, 0)
+	var/list/overdue_by_priority = list(0, 0, 0)
+	var/peak_pending = 0
+	var/budget_overruns = 0
+	var/task_overruns = 0
+	var/peak_pass_ms = 0
 
 /datum/netrun_task_scheduler/proc/pending()
 	return length(by_key)
@@ -67,12 +87,15 @@
 			counts[existing.priority]--
 			existing.priority = priority
 			counts[priority]++
+			peak_queued_by_priority[priority] = max(peak_queued_by_priority[priority], counts[priority])
 			append_task(existing)
 			promoted++
 		return FALSE
 	var/datum/netrun_task/task = new(kind, key, priority, target)
 	by_key[key] = task
 	counts[priority]++
+	peak_queued_by_priority[priority] = max(peak_queued_by_priority[priority], counts[priority])
+	peak_pending = max(peak_pending, length(by_key))
 	append_task(task)
 	return TRUE
 
@@ -139,15 +162,52 @@
 			return task
 	return null
 
-/datum/netrun_task_scheduler/proc/note_execution(cost_ms)
+/// Time is measured on the worker side; enqueue-to-start delay is also recorded.
+/datum/netrun_task_scheduler/proc/note_execution(datum/netrun_task/task, cost_ms)
+	if(!task)
+		return
 	completed++
+	var/priority = task.priority
+	var/wait_ds = max(0, world.time - task.enqueued_at)
+	var/deadline_ds = 20 SECONDS
+	switch(priority)
+		if(NETRUN_TASK_CRITICAL)
+			deadline_ds = 2 SECONDS
+		if(NETRUN_TASK_NORMAL)
+			deadline_ds = 5 SECONDS
+	executed_by_priority[priority]++
+	max_wait_by_priority[priority] = max(max_wait_by_priority[priority], wait_ds)
 	max_task_ms = max(max_task_ms, cost_ms)
 	average_ms = average_ms * 0.85 + cost_ms * 0.15
+	var/datum/netrun_task_profile/profile = profiles[task.kind]
+	if(!profile)
+		profile = new
+		profiles[task.kind] = profile
+	profile.calls++
+	profile.total_ms += cost_ms
+	profile.peak_ms = max(profile.peak_ms, cost_ms)
+	profile.average_ms = profile.total_ms / profile.calls
+	profile.total_wait_ds += wait_ds
+	profile.peak_wait_ds = max(profile.peak_wait_ds, wait_ds)
+	if(wait_ds > deadline_ds)
+		profile.overdue++
+		overdue_by_priority[priority]++
+
+/// Compact per-kind snapshot, safe for administrator diagnostics.
+/datum/netrun_task_scheduler/proc/profile_summary()
+	var/list/parts = list()
+	for(var/kind in profiles)
+		var/datum/netrun_task_profile/profile = profiles[kind]
+		parts += "[kind]:[profile.calls]x avg=[round(profile.average_ms, 0.01)]ms max=[round(profile.peak_ms, 0.01)]ms wait=[round(profile.peak_wait_ds / (1 SECONDS), 0.1)]s"
+	return jointext(parts, " | ")
 
 /datum/netrun_task_scheduler/Destroy()
 	for(var/key in by_key)
 		qdel(by_key[key])
 	by_key.Cut()
+	for(var/kind in profiles)
+		qdel(profiles[kind])
+	profiles.Cut()
 	critical.Cut()
 	normal.Cut()
 	background.Cut()
@@ -205,7 +265,8 @@ SUBSYSTEM_DEF(netrun)
 	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles] T:[topology_rebuilds] F:[camera_feed_scans]/[camera_feed_cache_hits] R:[camera_route_borrows] W:[wire_session_sweeps]"
 	if(task_scheduler)
 		var/datum/netrun_task_scheduler/scheduler = task_scheduler
-		msg += " Tasks:[scheduler.pending()] Q:[scheduler.counts[1]]/[scheduler.counts[2]]/[scheduler.counts[3]] Done:[scheduler.completed] Merge:[scheduler.merged] Pr:[scheduler.promoted] Budget:[round(scheduler.last_execution_ms, 0.1)]/[round(scheduler.last_budget_ms, 0.1)]ms"
+		msg += " Tasks:[scheduler.pending()] Q:[scheduler.counts[1]]/[scheduler.counts[2]]/[scheduler.counts[3]] Qpeak:[scheduler.peak_pending] Done:[scheduler.completed] Merge:[scheduler.merged] Pr:[scheduler.promoted] Budget:[round(scheduler.last_execution_ms, 0.1)]/[round(scheduler.last_budget_ms, 0.1)]ms"
+		msg += " Exec:[scheduler.executed_by_priority[1]]/[scheduler.executed_by_priority[2]]/[scheduler.executed_by_priority[3]] WaitMax:[round(scheduler.max_wait_by_priority[1] / (1 SECONDS), 0.1)]/[round(scheduler.max_wait_by_priority[2] / (1 SECONDS), 0.1)]/[round(scheduler.max_wait_by_priority[3] / (1 SECONDS), 0.1)]s Late:[scheduler.overdue_by_priority[1]]/[scheduler.overdue_by_priority[2]]/[scheduler.overdue_by_priority[3]] Ovr:[scheduler.budget_overruns]/[scheduler.task_overruns]"
 	if(profile_armed)
 		msg += " Cam ms total/max F:[round(camera_feed_scan_ms, 0.1)]/[round(camera_feed_scan_max_ms, 0.1)] R:[round(camera_route_check_ms, 0.1)]/[round(camera_route_check_max_ms, 0.1)]"
 	return ..()
@@ -355,7 +416,9 @@ SUBSYSTEM_DEF(netrun)
 		var/datum/target = task.target()
 		execute_task(task)
 		var/cost_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - task_started))
-		scheduler.note_execution(cost_ms)
+		scheduler.note_execution(task, cost_ms)
+		if(cost_ms > budget_ms)
+			scheduler.task_overruns++
 		if(profile_armed)
 			profile_note("netrun/task/[task.kind]", cost_ms, QDELETED(target) ? null : target)
 		qdel(task)
@@ -364,11 +427,17 @@ SUBSYSTEM_DEF(netrun)
 			scheduler.last_executed = executed
 			scheduler.last_budget_ms = budget_ms
 			scheduler.last_execution_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
+			scheduler.peak_pass_ms = max(scheduler.peak_pass_ms, scheduler.last_execution_ms)
+			if(scheduler.last_execution_ms > budget_ms)
+				scheduler.budget_overruns++
 			current_pass_cost_ms += scheduler.last_execution_ms
 			return
 	scheduler.last_executed = executed
 	scheduler.last_budget_ms = budget_ms
 	scheduler.last_execution_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
+	scheduler.peak_pass_ms = max(scheduler.peak_pass_ms, scheduler.last_execution_ms)
+	if(scheduler.last_execution_ms > budget_ms)
+		scheduler.budget_overruns++
 	current_pass_cost_ms += scheduler.last_execution_ms
 	on_pass_finished(executed)
 
