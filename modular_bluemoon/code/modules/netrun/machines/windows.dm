@@ -208,7 +208,14 @@
 /datum/netrun_remote_session/proc/watch_target()
 	if(QDELETED(watch_node) || QDELETED(owner.operator) || watch_viewer != owner.operator || owner.is_locked())
 		return null
-	if(!watch_node.is_online() || !owner.can_route(watch_node) || owner.node_level(watch_node) < NETRUN_ACCESS_USER)
+	if(!watch_node.is_online())
+		return null
+	// Refresh the moving endpoint before checking the retained path tree.
+	owner.refresh_route_node(watch_node)
+	var/datum/netrun_path_tree/tree = owner.make_path_tree(TRUE)
+	var/allowed = owner.can_route(watch_node, tree) && owner.node_level(watch_node, tree) >= NETRUN_ACCESS_USER
+	qdel(tree)
+	if(!allowed)
 		return null
 	var/atom/source = watch_node.parent
 	return source.netrun_view_target()

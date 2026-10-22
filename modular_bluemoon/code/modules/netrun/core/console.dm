@@ -496,14 +496,20 @@
 		trace = max(0, trace - NETRUN_TRACE_DECAY * delta * (1 + owner.daemon_bonus("scrub")))
 
 /datum/netrun_remote_session/proc/process_tick()
-	if(watch_node && !owner.watch_target())
+	if(!watch_node)
+		return
+	var/atom/target = owner.watch_target()
+	if(!target || !watch_eye || watch_viewer?.client?.eye != watch_eye)
 		stop_watch()
-	else if(watch_eye && watch_viewer?.client?.eye != watch_eye)
+		return
+	var/turf/target_turf = get_turf(target)
+	if(!target_turf)
 		stop_watch()
-	else if(watch_eye)
-		watch_eye.forceMove(get_turf(owner.watch_target()))
-		if(isliving(watch_viewer))
-			watch_eye.update_remote_sight(watch_viewer)
+		return
+	if(watch_eye.loc != target_turf)
+		watch_eye.forceMove(target_turf)
+	if(isliving(watch_viewer))
+		watch_eye.update_remote_sight(watch_viewer)
 
 /datum/netrun_console/proc/start_breach(kind, id, automatic = FALSE)
 	activate()
