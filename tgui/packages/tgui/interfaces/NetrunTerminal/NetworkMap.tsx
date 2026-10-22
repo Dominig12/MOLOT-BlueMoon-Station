@@ -28,6 +28,7 @@ const EMPTY_EDGES: NetEdge[] = [];
 const EMPTY_EVENTS: NetEvent[] = [];
 const EMPTY_HOPS: PingHop[] = [];
 const EMPTY_SEARCH: SearchResult[] = [];
+const EMPTY_ROUTE: string[] = [];
 
 // TGUI polling replaces data objects even if their contents have not changed.
 // Retain component references so logs/combat ticks do not trigger map layouts.
@@ -122,10 +123,23 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   const visibleIds = useMemo(() => new Set(visibleNodes.map((n) => n.address)), [visibleNodes]);
   const visibleEdges = useMemo(() => edges.filter((edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to)), [edges, visibleIds]);
   const visiblePoints = useMemo(() => new Map(visibleNodes.map((n) => [n.address, positions.get(n.address)])), [visibleNodes, positions]);
+  // The canvas draws only the static graph: keep its node reference stable across status ticks
+  // (entities/ICE/active), so a moving actor never forces a canvas repaint or scene rebuild.
+  const canvasSignature = useMemo(() => visibleNodes.map((n) =>
+    `${n.address}|${n.type}|${n.online}|${n.access}|${n.px}|${n.py}|${n.anchorX ?? ''}|${n.anchorY ?? ''}|${n.network}|${n.sector ?? ''}|${n.name}|${n.can_hop ?? ''}`).join(';'),
+  [visibleNodes]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- staleness is intentional: only a static-field change yields a new array.
+  const canvasNodes = useMemo(() => visibleNodes, [canvasSignature]);
+  const edgeSignature = useMemo(() => visibleEdges.map((edge) => `${edge.id}|${edge.online !== false}`).join(';'), [visibleEdges]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- same stable-reference intent as canvasNodes.
+  const canvasEdges = useMemo(() => visibleEdges, [edgeSignature]);
+  // Moving occupants for the reactive DOM layer above the canvas.
+  const actors = useMemo(() => visibleNodes.filter((node) => node.entities || node.ice), [visibleNodes]);
   // End-to-end routes are never geometrically shortened through omitted nodes:
   // the canvas additionally verifies every adjacent pair against real edges.
-  const selectedRoute = map?.route?.reachable ? map.route.route : [];
-  const pingAddresses = pingRoute.filter((hop) => hop.kind === 'node').map((hop) => hop.ref);
+  const selectedRoute = map?.route?.reachable ? map.route.route : EMPTY_ROUTE;
+  const waypointRoute = waypoint?.route || EMPTY_ROUTE;
+  const pingAddresses = useMemo(() => pingRoute.filter((hop) => hop.kind === 'node').map((hop) => hop.ref), [pingRoute]);
   const onSelect = useCallback((address: string) => { setPendingCenter(null); act('select', { address }); }, [act]);
   const locate = useCallback((address: string, own = false) => {
     setQuery(''); setSearchReset((value) => value + 1); setFocusNearby(false); setDisabledTypes({}); setPendingCenter(address);
@@ -244,10 +258,10 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
                                  </Box>))}
                              </Box>}
       {!nodes.length && <Box p={1} color={THEME.muted}>На этом этаже нет доступных узлов.</Box>}
-      <GraphCanvas key={`${map.active_sector || ''}:${map.active_z ?? ''}`} ref={viewport} adjacency={adjacency} nodes={visibleNodes} edges={visibleEdges} positions={visiblePoints}
+      <GraphCanvas key={`${map.active_sector || ''}:${map.active_z ?? ''}`} ref={viewport} adjacency={adjacency} nodes={canvasNodes} edges={canvasEdges} positions={visiblePoints}
         gateways={gateways} selected={selectedAddress} jacked={jackAddress} focus={map.focus}
-        apcZones={map.apc_zones}
-        entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || []}
+        apcZones={map.apc_zones} actors={actors}
+        entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypointRoute}
         pingRoute={pingAddresses} events={events} onSelect={onSelect} />
       <Box p={0.5} color={THEME.muted} fontSize="10px" style={{ flexShrink: 0, borderTop: `1px solid ${THEME.line}`, background: '#0d222d' }}>
         □ APC · ⬡ реле · ◇ сервер/терминал · ○ устройство · подсветка — зона выбранного APC<br />

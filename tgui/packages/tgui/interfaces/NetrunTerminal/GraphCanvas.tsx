@@ -1,16 +1,19 @@
 /* eslint-disable react/no-unused-prop-types -- forwardRef accesses typed props through its retained render callbacks. */
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 
+import { ActorLayer } from './ActorLayer';
 import { GraphOverlay, GraphRenderer } from './graphRenderer';
 import { GraphScene, PlacedNode } from './graphScene';
 import { clamp, GraphViewport } from './graphViewport';
 import { GraphPoint } from './mapLayout';
-import { NetEdge, NODE_NAMES, THEME } from './types';
+import { NetEdge, NetEvent, NODE_NAMES, THEME } from './types';
 
 export type GraphCanvasHandle = { center: (address: string) => void; fit: () => void };
 type Props = GraphOverlay & {
   nodes: PlacedNode[]; edges: NetEdge[]; positions: Map<string, GraphPoint>;
   focus: string | null; adjacency: Map<string, Set<string>>; onSelect: (address: string) => void;
+  /** Moving occupants and event ripples - rendered by the reactive DOM layer, not the canvas. */
+  actors: PlacedNode[]; events: NetEvent[];
 };
 
 /** React owns controls/lifecycle; scene, camera and renderer own their respective state. */
@@ -22,6 +25,9 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   const frame = useRef<number | null>(null);
   const down = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
   const [tooltip, setTooltip] = useState<{ address: string; x: number; y: number } | null>(null);
+  // A render tick so the DOM actor layer follows pan/zoom without the canvas ever owning it.
+  const [, setViewVersion] = useState(0);
+  const bumpView = useCallback(() => setViewVersion((value) => value + 1), []);
   const scene = useMemo(() => {
     const value = new GraphScene(); value.update(props.nodes, props.edges); return value;
   }, [props.nodes, props.edges]);
@@ -47,32 +53,35 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     if (animating && typeof window.requestAnimationFrame === 'function') { queuePaint(); }
   };
   const fit = useCallback(() => {
-    const { width, height } = size(); view.fit(retained.current.fitPoints(latest.current.apcZones), width, height); queuePaint();
-  }, [view, queuePaint, size]);
+    const { width, height } = size(); view.fit(retained.current.fitPoints(latest.current.apcZones), width, height); queuePaint(); bumpView();
+  }, [view, queuePaint, size, bumpView]);
   const center = useCallback((address: string) => {
     const point = retained.current.byAddress.get(address);
     if (!point) { return; }
-    const { width, height } = size(); view.center(point, width, height); queuePaint();
-  }, [view, queuePaint, size]);
+    const { width, height } = size(); view.center(point, width, height); queuePaint(); bumpView();
+  }, [view, queuePaint, size, bumpView]);
   useImperativeHandle(externalRef, () => ({ center, fit }), [center, fit]);
+  // Repaint the static canvas only on structural or static-status changes - never on actor/event
+  // churn (those are handled by the DOM layer), so a status tick does not force a canvas repaint.
   useEffect(() => {
-    renderer.update(scene, props.events, performance.now());
+    renderer.update(scene, performance.now());
     if (view.fitting && scene.nodes.length) { fit(); } else { queuePaint(); }
-  }, [scene, props, renderer, view, fit, queuePaint]);
+  }, [scene, props.selected, props.jacked, props.entityHost, props.selectedRoute, props.waypointRoute,
+    props.pingRoute, props.gateways, props.apcZones, renderer, view, fit, queuePaint]);
   useEffect(() => {
     if (tooltip && !scene.byAddress.has(tooltip.address)) { setTooltip(null); }
   }, [scene, tooltip]);
   useEffect(() => {
     const el = container.current;
     if (!el) { return; }
-    const resized = () => { if (view.fitting) { fit(); } else { queuePaint(); } };
+    const resized = () => { if (view.fitting) { fit(); } else { queuePaint(); bumpView(); } };
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resized);
     observer?.observe(el); window.addEventListener('resize', resized);
     return () => {
       observer?.disconnect(); window.removeEventListener('resize', resized);
       if (frame.current !== null) { window.cancelAnimationFrame(frame.current); frame.current = null; }
     };
-  }, [view, fit, queuePaint]);
+  }, [view, fit, queuePaint, bumpView]);
   const hit = (clientX: number, clientY: number) => {
     const bounds = container.current?.getBoundingClientRect();
     return bounds ? retained.current.hit(view.unproject(clientX - bounds.left, clientY - bounds.top), view.zoom) : null;
@@ -92,7 +101,7 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
         if (press) {
           const dx = event.clientX - press.x, dy = event.clientY - press.y;
           if (dx * dx + dy * dy > 16) { press.moved = true; }
-          if (press.moved) { view.pan(press.panX + dx, press.panY + dy); setTooltip(null); queuePaint(); }
+          if (press.moved) { view.pan(press.panX + dx, press.panY + dy); setTooltip(null); queuePaint(); bumpView(); }
           return;
         }
         const node = hit(event.clientX, event.clientY), bounds = event.currentTarget.getBoundingClientRect();
@@ -109,9 +118,11 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
         event.preventDefault(); setTooltip(null);
         const bounds = event.currentTarget.getBoundingClientRect(), dimensions = size();
         const fitted = new GraphViewport(); fitted.fit(retained.current.fitPoints(latest.current.apcZones), dimensions.width, dimensions.height);
-        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, fitted.zoom); queuePaint();
+        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, fitted.zoom); queuePaint(); bumpView();
       }}>
       <canvas ref={canvas} data-net-canvas aria-hidden="true" style={{ display: 'block', width: '100%', height: '100%' }} />
+      <ActorLayer actors={props.actors} events={props.events} points={props.positions}
+        vx={view.x} vy={view.y} vzoom={view.zoom} width={size().width} height={size().height} />
       {tooltip && tooltipNode && <div role="tooltip" style={{ position: 'absolute', zIndex: 5, left: clamp(tooltip.x + 14, 8, Math.max(8, size().width - 206)), top: clamp(tooltip.y + 12, 8, Math.max(8, size().height - 82)), width: '194px', padding: '8px 10px', pointerEvents: 'none', background: '#102531', border: '1px solid #316178', borderRadius: '6px', color: THEME.text, fontSize: '11px', boxShadow: '0 10px 25px rgba(0,0,0,.3)' }}>
         <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tooltipNode.name}</div>
         <div style={{ opacity: .7, fontFamily: 'monospace' }}>{tooltipNode.address}</div>

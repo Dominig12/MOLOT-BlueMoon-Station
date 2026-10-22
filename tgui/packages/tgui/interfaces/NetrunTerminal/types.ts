@@ -252,7 +252,7 @@ export type Waypoint = {
 };
 
 export type NetEvent = {
-  kind: 'command' | 'intrusion' | 'breach' | 'trace';
+  kind: 'command' | 'intrusion' | 'breach' | 'trace' | 'purge';
   from: string | null;
   to: string | null;
   age: number;

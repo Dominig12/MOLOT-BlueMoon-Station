@@ -3,12 +3,11 @@ import { GRAPH_GLYPH_RADIUS, GRAPH_TILE } from './graphLayout';
 import { GraphScene, PlacedNode } from './graphScene';
 import { clamp, GraphViewport } from './graphViewport';
 import { GraphPoint } from './mapLayout';
-import { ACCESS_COLORS, ApcZone, Gateway, NetEdge, NetEvent } from './types';
+import { ACCESS_COLORS, ApcZone, Gateway, NetEdge } from './types';
 
 export type GraphOverlay = {
   selected: string | null; jacked: string | null; entityHost: string | null;
   gateways: Map<string, Gateway>; selectedRoute: string[]; waypointRoute: string[]; pingRoute: string[];
-  events: NetEvent[];
   apcZones?: ApcZone[];
 };
 
@@ -17,10 +16,9 @@ const physicalPoint = (node: PlacedNode): GraphPoint => ({ px: node.anchorX ?? n
 type EdgeGeometry = { from: GraphPoint; to: GraphPoint; signature: string };
 type EdgeTransition = EdgeGeometry & { started: number; removed: boolean };
 
-/** Canvas drawing owns transient presentation only; topology and camera remain independent. */
+/** Canvas draws only the static graph (structure, status, labels); moving actors and event
+ * pulses live in the reactive DOM layer above, so a status tick never repaints the canvas. */
 export class GraphRenderer {
-  private eventEpoch = 0;
-  private events: NetEvent[] = [];
   private changed = new Map<string, number>();
   private points = new Map<string, string>();
   private edges = new Map<string, EdgeGeometry>();
@@ -101,8 +99,7 @@ export class GraphRenderer {
     return animating;
   }
 
-  update(scene: GraphScene, events: NetEvent[], now: number) {
-    if (events !== this.events) { this.events = events; this.eventEpoch = now; }
+  update(scene: GraphScene, now: number) {
     const next = new Map<string, string>();
     for (const node of scene.nodes) {
       const point = `${node.px},${node.py}`;
@@ -150,19 +147,17 @@ export class GraphRenderer {
     const selectedNeighbors = scene.adjacency.get(overlay.selected);
     const straight = (a: GraphPoint, b: GraphPoint) => { ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py); };
     this.drawEdges(ctx, scene, overlay, view, width, height, straight);
-    // Marching ants flow along highlighted routes to read as live traffic.
-    const flow = -(now / 28) % 1000;
+    // A static highlight (the animated "marching ants" flow moved to the DOM layer so the
+    // canvas is not forced to repaint while a route is shown).
     const route = (addresses: string[], color: string, dash: number[]) => {
-      // Animate marching ants only when zoomed in; at overview it would repaint the whole map each frame.
-      if (addresses.length > 1 && view.zoom >= .3) { animating = true; }
       ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 3.5;
-      ctx.setLineDash(dash); ctx.lineDashOffset = flow;
+      ctx.setLineDash(dash);
       ctx.shadowBlur = 8; ctx.shadowColor = color;
       for (let i = 1; i < addresses.length; i++) {
         const a = scene.byAddress.get(addresses[i - 1]), b = scene.byAddress.get(addresses[i]);
         if (a && b && scene.adjacency.get(a.address)?.has(b.address)) { straight(physicalPoint(a), physicalPoint(b)); }
       }
-      ctx.stroke(); ctx.setLineDash([]); ctx.lineDashOffset = 0; ctx.shadowBlur = 0;
+      ctx.stroke(); ctx.setLineDash([]); ctx.shadowBlur = 0;
     };
     route(overlay.selectedRoute, '#50e8c0', [11, 7]);
     route(overlay.waypointRoute, '#e879b8', [8, 5]);
@@ -177,52 +172,28 @@ export class GraphRenderer {
       const changed = this.changed.get(node.address), progress = changed === undefined ? 1 : (now - changed) / 350;
       if (progress >= 1) { this.changed.delete(node.address); }
       else { animating = true; }
-      // Live pulses: ICE threats and recently-active nodes breathe so the eye finds them.
-      // Only animated when zoomed in — at overview they are invisible yet would force a
-      // continuous full-canvas repaint of the whole network.
-      if (node.ice && zoom >= .45) {
-        animating = true;
-        ctx.beginPath(); ctx.arc(node.px, node.py, 20 + Math.sin(now / 260) * 2.5, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(233,110,124,${0.5 + Math.sin(now / 260) * 0.25})`; ctx.lineWidth = 2; ctx.stroke();
-      } else if (node.active && zoom >= .45) {
-        animating = true;
-        ctx.beginPath(); ctx.arc(node.px, node.py, 18 + Math.sin(now / 320) * 2, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(255,194,107,${0.35 + Math.sin(now / 320) * 0.2})`; ctx.lineWidth = 1.5; ctx.stroke();
-      }
+      // Moving actors (entities/ICE), their pulses and event ripples are drawn by the DOM layer.
       // No minimum screen-space size: all geometry always fits inside a 48-world-unit square.
-      if (important || node.ice || progress < 1) {
+      if (important || progress < 1) {
         ctx.beginPath(); ctx.arc(node.px, node.py, 20, 0, Math.PI * 2);
-        ctx.fillStyle = host ? '#46283e' : node.ice ? '#47232d' : '#183b46'; ctx.fill();
-        ctx.strokeStyle = selected ? '#eafff5' : host ? '#f8a3e6' : node.ice ? '#dd667b' : '#65b4d5';
+        ctx.fillStyle = host ? '#46283e' : '#183b46'; ctx.fill();
+        ctx.strokeStyle = selected ? '#eafff5' : host ? '#f8a3e6' : '#65b4d5';
         ctx.lineWidth = 1.5; ctx.stroke();
       }
       // Glow lifts key nodes off the board without enlarging their footprint.
       if (important && zoom >= .45) { ctx.shadowBlur = 16; ctx.shadowColor = selected ? '#9dffe4' : host ? '#f8a3e6' : '#9ad0e0'; }
-      else if (node.ice && zoom >= .45) { ctx.shadowBlur = 14; ctx.shadowColor = '#e9545f'; }
       ctx.beginPath();
       this.drawShape(ctx, node);
       ctx.fillStyle = color; ctx.fill();
       ctx.lineWidth = selectedNeighbors?.has(node.address) ? 2.5 : 1.5;
       ctx.strokeStyle = important ? '#d9f2f2' : gateway?.color || '#527287'; ctx.stroke();
       ctx.shadowBlur = 0;
-      if (node.entities) { ctx.fillStyle = '#f19bdc'; ctx.fillRect(node.px + 13, node.py - 17, 5, 5); }
-      if (node.ice) { ctx.fillStyle = '#ff6470'; ctx.beginPath(); ctx.arc(node.px - 14, node.py - 14, 3.5, 0, Math.PI * 2); ctx.fill(); }
       if (zoom >= .6 && ['apc', 'server', 'terminal', 'camera'].includes(node.type)) {
         ctx.strokeStyle = '#102331'; ctx.lineWidth = 1.5; ctx.beginPath();
         ctx.moveTo(node.px - 4, node.py); ctx.lineTo(node.px + 4, node.py);
         if (node.type === 'apc') { ctx.moveTo(node.px, node.py - 4); ctx.lineTo(node.px, node.py + 4); }
         ctx.stroke();
       }
-    }
-    for (const event of this.events) {
-      const age = event.age + (now - this.eventEpoch) / 1000;
-      if (age >= 4) { continue; }
-      const point = scene.byAddress.get(event.to) || scene.byAddress.get(event.from);
-      if (!point) { continue; }
-      animating = true;
-      ctx.beginPath(); ctx.arc(point.px, point.py, 21 + Math.sin(age * 5) * 1.5, 0, Math.PI * 2);
-      ctx.strokeStyle = event.kind === 'trace' ? `rgba(245,102,112,${(4 - age) / 5})` : `rgba(255,194,107,${(4 - age) / 5})`;
-      ctx.lineWidth = 1.5; ctx.stroke();
     }
     ctx.restore(); ctx.font = '11px monospace'; ctx.textAlign = 'left';
     const priority = (node: PlacedNode) => node.address === overlay.selected ? 5 : node.address === overlay.entityHost ? 4 : node.address === overlay.jacked ? 3 : node.ice ? 2 : 0;
