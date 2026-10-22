@@ -1,6 +1,161 @@
+// NETRUN ADAPTIVE TASK SCHEDULER V1
+#define NETRUN_TASK_CRITICAL 1
+#define NETRUN_TASK_NORMAL 2
+#define NETRUN_TASK_BACKGROUND 3
+
+/datum/netrun_task
+	var/kind
+	var/key
+	var/priority
+	var/datum/weakref/target_ref
+	var/enqueued_at
+
+/datum/netrun_task/New(new_kind, new_key, new_priority, datum/target)
+	. = ..()
+	kind = new_kind
+	key = new_key
+	priority = new_priority
+	enqueued_at = world.time
+	if(target)
+		target_ref = WEAKREF(target)
+
+/datum/netrun_task/proc/target()
+	return target_ref?.resolve()
+
+/// Tasks are merged by kind and target; tombstones allow cheap promotions.
+/datum/netrun_task_scheduler
+	var/list/by_key = list()
+	var/list/critical = list()
+	var/list/normal = list()
+	var/list/background = list()
+	var/critical_read = 1
+	var/normal_read = 1
+	var/background_read = 1
+	var/list/counts = list(0, 0, 0)
+	var/dispatch_cursor = 0
+	var/merged = 0
+	var/promoted = 0
+	var/completed = 0
+	var/cancelled = 0
+	var/last_budget_ms = 0
+	var/last_execution_ms = 0
+	var/last_executed = 0
+	var/average_ms = 0.1
+	var/max_task_ms = 0
+
+/datum/netrun_task_scheduler/proc/pending()
+	return length(by_key)
+
+/datum/netrun_task_scheduler/proc/append_task(datum/netrun_task/task)
+	switch(task.priority)
+		if(NETRUN_TASK_CRITICAL)
+			critical += task
+		if(NETRUN_TASK_NORMAL)
+			normal += task
+		if(NETRUN_TASK_BACKGROUND)
+			background += task
+
+/datum/netrun_task_scheduler/proc/enqueue(kind, datum/target, priority = NETRUN_TASK_NORMAL)
+	if(!kind || (target && QDELETED(target)))
+		return FALSE
+	priority = clamp(priority, NETRUN_TASK_CRITICAL, NETRUN_TASK_BACKGROUND)
+	var/key = "[kind]:[target ? REF(target) : "global"]"
+	var/datum/netrun_task/existing = by_key[key]
+	if(existing && !QDELETED(existing))
+		merged++
+		if(priority < existing.priority)
+			counts[existing.priority]--
+			existing.priority = priority
+			counts[priority]++
+			append_task(existing)
+			promoted++
+		return FALSE
+	var/datum/netrun_task/task = new(kind, key, priority, target)
+	by_key[key] = task
+	counts[priority]++
+	append_task(task)
+	return TRUE
+
+/datum/netrun_task_scheduler/proc/cancel(kind, datum/target)
+	var/key = "[kind]:[target ? REF(target) : "global"]"
+	var/datum/netrun_task/task = by_key[key]
+	if(!task)
+		return FALSE
+	counts[task.priority]--
+	by_key -= key
+	cancelled++
+	qdel(task)
+	return TRUE
+
+/datum/netrun_task_scheduler/proc/take_priority(priority)
+	var/list/queue
+	var/read_at
+	switch(priority)
+		if(NETRUN_TASK_CRITICAL)
+			queue = critical
+			read_at = critical_read
+		if(NETRUN_TASK_NORMAL)
+			queue = normal
+			read_at = normal_read
+		if(NETRUN_TASK_BACKGROUND)
+			queue = background
+			read_at = background_read
+	if(!queue)
+		return null
+	var/datum/netrun_task/result
+	var/scanned = 0
+	while(read_at <= length(queue) && scanned < 32)
+		scanned++
+		var/datum/netrun_task/task = queue[read_at]
+		queue[read_at] = null
+		read_at++
+		if(QDELETED(task) || task.priority != priority || by_key[task.key] != task)
+			continue
+		by_key -= task.key
+		counts[priority]--
+		result = task
+		break
+	if(read_at > length(queue))
+		queue.Cut()
+		read_at = 1
+	else if(read_at > 64 && read_at > length(queue) / 2)
+		queue.Cut(1, read_at)
+		read_at = 1
+	switch(priority)
+		if(NETRUN_TASK_CRITICAL)
+			critical_read = read_at
+		if(NETRUN_TASK_NORMAL)
+			normal_read = read_at
+		if(NETRUN_TASK_BACKGROUND)
+			background_read = read_at
+	return result
+
+/datum/netrun_task_scheduler/proc/take()
+	var/static/list/rotation = list(NETRUN_TASK_CRITICAL, NETRUN_TASK_NORMAL, NETRUN_TASK_CRITICAL, NETRUN_TASK_BACKGROUND, NETRUN_TASK_CRITICAL, NETRUN_TASK_NORMAL, NETRUN_TASK_CRITICAL)
+	for(var/i in 1 to length(rotation))
+		dispatch_cursor = (dispatch_cursor % length(rotation)) + 1
+		var/datum/netrun_task/task = take_priority(rotation[dispatch_cursor])
+		if(task)
+			return task
+	return null
+
+/datum/netrun_task_scheduler/proc/note_execution(cost_ms)
+	completed++
+	max_task_ms = max(max_task_ms, cost_ms)
+	average_ms = average_ms * 0.85 + cost_ms * 0.15
+
+/datum/netrun_task_scheduler/Destroy()
+	for(var/key in by_key)
+		qdel(by_key[key])
+	by_key.Cut()
+	critical.Cut()
+	normal.Cut()
+	background.Cut()
+	return ..()
+
 SUBSYSTEM_DEF(netrun)
 	name = "Netrun"
-	wait = 1 SECONDS
+	wait = 2
 	flags = SS_BACKGROUND
 	runlevels = RUNLEVEL_GAME | RUNLEVEL_POSTGAME
 
@@ -12,8 +167,9 @@ SUBSYSTEM_DEF(netrun)
 	var/list/mob/camera/netrun_entity/entities = list()
 	/// id = /datum/netrun_command
 	var/list/commands
-	var/list/currentrun = list()
-	var/list/currentnodes = list()
+	var/datum/netrun_task_scheduler/task_scheduler
+	var/next_task_population = 0
+	var/task_populations = 0
 	/// Only sessions with timers, a live UI or an entity are processed.
 	var/list/active_consoles = list()
 	/// Moving devices and native states that genuinely lack notifications.
@@ -47,6 +203,9 @@ SUBSYSTEM_DEF(netrun)
 
 /datum/controller/subsystem/netrun/stat_entry(msg)
 	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles] T:[topology_rebuilds] F:[camera_feed_scans]/[camera_feed_cache_hits] R:[camera_route_borrows] W:[wire_session_sweeps]"
+	if(task_scheduler)
+		var/datum/netrun_task_scheduler/scheduler = task_scheduler
+		msg += " Tasks:[scheduler.pending()] Q:[scheduler.counts[1]]/[scheduler.counts[2]]/[scheduler.counts[3]] Done:[scheduler.completed] Merge:[scheduler.merged] Pr:[scheduler.promoted] Budget:[round(scheduler.last_execution_ms, 0.1)]/[round(scheduler.last_budget_ms, 0.1)]ms"
 	if(profile_armed)
 		msg += " Cam ms total/max F:[round(camera_feed_scan_ms, 0.1)]/[round(camera_feed_scan_max_ms, 0.1)] R:[round(camera_route_check_ms, 0.1)]/[round(camera_route_check_max_ms, 0.1)]"
 	return ..()
@@ -91,91 +250,127 @@ SUBSYSTEM_DEF(netrun)
 	poll_nodes -= node
 	dirty_nodes -= node
 	timed_nodes -= node
-	currentnodes -= node
+	task_scheduler?.cancel("node", node)
 
-/datum/controller/subsystem/netrun/fire(resumed = FALSE)
-	var/slice_start_usage = TICK_USAGE
-	if(!resumed)
-		current_pass_cost_ms = 0
-		last_processed_nodes = 0
-		last_processed_consoles = 0
-		currentrun = active_consoles.Copy()
-		currentice = ice_processes.Copy()
-		currentbreaches = list()
-		reconcile_nodes = length(entities) || !patrol_initialized || !lore_initialized
-		for(var/datum/netrun_console/console as anything in currentrun)
-			if(QDELETED(console))
-				continue
-			if(console.intrusion.breach)
-				currentbreaches += console
-			if(console.needs_processing())
-				reconcile_nodes = TRUE
-		currentnodes = dirty_nodes.Copy()
-		if(reconcile_nodes)
-			currentnodes |= poll_nodes
-		for(var/datum/component/netrun_node/node as anything in timed_nodes)
-			if(timed_nodes[node] <= world.time)
-				currentnodes[node] = TRUE
-		pass_item_count = length(currentrun) + length(currentice) + length(currentnodes)
-	var/delta = wait / (1 SECONDS)
-	var/profiling = profile_armed
-	// ICE snapshots remain resumable across MC slices, without rescanning all terminals.
-	while(length(currentice))
-		var/datum/netrun_ice/ice = currentice[length(currentice)]
-		currentice.len--
-		var/item_start_usage = profiling ? TICK_USAGE : 0
-		if(!QDELETED(ice))
+/datum/controller/subsystem/netrun/proc/get_task_scheduler()
+	if(!task_scheduler)
+		task_scheduler = new
+	return task_scheduler
+
+/datum/controller/subsystem/netrun/proc/populate_tasks()
+	task_populations++
+	var/datum/netrun_task_scheduler/scheduler = get_task_scheduler()
+	currentbreaches.Cut()
+	var/reconcile = length(entities) || !patrol_initialized || !lore_initialized
+	for(var/datum/netrun_console/console as anything in active_consoles)
+		if(QDELETED(console))
+			active_consoles -= console
+			continue
+		if(console.intrusion.breach)
+			currentbreaches += console
+		if(!console.needs_processing())
+			active_consoles -= console
+			continue
+		reconcile = TRUE
+		var/priority = console.intrusion.breach || console.is_locked() ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL
+		scheduler.enqueue("console", console, priority)
+	for(var/datum/netrun_ice/ice as anything in ice_processes)
+		if(QDELETED(ice))
+			continue
+		scheduler.enqueue("ice", ice, ice.pending_program ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL)
+	for(var/datum/component/netrun_node/node as anything in dirty_nodes)
+		if(!QDELETED(node))
+			scheduler.enqueue("node", node, NETRUN_TASK_NORMAL)
+	if(reconcile)
+		for(var/datum/component/netrun_node/node as anything in poll_nodes)
+			if(!QDELETED(node))
+				scheduler.enqueue("node", node, NETRUN_TASK_BACKGROUND)
+	for(var/datum/component/netrun_node/node as anything in timed_nodes)
+		if(timed_nodes[node] <= world.time && !QDELETED(node))
+			scheduler.enqueue("node", node, NETRUN_TASK_NORMAL)
+	scheduler.enqueue("housekeeping", null, NETRUN_TASK_BACKGROUND)
+
+/datum/controller/subsystem/netrun/proc/execute_task(datum/netrun_task/task)
+	var/datum/target = task.target()
+	if(task.kind != "housekeeping" && QDELETED(target))
+		return
+	switch(task.kind)
+		if("ice")
+			var/datum/netrun_ice/ice = target
+			var/delta = ice.last_netrun_tick ? max(0, world.time - ice.last_netrun_tick) / (1 SECONDS) : 1
+			ice.last_netrun_tick = world.time
 			breach_snapshot_active = TRUE
 			ice.process_ai(delta)
 			breach_snapshot_active = FALSE
-			if(profiling)
-				profile_note(ice.type, max(0, TICK_DELTA_TO_MS(TICK_USAGE - item_start_usage)), ice)
-		if(MC_TICK_CHECK)
-			current_pass_cost_ms += max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
-			return
-	currentbreaches.Cut()
-	while(length(currentrun))
-		var/datum/netrun_console/console = currentrun[length(currentrun)]
-		currentrun.len--
-		var/item_start_usage = profiling ? TICK_USAGE : 0
-		if(!QDELETED(console))
+		if("console")
+			var/datum/netrun_console/console = target
+			var/delta = console.last_netrun_tick ? max(0, world.time - console.last_netrun_tick) / (1 SECONDS) : 1
+			console.last_netrun_tick = world.time
 			console.access_session.process_events()
 			console.process_tick(delta)
 			console.flush_ui()
 			last_processed_consoles++
-			if(!console.needs_processing())
+			if(!QDELETED(console) && !console.needs_processing())
 				active_consoles -= console
-			if(profiling)
-				profile_note(console.type, max(0, TICK_DELTA_TO_MS(TICK_USAGE - item_start_usage)), console)
-		if(MC_TICK_CHECK)
-			current_pass_cost_ms += max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
-			return
-	var/datum/netrun_topology/graph = get_topology()
-	while(length(currentnodes))
-		var/datum/component/netrun_node/node = currentnodes[length(currentnodes)]
-		currentnodes.len--
-		dirty_nodes -= node
-		var/item_start_usage = profiling ? TICK_USAGE : 0
-		if(!QDELETED(node))
+		if("node")
+			var/datum/component/netrun_node/node = target
+			dirty_nodes -= node
+			var/datum/netrun_topology/graph = get_topology()
 			if(node.is_dynamic() || !node.binding_checked || node.binding_infra_revision != graph.infrastructure_revision)
 				node.join_network()
 			node.reconcile_state()
 			track_node(node)
 			last_processed_nodes++
-			if(profiling)
-				profile_note(node.parent.type, max(0, TICK_DELTA_TO_MS(TICK_USAGE - item_start_usage)), node.parent)
+		if("housekeeping")
+			var/datum/netrun_topology/graph = get_topology()
+			if(graph.dirty && (length(active_consoles) || length(entities)))
+				ensure_topology()
+			graph.refresh_route_tables()
+			if(!patrol_initialized && length(networks))
+				initialize_patrol()
+			if(!lore_initialized && length(nodes_by_address))
+				initialize_lore()
+
+/datum/controller/subsystem/netrun/fire(resumed = FALSE)
+	var/slice_start_usage = TICK_USAGE
+	if(!resumed)
+		current_pass_cost_ms = 0
+	var/datum/netrun_task_scheduler/scheduler = get_task_scheduler()
+	if(!resumed && world.time >= next_task_population)
+		last_processed_nodes = 0
+		last_processed_consoles = 0
+		populate_tasks()
+		next_task_population = world.time + 1 SECONDS
+	var/pressure = clamp(TICK_USAGE / 100, 0, 1)
+	var/budget_ms = clamp(2.0 * (1 - pressure), 0.30, 2.0)
+	var/max_items = clamp(round(budget_ms / max(scheduler.average_ms, 0.05)), 2, 48)
+	var/executed = 0
+	while(executed < max_items)
+		if(executed && max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage)) >= budget_ms)
+			break
+		var/datum/netrun_task/task = scheduler.take()
+		if(!task)
+			break
+		var/task_started = TICK_USAGE
+		var/datum/target = task.target()
+		execute_task(task)
+		var/cost_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - task_started))
+		scheduler.note_execution(cost_ms)
+		if(profile_armed)
+			profile_note("netrun/task/[task.kind]", cost_ms, QDELETED(target) ? null : target)
+		qdel(task)
+		executed++
 		if(MC_TICK_CHECK)
-			current_pass_cost_ms += max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
+			scheduler.last_executed = executed
+			scheduler.last_budget_ms = budget_ms
+			scheduler.last_execution_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
+			current_pass_cost_ms += scheduler.last_execution_ms
 			return
-	if(reconcile_nodes)
-		graph = ensure_topology()
-	graph.refresh_route_tables()
-	if(!patrol_initialized && length(networks))
-		initialize_patrol()
-	if(!lore_initialized && length(nodes_by_address))
-		initialize_lore()
-	current_pass_cost_ms += max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
-	on_pass_finished(pass_item_count)
+	scheduler.last_executed = executed
+	scheduler.last_budget_ms = budget_ms
+	scheduler.last_execution_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
+	current_pass_cost_ms += scheduler.last_execution_ms
+	on_pass_finished(executed)
 
 /datum/controller/subsystem/netrun/proc/get_network(id)
 	if(!id)
@@ -253,6 +448,9 @@ SUBSYSTEM_DEF(netrun)
 	events += list(list("kind" = kind, "from" = from_ref, "to" = to_ref, "t" = world.time))
 	if(length(events) > 40)
 		events.Cut(1, length(events) - 40 + 1)
+	for(var/datum/netrun_console/console as anything in active_consoles)
+		if(!QDELETED(console) && console.map_view?.subscribed)
+			console.invalidate_ui()
 
 /// Недавние события (последние секунды) для интерфейса
 /datum/controller/subsystem/netrun/proc/recent_events()

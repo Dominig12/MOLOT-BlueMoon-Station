@@ -4,6 +4,8 @@
  * и отличаются только тем, откуда идёт подключение (origin) и куда бьёт трассировка.
  */
 /datum/netrun_console
+	var/last_netrun_tick = 0 // scheduler
+	var/datum/netrun_ui_source
 	var/name = "консоль"
 	/// Физический носитель: терминал, дека, имплант, компьютер или сущность
 	var/atom/host
@@ -110,17 +112,21 @@
 	return origin == NETRUN_ORIGIN_ENTITY || is_ui_active() || intrusion.breach || intrusion.trace > 0 || is_locked() || connection.jack || remote_session.watch_node
 
 /datum/netrun_console/proc/is_ui_active()
-	return world.time <= last_ui_at + 3 * SSnetrun.wait
+	if(world.time <= last_ui_at + 3 SECONDS)
+		return TRUE
+	if(!operator?.client)
+		return FALSE
+	var/datum/source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
+	return !!SStgui.get_open_ui(operator, source)
 
 /datum/netrun_console/proc/flush_ui()
 	if(!ui_dirty)
 		return
-	ui_dirty = FALSE
-	// TGUI already polls live windows. Do not serialize the same graph again
-	// from SSnetrun immediately after that poll (NTOS also owns its parent UI).
-	if(world.time < last_ui_at + SSnetrun.wait)
+	if(world.time < last_ui_at + 1 SECONDS || !is_ui_active())
 		return
-	SStgui.update_uis(src)
+	var/datum/source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
+	ui_dirty = FALSE
+	SStgui.update_uis(source)
 
 /datum/netrun_console/ui_host(mob/user)
 	return host || src

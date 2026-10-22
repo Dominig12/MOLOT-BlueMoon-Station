@@ -20,6 +20,7 @@
 		ui.open()
 
 /datum/netrun_console/ui_data(mob/user, datum/ui_source)
+	netrun_ui_source = ui_source || src // scheduler
 	note_ui_activity()
 	if(user)
 		if(operator != user)

@@ -49,7 +49,7 @@
 		"color" = node.network?.color, "runs" = runs)
 	// Only the selected APC is retained; ordinary graph polls do not rescan world areas.
 	cache = list()
-	cache[key] = list("expires" = world.time + SSnetrun.wait, "zone" = zone)
+	cache[key] = list("expires" = world.time + 1 SECONDS, "zone" = zone)
 	return zone
 
 /datum/netrun_map_geometry/Destroy()

@@ -227,12 +227,12 @@
 /datum/netrun_topology/proc/refresh_route_tables()
 	if(world.time < route_refresh_at)
 		return
-	route_refresh_at = world.time + SSnetrun.wait
+	route_refresh_at = world.time + 1 SECONDS
 	if(length(route_tables))
 		reconcile_availability()
 	for(var/address in route_used.Copy())
 		var/datum/component/netrun_node/start = nodes[address]
-		if(QDELETED(start) || route_used[address] < world.time - 2 * SSnetrun.wait)
+		if(QDELETED(start) || route_used[address] < world.time - 2 SECONDS)
 			qdel(route_tables[address])
 			route_tables -= address
 			route_used -= address

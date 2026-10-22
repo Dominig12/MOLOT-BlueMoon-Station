@@ -11,6 +11,7 @@
  * Обрабатывается в SSnetrun.fire().
  */
 /datum/netrun_ice
+	var/last_netrun_tick = 0 // scheduler
 	var/name = "ICE"
 	var/datum/component/netrun_node/node
 	var/kind = NETRUN_ICE_SENTRY
