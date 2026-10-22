@@ -42,6 +42,12 @@
 	var/ui_dirty = TRUE
 	/// UI polling renews this lease, including consoles embedded in NTOS windows.
 	var/last_ui_at = -INFINITY
+	/// TRUE only inside one ui_data serialization pass; enables per-pass projection reuse.
+	var/ui_serializing = FALSE
+	/// Projection-context snapshot shared by catalog/CLI validity checks within one pass.
+	var/list/ui_projection_cache
+	/// TRUE when ui_routes is a borrowed shared table that must not be qdel()ed on teardown.
+	var/ui_routes_borrowed = FALSE
 
 /datum/netrun_console/New(atom/host, origin)
 	src.host = host

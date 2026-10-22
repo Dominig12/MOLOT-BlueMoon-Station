@@ -335,6 +335,28 @@
 				tree.reached_networks[start.network.id] = TRUE
 	return tree
 
+/// The one UI snapshot per poll shares the server's retained routing table directly when no
+/// request-local restriction (the wireless-zone cut) can mutate it. Borrowing avoids copying
+/// the whole reached/cost tree on every poll; the pass marks it so teardown never qdel()s it.
+/datum/netrun_console/proc/acquire_ui_routes()
+	return connection.acquire_ui_routes()
+
+/datum/netrun_connection/proc/acquire_ui_routes()
+	var/turf/here = get_turf(owner.host)
+	// Same predicate as make_path_tree/watch_target: only this case rewrites the tree in place.
+	if(wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z))))
+		owner.ui_routes_borrowed = FALSE
+		return owner.make_path_tree(TRUE)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/start = owner.physical_route_source()
+	graph = SSnetrun.ensure_topology()
+	var/datum/netrun_path_tree/borrowed = graph.route_snapshot(start, TRUE)
+	if(borrowed)
+		owner.ui_routes_borrowed = TRUE
+		return borrowed
+	owner.ui_routes_borrowed = FALSE
+	return new /datum/netrun_path_tree
+
 /datum/netrun_console/proc/release_path_tree(datum/netrun_path_tree/tree)
 	return connection.release_path_tree(tree)
 

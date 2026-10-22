@@ -25,7 +25,11 @@
 	// Matrix clicks need no global discovery pass. The live delivery/finish
 	// checks own fresh trees; this snapshot only describes the visible panel.
 	refresh_route_node(selected_node())
-	ui_routes = (!intrusion.breach || (workspace_view in list("map", "files", "pinned", "terminal", "web"))) ? make_path_tree(TRUE) : null
+	if(!intrusion.breach || (workspace_view in list("map", "files", "pinned", "terminal", "web")))
+		ui_routes = acquire_ui_routes()
+	else
+		ui_routes = null
+		ui_routes_borrowed = FALSE
 	access_cache = user_access()
 	network_level_cache = list()
 	ui_node_levels = list()
@@ -36,6 +40,8 @@
 	ui_bonuses = list()
 	ui_files = all_files()
 	ui_completion_cache = list()
+	ui_projection_cache = null
+	ui_serializing = TRUE
 	var/list/session
 	if(user)
 		ui_source = ui_source || src
@@ -51,7 +57,14 @@
 	ui_bonuses = null
 	ui_files = null
 	ui_completion_cache = null
-	QDEL_NULL(ui_routes)
+	ui_projection_cache = null
+	ui_serializing = FALSE
+	if(ui_routes_borrowed)
+		// Borrowed the server's shared routing table; never destroy it on teardown.
+		ui_routes = null
+		ui_routes_borrowed = FALSE
+	else
+		QDEL_NULL(ui_routes)
 
 /datum/netrun_console/ui_static_data(mob/user)
 	if(user)
@@ -97,7 +110,6 @@
 		data["windows"] = windows_payload()
 		data["window"] = null
 		return data
-	data["file"] = file_payload()
 
 	append_network_catalog(data, session)
 
@@ -720,11 +732,17 @@
 /// Small authorization/connectivity key shared by catalog and completion projections.
 /// File-store revisions cover keys, daemons and renamed/deleted completion candidates.
 /datum/netrun_console/proc/ui_projection_context()
+	// Within one ui_data pass every input below is fixed, and catalog/CLI validity checks each
+	// rebuild this list; compute it once per pass. Standalone callers still get a fresh snapshot.
+	if(ui_serializing && ui_projection_cache)
+		return ui_projection_cache
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/source = route_source()
 	var/list/access = user_access()
-	return list(operator, source?.address, source?.is_online(), graph.revision, graph.transit_availability_revision,
+	. = list(operator, source?.address, source?.is_online(), graph.revision, graph.transit_availability_revision,
 		map_view.authorization_revision, access.Copy(), is_locked(), intrusion.can_breach,
 		inventory.local_store?.revision, inventory.shard, inventory.shard?.file_store?.revision,
 		connection.wireless, connection.jack?.address, web_browsing(), ui_uplink_value,
 		SSntnet.is_enabled(), length(SSntnet.catalog))
+	if(ui_serializing)
+		ui_projection_cache = .
