@@ -2,6 +2,7 @@
 	/// Если задано - состояние tgui для этой консоли (импланты, сущности)
 	var/datum/ui_state/state_override
 	var/tgui_title = "Сетевой терминал"
+	var/list/ui_catalog_context
 
 /datum/netrun_console/ui_state(mob/user)
 	if(state_override)
@@ -15,8 +16,12 @@
 		ui = new(user, src, "NetrunTerminal", tgui_title)
 		ui.open()
 
-/datum/netrun_console/ui_data(mob/user)
-	last_ui_at = world.time
+/datum/netrun_console/ui_data(mob/user, datum/ui_source)
+	note_ui_activity()
+	if(user)
+		if(operator != user)
+			ui_network_catalog = null
+		operator = user
 	// Matrix clicks need no global discovery pass. The live delivery/finish
 	// checks own fresh trees; this snapshot only describes the visible panel.
 	refresh_route_node(selected_node())
@@ -31,7 +36,11 @@
 	ui_bonuses = list()
 	ui_files = all_files()
 	ui_completion_cache = list()
-	. = build_ui_data(user)
+	var/list/session
+	if(user)
+		ui_source = ui_source || src
+		session = map_view.wire_session(user, ui_source, SStgui.get_open_ui(user, ui_source))
+	. = build_ui_data(user, ui_source, session)
 	access_cache = null
 	network_level_cache = null
 	ui_node_levels = null
@@ -44,7 +53,12 @@
 	ui_completion_cache = null
 	QDEL_NULL(ui_routes)
 
-/datum/netrun_console/proc/build_ui_data(mob/user)
+/datum/netrun_console/ui_static_data(mob/user)
+	if(user)
+		operator = user
+	return list("cli" = cli_payload(workspace_view == "terminal"), "networks" = network_catalog())
+
+/datum/netrun_console/proc/build_ui_data(mob/user, datum/ui_source, list/session)
 	var/list/data = list()
 	data["origin"] = origin
 	data["workspace_view"] = workspace_view
@@ -64,7 +78,7 @@
 	// Matrix clicks must not rebuild the hidden graph, global autocomplete,
 	// selected-node command help or the native machine UI behind the puzzle.
 	if(intrusion.breach && !(workspace_view in list("map", "files", "pinned", "terminal", "web")))
-		data["networks"] = ui_network_catalog || list()
+		append_network_catalog(data, session, FALSE)
 		data["view"] = null
 		data["web"] = null
 		data["map"] = null
@@ -79,52 +93,13 @@
 		data["entity"] = entity_data()
 		data["combat"] = combat_payload()
 		data["chat"] = chat_data()
-		data["cli"] = cli_payload(FALSE)
+		append_cli_payload(data, FALSE, session)
 		data["windows"] = windows_payload()
 		data["window"] = null
 		return data
 	data["file"] = file_payload()
 
-	var/list/networks = list()
-	var/list/homes = home_networks()
-	for(var/network_id in SSnetrun.networks)
-		var/datum/netrun_network/network = SSnetrun.networks[network_id]
-		var/reachable = can_reach(network)
-		if(!reachable && network.isolated)
-			continue
-		networks += list(list(
-			"id" = network.id,
-			"name" = network.name,
-			"short" = network.short_name,
-			"code" = network.code,
-			"color" = network.color,
-			"security" = network.security,
-			"isolated" = network.isolated,
-			"home" = (network in homes),
-			"reachable" = reachable,
-			"access" = network_level(network),
-			"has_key" = has_key(network),
-			"can_breach" = intrusion.can_breach && reachable && network_level(network) < NETRUN_ACCESS_GUEST,
-			"nodes" = length(network.nodes),
-		))
-	if(web_browsing() && has_uplink() && SSntnet.is_enabled())
-		networks += list(list(
-			"id" = "web",
-			"name" = "NTnet — сайты",
-			"short" = "WEB",
-			"code" = "WEB",
-			"color" = "#5bc0de",
-			"security" = 0,
-			"isolated" = FALSE,
-			"home" = FALSE,
-			"reachable" = TRUE,
-			"access" = NETRUN_ACCESS_GUEST,
-			"has_key" = FALSE,
-			"can_breach" = FALSE,
-			"nodes" = length(SSntnet.catalog),
-		))
-	data["networks"] = networks
-	ui_network_catalog = networks
+	append_network_catalog(data, session)
 
 	if(workspace_view == "web" && web_browsing())
 		data["view"] = null
@@ -136,7 +111,7 @@
 		data["entity"] = entity_data()
 		data["combat"] = combat_payload()
 		data["chat"] = chat_data()
-		data["cli"] = cli_payload(FALSE)
+		append_cli_payload(data, FALSE, session)
 		data["windows"] = windows_payload()
 		data["window"] = null
 		data["map"] = null
@@ -147,7 +122,7 @@
 		return data
 	data["web"] = null
 
-	data["map"] = workspace_view == "map" ? map_payload() : null
+	data["map"] = workspace_view == "map" ? map_payload(user, ui_source, session) : null
 	data["waypoint"] = workspace_view == "map" ? waypoint_payload() : null
 	data["view"] = null
 
@@ -208,7 +183,7 @@
 	data["entity"] = entity_data()
 	data["combat"] = combat_payload()
 	data["chat"] = chat_data()
-	data["cli"] = cli_payload(workspace_view == "terminal")
+	append_cli_payload(data, workspace_view == "terminal", session)
 	data["windows"] = windows_payload()
 	data["window"] = workspace_view == "pinned" && remote_session.active_window ? window_payload() : null
 	data["ping_route"] = (map_view.ping_route && world.time - map_view.ping_at < 6 SECONDS) ? map_view.ping_route : null
@@ -264,8 +239,8 @@
 		return selected
 	return route_source()
 
-/datum/netrun_console/proc/map_payload()
-	return map_view.payload()
+/datum/netrun_console/proc/map_payload(mob/user, datum/ui_source, list/session)
+	return map_view.wire_payload(user, ui_source, session)
 
 /datum/netrun_console/proc/route_reveal_addresses(datum/component/netrun_node/focus)
 	. = list()
@@ -379,12 +354,15 @@
 	return payload
 
 /datum/netrun_console/ui_act(action, list/params, datum/tgui/ui, datum/ui_state/state)
-	last_ui_at = world.time
+	note_ui_activity()
 	invalidate_ui()
 	. = ..()
 	if(.)
 		return
 	operator = ui.user
+	if(action == "map_resync")
+		map_view.resync(ui)
+		return TRUE
 	if(file_act(action, params, ui.user))
 		return TRUE
 	switch(action)
@@ -681,3 +659,72 @@
 
 // MARK: Командная строка
 
+
+/datum/netrun_console/proc/network_catalog()
+	var/list/catalog_context = ui_projection_context()
+	if(ui_network_catalog && netrun_snapshot_equal(ui_catalog_context, catalog_context))
+		return ui_network_catalog
+	ui_catalog_context = catalog_context
+	var/list/networks = list()
+	var/list/homes = home_networks()
+	for(var/network_id in SSnetrun.networks)
+		var/datum/netrun_network/network = SSnetrun.networks[network_id]
+		var/reachable = can_reach(network)
+		if(!reachable && network.isolated)
+			continue
+		networks += list(list(
+			"id" = network.id,
+			"name" = network.name,
+			"short" = network.short_name,
+			"code" = network.code,
+			"color" = network.color,
+			"security" = network.security,
+			"isolated" = network.isolated,
+			"home" = (network in homes),
+			"reachable" = reachable,
+			"access" = network_level(network),
+			"has_key" = has_key(network),
+			"can_breach" = intrusion.can_breach && reachable && network_level(network) < NETRUN_ACCESS_GUEST,
+			"nodes" = length(network.nodes),
+		))
+	if(web_browsing() && has_uplink() && SSntnet.is_enabled())
+		networks += list(list(
+			"id" = "web",
+			"name" = "NTnet — сайты",
+			"short" = "WEB",
+			"code" = "WEB",
+			"color" = "#5bc0de",
+			"security" = 0,
+			"isolated" = FALSE,
+			"home" = FALSE,
+			"reachable" = TRUE,
+			"access" = NETRUN_ACCESS_GUEST,
+			"has_key" = FALSE,
+			"can_breach" = FALSE,
+			"nodes" = length(SSntnet.catalog),
+		))
+	ui_network_catalog = networks
+	return networks
+
+/// The backend retains omitted fields, so unchanged LAN catalogs need no repeated JSON.
+/datum/netrun_console/proc/append_network_catalog(list/data, list/session, refresh = TRUE)
+	var/list/catalog = refresh ? network_catalog() : ui_network_catalog
+	if(!catalog)
+		catalog = list()
+	if(session && session["network_catalog"] == catalog)
+		return
+	data["networks"] = catalog
+	if(session)
+		session["network_catalog"] = catalog
+
+/// Small authorization/connectivity key shared by catalog and completion projections.
+/// File-store revisions cover keys, daemons and renamed/deleted completion candidates.
+/datum/netrun_console/proc/ui_projection_context()
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/source = route_source()
+	var/list/access = user_access()
+	return list(operator, source?.address, source?.is_online(), graph.revision, graph.transit_availability_revision,
+		map_view.authorization_revision, access.Copy(), is_locked(), intrusion.can_breach,
+		inventory.local_store?.revision, inventory.shard, inventory.shard?.file_store?.revision,
+		connection.wireless, connection.jack?.address, web_browsing(), ui_uplink_value,
+		SSntnet.is_enabled(), length(SSntnet.catalog))

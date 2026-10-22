@@ -7,13 +7,14 @@ import { CombatPanel } from './CombatPanel';
 import { NetrunContent } from './Content';
 import { FilePanel } from './FilePanel';
 import { GraphRenderer } from './graphRenderer';
+import { GraphScene } from './graphScene';
 import { GraphViewport } from './graphViewport';
 import * as mapGeometry from './mapLayout';
 import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog } from './Panels';
-import { NetrunData } from './types';
+import { NetMap, NetMapDelta, NetrunData } from './types';
 import { WindowPanel } from './WindowPanel';
 
 const command = {
@@ -64,6 +65,61 @@ const sent = (topic, action: string) => topic.mock.calls
   .map((call) => JSON.parse(call[0].payload));
 
 describe('Netrun terminal panels', () => {
+  test('quiet delta polls retain a 6000-node scene without layout, reindexing or canvas work', () => {
+    const context = jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
+    const paint = jest.spyOn(GraphRenderer.prototype, 'paint').mockImplementation(() => undefined);
+    const live = jest.spyOn(GraphScene, 'live');
+    const index = jest.spyOn(GraphScene.prototype, 'update');
+    const layout = jest.spyOn(mapGeometry, 'layoutGraph');
+    const originalFrame = window.requestAnimationFrame;
+    Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: undefined });
+    try {
+      const nodes = Array.from({ length: 6000 }, (_, i) => ({ ...node, address: `N${i}`, x: 10 + i % 80 * 2, y: 10 + Math.floor(i / 80) * 2 }));
+      const initial: NetMap = { epoch: 'terminal-ui', full: true, gateways: [], focus: nodes[0].address,
+        revision: 1, structure_revision: 1, static_revision: 1, state_revision: 1, nodes, edges: [] };
+      const topic = setup({ map: initial });
+      const panel = render(<StationMap />);
+      const counts = [paint, live, index, layout].map((spy) => spy.mock.calls.length);
+      for (let i = 0; i < 5; i++) {
+        const idle: NetMapDelta = { epoch: 'terminal-ui', full: false, base_revision: 1, state_revision: 1, nodes: [], edges: [], focus: nodes[0].address };
+        act(() => topic.store.dispatch(backendUpdate({ data: { map: idle, events: [], search: [] } })));
+        panel.rerender(<StationMap />);
+      }
+      expect(panel.getByText('6000/6000 · текущий этаж')).toBeTruthy();
+      expect([paint, live, index, layout].map((spy) => spy.mock.calls.length)).toEqual(counts);
+      expect(sent(topic, 'map_resync')).toEqual([]);
+    } finally {
+      context.mockRestore(); paint.mockRestore(); live.mockRestore(); index.mockRestore(); layout.mockRestore();
+      Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: originalFrame });
+    }
+  });
+
+  test('a refreshed UI requests one baseline then applies sparse updates and removals', () => {
+    const missing: NetMapDelta = { epoch: 'new-ui', full: false, base_revision: 4, state_revision: 5, nodes: [], edges: [] };
+    const topic = setup({ map: missing });
+    const panel = render(<StationMap />);
+    expect(sent(topic, 'map_resync')).toEqual([{}]);
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...missing, state_revision: 6 } } })));
+    panel.rerender(<StationMap />);
+    expect(sent(topic, 'map_resync')).toEqual([{}]);
+    const full: NetMap = { epoch: 'new-ui', full: true, gateways: [], focus: node.address, revision: 1,
+      structure_revision: 1, static_revision: 1, state_revision: 6, nodes: [node], edges: [] };
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: full } })));
+    panel.rerender(<StationMap />);
+    expect(panel.getByText('1/1 · текущий этаж')).toBeTruthy();
+    const peer = { ...node, address: 'PEER', x: 20 };
+    const update: NetMapDelta = { epoch: 'new-ui', full: false, base_revision: 6, state_revision: 7,
+      structure_revision: 2, static_revision: 2, nodes: [peer], edges: [{ id: 'new-link', from: node.address, to: peer.address, kind: 'apc' }] };
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: update } })));
+    panel.rerender(<StationMap />);
+    expect(panel.getByText('2/2 · текущий этаж')).toBeTruthy();
+    act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...update, base_revision: 7, state_revision: 8,
+      structure_revision: 3, static_revision: 3, nodes: [], edges: [], removed_nodes: [node.address], removed_edges: ['new-link'] } } })));
+    panel.rerender(<StationMap />);
+    expect(panel.getByText('1/1 · текущий этаж')).toBeTruthy();
+    expect(sent(topic, 'map_resync')).toEqual([{}]);
+  });
+
   test('moving endpoints and live overlays leave the canvas cached while stationary deletion repaints', () => {
     const context = jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
     const paint = jest.spyOn(GraphRenderer.prototype, 'paint').mockImplementation(() => undefined);

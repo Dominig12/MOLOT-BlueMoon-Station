@@ -29,6 +29,15 @@
 	var/list/shown_addresses = list()
 	var/list/revealed_addresses = list()
 	var/list/context
+	/// Authorization changes replace every UI baseline, including credentials lost by an operator.
+	var/authorization_revision = 0
+	var/list/security_context
+	var/wire_epoch = 0
+	var/wire_session_id = 0
+	/// REF strings and timestamps only: closed windows/users are never retained by this cache.
+	var/list/wire_sessions = list()
+	var/list/wire_journal = list()
+	var/wire_journal_entries = 0
 	var/active_sector
 	var/active_z
 	var/source_sector
@@ -70,6 +79,9 @@
 	shown_addresses.Cut()
 	revealed_addresses.Cut()
 	static_structure = null
+	wire_sessions.Cut()
+	wire_journal.Cut()
+	security_context = null
 	owner = null
 	return ..()
 
@@ -90,8 +102,10 @@
 	if(owner)
 		owner.ui_dirty = TRUE
 
-/datum/netrun_map_view/proc/invalidate()
+/datum/netrun_map_view/proc/invalidate(sensitive = TRUE)
 	dirty = TRUE
+	if(sensitive)
+		authorization_revision++
 	if(owner)
 		owner.ui_dirty = TRUE
 
@@ -110,10 +124,15 @@
 	source_z = current?.z
 	// Access is included so a credential change (an ID picked up or dropped) refreshes the
 	// projection through the context diff - no periodic full pass is needed to catch it.
-	var/list/current_context = list(owner.operator, owner.route_source()?.address, selected_address, waypoint_address, active_sector, active_z, owner.user_access(), owner.is_locked(), graph.availability_revision)
+	var/datum/component/netrun_node/source = owner.route_source()
+	var/list/current_context = list(owner.operator, source?.address, source?.is_online(), selected_address, waypoint_address, active_sector, active_z, owner.user_access(), owner.is_locked(), graph.transit_availability_revision)
 	if(!netrun_snapshot_equal(context, current_context))
 		dirty = TRUE
 	context = current_context
+	var/list/current_security = list(owner.operator, owner.route_source()?.address, owner.user_access(), owner.is_locked(), authorization_revision)
+	if(!netrun_snapshot_equal(security_context, current_security))
+		security_context = current_security
+		wire_epoch++
 	// Fully event-driven: a full rebuild only on a structural change, context change or a new
 	// graph revision; a status-only change updates just the affected nodes in place.
 	if(dirty || structure_dirty || !snapshot || snapshot["revision"] != graph.revision)
@@ -136,16 +155,21 @@
 		var/requested_z = isnum(z) ? z : text2num("[z]")
 		active_sector = id
 		active_z = (requested_z in levels) ? requested_z : ((source_z in levels) ? source_z : levels[1])
-		invalidate()
+		invalidate(FALSE)
 		return TRUE
 	return FALSE
 
 /datum/netrun_map_view/proc/follow_source()
 	active_sector = source_sector
 	active_z = source_z
-	invalidate()
+	invalidate(FALSE)
 
 /datum/netrun_map_view/proc/rebuild(datum/netrun_topology/graph)
+	var/previous_revision = state_revision
+	var/list/changed_nodes = list()
+	var/list/changed_edges = list()
+	var/list/removed_nodes = list()
+	var/list/removed_edges = list()
 	var/list/revealed = owner.route_reveal_addresses(owner.map_focus_node())
 	revealed_addresses = revealed
 	var/list/shown = list()
@@ -166,10 +190,7 @@
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(QDELETED(node) || !owner.can_route(node) || (!reveal_all && !(address in revealed) && !owner.node_visible(node)))
 			continue
-		var/list/entry = node.ui_entry(owner)
-		entry["network"] = node.network?.id
-		entry["sector"] = node.binding_sector
-		entry["neighbor_count"] = length(graph.neighbors(address))
+		var/list/entry = project_entry(node, length(graph.neighbors(address)))
 		if(netrun_snapshot_equal(node_entries[address], entry))
 			entry = node_entries[address]
 		next_nodes[address] = entry
@@ -199,6 +220,8 @@
 		if(entry["sector"] != active_sector || entry["z"] != active_z)
 			continue
 		map_nodes += list(entry)
+		if(!shown_addresses[address] || node_entries[address] != entry)
+			changed_nodes += list(entry)
 		node_indexes[address] = length(map_nodes)
 		incident_edges[address] = list()
 		shown[address] = TRUE
@@ -217,6 +240,8 @@
 		if(netrun_snapshot_equal(edge_entries[edge["id"]], entry))
 			entry = edge_entries[edge["id"]]
 		next_edges[edge["id"]] = entry
+		if(edge_entries[edge["id"]] != entry)
+			changed_edges += list(entry)
 		map_edges += list(entry)
 		var/list/from_edges = incident_edges[edge["from"]]
 		var/list/to_edges = incident_edges[edge["to"]]
@@ -249,6 +274,12 @@
 	if(!snapshot || !netrun_snapshot_equal(snapshot["nodes"], map_nodes) || !netrun_snapshot_equal(snapshot["edges"], map_edges) || !netrun_snapshot_equal(snapshot["gateways"], gateways) || !netrun_snapshot_equal(snapshot["sectors"], sector_catalog) || !netrun_snapshot_equal(snapshot["apc_zones"], apc_zones) || !netrun_snapshot_equal(snapshot["relay_destinations"], destinations))
 		state_revision++
 	structure = new_structure
+	for(var/address in shown_addresses)
+		if(!shown[address])
+			removed_nodes += address
+	for(var/id in edge_entries)
+		if(!next_edges[id])
+			removed_edges += id
 	node_entries = next_nodes
 	edge_entries = next_edges
 	shown_addresses = shown
@@ -256,6 +287,7 @@
 		"revision" = graph.revision, "structure_revision" = structure_revision, "state_revision" = state_revision, "static_revision" = static_revision,
 		"source_sector" = source_sector, "source_z" = source_z, "active_sector" = active_sector, "active_z" = active_z,
 		"sectors" = sector_catalog, "apc_zones" = apc_zones, "relay_destinations" = destinations)
+	record_wire_delta(previous_revision, changed_nodes, changed_edges, removed_nodes, removed_edges)
 	dirty = FALSE
 	structure_dirty = FALSE
 	dirty_nodes.Cut()
@@ -263,6 +295,9 @@
 
 /// Only O(changed nodes + their incident edges) work for a live map update.
 /datum/netrun_map_view/proc/apply_incremental(datum/netrun_topology/graph)
+	var/previous_revision = state_revision
+	var/list/node_updates = list()
+	var/list/edge_updates = list()
 	var/list/map_nodes = snapshot["nodes"]
 	var/list/map_edges = snapshot["edges"]
 	var/list/paint_nodes = static_structure[1]
@@ -272,6 +307,9 @@
 	var/static_changed = FALSE
 	var/geometry_changed = FALSE
 	var/list/changed_edges = list()
+	var/list/prepared = list()
+	// Preflight visibility before mutating the retained snapshot: a late full rebuild must
+	// not lose earlier changes from the same batch or publish a partially updated baseline.
 	for(var/address in dirty_nodes)
 		var/list/previous = node_entries[address]
 		var/index = node_indexes[address]
@@ -287,18 +325,21 @@
 			return
 		if(!previous || !index)
 			continue
-		var/list/entry = node.ui_entry(owner)
-		entry["network"] = node.network?.id
-		entry["sector"] = node.binding_sector
-		entry["neighbor_count"] = previous["neighbor_count"]
-		if(netrun_snapshot_equal(previous, entry))
-			continue
+		var/list/entry = project_entry(node, previous["neighbor_count"])
 		// Anchoring/unanchoring transfers a marker between canvas and DOM layers.
 		if(previous["dynamic"] != entry["dynamic"])
 			rebuild(graph)
 			return
+		prepared[address] = entry
+	for(var/address in prepared)
+		var/list/previous = node_entries[address]
+		var/list/entry = prepared[address]
+		var/index = node_indexes[address]
+		if(netrun_snapshot_equal(previous, entry))
+			continue
 		map_nodes[index] = entry
 		node_entries[address] = entry
+		node_updates += list(entry)
 		bumped = TRUE
 		var/list/node_structure = structure_entry(entry)
 		if(!netrun_snapshot_equal(structural_nodes[address], node_structure))
@@ -320,6 +361,7 @@
 			continue
 		map_edges[index] = entry
 		edge_entries[entry["id"]] = entry
+		edge_updates += list(entry)
 		bumped = TRUE
 		if(paint_edges[entry["id"]])
 			paint_edges[entry["id"]] = entry.Copy()
@@ -331,6 +373,15 @@
 		snapshot["structure_revision"] = ++structure_revision
 	if(static_changed)
 		snapshot["static_revision"] = ++static_revision
+	record_wire_delta(previous_revision, node_updates, edge_updates, list(), list())
+
+/// One serialization seam makes incremental work measurable without constructing fake topology.
+/datum/netrun_map_view/proc/project_entry(datum/component/netrun_node/node, neighbor_count)
+	var/list/entry = node.ui_entry(owner)
+	entry["network"] = node.network?.id
+	entry["sector"] = node.binding_sector
+	entry["neighbor_count"] = neighbor_count
+	return entry
 
 /datum/netrun_map_view/proc/structure_entry(list/entry)
 	return list(entry["type"], entry["uplink"], entry["network"], entry["sector"], entry["x"], entry["y"], entry["z"], entry["dynamic"])
@@ -350,7 +401,7 @@
 		var/datum/component/netrun_node/target = graph.nodes[address]
 		var/turf/position = get_turf(target.parent)
 		var/online = netrun_link_available(selected, target)
-		var/can_hop = entity && entity.host_node == selected && world.time >= entity.next_hop && !entity.is_stunned() && entity.can_enter(target)
+		var/can_hop = entity && entity.host_node == selected && world.time >= entity.next_hop && !entity.is_stunned() && entity.can_enter(target, owner.ui_routes)
 		var/reason
 		if(!entity)
 			reason = "Переход доступен сетевой сущности."
@@ -363,6 +414,117 @@
 		. += list(list("from" = selected.address, "to" = address, "name" = target.get_name(),
 			"sector" = target.binding_sector, "z" = position?.z, "online" = online,
 			"can_hop" = !!can_hop, "unavailable_reason" = reason))
+
+/// Bounded immutable change batches are shared by viewers; no quiet poll walks map entries.
+/datum/netrun_map_view/proc/record_wire_delta(previous_revision, list/nodes, list/edges, list/removed_nodes, list/removed_edges)
+	if(state_revision == previous_revision)
+		return
+	var/count = length(nodes) + length(edges) + length(removed_nodes) + length(removed_edges)
+	wire_journal += list(list("base_revision" = previous_revision, "state_revision" = state_revision,
+		"nodes" = nodes, "edges" = edges, "removed_nodes" = removed_nodes, "removed_edges" = removed_edges, "count" = count))
+	wire_journal_entries += count
+	while(length(wire_journal) > 32 || wire_journal_entries > 4096)
+		var/list/oldest = wire_journal[1]
+		wire_journal_entries -= oldest["count"]
+		wire_journal.Cut(1, 2)
+
+/// A UI is identified by its actual source, including the containing NTOS program.
+/// The first registered poll binds the provisional opening snapshot without resending it.
+/datum/netrun_map_view/proc/wire_session(mob/user, datum/ui_source, datum/tgui/ui)
+	var/key = "[REF(user)]:[REF(ui_source)]"
+	var/list/session = wire_sessions[key]
+	var/ui_reference = ui ? REF(ui) : null
+	if(!session || !ui || (session["ui"] && session["ui"] != ui_reference))
+		session = list("id" = ++wire_session_id, "ui" = ui_reference)
+		wire_sessions[key] = session
+	else if(!session["ui"])
+		session["ui"] = ui_reference
+	session["seen"] = world.time
+	// Session records contain strings, not datum references, and expire when unused.
+	for(var/stale_key in wire_sessions)
+		var/list/stale = wire_sessions[stale_key]
+		if(world.time > stale["seen"] + 5 MINUTES)
+			wire_sessions -= stale_key
+	return session
+
+/datum/netrun_map_view/proc/wire_payload(mob/user, datum/ui_source, list/session)
+	var/list/full = payload()
+	if(!user)
+		return full
+	ui_source = ui_source || owner
+	var/datum/tgui/ui = SStgui.get_open_ui(user, ui_source)
+	return encode_wire(full, session ? session : wire_session(user, ui_source, ui))
+
+/// A refresh or skipped delivery cannot silently merge a patch into the wrong baseline.
+/// The frontend requests resync through its validated UI action when it detects that case.
+/datum/netrun_map_view/proc/resync(datum/tgui/ui)
+	if(!ui?.user || !ui.src_object)
+		return
+	var/key = "[REF(ui.user)]:[REF(ui.src_object)]"
+	wire_sessions -= key
+	owner?.invalidate_ui()
+
+/datum/netrun_map_view/proc/encode_wire(list/full, list/session)
+	var/epoch = "[REF(src)]:[wire_epoch]:[session["id"]]"
+	var/previous = session["revision"]
+	var/list/result = full.Copy()
+	var/list/node_updates = list()
+	var/list/edge_updates = list()
+	var/list/removed_nodes = list()
+	var/list/removed_edges = list()
+	var/send_full = isnull(previous) || session["epoch"] != epoch || previous > state_revision
+	if(!send_full && previous != state_revision)
+		var/cursor = previous
+		for(var/list/batch as anything in wire_journal)
+			if(batch["state_revision"] <= previous)
+				continue
+			if(batch["base_revision"] != cursor)
+				break
+			for(var/address in batch["removed_nodes"])
+				node_updates -= address
+				removed_nodes[address] = TRUE
+			for(var/id in batch["removed_edges"])
+				edge_updates -= id
+				removed_edges[id] = TRUE
+			for(var/list/entry as anything in batch["nodes"])
+				node_updates[entry["address"]] = entry
+				removed_nodes -= entry["address"]
+			for(var/list/entry as anything in batch["edges"])
+				edge_updates[entry["id"]] = entry
+				removed_edges -= entry["id"]
+			cursor = batch["state_revision"]
+		send_full = cursor != state_revision
+	result["epoch"] = epoch
+	result["full"] = send_full
+	if(!send_full)
+		result["base_revision"] = previous
+		// Selected APC shapes and sector catalogs can be large despite being immutable.
+		// Omit unchanged metadata rather than re-encoding their tiles every poll.
+		for(var/key in list("gateways", "sectors", "apc_zones"))
+			if(session[key] == full[key])
+				result -= key
+		result["nodes"] = list()
+		result["edges"] = list()
+		var/list/wire_nodes = result["nodes"]
+		var/list/wire_edges = result["edges"]
+		for(var/address in node_updates)
+			wire_nodes += list(node_updates[address])
+		for(var/id in edge_updates)
+			wire_edges += list(edge_updates[id])
+		// Associative keys are emitted as arrays, never as address=>TRUE objects.
+		result["removed_nodes"] = list()
+		result["removed_edges"] = list()
+		var/list/wire_removed_nodes = result["removed_nodes"]
+		var/list/wire_removed_edges = result["removed_edges"]
+		for(var/address in removed_nodes)
+			wire_removed_nodes += address
+		for(var/id in removed_edges)
+			wire_removed_edges += id
+	session["epoch"] = epoch
+	session["revision"] = state_revision
+	for(var/key in list("gateways", "sectors", "apc_zones"))
+		session[key] = full[key]
+	return result
 
 /// Compare wire data without serializing the whole graph into another JSON string.
 /proc/netrun_snapshot_equal(first, second)

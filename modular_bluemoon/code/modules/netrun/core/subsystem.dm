@@ -14,6 +14,16 @@ SUBSYSTEM_DEF(netrun)
 	var/list/commands
 	var/list/currentrun = list()
 	var/list/currentnodes = list()
+	/// Only sessions with timers, a live UI or an entity are processed.
+	var/list/active_consoles = list()
+	/// Moving devices and native states that genuinely lack notifications.
+	var/list/poll_nodes = list()
+	var/list/dirty_nodes = list()
+	/// node -> next transient expiry (activity, reboot, firewall).
+	var/list/timed_nodes = list()
+	var/last_processed_nodes = 0
+	var/last_processed_consoles = 0
+	var/pass_item_count = 0
 	var/list/currentbreaches = list()
 	var/breach_snapshot_active = FALSE
 	var/reconcile_nodes = FALSE
@@ -23,74 +33,134 @@ SUBSYSTEM_DEF(netrun)
 	var/datum/netrun_topology/topology
 
 /datum/controller/subsystem/netrun/stat_entry(msg)
-	msg = "N:[length(nodes_by_address)] C:[length(consoles)] E:[length(entities)]"
+	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles]"
 	return ..()
 
+/// Coalescing worksets keep quiet machines and terminals out of the one-second pass.
+/datum/controller/subsystem/netrun/proc/queue_node(datum/component/netrun_node/node)
+	if(!QDELETED(node))
+		dirty_nodes[node] = TRUE
+
+/// A display snapshot can be requested before the next one-second node pass.
+/// Inspect only queued native changes; command execution still builds fresh routes.
+/datum/controller/subsystem/netrun/proc/reconcile_dirty_availability()
+	for(var/datum/component/netrun_node/node as anything in dirty_nodes)
+		if(QDELETED(node))
+			continue
+		var/online = node.is_online()
+		if(online != node.last_online)
+			node.last_online = online
+			get_topology().availability_changed(node)
+
+/datum/controller/subsystem/netrun/proc/track_node(datum/component/netrun_node/node)
+	if(QDELETED(node))
+		return
+	var/atom/endpoint = node.parent
+	if(node.is_dynamic() || endpoint.netrun_needs_poll())
+		poll_nodes[node] = TRUE
+	else
+		poll_nodes -= node
+	var/next_expiry = INFINITY
+	if(node.offline_until > world.time)
+		next_expiry = min(next_expiry, node.offline_until)
+	if(node.firewall_until > world.time)
+		next_expiry = min(next_expiry, node.firewall_until)
+	if(node.last_activity + 5 SECONDS > world.time)
+		next_expiry = min(next_expiry, node.last_activity + 5 SECONDS)
+	if(next_expiry < INFINITY)
+		timed_nodes[node] = next_expiry
+	else
+		timed_nodes -= node
+
+/datum/controller/subsystem/netrun/proc/untrack_node(datum/component/netrun_node/node)
+	poll_nodes -= node
+	dirty_nodes -= node
+	timed_nodes -= node
+	currentnodes -= node
+
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
+	var/slice_start_usage = TICK_USAGE
 	if(!resumed)
-		currentrun = consoles.Copy()
+		current_pass_cost_ms = 0
+		last_processed_nodes = 0
+		last_processed_consoles = 0
+		currentrun = active_consoles.Copy()
 		currentice = ice_processes.Copy()
 		currentbreaches = list()
 		reconcile_nodes = length(entities) || !patrol_initialized || !lore_initialized
-		// Every mapped terminal owns a console; its mere existence is not an active session.
-		// Build the breach candidate pool once instead of scanning all terminals per ICE.
 		for(var/datum/netrun_console/console as anything in currentrun)
 			if(QDELETED(console))
 				continue
 			if(console.intrusion.breach)
 				currentbreaches += console
-			if(console.is_ui_active() || console.intrusion.breach || console.intrusion.trace > 0 || console.connection.jack)
+			if(console.needs_processing())
 				reconcile_nodes = TRUE
-		currentnodes = reconcile_nodes ? nodes_by_address.Copy() : list()
+		currentnodes = dirty_nodes.Copy()
+		if(reconcile_nodes)
+			currentnodes |= poll_nodes
+		for(var/datum/component/netrun_node/node as anything in timed_nodes)
+			if(timed_nodes[node] <= world.time)
+				currentnodes[node] = TRUE
+		pass_item_count = length(currentrun) + length(currentice) + length(currentnodes)
 	var/delta = wait / (1 SECONDS)
-	// Combat and open sessions go first: a heavy node sync must never starve ICE reactions
-	// or UI refresh, or a one-second fight would stretch to several real seconds under load.
+	var/profiling = profile_armed
+	// ICE snapshots remain resumable across MC slices, without rescanning all terminals.
 	while(length(currentice))
 		var/datum/netrun_ice/ice = currentice[length(currentice)]
 		currentice.len--
+		var/item_start_usage = profiling ? TICK_USAGE : 0
 		if(!QDELETED(ice))
 			breach_snapshot_active = TRUE
 			ice.process_ai(delta)
 			breach_snapshot_active = FALSE
+			if(profiling)
+				profile_note(ice.type, max(0, TICK_DELTA_TO_MS(TICK_USAGE - item_start_usage)), ice)
 		if(MC_TICK_CHECK)
+			current_pass_cost_ms += max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
 			return
 	currentbreaches.Cut()
 	while(length(currentrun))
 		var/datum/netrun_console/console = currentrun[length(currentrun)]
 		currentrun.len--
+		var/item_start_usage = profiling ? TICK_USAGE : 0
 		if(!QDELETED(console))
 			console.access_session.process_events()
 			console.process_tick(delta)
 			console.flush_ui()
+			last_processed_consoles++
+			if(!console.needs_processing())
+				active_consoles -= console
+			if(profiling)
+				profile_note(console.type, max(0, TICK_DELTA_TO_MS(TICK_USAGE - item_start_usage)), console)
 		if(MC_TICK_CHECK)
+			current_pass_cost_ms += max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
 			return
-	if(!reconcile_nodes)
-		// Expire retained UI routes without building an unopened physical topology.
-		get_topology().refresh_route_tables()
-		return
-	// Вложенный предмет не получает MOVED при перемещении носителя. Сверяем топологию
-	// независимо от открытых интерфейсов, не создавая сигнал на каждом контейнере.
-	// Это односекундная сверка - она может безопасно уступить тик боевой части выше.
+	var/datum/netrun_topology/graph = get_topology()
 	while(length(currentnodes))
-		var/address = currentnodes[length(currentnodes)]
-		var/datum/component/netrun_node/node = currentnodes[address]
+		var/datum/component/netrun_node/node = currentnodes[length(currentnodes)]
 		currentnodes.len--
+		dirty_nodes -= node
+		var/item_start_usage = profiling ? TICK_USAGE : 0
 		if(!QDELETED(node))
-			// Static turf-bound machines already receive MOVED; only carried/mobile
-			// endpoints need a membership fallback when their carrier moves.
-			if(node.is_dynamic() || !node.binding_checked || node.binding_infra_revision != get_topology().infrastructure_revision)
+			if(node.is_dynamic() || !node.binding_checked || node.binding_infra_revision != graph.infrastructure_revision)
 				node.join_network()
 			node.reconcile_state()
+			track_node(node)
+			last_processed_nodes++
+			if(profiling)
+				profile_note(node.parent.type, max(0, TICK_DELTA_TO_MS(TICK_USAGE - item_start_usage)), node.parent)
 		if(MC_TICK_CHECK)
+			current_pass_cost_ms += max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
 			return
-	// Publish new endpoints and carrier movement even when nobody opens a map.
-	// Active display routes are server-owned; execution still checks a fresh path.
-	ensure_topology().refresh_route_tables()
-	// One-time passive patrol and lore seeding once the round's networks are populated.
+	if(reconcile_nodes)
+		graph = ensure_topology()
+	graph.refresh_route_tables()
 	if(!patrol_initialized && length(networks))
 		initialize_patrol()
 	if(!lore_initialized && length(nodes_by_address))
 		initialize_lore()
+	current_pass_cost_ms += max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
+	on_pass_finished(pass_item_count)
 
 /datum/controller/subsystem/netrun/proc/get_network(id)
 	if(!id)

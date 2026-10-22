@@ -6,6 +6,7 @@ import { GraphCanvas, GraphCanvasHandle } from './GraphCanvas';
 import { GraphLayout } from './graphLayout';
 import { StaticMapProjection } from './mapLayers';
 import { createGraphLayoutCache, graphAdjacency, graphNeighborhood, GraphPoint, layoutGraph } from './mapLayout';
+import { NetrunMapStream } from './mapStream';
 import {
   ACCESS_NAMES, NetEdge, NetEvent, NetMap, NetNode, NetrunData, NODE_ICONS,
   NODE_NAMES, PingHop, SearchResult, THEME, Waypoint,
@@ -35,8 +36,10 @@ const EMPTY_ADDRESSES: string[] = [];
 
 // TGUI polling replaces data objects even if their contents have not changed.
 // Retain component references so logs/combat ticks do not trigger map layouts.
-const useSemanticValue = <T, >(value: T, signature: string): T => {
+const useSemanticValue = <T, >(value: T, signature: string | undefined): T => {
   const previous = useRef({ value, signature });
+  // The stream adapter already preserves identities for versioned wire data.
+  if (signature === undefined) { previous.current = { value, signature }; return value; }
   if (previous.current.signature !== signature) { previous.current = { value, signature }; }
   return previous.current.value;
 };
@@ -50,49 +53,62 @@ const useStableList = <T, >(items: T[]): T[] => {
 
 export const StationMap = (props: { suspended?: boolean } = {}) => {
   const { act, data } = useBackend<NetrunData>();
+  const [stream] = useState(() => new NetrunMapStream());
+  const resyncSent = useRef(0);
   const latest = useRef<MapInput | null>(null);
   if (!props.suspended) {
+    const resolved = stream.apply(data.map);
     latest.current = {
-      map: data.map || latest.current?.map || null, selectedAddress: data.selected?.address ?? null,
+      map: data.map ? resolved : latest.current?.map || null, selectedAddress: data.selected?.address ?? null,
       selectedNetwork: data.selected_network?.id ?? null, jackAddress: data.jack?.address ?? null,
       entityHost: data.entity?.host ?? null, hasEntity: !!data.entity,
       pingRoute: data.ping_route ?? EMPTY_HOPS, events: data.events ?? EMPTY_EVENTS,
       waypoint: data.waypoint ?? null, search: data.search ?? EMPTY_SEARCH,
     };
   }
+  useEffect(() => {
+    if (!props.suspended && stream.resyncToken !== resyncSent.current) {
+      resyncSent.current = stream.resyncToken;
+      act('map_resync');
+    }
+  }, [props.suspended, stream.resyncToken, act]);
   return latest.current ? <MapSnapshot input={latest.current} act={act} suspended={props.suspended} /> : null;
 };
 
 const MapSnapshot = memo(({ input, act, suspended }: { input: MapInput; act: Act; suspended?: boolean }) => {
   const rawNodes = input.map?.nodes ?? EMPTY_NODES;
   const rawEdges = input.map?.edges ?? EMPTY_EDGES;
+  const streamed = input.map?.epoch !== undefined;
   // Structural hash excludes mutable activity/access/route/trace fields.
   // The server's topology revision alone is not sufficient: a graph slice can
   // change with search/focus/reveal even when its global revision stays fixed.
   const topologyKey = input.map?.structure_revision === undefined ? JSON.stringify([
     input.map?.revision, rawNodes.map((node) => [node.address, node.type, node.uplink]),
     rawEdges.map((edge) => [edge.id, edge.from, edge.to, edge.kind]),
-  ]) : String(input.map.structure_revision);
+  ]) : `${input.map.epoch || ''}:${input.map.structure_revision}`;
   const stateKey = input.map?.state_revision;
-  const nodes = useSemanticValue(rawNodes, stateKey === undefined ? JSON.stringify(rawNodes.map((node) => [
+  const nodes = useSemanticValue(rawNodes, streamed ? undefined : stateKey === undefined ? JSON.stringify(rawNodes.map((node) => [
     node.address, node.type, node.uplink, node.name, node.network, node.sector, node.apc, node.x, node.y, node.z,
     node.online, node.access, node.security, node.entities, node.ice, node.active, node.can_hop, node.dynamic,
   ])) : `${topologyKey}:${stateKey}`);
-  const edges = useSemanticValue(rawEdges, stateKey === undefined ? JSON.stringify(rawEdges) : `${topologyKey}:${stateKey}`);
-  const gateways = useSemanticValue(input.map?.gateways ?? [], JSON.stringify(input.map?.gateways ?? []));
-  const storedRoute = useSemanticValue(input.map?.route ?? null, JSON.stringify(input.map?.route ?? null));
-  const geographyValue = { source_sector: input.map?.source_sector, source_z: input.map?.source_z,
+  const edges = useSemanticValue(rawEdges, streamed ? undefined : stateKey === undefined ? JSON.stringify(rawEdges) : `${topologyKey}:${stateKey}`);
+  const gateways = useSemanticValue(input.map?.gateways ?? [], streamed ? undefined : JSON.stringify(input.map?.gateways ?? []));
+  const storedRoute = useSemanticValue(input.map?.route ?? null, streamed ? undefined : JSON.stringify(input.map?.route ?? null));
+  const geographyValue = useMemo(() => ({ source_sector: input.map?.source_sector, source_z: input.map?.source_z,
     active_sector: input.map?.active_sector, active_z: input.map?.active_z, sectors: input.map?.sectors,
-    apc_zones: input.map?.apc_zones, relay_destinations: input.map?.relay_destinations };
-  const geography = useSemanticValue(geographyValue, JSON.stringify(geographyValue));
-  const apcZones = useSemanticValue(input.map?.apc_zones, JSON.stringify(input.map?.apc_zones));
+    apc_zones: input.map?.apc_zones, relay_destinations: input.map?.relay_destinations }),
+  [input.map?.source_sector, input.map?.source_z, input.map?.active_sector, input.map?.active_z,
+    input.map?.sectors, input.map?.apc_zones, input.map?.relay_destinations]);
+  const geography = useSemanticValue(geographyValue, streamed ? undefined : JSON.stringify(geographyValue));
+  const apcZones = useSemanticValue(input.map?.apc_zones, streamed ? undefined : JSON.stringify(input.map?.apc_zones));
   const map = useMemo(() => input.map ? { ...input.map, ...geography, apc_zones: apcZones, nodes, edges, gateways, route: storedRoute } : null,
     [!!input.map, input.map?.focus, input.map?.revision, input.map?.structure_revision, input.map?.static_revision, stateKey, geography, apcZones, nodes, edges, gateways, storedRoute]);
   const pingRoute = useSemanticValue(input.pingRoute, JSON.stringify(input.pingRoute));
   const events = useSemanticValue(input.events, JSON.stringify(input.events));
   const waypoint = useSemanticValue(input.waypoint, JSON.stringify(input.waypoint));
+  const search = useSemanticValue(input.search, JSON.stringify(input.search));
   return (<GraphMap {...input} map={map} topologyKey={topologyKey} suspended={suspended}
-    pingRoute={pingRoute} events={events} waypoint={waypoint} act={act} />);
+    pingRoute={pingRoute} events={events} waypoint={waypoint} search={search} act={act} />);
 });
 
 const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
@@ -110,7 +126,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   const nodes = map?.nodes ?? EMPTY_NODES;
   const edges = map?.edges ?? EMPTY_EDGES;
   const stationary = staticProjection.update(nodes, edges, map?.static_revision === undefined ? undefined
-    : `${map.active_sector}:${map.active_z}:${map.static_revision}`);
+    : `${map.epoch || ''}:${map.active_sector}:${map.active_z}:${map.static_revision}`);
   const staticPositions = useMemo(() => layoutGraph(stationary.nodes, stationary.edges, layoutCache), [stationary.geometry, layoutCache]);
   const staticSlots = useMemo(() => new Set([...staticPositions.values()].map((point) => `${point.px},${point.py}`)), [staticPositions]);
   const mobileNodes = useMemo(() => nodes.filter((entry) => entry.dynamic), [nodes]);
@@ -272,7 +288,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
         actors={visibleNodes} dynamicEdges={dynamicEdges} suspended={suspended}
         gateways={gateways} selected={selectedAddress} jacked={jackAddress} focus={map.focus}
         apcZones={map.apc_zones}
-        entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || []}
+        entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || EMPTY_ADDRESSES}
         pingRoute={pingAddresses} events={events} onSelect={onSelect} />
       <Box p={0.5} color={THEME.muted} fontSize="10px" style={{ flexShrink: 0, borderTop: `1px solid ${THEME.line}`, background: '#0d222d' }}>
         □ APC · ⬡ реле · ◇ сервер/терминал · ○ устройство · подсветка — зона выбранного APC<br />

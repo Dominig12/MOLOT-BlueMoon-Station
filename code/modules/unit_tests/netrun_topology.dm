@@ -92,7 +92,10 @@
 	var/datum/component/netrun_node/first_node = first.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/second_node = second.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/remote_node = remote.GetComponent(/datum/component/netrun_node)
-	SSnetrun.ensure_topology()
+	var/datum/netrun_topology/topology = SSnetrun.ensure_topology()
+	var/list/original_nodes = topology.nodes
+	var/list/original_edges = topology.edges
+	var/edge_count = length(topology.edges)
 	TEST_ASSERT_EQUAL(client_node.uplink_node(), first_node, "Initial attachment must use the closest APC in the local sector")
 	client.forceMove(near_second)
 	SSnetrun.ensure_topology()
@@ -100,6 +103,11 @@
 	client.forceMove(across_area)
 	SSnetrun.ensure_topology()
 	TEST_ASSERT_EQUAL(client_node.uplink_node(), second_node, "Crossing into a new root area must choose the closest structural APC again")
+	TEST_ASSERT_EQUAL(topology.nodes, original_nodes, "An endpoint rebind must not replace or revisit the full node registry")
+	TEST_ASSERT_EQUAL(topology.edges, original_edges, "An endpoint rebind must preserve the infrastructure edge array")
+	TEST_ASSERT_EQUAL(length(topology.edges), edge_count, "Replacing one endpoint cable must leave exactly one cable for that endpoint")
+	TEST_ASSERT_NULL(topology.edge_between(client_node.address, first_node.address), "The old APC cable must be removed from the routing index")
+	TEST_ASSERT_NOTNULL(topology.edge_between(client_node.address, second_node.address), "The new APC cable must become routable immediately")
 	client.forceMove(remote_spot)
 	SSnetrun.ensure_topology()
 	TEST_ASSERT_EQUAL(client_node.uplink_node(), remote_node, "Crossing sectors must rebind even when the root area instance is unchanged")
@@ -315,9 +323,12 @@
 	TEST_ASSERT(!source.console.can_route(target_node), "A real request must immediately detect a broken APC without trusting the retained display path")
 	graph.route_refresh_at = world.time
 	graph.refresh_route_tables()
+	TEST_ASSERT_EQUAL(graph.route_revision, previous_revision, "Subsystem housekeeping must not rebuild even an invalidated display table")
+	var/datum/netrun_path_tree/refreshed = source.console.make_path_tree(TRUE)
+	allocated += refreshed
 	stored = graph.route_tables[source_node.address]
-	TEST_ASSERT(stored.revision > previous_revision, "The scheduled refresh must advance the retained route revision")
-	TEST_ASSERT(!stored.reached[target_node.address], "A refreshed server table must remove a path through broken infrastructure")
+	TEST_ASSERT(stored.revision > previous_revision, "The next requesting UI must lazily advance the invalidated route revision")
+	TEST_ASSERT(!stored.reached[target_node.address], "A requested server table must remove a path through broken infrastructure")
 	source.console.map_view.selected_address = target_node.address
 	source.console.workspace_view = "map"
 	var/list/payload = source.console.ui_data(null)

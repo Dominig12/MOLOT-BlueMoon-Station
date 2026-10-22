@@ -35,6 +35,11 @@
 /datum/netrun_console
 	/// One UI serialization only; caller clears it when the request has finished.
 	var/list/ui_completion_cache
+	var/list/cli_projection_context
+	var/list/cli_projection_values
+	var/list/cli_cached_context
+	var/list/cli_cached_payload
+	var/cli_cached_revision = 0
 
 /datum/controller/subsystem/netrun/proc/get_cli_commands()
 	if(!cli_commands)
@@ -71,6 +76,12 @@
 /// Send shared address lists once rather than serializing one copy for each CLI verb.
 /// Breach-only UI updates may request metadata without traversing completion candidates.
 /datum/netrun_console/proc/cli_payload(include_completions = TRUE)
+	var/datum/component/netrun_node/selected = selected_node()
+	var/list/current_context = list(include_completions, ui_projection_context(), selected?.address,
+		selected?.all_command_ids(), remote_session.windows.Copy())
+	if(cli_cached_payload && netrun_snapshot_equal(cli_cached_context, current_context))
+		return cli_cached_payload
+	cli_cached_context = current_context
 	var/list/verbs = list()
 	var/list/pools = list()
 	for(var/verb_name in SSnetrun.get_cli_commands())
@@ -81,13 +92,27 @@
 		verbs += list(list("id" = command.id, "args" = command.args, "desc" = command.desc, "category" = command.category, "completion_key" = group))
 		if(include_completions && !(group in pools))
 			pools[group] = command.completions(src, "")
-	return list("verbs" = verbs, "completions" = pools)
+	cli_cached_payload = list("verbs" = verbs, "completions" = pools)
+	cli_cached_revision++
+	return cli_cached_payload
+
+/// TGUI merges omitted top-level fields. Quiet polls do not serialize large completion pools.
+/// ui_static_data supplies a baseline even after a browser refresh with the same UI datum.
+/datum/netrun_console/proc/append_cli_payload(list/data, include_completions, list/session)
+	var/list/payload = cli_payload(include_completions)
+	if(!session || session["cli_revision"] != cli_cached_revision)
+		data["cli"] = payload
+		if(session)
+			session["cli_revision"] = cli_cached_revision
 
 /// Address and network completion share one projection of the current reachable graph.
 /// Returned lists are read-only: callers combining categories must copy before appending.
 /datum/netrun_console/proc/cli_completion_values(kind)
 	if(islist(ui_completion_cache?[kind]))
 		return ui_completion_cache[kind]
+	var/list/current_context = ui_projection_context()
+	if(cli_projection_values && netrun_snapshot_equal(cli_projection_context, current_context))
+		return cli_projection_values[kind]
 	// Standalone help/completion callers also get one bounded routing snapshot.
 	var/owns_routes = !ui_routes
 	if(owns_routes)
@@ -110,6 +135,8 @@
 			node_addresses += node.address
 	if(owns_routes)
 		QDEL_NULL(ui_routes)
+	cli_projection_context = current_context
+	cli_projection_values = list("nodes" = node_addresses, "networks" = network_codes)
 	if(ui_completion_cache)
 		ui_completion_cache["nodes"] = node_addresses
 		ui_completion_cache["networks"] = network_codes

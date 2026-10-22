@@ -40,6 +40,7 @@
 	var/last_ice = -1
 	var/last_active
 	var/last_dynamic
+	var/pending_state_notification = FALSE
 
 /datum/component/netrun_node/Initialize(node_type, list/command_ids, security = 1, list/required_access, storage_capacity = 0)
 	if(!isatom(parent))
@@ -63,15 +64,19 @@
 
 /datum/component/netrun_node/RegisterWithParent()
 	RegisterSignal(parent, COMSIG_ATOM_EMP_ACT, PROC_REF(on_emp))
-	RegisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_OBJ_SETANCHORED), PROC_REF(on_state_changed))
+	RegisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED, COMSIG_OBJ_SETANCHORED), PROC_REF(on_state_changed))
 	if(ismovable(parent))
 		RegisterSignal(parent, COMSIG_MOVABLE_MOVED, PROC_REF(on_moved))
+	if(istype(parent, /obj/machinery/door/airlock))
+		RegisterSignal(parent, COMSIG_ATOM_UPDATED_ICON, PROC_REF(on_state_changed))
 
 /datum/component/netrun_node/UnregisterFromParent()
 	UnregisterSignal(parent, list(COMSIG_ATOM_EMP_ACT, COMSIG_MOVABLE_MOVED))
-	UnregisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_OBJ_SETANCHORED))
+	UnregisterSignal(parent, COMSIG_ATOM_UPDATED_ICON)
+	UnregisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED, COMSIG_OBJ_SETANCHORED))
 
 /datum/component/netrun_node/Destroy()
+	SSnetrun.untrack_node(src)
 	var/datum/netrun_topology/topology = SSnetrun.get_topology()
 	SSnetrun.nodes_by_address -= address
 	notify_changed(NETRUN_CHANGED_REMOVED)
@@ -127,7 +132,8 @@
 
 /datum/component/netrun_node/proc/on_state_changed(datum/source)
 	SIGNAL_HANDLER
-	notify_changed(NETRUN_CHANGED_STATE)
+	pending_state_notification = TRUE
+	SSnetrun.queue_node(src)
 
 /// The fallback samples only fields exposed by the graph, including timed states.
 /// Polls the timed/native status that has no change signal (power, firewall expiry, occupants,
@@ -140,10 +146,11 @@
 	var/ice_count = length(netrun_ice)
 	var/active = world.time - last_activity < 5 SECONDS
 	var/dynamic = is_dynamic()
-	if(online == last_online && security == last_security && entity_count == last_entities && ice_count == last_ice && active == last_active && dynamic == last_dynamic)
+	if(!pending_state_notification && online == last_online && security == last_security && entity_count == last_entities && ice_count == last_ice && active == last_active && dynamic == last_dynamic)
 		return
 	if(online != last_online)
-		SSnetrun.get_topology().availability_revision++
+		SSnetrun.get_topology().availability_changed(src)
+	pending_state_notification = FALSE
 	last_online = online
 	last_security = security
 	last_entities = entity_count
@@ -153,12 +160,14 @@
 	notify_changed(NETRUN_CHANGED_STATE)
 
 /datum/component/netrun_node/proc/notify_changed(flags = NETRUN_CHANGED_STATE)
+	if(!QDELETED(src) && !(flags & NETRUN_CHANGED_REMOVED))
+		SSnetrun.track_node(src)
 	// Availability is a separate routing generation: occupant/activity changes do not
 	// rebuild shortest paths, while power/EMP changes invalidate retained display paths.
 	var/online = is_online()
 	if(online != last_online)
 		last_online = online
-		SSnetrun.get_topology().availability_revision++
+		SSnetrun.get_topology().availability_changed(src)
 	SEND_SIGNAL(src, COMSIG_NETRUN_NODE_CHANGED, src, flags)
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, src, flags)
 
@@ -265,7 +274,7 @@
 	)
 	if(console.origin == NETRUN_ORIGIN_ENTITY && istype(console.host, /mob/camera/netrun_entity))
 		var/mob/camera/netrun_entity/entity = console.host
-		.["can_hop"] = entity.can_enter(src)
+		.["can_hop"] = entity.can_enter(src, console.ui_routes)
 
 /// Найти узел на атоме или внутри него (для подключения деки и сканеров)
 /proc/netrun_find_node(atom/A)
@@ -315,3 +324,23 @@
 /// Объект может навязать конкретную мини-игру взлома ("matrix" / "sequence"); null - по умолчанию.
 /atom/proc/netrun_breach_minigame()
 	return null
+
+/// Native custom states without notifications retain a one-second fallback. Generic
+/// machinery is driven by stat signals; its transient netrun timers are tracked separately.
+/atom/proc/netrun_needs_poll()
+	return TRUE
+
+/obj/machinery/netrun_needs_poll()
+	return FALSE
+
+/obj/machinery/power/apc/netrun_needs_poll()
+	return TRUE
+
+/obj/machinery/ntnet_relay/netrun_needs_poll()
+	return TRUE
+
+/obj/machinery/rnd/server/netrun_needs_poll()
+	return TRUE
+
+/obj/machinery/telecomms/netrun_needs_poll()
+	return TRUE

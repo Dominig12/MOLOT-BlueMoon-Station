@@ -36,7 +36,14 @@
 	var/weight_revision = 0
 	/// Forwarding availability changes independently from graph geometry and occupancy.
 	var/availability_revision = 0
+	/// Only forwarding nodes can change visibility beyond their own marker.
+	var/transit_availability_revision = 0
 	var/backbone_disabled
+
+/datum/netrun_topology/proc/availability_changed(datum/component/netrun_node/node)
+	availability_revision++
+	if(is_infrastructure(node) || length(adjacency[node.address]) > 1)
+		transit_availability_revision++
 
 /datum/netrun_topology/proc/invalidate()
 	dirty = TRUE
@@ -174,8 +181,33 @@
 	node.binding_sector = sector
 	node.binding_infra_revision = infrastructure_revision
 	if(previous != node.bound_apc)
-		invalidate()
+		if(!rebind_leaf(node))
+			invalidate()
 		node.notify_changed(NETRUN_CHANGED_BINDING)
+
+/// Changing one endpoint's APC does not change the infrastructure mesh. Update
+/// its single edge directly rather than rebuilding every APC pair and endpoint.
+/datum/netrun_topology/proc/rebind_leaf(datum/component/netrun_node/node)
+	if(dirty || rebuilding || is_infrastructure(node) || nodes[node.address] != node)
+		return FALSE
+	var/list/neighbors = adjacency[node.address]
+	if(length(neighbors) > 1 || (node.bound_apc && nodes[node.bound_apc.address] != node.bound_apc))
+		return FALSE
+	for(var/neighbor in neighbors)
+		var/list/edge = edge_lookup["[node.address]>[neighbor]"]
+		edges -= list(edge)
+		edge_lookup -= "[node.address]>[neighbor]"
+		edge_lookup -= "[neighbor]>[node.address]"
+		var/list/peers = adjacency[neighbor]
+		peers -= node.address
+	adjacency[node.address] = list()
+	if(node.bound_apc)
+		add_edge(node.address, node.bound_apc.address, "endpoint")
+	clear_route_tables()
+	revision++
+	weight_revision++
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, revision)
+	return TRUE
 
 /datum/netrun_topology/proc/neighbors(address, include_relays = TRUE)
 	var/list/local = adjacency[address] || list()
@@ -204,16 +236,22 @@
 
 /datum/netrun_topology/proc/refresh_node_weights(datum/component/netrun_node/node)
 	var/changed = FALSE
-	for(var/neighbor in adjacency[node.address])
+	var/delta = 0
+	var/list/neighbors = adjacency[node.address]
+	for(var/neighbor in neighbors)
 		var/list/edge = edge_lookup["[node.address]>[neighbor]"]
 		var/datum/component/netrun_node/peer = nodes[neighbor]
 		var/cost = edge_cost(node.address, neighbor)
 		if(edge["latency"] != cost)
+			delta = cost - edge["latency"]
 			edge["latency"] = cost
 			changed = TRUE
 		edge["distance"] = netrun_topology_distance(get_turf(node.parent), get_turf(peer.parent))
 	if(changed)
+		var/previous_geometry = weight_revision
 		weight_revision++
+		if(!is_infrastructure(node) && length(neighbors) == 1)
+			reweight_leaf_routes(node.address, neighbors[1], delta, previous_geometry)
 
 /// All edges are undirected and canonicalized by address, including endpoint bindings.
 /datum/netrun_topology/proc/add_edge(first, second, kind)

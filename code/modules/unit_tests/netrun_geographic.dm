@@ -88,6 +88,7 @@
 	var/datum/netrun_path_tree/before = source.console.make_path_tree(TRUE)
 	allocated += before
 	TEST_ASSERT_EQUAL(before.costs[node.address], 2, "Two adjacent physical cables must cost two deciseconds")
+	var/builds = graph.route_revision
 	target.forceMove(far_spot)
 	var/datum/netrun_path_tree/after = source.console.make_path_tree(TRUE)
 	allocated += after
@@ -97,6 +98,16 @@
 	TEST_ASSERT_EQUAL(after.costs[node.address], 11, "The next server snapshot must refresh a changed cable cost")
 	TEST_ASSERT_EQUAL(source.console.latency_to(node), 11, "Live command and ping latency must use actual world distances")
 	TEST_ASSERT(after.geometry_revision > before.geometry_revision, "A changed physical cost must advance the table's geometry generation")
+	TEST_ASSERT_EQUAL(graph.route_revision, builds, "Moving a destination leaf must repair its cost without rebuilding any retained tree")
+	var/turf/source_spot = scene.take(locate(origin.x + 4, origin.y, origin.z), room)
+	source.forceMove(source_spot)
+	var/datum/netrun_path_tree/moved_source = source.console.make_path_tree(TRUE)
+	allocated += moved_source
+	TEST_ASSERT_EQUAL(moved_source.costs[node.address], 14, "Moving the source leaf must adjust the shared prefix of its destination costs")
+	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT_EQUAL(moved_source.costs[source_node.address], 0, "A shared prefix must never change a source's self cost")
+	TEST_ASSERT_EQUAL(after.costs[node.address], 11, "A previously issued snapshot must not inherit a later source-prefix change")
+	TEST_ASSERT_EQUAL(graph.route_revision, builds, "Moving the source leaf must not run Dijkstra again")
 
 /// Uniform relay gateways work within a sector without storing a quadratic clique.
 /datum/unit_test/netrun_geographic_relay_bucket/Run()
@@ -175,3 +186,35 @@
 	TEST_ASSERT(!carried.is_dynamic(), "A now turf-bound anchored endpoint must return to the static layer")
 	endpoint.anchored = FALSE
 	TEST_ASSERT(carried.is_dynamic(), "An unanchored endpoint must remain reactive even while standing on one turf")
+
+/// A large fan-out of terminal endpoints does not belong in Dijkstra's heap.
+/datum/unit_test/netrun_route_terminal_frontier/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, origin)
+	var/datum/component/netrun_node/center = apc.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_topology/graph = allocate(/datum/netrun_topology)
+	graph.nodes[center.address] = center
+	graph.adjacency[center.address] = list()
+	var/list/leaves = list()
+	for(var/i in 1 to 48)
+		var/obj/item/host = allocate(/obj/item, origin)
+		var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_DECK)
+		leaves += node
+		graph.nodes[node.address] = node
+		graph.adjacency[node.address] = list()
+		graph.add_edge(center.address, node.address, "endpoint")
+	var/datum/component/netrun_node/offline_leaf = leaves[48]
+	offline_leaf.offline_until = world.time + 1 MINUTES
+	var/datum/netrun_path_tree/from_center = allocate(/datum/netrun_path_tree, graph, center)
+	TEST_ASSERT_EQUAL(length(from_center.reached), 49, "All terminal destinations, including an offline leaf, must retain physical discovery")
+	TEST_ASSERT_EQUAL(from_center.frontier_insertions, 1, "Forty-eight terminal endpoints must add zero heap entries")
+	TEST_ASSERT_EQUAL(from_center.costs[offline_leaf.address], 1, "Offline destinations retain their geographic cost without forwarding traffic")
+	TEST_ASSERT(from_center.network_index_ready, "A real path tree must publish its reached-network index")
+	TEST_ASSERT(from_center.reached_networks[center.network.id], "The network reachability index must include the source LAN")
+	var/datum/component/netrun_node/source = leaves[1]
+	var/datum/netrun_path_tree/from_leaf = allocate(/datum/netrun_path_tree, graph, source)
+	TEST_ASSERT_EQUAL(from_leaf.frontier_insertions, 2, "A terminal source adds only itself and the APC to the heap")
+	TEST_ASSERT_EQUAL(from_leaf.costs[offline_leaf.address], 2, "The optimized fan-out must preserve both source and target cable costs")

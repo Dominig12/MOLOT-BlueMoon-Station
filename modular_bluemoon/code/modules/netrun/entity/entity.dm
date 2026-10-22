@@ -92,23 +92,27 @@
 		return
 	var/datum/component/netrun_node/old = host_node
 	LAZYREMOVE(host_node.entities, src)
+	old.notify_changed(NETRUN_CHANGED_OCCUPANTS)
 	host_node = null
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_NODE_CHANGED, old, null)
 
 /// Можно ли перепрыгнуть в узел
-/mob/camera/netrun_entity/proc/can_enter(datum/component/netrun_node/node)
+/mob/camera/netrun_entity/proc/can_enter(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
 	if(!node || node == host_node || !host_node || console.is_locked())
 		return FALSE
 	console.refresh_route_node(host_node)
 	console.refresh_route_node(node)
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	if(!(node.address in graph.neighbors(host_node.address)) || !netrun_link_available(host_node, node))
+	if(!graph.edge_between(host_node.address, node.address) || !netrun_link_available(host_node, node))
 		return FALSE
 	// Свежий расчёт доступа через path-tree, минуя кэш уровней UI: иначе только что
 	// полученный USER может не учитываться до следующего обновления интерфейса.
-	var/datum/netrun_path_tree/tree = console.make_path_tree()
+	var/owns_tree = !tree
+	if(owns_tree)
+		tree = console.make_path_tree()
 	. = console.node_level(node, tree) >= NETRUN_ACCESS_USER || console.has_key(node.network, TRUE)
-	qdel(tree)
+	if(owns_tree)
+		qdel(tree)
 
 /// Понятная причина отказа в переходе - для журнала консоли.
 /mob/camera/netrun_entity/proc/hop_denial(datum/component/netrun_node/node)

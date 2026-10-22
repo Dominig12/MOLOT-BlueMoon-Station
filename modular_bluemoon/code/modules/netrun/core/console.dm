@@ -58,10 +58,13 @@
 	RegisterSignal(inventory, COMSIG_NETRUN_INVENTORY_CHANGED, PROC_REF(on_session_changed))
 	RegisterSignal(src, COMSIG_NETRUN_COMBAT_CHANGED, PROC_REF(on_session_changed))
 	SSnetrun.consoles += src
+	if(origin == NETRUN_ORIGIN_ENTITY)
+		activate()
 	log_line("Сеанс открыт.", "good")
 
 /datum/netrun_console/Destroy()
 	SSnetrun.consoles -= src
+	SSnetrun.active_consoles -= src
 	QDEL_NULL(combat_context)
 	QDEL_NULL(map_view)
 	QDEL_NULL(remote_session)
@@ -82,6 +85,17 @@
 /// Never serialize UI or rebuild topology inside a synchronous signal handler.
 /datum/netrun_console/proc/invalidate_ui()
 	ui_dirty = TRUE
+	activate()
+
+/datum/netrun_console/proc/activate()
+	SSnetrun.active_consoles[src] = TRUE
+
+/datum/netrun_console/proc/note_ui_activity()
+	last_ui_at = world.time
+	activate()
+
+/datum/netrun_console/proc/needs_processing()
+	return origin == NETRUN_ORIGIN_ENTITY || is_ui_active() || intrusion.breach || intrusion.trace > 0 || is_locked() || connection.jack || remote_session.watch_node
 
 /datum/netrun_console/proc/is_ui_active()
 	return world.time <= last_ui_at + 3 * SSnetrun.wait
@@ -142,10 +156,13 @@
 	if(owns_tree)
 		tree = owner.path_tree()
 	. = FALSE
-	for(var/datum/component/netrun_node/node as anything in network.nodes)
-		if(tree.reached[node.address])
-			. = TRUE
-			break
+	if(tree.network_index_ready)
+		. = !!tree.reached_networks[network.id]
+	else
+		for(var/datum/component/netrun_node/node as anything in network.nodes)
+			if(tree.reached[node.address])
+				. = TRUE
+				break
 	if(owns_tree)
 		owner.release_path_tree(tree)
 
@@ -349,6 +366,9 @@
 	var/datum/netrun_request/request = new(file_uid)
 	var/result = world.PushUsr(operator, CALLBACK(command, TYPE_PROC_REF(/datum/netrun_command, execute), node, src, netrun_command_arg(command_id), request))
 	qdel(request)
+	if(QDELETED(src) || QDELETED(node))
+		return FALSE
+	node.notify_changed()
 	if(isnull(result))
 		return FALSE
 	log_line(result, illegal ? "average" : "good")
@@ -405,6 +425,8 @@
 	return "узел [origin] [REF(src)]"
 
 /datum/netrun_console/proc/add_trace(amount)
+	if(amount > 0)
+		activate()
 	return intrusion.add_trace(amount)
 
 /datum/netrun_intrusion_session/proc/add_trace(amount)
@@ -484,6 +506,7 @@
 			watch_eye.update_remote_sight(watch_viewer)
 
 /datum/netrun_console/proc/start_breach(kind, id, automatic = FALSE)
+	activate()
 	return intrusion.start_breach(kind, id, automatic)
 
 /datum/netrun_intrusion_session/proc/start_breach(kind, id, automatic = FALSE)

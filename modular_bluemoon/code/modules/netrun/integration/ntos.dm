@@ -39,7 +39,14 @@
 	var/datum/netrun_console/active = get_console()
 	if(active)
 		active.operator = user
-		data += active.ui_data(user)
+		data += active.ui_data(user, src)
+	return data
+
+/datum/computer_file/program/netrun/ui_static_data(mob/user)
+	var/list/data = ..()
+	var/datum/netrun_console/active = get_console()
+	if(active)
+		data += active.ui_static_data(user)
 	return data
 
 /datum/computer_file/program/netrun/ui_act(action, list/params, datum/tgui/ui, datum/ui_state/state)

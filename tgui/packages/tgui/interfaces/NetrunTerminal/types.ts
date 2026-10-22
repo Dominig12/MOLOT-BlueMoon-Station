@@ -225,7 +225,7 @@ export type NetrunData = {
   };
   windows: WindowTab[];
   window: MachineWindow | null;
-  map: NetMap | null;
+  map: NetMapPacket | null;
   selected_network: SelectedNetwork | null;
   ping_route: PingHop[] | null;
   events?: NetEvent[] | null;
@@ -280,6 +280,9 @@ export type NetEdge = {
 };
 
 export type NetMap = {
+  /** A full baseline for one authorized UI stream; omitted by legacy payloads. */
+  epoch?: string;
+  full?: true | 1;
   gateways: Gateway[];
   nodes: NetNode[];
   edges: NetEdge[];
@@ -306,6 +309,19 @@ export type NetMap = {
     reachable: boolean;
   } | null;
 };
+
+/** Graph entries are upserts; unchanged stationary entries are not transported again. */
+export type NetMapDelta = Partial<Omit<NetMap, 'nodes' | 'edges' | 'full' | 'state_revision'>> & {
+  epoch: string;
+  full: false | 0;
+  base_revision: number;
+  state_revision: number;
+  nodes?: NetNode[];
+  edges?: NetEdge[];
+  removed_nodes?: string[];
+  removed_edges?: string[];
+};
+export type NetMapPacket = NetMap | NetMapDelta;
 
 export type ApcZone = { address: string; z: number; runs: { x: number; y: number; width: number }[] };
 export type RelayDestination = {

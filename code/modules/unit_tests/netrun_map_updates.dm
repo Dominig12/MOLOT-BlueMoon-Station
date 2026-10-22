@@ -40,9 +40,14 @@
 /// Work counters verify that live overlays do not rebuild the stationary projection.
 /datum/netrun_map_view/netrun_performance_test
 	var/rebuilds = 0
+	var/serialized_nodes = 0
 
 /datum/netrun_map_view/netrun_performance_test/rebuild(datum/netrun_topology/graph)
 	rebuilds++
+	return ..()
+
+/datum/netrun_map_view/netrun_performance_test/project_entry(datum/component/netrun_node/node, neighbor_count)
+	serialized_nodes++
 	return ..()
 
 /datum/unit_test/netrun_map_incremental_work/Run()
@@ -67,15 +72,24 @@
 	var/paint = map["static_revision"]
 	var/generation = map["state_revision"]
 	var/builds = view.rebuilds
+	var/entries = view.serialized_nodes
 	console.process_tick(1)
 	console.ui_data(null)
 	TEST_ASSERT_EQUAL(view.rebuilds, builds, "An idle console tick must reuse its permitted map instead of rebuilding every node")
+	TEST_ASSERT_EQUAL(view.serialized_nodes, entries, "A quiet UI request must serialize zero node entries")
 	node.touch()
 	payload = console.ui_data(null)
 	map = payload["map"]
 	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Activity must update its indexed entry without rebuilding the full projection")
+	TEST_ASSERT_EQUAL(view.serialized_nodes, entries + 1, "One activity invalidation must serialize exactly one indexed node")
 	TEST_ASSERT(map["state_revision"] > generation, "The live overlay must receive activity changes")
 	TEST_ASSERT_EQUAL(map["static_revision"], paint, "Activity must not invalidate the cached stationary canvas")
+	entries = view.serialized_nodes
+	target.set_machine_stat(BROKEN)
+	node.reconcile_state()
+	console.ui_data(null)
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "An unavailable leaf must not rebuild the reachable network projection")
+	TEST_ASSERT_EQUAL(view.serialized_nodes, entries + 1, "An unavailable leaf must serialize just itself and update its incident edge")
 	console.workspace_view = "terminal"
 	console.process_tick(1)
 	TEST_ASSERT(!view.subscribed, "A hidden map must stop receiving global node-change broadcasts")
@@ -126,3 +140,103 @@
 	node.raise_firewall()
 	TEST_ASSERT(entity.console.node_level(node) < NETRUN_ACCESS_ROOT, "A permission read must drain pending firewall revocations immediately")
 	TEST_ASSERT(!entity.console.access_session.node_access[node.address], "The access session must own and remove its revoked grant")
+
+/// Transport work depends on changed entries, not the size of an already delivered map.
+/datum/unit_test/netrun_map_wire_delta_size/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
+	var/datum/netrun_map_view/view = console.map_view
+	var/list/nodes = list()
+	for(var/i in 1 to 6000)
+		nodes += list(list("address" = "N[i]", "name" = "Camera [i]", "type" = "camera", "x" = i % 80,
+			"y" = round(i / 80), "z" = 1, "online" = TRUE, "access" = 1, "entities" = 0, "ice" = 0, "active" = FALSE))
+	view.state_revision = 1
+	var/list/full = list("nodes" = nodes, "edges" = list(), "gateways" = list(), "sectors" = list(), "apc_zones" = list(),
+		"state_revision" = 1, "structure_revision" = 1, "static_revision" = 1, "revision" = 1)
+	var/list/session = list("id" = 1)
+	var/list/baseline = view.encode_wire(full, session)
+	TEST_ASSERT(baseline["full"], "A new UI must receive its complete baseline")
+	TEST_ASSERT_EQUAL(length(baseline["nodes"]), 6000, "The first snapshot must contain every permitted physical node")
+	var/baseline_bytes = length(json_encode(baseline))
+	var/list/quiet = view.encode_wire(full, session)
+	TEST_ASSERT(!quiet["full"], "An already synchronized UI must receive a delta")
+	TEST_ASSERT_EQUAL(length(quiet["nodes"]), 0, "A quiet poll must not encode any of its 6000 known nodes")
+	TEST_ASSERT_EQUAL(length(quiet["edges"]), 0, "A quiet poll must not encode unchanged edges")
+	TEST_ASSERT(length(json_encode(quiet)) < 2000, "A quiet map update must remain a small metadata packet")
+	TEST_ASSERT(length(json_encode(quiet)) * 100 < baseline_bytes, "A quiet update must be below one percent of the large baseline")
+	TEST_ASSERT(!("apc_zones" in quiet), "An unchanged APC shape must not be serialized again")
+
+	var/list/changed = nodes[42].Copy()
+	changed["entities"] = 2
+	nodes[42] = changed
+	full["state_revision"] = ++view.state_revision
+	view.record_wire_delta(1, list(changed), list(), list(), list())
+	var/list/delta = view.encode_wire(full, session)
+	TEST_ASSERT(!delta["full"], "An individual live change must keep its baseline")
+	TEST_ASSERT_EQUAL(length(delta["nodes"]), 1, "One changed node must produce one upsert")
+	TEST_ASSERT_EQUAL(delta["base_revision"], 1, "The delta must name the exact baseline it extends")
+	TEST_ASSERT_EQUAL(delta["state_revision"], 2, "The upsert must advance the client state generation")
+	nodes.Cut(42, 43)
+	full["state_revision"] = ++view.state_revision
+	view.record_wire_delta(2, list(), list(), list("N42"), list())
+	delta = view.encode_wire(full, session)
+	TEST_ASSERT("N42" in delta["removed_nodes"], "Deletion must remove the client's previously delivered marker")
+	TEST_ASSERT_EQUAL(length(delta["nodes"]), 0, "Deletion must not resend all surviving nodes")
+
+	var/list/other_session = list("id" = 2)
+	TEST_ASSERT(view.encode_wire(full, other_session)["full"], "A second UI must have an independent complete baseline")
+	TEST_ASSERT(!view.encode_wire(full, session)["full"], "A second viewer must not reset the first viewer's cursor")
+	view.wire_epoch++
+	TEST_ASSERT(view.encode_wire(full, session)["full"], "An authorization epoch change must replace every previously known node set")
+	var/list/slow_session = session.Copy()
+	for(var/i in 1 to 34)
+		var/previous = view.state_revision
+		full["state_revision"] = ++view.state_revision
+		view.record_wire_delta(previous, list(changed), list(), list(), list())
+	TEST_ASSERT(view.encode_wire(full, slow_session)["full"], "A gap beyond bounded history must send a fresh baseline instead of an incomplete delta")
+
+/// Reopening and NTOS program ownership must never share a cursor by accident.
+/datum/unit_test/netrun_map_wire_ui_sessions/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
+	var/mob/living/user = allocate(/mob/living)
+	var/datum/tgui/first_ui = allocate(/datum/tgui, user, console, "NetrunTerminal")
+	var/list/opening = console.map_view.wire_session(user, console, null)
+	var/list/bound = console.map_view.wire_session(user, console, first_ui)
+	TEST_ASSERT_EQUAL(opening, bound, "The first registered poll must bind its opening baseline without repeating it")
+	var/datum/tgui/reopened = allocate(/datum/tgui, user, console, "NetrunTerminal")
+	var/list/replacement = console.map_view.wire_session(user, console, reopened)
+	TEST_ASSERT_NOTEQUAL(replacement["id"], bound["id"], "A reopened UI datum must start a new stream epoch")
+	var/datum/computer_file/program/netrun/program = allocate(/datum/computer_file/program/netrun)
+	var/datum/tgui/ntos_ui = allocate(/datum/tgui, user, program, "NtosNetrun")
+	var/list/ntos_session = console.map_view.wire_session(user, program, ntos_ui)
+	TEST_ASSERT_NOTEQUAL(ntos_session["id"], replacement["id"], "NTOS must bind its containing program rather than a hidden console UI")
+	console.map_view.resync(ntos_ui)
+	TEST_ASSERT_NOTEQUAL(console.map_view.wire_session(user, program, ntos_ui)["id"], ntos_session["id"], "Refresh recovery must replace just that UI's cursor")
+	TEST_ASSERT_EQUAL(console.map_view.wire_session(user, console, reopened), replacement, "NTOS resync must preserve another valid viewer")
+
+/// A terminal poll retains shared completion pools while storage changes invalidate disclosure.
+/datum/unit_test/netrun_cli_wire_cache/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
+	var/list/session = list("id" = 1)
+	var/list/data = list()
+	console.append_cli_payload(data, TRUE, session)
+	TEST_ASSERT_NOTNULL(data["cli"], "A terminal stream needs an initial completion baseline")
+	var/revision = console.cli_cached_revision
+	data = list()
+	console.append_cli_payload(data, TRUE, session)
+	TEST_ASSERT(!("cli" in data), "A quiet terminal poll must omit large completion pools preserved by TGUI")
+	TEST_ASSERT_EQUAL(console.cli_cached_revision, revision, "Quiet polls must reuse their completion projection")
+	console.map_view.invalidate()
+	data = list()
+	console.append_cli_payload(data, TRUE, session)
+	TEST_ASSERT_NOTNULL(data["cli"], "An authorization invalidation must replace cached completions")
+	TEST_ASSERT_NOTNULL(console.ui_static_data(null)["cli"], "Full refresh must always restore completions even with the same UI cursor")
+	data = list()
+	console.append_network_catalog(data, session)
+	TEST_ASSERT_NOTNULL(data["networks"], "A new stream must receive its network catalog")
+	data = list()
+	console.append_network_catalog(data, session)
+	TEST_ASSERT(!("networks" in data), "A quiet poll must not JSON-encode the same full LAN catalog")
+	TEST_ASSERT_NOTNULL(console.ui_static_data(null)["networks"], "A refreshed browser must restore its network catalog baseline")

@@ -71,6 +71,7 @@
 	leave_node()
 	node = new_node
 	LAZYADD(new_node.netrun_ice, src)
+	new_node.notify_changed(NETRUN_CHANGED_OCCUPANTS)
 	SEND_SIGNAL(src, COMSIG_NETRUN_ICE_NODE_CHANGED, null, new_node)
 	return TRUE
 
@@ -80,6 +81,7 @@
 		return
 	var/datum/component/netrun_node/old_node = node
 	LAZYREMOVE(node.netrun_ice, src)
+	old_node.notify_changed(NETRUN_CHANGED_OCCUPANTS)
 	node = null
 	SEND_SIGNAL(src, COMSIG_NETRUN_ICE_NODE_CHANGED, old_node, null)
 
