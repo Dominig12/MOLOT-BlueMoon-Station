@@ -231,6 +231,12 @@ SUBSYSTEM_DEF(netrun)
 	var/next_task_population = 0
 	var/task_populations = 0
 	var/apc_prebuild_steps = 0
+	/// HUD profiling: a single response may have many targets but at most one route snapshot.
+	var/combat_full_payloads = 0
+	var/combat_summary_payloads = 0
+	var/combat_ui_tree_builds = 0
+	var/combat_full_payload_ms = 0
+	var/combat_full_payload_peak_ms = 0
 	/// Only sessions with timers, a live UI or an entity are processed.
 	var/list/active_consoles = list()
 	/// Moving devices and native states that genuinely lack notifications.
@@ -267,7 +273,9 @@ SUBSYSTEM_DEF(netrun)
 	if(task_scheduler)
 		var/datum/netrun_task_scheduler/scheduler = task_scheduler
 		msg += " Tasks:[scheduler.pending()] Q:[scheduler.counts[1]]/[scheduler.counts[2]]/[scheduler.counts[3]] Qpeak:[scheduler.peak_pending] Done:[scheduler.completed] Merge:[scheduler.merged] Pr:[scheduler.promoted] Budget:[round(scheduler.last_execution_ms, 0.1)]/[round(scheduler.last_budget_ms, 0.1)]ms"
-		msg += " APWork:[apc_prebuild_steps] APCmp:[topology?.apc_prebuild?.comparisons || 0]"
+		msg += " APWork:[apc_prebuild_steps] APCmp:[topology?.apc_prebuild?.comparisons || 0] Combat UI:[combat_full_payloads]/[combat_summary_payloads] Paths:[combat_ui_tree_builds]"
+		if(profile_armed)
+			msg += " Combat ms total/max:[round(combat_full_payload_ms, 0.1)]/[round(combat_full_payload_peak_ms, 0.1)]"
 		msg += " Exec:[scheduler.executed_by_priority[1]]/[scheduler.executed_by_priority[2]]/[scheduler.executed_by_priority[3]] WaitMax:[round(scheduler.max_wait_by_priority[1] / (1 SECONDS), 0.1)]/[round(scheduler.max_wait_by_priority[2] / (1 SECONDS), 0.1)]/[round(scheduler.max_wait_by_priority[3] / (1 SECONDS), 0.1)]s Late:[scheduler.overdue_by_priority[1]]/[scheduler.overdue_by_priority[2]]/[scheduler.overdue_by_priority[3]] Ovr:[scheduler.budget_overruns]/[scheduler.task_overruns]"
 	if(profile_armed)
 		msg += " Cam ms total/max F:[round(camera_feed_scan_ms, 0.1)]/[round(camera_feed_scan_max_ms, 0.1)] R:[round(camera_route_check_ms, 0.1)]/[round(camera_route_check_max_ms, 0.1)]"
