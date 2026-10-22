@@ -108,3 +108,26 @@ test('live actors and overlays leave the retained base untouched; camera and sta
   rendered.unmount(); painted.mockRestore(); context.mockRestore();
   window.requestAnimationFrame = originalRequest; window.cancelAnimationFrame = originalCancel;
 });
+
+
+test('large map painter yields between steps while retaining every marker', () => {
+  let markers = 0;
+  const context = new Proxy({}, { get: (_target, name: string) => {
+    if (name === 'createRadialGradient') { return () => ({ addColorStop: () => {} }); }
+    if (name === 'measureText') { return (value: string) => ({ width: value.length * 7 }); }
+    return () => { if (name === 'arc') { markers++; } };
+  } }) as CanvasRenderingContext2D;
+  const scene = new GraphScene();
+  scene.update(Array.from({ length: 600 }, (_, i) => ({
+    ...node, address: 'N' + i, px: i * 4, py: 0, type: 'camera',
+  })), []);
+  const renderer = new GraphRenderer(), camera = new GraphViewport();
+  camera.fit(scene.nodes, 720, 480);
+  const job = renderer.paintChunks(context, scene, camera, overlay, 720, 480, 1, 32);
+  expect(job.next().done).toBe(false);
+  expect(markers).toBeLessThan(600);
+  let iterations = 0;
+  while (!job.next().done && iterations < 1500) { iterations++; }
+  expect(iterations).toBeLessThan(1500);
+  expect(markers).toBe(600);
+});

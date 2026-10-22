@@ -24,6 +24,8 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   const [camera, setCamera] = useState({ x: view.x, y: view.y, zoom: view.zoom, width: 720, height: 480 });
   const latest = useRef(props); latest.current = props;
   const frame = useRef<number | null>(null);
+  const paintVersion = useRef(0);
+  const paintJob = useRef<{ version: number; iterator: Generator<void, void, unknown>; surface: HTMLCanvasElement } | null>(null);
   const down = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
   const [tooltip, setTooltip] = useState<{ address: string; x: number; y: number } | null>(null);
   const base = useMemo(() => {
@@ -41,24 +43,58 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
       : { x: view.x, y: view.y, zoom: view.zoom, ...dimensions });
   }, [view, size]);
   const paintRef = useRef<() => void>(() => {});
-  const queuePaint = useCallback(() => {
-    if (latest.current.suspended) { return; }
-    if (frame.current !== null) { return; }
+  const schedulePaint = useCallback(() => {
+    if (latest.current.suspended || frame.current !== null) { return; }
     if (typeof window.requestAnimationFrame !== 'function') { paintRef.current(); return; }
     frame.current = window.requestAnimationFrame(() => { frame.current = null; paintRef.current(); });
   }, []);
+  const queuePaint = useCallback(() => {
+    paintVersion.current++;
+    paintJob.current = null;
+    schedulePaint();
+  }, [schedulePaint]);
   paintRef.current = () => {
-    if (latest.current.suspended) { return; }
+    if (latest.current.suspended) { paintJob.current = null; return; }
     const surface = canvas.current, holder = container.current;
     const ctx = surface?.getContext('2d', { alpha: false });
     if (!surface || !holder || !ctx) { return; }
     const { width, height } = size();
     const ratio = Math.min(2, window.devicePixelRatio || 1, Math.sqrt(5000000 / (width * height)));
-    if (surface.width !== Math.ceil(width * ratio) || surface.height !== Math.ceil(height * ratio)) {
-      surface.width = Math.ceil(width * ratio); surface.height = Math.ceil(height * ratio);
+    const pixelsWide = Math.ceil(width * ratio), pixelsHigh = Math.ceil(height * ratio);
+    if (scenery.current.nodes.length + scenery.current.edges.length < 384
+      || typeof window.requestAnimationFrame !== 'function') {
+      paintJob.current = null;
+      if (surface.width !== pixelsWide || surface.height !== pixelsHigh) {
+        surface.width = pixelsWide; surface.height = pixelsHigh;
+      }
+      renderer.paint(ctx, scenery.current, view, latest.current, width, height, ratio);
+      return;
     }
-    // The canvas itself is the retained bitmap cache. There is no animation render loop.
-    renderer.paint(ctx, scenery.current, view, latest.current, width, height, ratio);
+    if (!paintJob.current || paintJob.current.version !== paintVersion.current) {
+      const hidden = document.createElement('canvas');
+      hidden.width = pixelsWide; hidden.height = pixelsHigh;
+      const hiddenCtx = hidden.getContext('2d', { alpha: false });
+      if (!hiddenCtx) {
+        if (surface.width !== pixelsWide || surface.height !== pixelsHigh) {
+          surface.width = pixelsWide; surface.height = pixelsHigh;
+        }
+        renderer.paint(ctx, scenery.current, view, latest.current, width, height, ratio);
+        return;
+      }
+      paintJob.current = {
+        version: paintVersion.current, surface: hidden,
+        iterator: renderer.paintChunks(hiddenCtx, scenery.current, view, latest.current, width, height, ratio),
+      };
+    }
+    const job = paintJob.current;
+    if (!job.iterator.next().done) { schedulePaint(); return; }
+    paintJob.current = null;
+    // Show only a complete frame; keep the old bitmap visible while building.
+    if (surface.width !== pixelsWide || surface.height !== pixelsHigh) {
+      surface.width = pixelsWide; surface.height = pixelsHigh;
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(job.surface, 0, 0);
   };
   const fit = useCallback(() => {
     const { width, height } = size(); view.fit(retained.current.fitPoints(latest.current.apcZones), width, height); syncCamera(); queuePaint();
@@ -72,6 +108,7 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   useEffect(() => {
     if (props.suspended) {
       if (frame.current !== null) { window.cancelAnimationFrame(frame.current); frame.current = null; }
+      paintJob.current = null;
       setTooltip(null); return;
     }
     // Activity and movable geometry never invalidate the base or automatically change its camera.
@@ -92,6 +129,7 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     return () => {
       observer?.disconnect(); window.removeEventListener('resize', resized);
       if (frame.current !== null) { window.cancelAnimationFrame(frame.current); frame.current = null; }
+      paintJob.current = null;
     };
   }, [view, fit, syncCamera, queuePaint]);
   const hit = (clientX: number, clientY: number) => {
