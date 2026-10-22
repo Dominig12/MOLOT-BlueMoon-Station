@@ -27,6 +27,8 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   const paintVersion = useRef(0);
   const paintJob = useRef<{ version: number; iterator: Generator<void, void, unknown>; surface: HTMLCanvasElement; viewport: GraphViewport } | null>(null);
   const paintedView = useRef<{ x: number; y: number; zoom: number } | null>(null);
+  const wheelActive = useRef(false);
+  const wheelFinish = useRef<number | null>(null);
   const down = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
   const [tooltip, setTooltip] = useState<{ address: string; x: number; y: number } | null>(null);
   const base = useMemo(() => {
@@ -71,6 +73,19 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     const { width, height } = size();
     const ratio = Math.min(2, window.devicePixelRatio || 1, Math.sqrt(5000000 / (width * height)));
     const pixelsWide = Math.ceil(width * ratio), pixelsHigh = Math.ceil(height * ratio);
+    // Continuous wheel input replaces stretched bitmaps with sharp, viewport-only drawing
+    // once per animation frame; a complete staged paint follows when scrolling stops.
+    if (wheelActive.current && scenery.current.nodes.length + scenery.current.edges.length >= 384
+      && typeof window.requestAnimationFrame === 'function') {
+      paintJob.current = null;
+      if (surface.width !== pixelsWide || surface.height !== pixelsHigh) {
+        surface.width = pixelsWide; surface.height = pixelsHigh;
+      }
+      renderer.paintPreview(ctx, scenery.current, view, latest.current, width, height, ratio);
+      paintedView.current = { x: view.x, y: view.y, zoom: view.zoom };
+      syncBitmapCamera();
+      return;
+    }
     if (scenery.current.nodes.length + scenery.current.edges.length < 384
       || typeof window.requestAnimationFrame !== 'function') {
       paintJob.current = null;
@@ -127,6 +142,8 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   useEffect(() => {
     if (props.suspended) {
       if (frame.current !== null) { window.cancelAnimationFrame(frame.current); frame.current = null; }
+      if (wheelFinish.current !== null) { window.clearTimeout(wheelFinish.current); wheelFinish.current = null; }
+      wheelActive.current = false;
       paintJob.current = null;
       setTooltip(null); return;
     }
@@ -148,6 +165,8 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     return () => {
       observer?.disconnect(); window.removeEventListener('resize', resized);
       if (frame.current !== null) { window.cancelAnimationFrame(frame.current); frame.current = null; }
+      if (wheelFinish.current !== null) { window.clearTimeout(wheelFinish.current); wheelFinish.current = null; }
+      wheelActive.current = false;
       paintJob.current = null;
     };
   }, [view, fit, syncCamera, queuePaint]);
@@ -196,7 +215,18 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
         event.preventDefault(); setTooltip(null);
         const bounds = event.currentTarget.getBoundingClientRect(), dimensions = size();
         const fitted = new GraphViewport(); fitted.fit(retained.current.fitPoints(latest.current.apcZones), dimensions.width, dimensions.height);
-        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, fitted.zoom); syncCamera(); syncBitmapCamera(); queuePaint();
+        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, fitted.zoom);
+        syncCamera(); syncBitmapCamera();
+        wheelActive.current = true;
+        paintVersion.current++;
+        paintJob.current = null;
+        schedulePaint();
+        if (wheelFinish.current !== null) { window.clearTimeout(wheelFinish.current); }
+        wheelFinish.current = window.setTimeout(() => {
+          wheelFinish.current = null;
+          wheelActive.current = false;
+          queuePaint();
+        }, 110);
       }}>
       <canvas ref={canvas} data-net-canvas aria-hidden="true" style={{ display: 'block', width: '100%', height: '100%' }} />
       {!props.suspended && <ActorLayer {...props} scene={scene} dynamicEdges={props.dynamicEdges || EMPTY_EDGES} camera={camera} />}

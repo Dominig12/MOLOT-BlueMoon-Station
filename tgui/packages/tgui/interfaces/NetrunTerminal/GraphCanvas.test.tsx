@@ -167,3 +167,65 @@ test('drag moves the retained bitmap with SVG before pointer release', () => {
   window.requestAnimationFrame = request; window.cancelAnimationFrame = cancel;
   Object.defineProperty(window, 'PointerEvent', { value: pointer, configurable: true });
 });
+
+
+test('continuous zoom paints crisp visible geometry each frame rather than stretching a stale raster', () => {
+  jest.useFakeTimers();
+  const request = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
+  const frames = new Map<number, FrameRequestCallback>();
+  let sequence = 0;
+  window.requestAnimationFrame = jest.fn((callback) => { frames.set(++sequence, callback); return sequence; });
+  window.cancelAnimationFrame = jest.fn((id) => { frames.delete(id); });
+  const ctx = { setTransform: jest.fn(), drawImage: jest.fn() } as unknown as CanvasRenderingContext2D;
+  const getContext = jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx);
+  const preview = jest.spyOn(GraphRenderer.prototype, 'paintPreview').mockImplementation(() => {});
+  const detail = jest.spyOn(GraphRenderer.prototype, 'paintChunks').mockImplementation(function* () { yield; yield; });
+  const nodes = Array.from({ length: 400 }, (_, i) => ({
+    ...node, address: 'ZOOM' + i, px: (i % 20) * 96, py: Math.floor(i / 20) * 96,
+  }));
+  const props = { ...overlay, nodes, edges: [], positions: new Map(nodes.map((entry) => [entry.address, entry])),
+    adjacency: new Map(), focus: null, onSelect: jest.fn() };
+  const screen = render(<GraphCanvas {...props} />);
+  const flush = () => act(() => {
+    const callbacks = [...frames]; frames.clear(); callbacks.forEach(([, cb]) => cb(0));
+  });
+  flush(); flush(); flush();
+  expect(detail).toHaveBeenCalledTimes(1);
+  const surface = screen.container.querySelector('[data-net-canvas]') as HTMLCanvasElement;
+  const viewport = screen.getByLabelText('Карта сети');
+  for (let index = 1; index <= 3; index++) {
+    fireEvent.wheel(viewport, { clientX: 360, clientY: 240, deltaY: -40 });
+    flush();
+    expect(preview).toHaveBeenCalledTimes(index);
+    expect(detail).toHaveBeenCalledTimes(1);
+    expect(surface.style.transform).toContain('translate(0px, 0px) scale(1)');
+  }
+  act(() => { jest.advanceTimersByTime(115); });
+  flush(); flush(); flush();
+  expect(detail).toHaveBeenCalledTimes(2);
+  expect(preview).toHaveBeenCalledTimes(3);
+  screen.unmount(); preview.mockRestore(); detail.mockRestore(); getContext.mockRestore();
+  window.requestAnimationFrame = request; window.cancelAnimationFrame = cancel;
+  jest.useRealTimers();
+});
+
+test('zoom preview uses an incident edge index and retains crisp labels', () => {
+  const marks = { arcs: 0, edges: 0, labels: 0 };
+  const ctx = new Proxy({}, { get: (_obj, name: string) => {
+    if (name === 'measureText') { return (value: string) => ({ width: value.length * 7 }); }
+    return () => {
+      if (name === 'arc') { marks.arcs++; }
+      if (name === 'lineTo') { marks.edges++; }
+      if (name === 'fillText') { marks.labels++; }
+    };
+  } }) as CanvasRenderingContext2D;
+  const first = { ...node, address: 'A', px: 0, py: 0 };
+  const second = { ...node, address: 'B', px: 96, py: 0, type: 'camera' };
+  const scene = new GraphScene();
+  scene.update([first, second], [{ id: 'A:B', from: 'A', to: 'B', kind: 'apc', online: true }]);
+  const camera = new GraphViewport(); camera.fit(scene.nodes, 720, 480);
+  new GraphRenderer().paintPreview(ctx, scene, camera, overlay, 720, 480, 1);
+  expect(scene.incidentEdges.get('A')).toHaveLength(1);
+  expect(marks.edges).toBeGreaterThan(0);
+  expect(marks.arcs).toBe(1);
+});
