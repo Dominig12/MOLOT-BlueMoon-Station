@@ -269,7 +269,7 @@ SUBSYSTEM_DEF(netrun)
 	var/datum/netrun_topology/topology
 
 /datum/controller/subsystem/netrun/stat_entry(msg)
-	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles] T:[topology_rebuilds] F:[camera_feed_scans]/[camera_feed_cache_hits] R:[camera_route_borrows] W:[wire_session_sweeps]"
+	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles] T:[topology_rebuilds] F:[camera_feed_scans]/[camera_feed_cache_hits] R:[camera_route_borrows] W:[wire_session_sweeps] I:[topology?.indexed_infrastructure_visits || 0]"
 	if(task_scheduler)
 		var/datum/netrun_task_scheduler/scheduler = task_scheduler
 		msg += " Tasks:[scheduler.pending()] Q:[scheduler.counts[1]]/[scheduler.counts[2]]/[scheduler.counts[3]] Qpeak:[scheduler.peak_pending] Done:[scheduler.completed] Merge:[scheduler.merged] Pr:[scheduler.promoted] Budget:[round(scheduler.last_execution_ms, 0.1)]/[round(scheduler.last_budget_ms, 0.1)]ms"
@@ -326,7 +326,12 @@ SUBSYSTEM_DEF(netrun)
 /datum/controller/subsystem/netrun/proc/get_task_scheduler()
 	if(!task_scheduler)
 		task_scheduler = new
+		RegisterSignal(src, COMSIG_NETRUN_TOPOLOGY_DIRTY, PROC_REF(on_topology_dirty))
 	return task_scheduler
+
+/datum/controller/subsystem/netrun/proc/on_topology_dirty(datum/source, datum/netrun_topology/graph, generation)
+	SIGNAL_HANDLER
+	task_scheduler?.enqueue("apc_prebuild", graph, NETRUN_TASK_BACKGROUND)
 
 /datum/controller/subsystem/netrun/proc/populate_tasks()
 	task_populations++
@@ -535,9 +540,7 @@ SUBSYSTEM_DEF(netrun)
 	events += list(list("kind" = kind, "from" = from_ref, "to" = to_ref, "t" = world.time))
 	if(length(events) > 40)
 		events.Cut(1, length(events) - 40 + 1)
-	for(var/datum/netrun_console/console as anything in active_consoles)
-		if(!QDELETED(console) && console.map_view?.subscribed)
-			console.invalidate_ui()
+	SEND_SIGNAL(src, COMSIG_NETRUN_EVENT_POSTED, kind, from_ref, to_ref)
 
 /// Недавние события (последние секунды) для интерфейса
 /datum/controller/subsystem/netrun/proc/recent_events()

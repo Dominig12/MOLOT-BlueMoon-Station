@@ -375,6 +375,49 @@
 	graph = null
 	return ..()
 
+/// Registry subscriptions replace full endpoint scans for infrastructure changes.
+/datum/netrun_topology/New()
+	. = ..()
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_REGISTERED, PROC_REF(on_node_registered))
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_UNREGISTERED, PROC_REF(on_node_unregistered))
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_MOVED, PROC_REF(on_node_moved))
+	for(var/address in SSnetrun.nodes_by_address)
+		var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
+		if(QDELETED(node))
+			continue
+		if(node.node_type == NETRUN_NODE_APC)
+			registered_apcs[address] = node
+		else if(is_relay(node))
+			registered_relays[address] = node
+
+/datum/netrun_topology/proc/on_node_registered(datum/source, datum/component/netrun_node/node)
+	SIGNAL_HANDLER
+	if(QDELETED(node))
+		return
+	if(node.node_type == NETRUN_NODE_APC)
+		registered_apcs[node.address] = node
+		infrastructure_changed()
+	else if(is_relay(node))
+		registered_relays[node.address] = node
+		infrastructure_changed()
+	else
+		invalidate()
+
+/datum/netrun_topology/proc/on_node_unregistered(datum/source, datum/component/netrun_node/node)
+	SIGNAL_HANDLER
+	if(!node)
+		return
+	registered_apcs -= node.address
+	registered_relays -= node.address
+	forget_node(node)
+
+/datum/netrun_topology/proc/on_node_moved(datum/source, datum/component/netrun_node/node, turf/old_turf, turf/new_turf)
+	SIGNAL_HANDLER
+	if(QDELETED(node) || !is_infrastructure(node) || old_turf == new_turf)
+		return
+	node.topology_turf = new_turf
+	infrastructure_changed()
+
 /// Cached structural graph. Online state is deliberately absent: routing validates it live.
 /datum/netrun_topology
 	var/list/nodes = list()
@@ -391,6 +434,9 @@
 	var/indexed_revision = -1
 	var/list/apcs_by_sector = list()
 	var/list/relay_addresses = list()
+	var/list/registered_apcs = list()
+	var/list/registered_relays = list()
+	var/indexed_infrastructure_visits = 0
 	var/list/nearest_by_turf = list()
 	/// Moving an endpoint updates route costs without replacing its structural parent.
 	var/weight_revision = 0
@@ -408,6 +454,7 @@
 /datum/netrun_topology/proc/invalidate()
 	dirty = TRUE
 	structural_generation++
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_TOPOLOGY_DIRTY, src, structural_generation)
 
 /datum/netrun_topology/proc/infrastructure_changed()
 	infrastructure_revision++
@@ -457,21 +504,26 @@
 		return
 	apcs_by_sector = list()
 	relay_addresses = list()
-	var/list/addresses = sort_list(SSnetrun.nodes_by_address.Copy())
-	for(var/address in addresses)
-		var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
+	// Work scales with infrastructure, not the count of endpoints.
+	for(var/address in sort_list(registered_apcs.Copy()))
+		var/datum/component/netrun_node/node = registered_apcs[address]
 		if(QDELETED(node) || QDELETED(node.parent))
 			continue
+		indexed_infrastructure_visits++
 		var/sector = netrun_sector_for(get_turf(node.parent))
 		if(!sector)
 			continue
-		if(node.node_type == NETRUN_NODE_APC)
-			var/list/sector_apcs = apcs_by_sector[sector]
-			if(!sector_apcs)
-				sector_apcs = list()
-				apcs_by_sector[sector] = sector_apcs
-			sector_apcs += address
-		else if(is_relay(node))
+		var/list/sector_apcs = apcs_by_sector[sector]
+		if(!sector_apcs)
+			sector_apcs = list()
+			apcs_by_sector[sector] = sector_apcs
+		sector_apcs += address
+	for(var/address in sort_list(registered_relays.Copy()))
+		var/datum/component/netrun_node/node = registered_relays[address]
+		if(QDELETED(node) || QDELETED(node.parent))
+			continue
+		indexed_infrastructure_visits++
+		if(netrun_sector_for(get_turf(node.parent)))
 			relay_addresses += address
 	indexed_revision = infrastructure_revision
 
@@ -801,6 +853,7 @@
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, revision)
 
 /datum/netrun_topology/Destroy()
+	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_REGISTERED, COMSIG_NETRUN_NODE_UNREGISTERED, COMSIG_NETRUN_NODE_MOVED))
 	QDEL_NULL(apc_prebuild)
 	clear_route_tables(TRUE)
 	nodes.Cut()
@@ -808,6 +861,8 @@
 	edges.Cut()
 	edge_lookup.Cut()
 	apcs_by_sector.Cut()
+	registered_apcs.Cut()
+	registered_relays.Cut()
 	relay_addresses.Cut()
 	nearest_by_turf.Cut()
 	return ..()

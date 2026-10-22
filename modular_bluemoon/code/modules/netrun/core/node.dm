@@ -54,11 +54,9 @@
 	address = SSnetrun.make_address()
 	SSnetrun.nodes_by_address[address] = src
 	topology_turf = get_turf(parent)
-	var/datum/netrun_topology/topology = SSnetrun.get_topology()
-	if(topology.is_infrastructure(src))
-		topology.infrastructure_changed()
-	else
-		topology.invalidate()
+	// Publish registry event: topology listens and indexes APC/relay membership.
+	SSnetrun.get_topology()
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_REGISTERED, src)
 	join_network()
 	notify_changed(NETRUN_CHANGED_BINDING)
 
@@ -77,10 +75,9 @@
 
 /datum/component/netrun_node/Destroy()
 	SSnetrun.untrack_node(src)
-	var/datum/netrun_topology/topology = SSnetrun.get_topology()
 	SSnetrun.nodes_by_address -= address
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_UNREGISTERED, src)
 	notify_changed(NETRUN_CHANGED_REMOVED)
-	topology.forget_node(src)
 	for(var/mob/camera/netrun_entity/entity as anything in entities)
 		entity.host_lost()
 	entities = null
@@ -126,6 +123,7 @@
 
 /datum/component/netrun_node/proc/on_moved(datum/source)
 	SIGNAL_HANDLER
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_MOVED, src, topology_turf, get_turf(parent))
 	join_network()
 	// refresh_node emits BINDING only when the actual APC attachment changes.
 	notify_changed(NETRUN_CHANGED_STATE)

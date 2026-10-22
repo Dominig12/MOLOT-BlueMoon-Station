@@ -85,6 +85,13 @@
 /// Нелегальный сетевой доступ к кибернетическому узлу носителя: (datum/netrun_console, datum/component/netrun_node)
 #define COMSIG_NETRUN_IMPLANT_INTRUSION "netrun_implant_intrusion"
 
+/// SSnetrun lifecycle events; callbacks only invalidate caches or enqueue tasks.
+#define COMSIG_NETRUN_NODE_REGISTERED "netrun_node_registered"
+#define COMSIG_NETRUN_NODE_UNREGISTERED "netrun_node_unregistered"
+#define COMSIG_NETRUN_NODE_MOVED "netrun_node_moved"
+#define COMSIG_NETRUN_TOPOLOGY_DIRTY "netrun_topology_dirty"
+#define COMSIG_NETRUN_EVENT_POSTED "netrun_event_posted"
+
 /// Domain notifications. Handlers invalidate caches; they must not serialize UI.
 /// SSnetrun and node: (node, changed_flags).
 #define COMSIG_NETRUN_NODE_CHANGED "netrun_node_changed"
