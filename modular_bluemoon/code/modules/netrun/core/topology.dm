@@ -34,6 +34,11 @@
 	var/list/nearest
 	var/list/components
 	var/list/candidates
+	var/list/seen_candidates
+	var/select_i = 1
+	var/select_j = 1
+	var/union_i = 1
+	var/group_build_i = 1
 	var/list/groups
 	var/list/group_order
 	var/list/connected
@@ -121,38 +126,69 @@
 		pair_i++
 		pair_j = pair_i + 1
 
+/// The candidate collection is incremental rather than one large sort/union pass.
 /datum/netrun_apc_prebuild/proc/select_pairs()
-	candidates = list()
-	var/list/seen = list()
-	for(var/address in addresses)
-		for(var/list/pair as anything in nearest[address])
-			var/key = "[pair["from"]]>[pair["to"]]"
-			if(seen[key])
-				continue
-			seen[key] = TRUE
-			candidates += list(pair)
-	sortTim(candidates, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
-	for(var/list/pair as anything in candidates)
-		components[graph.apc_component(components, pair["to"])] = graph.apc_component(components, pair["from"])
-	groups = list()
-	group_order = list()
-	for(var/address in addresses)
-		var/root = graph.apc_component(components, address)
-		var/list/members = groups[root]
-		if(!members)
-			members = list()
-			groups[root] = members
-			group_order += root
-		members += address
-	if(length(group_order) < 2)
-		phase = "store"
+	if(!candidates)
+		candidates = list()
+		seen_candidates = list()
+		select_i = 1
+		select_j = 1
+		phase = "collect"
+		
+/datum/netrun_apc_prebuild/proc/collect_pair()
+	if(select_i > length(addresses))
+		phase = "sort"
 		return
-	connected = groups[group_order[1]].Copy()
-	group_i = 2
-	from_i = 1
-	to_i = 1
-	bridge = null
-	phase = "bridge"
+	var/address = addresses[select_i]
+	var/list/listing = nearest[address]
+	if(select_j > length(listing))
+		select_i++
+		select_j = 1
+		return
+	var/list/pair = listing[select_j++]
+	var/key = "[pair["from"]]>[pair["to"]]"
+	if(seen_candidates[key])
+		return
+	seen_candidates[key] = TRUE
+	candidates += list(pair)
+
+/datum/netrun_apc_prebuild/proc/sort_candidates()
+	// Every APC retains at most K neighbors. This bounded set is still sorted once
+	// for the exact deterministic ordering used by synchronous connect_apcs().
+	sortTim(candidates, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
+	union_i = 1
+	phase = "union"
+
+/datum/netrun_apc_prebuild/proc/union_pair()
+	if(union_i > length(candidates))
+		groups = list()
+		group_order = list()
+		group_build_i = 1
+		phase = "groups"
+		return
+	var/list/pair = candidates[union_i++]
+	components[graph.apc_component(components, pair["to"])] = graph.apc_component(components, pair["from"])
+
+/datum/netrun_apc_prebuild/proc/build_group()
+	if(group_build_i > length(addresses))
+		if(length(group_order) < 2)
+			phase = "store"
+			return
+		connected = groups[group_order[1]].Copy()
+		group_i = 2
+		from_i = 1
+		to_i = 1
+		bridge = null
+		phase = "bridge"
+		return
+	var/address = addresses[group_build_i++]
+	var/root = graph.apc_component(components, address)
+	var/list/members = groups[root]
+	if(!members)
+		members = list()
+		groups[root] = members
+		group_order += root
+	members += address
 
 /datum/netrun_apc_prebuild/proc/scan_bridge()
 	if(group_i > length(group_order))
@@ -190,6 +226,7 @@
 	nearest = null
 	components = null
 	candidates = null
+	seen_candidates = null
 	groups = null
 	group_order = null
 	connected = null
@@ -208,6 +245,14 @@
 				scan_pair()
 			if("select")
 				select_pairs()
+			if("collect")
+				collect_pair()
+			if("sort")
+				sort_candidates()
+			if("union")
+				union_pair()
+			if("groups")
+				build_group()
 			if("bridge")
 				scan_bridge()
 			if("store")

@@ -483,3 +483,28 @@
 	TEST_ASSERT(!job.valid_inputs(), "Old generation cannot publish stale APC edges")
 	graph.rebuild()
 	TEST_ASSERT(!graph.dirty, "Immediate routing retains synchronous fallback")
+
+
+/// Every phase of candidate collection and union progresses with a one-operation budget.
+/datum/unit_test/netrun_apc_prebuild_small_slices/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	for(var/i in 1 to 8)
+		var/turf/spot = scene.take(locate(origin.x + i, origin.y + 1, origin.z), room)
+		scene.machine(/obj/machinery/power/apc, spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	graph.invalidate()
+	var/datum/netrun_apc_prebuild/job = allocate(/datum/netrun_apc_prebuild, graph)
+	var/finished = FALSE
+	for(var/i in 1 to 3000)
+		if(job.advance(1))
+			finished = TRUE
+			break
+	TEST_ASSERT(finished, "A one-step task budget must eventually complete all APC phases")
+	TEST_ASSERT_EQUAL(length(job.links_by_sector), length(job.sectors), "Every sector must produce a complete candidate table")
+	TEST_ASSERT_EQUAL(graph.dirty, TRUE, "Building all candidates must not publish the graph")
+	graph.apc_prebuild = job
+	graph.rebuild()
+	TEST_ASSERT(!graph.dirty, "Finished staged candidates must commit atomically")
