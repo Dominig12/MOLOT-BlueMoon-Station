@@ -25,7 +25,8 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   const latest = useRef(props); latest.current = props;
   const frame = useRef<number | null>(null);
   const paintVersion = useRef(0);
-  const paintJob = useRef<{ version: number; iterator: Generator<void, void, unknown>; surface: HTMLCanvasElement } | null>(null);
+  const paintJob = useRef<{ version: number; iterator: Generator<void, void, unknown>; surface: HTMLCanvasElement; viewport: GraphViewport } | null>(null);
+  const paintedView = useRef<{ x: number; y: number; zoom: number } | null>(null);
   const down = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
   const [tooltip, setTooltip] = useState<{ address: string; x: number; y: number } | null>(null);
   const base = useMemo(() => {
@@ -42,6 +43,15 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
       && previous.width === dimensions.width && previous.height === dimensions.height ? previous
       : { x: view.x, y: view.y, zoom: view.zoom, ...dimensions });
   }, [view, size]);
+  // Keep the last bitmap in camera coordinates while SVG moves with current camera.
+  const syncBitmapCamera = useCallback(() => {
+    const surface = canvas.current, previous = paintedView.current;
+    if (!surface || !previous) { return; }
+    const scale = view.zoom / previous.zoom;
+    const dx = view.x - previous.x * scale, dy = view.y - previous.y * scale;
+    surface.style.transformOrigin = '0 0';
+    surface.style.transform = 'translate(' + dx + 'px, ' + dy + 'px) scale(' + scale + ')';
+  }, [view]);
   const paintRef = useRef<() => void>(() => {});
   const schedulePaint = useCallback(() => {
     if (latest.current.suspended || frame.current !== null) { return; }
@@ -54,7 +64,7 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     schedulePaint();
   }, [schedulePaint]);
   paintRef.current = () => {
-    if (latest.current.suspended) { paintJob.current = null; return; }
+    if (latest.current.suspended || down.current?.moved) { paintJob.current = null; return; }
     const surface = canvas.current, holder = container.current;
     const ctx = surface?.getContext('2d', { alpha: false });
     if (!surface || !holder || !ctx) { return; }
@@ -68,6 +78,8 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
         surface.width = pixelsWide; surface.height = pixelsHigh;
       }
       renderer.paint(ctx, scenery.current, view, latest.current, width, height, ratio);
+      paintedView.current = { x: view.x, y: view.y, zoom: view.zoom };
+      syncBitmapCamera();
       return;
     }
     if (!paintJob.current || paintJob.current.version !== paintVersion.current) {
@@ -79,11 +91,16 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
           surface.width = pixelsWide; surface.height = pixelsHigh;
         }
         renderer.paint(ctx, scenery.current, view, latest.current, width, height, ratio);
+        paintedView.current = { x: view.x, y: view.y, zoom: view.zoom };
+        syncBitmapCamera();
         return;
       }
+      const viewport = new GraphViewport();
+      viewport.x = view.x; viewport.y = view.y;
+      viewport.zoom = view.zoom; viewport.fitting = view.fitting;
       paintJob.current = {
-        version: paintVersion.current, surface: hidden,
-        iterator: renderer.paintChunks(hiddenCtx, scenery.current, view, latest.current, width, height, ratio),
+        version: paintVersion.current, surface: hidden, viewport,
+        iterator: renderer.paintChunks(hiddenCtx, scenery.current, viewport, latest.current, width, height, ratio),
       };
     }
     const job = paintJob.current;
@@ -95,15 +112,17 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(job.surface, 0, 0);
+    paintedView.current = { x: job.viewport.x, y: job.viewport.y, zoom: job.viewport.zoom };
+    syncBitmapCamera();
   };
   const fit = useCallback(() => {
-    const { width, height } = size(); view.fit(retained.current.fitPoints(latest.current.apcZones), width, height); syncCamera(); queuePaint();
-  }, [view, queuePaint, size, syncCamera]);
+    const { width, height } = size(); view.fit(retained.current.fitPoints(latest.current.apcZones), width, height); syncCamera(); syncBitmapCamera(); queuePaint();
+  }, [view, queuePaint, size, syncCamera, syncBitmapCamera]);
   const center = useCallback((address: string) => {
     const point = retained.current.byAddress.get(address);
     if (!point) { return; }
-    const { width, height } = size(); view.center(point, width, height); syncCamera(); queuePaint();
-  }, [view, queuePaint, size, syncCamera]);
+    const { width, height } = size(); view.center(point, width, height); syncCamera(); syncBitmapCamera(); queuePaint();
+  }, [view, queuePaint, size, syncCamera, syncBitmapCamera]);
   useImperativeHandle(externalRef, () => ({ center, fit }), [center, fit]);
   useEffect(() => {
     if (props.suspended) {
@@ -151,7 +170,15 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
         if (press) {
           const dx = event.clientX - press.x, dy = event.clientY - press.y;
           if (dx * dx + dy * dy > 16) { press.moved = true; }
-          if (press.moved) { view.pan(press.panX + dx, press.panY + dy); setTooltip(null); syncCamera(); queuePaint(); }
+          if (press.moved) {
+            // Only the last completed bitmap follows the pointer; redraw once at drag end.
+            if (paintJob.current) { paintVersion.current++; paintJob.current = null; }
+            if (frame.current !== null) {
+              window.cancelAnimationFrame(frame.current); frame.current = null;
+            }
+            view.pan(press.panX + dx, press.panY + dy);
+            setTooltip(null); syncCamera(); syncBitmapCamera();
+          }
           return;
         }
         const node = hit(event.clientX, event.clientY), bounds = event.currentTarget.getBoundingClientRect();
@@ -160,15 +187,16 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
       onPointerLeave={() => setTooltip(null)}
       onPointerUp={(event) => {
         const press = down.current; down.current = null;
-        if (!press || press.moved) { return; }
+        if (!press) { return; }
+        if (press.moved) { queuePaint(); return; }
         const node = hit(event.clientX, event.clientY); if (node) { latest.current.onSelect(node.address); }
       }}
-      onPointerCancel={() => { down.current = null; setTooltip(null); }}
+      onPointerCancel={() => { const moved = down.current?.moved; down.current = null; setTooltip(null); if (moved) { queuePaint(); } }}
       onWheel={(event) => {
         event.preventDefault(); setTooltip(null);
         const bounds = event.currentTarget.getBoundingClientRect(), dimensions = size();
         const fitted = new GraphViewport(); fitted.fit(retained.current.fitPoints(latest.current.apcZones), dimensions.width, dimensions.height);
-        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, fitted.zoom); syncCamera(); queuePaint();
+        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, fitted.zoom); syncCamera(); syncBitmapCamera(); queuePaint();
       }}>
       <canvas ref={canvas} data-net-canvas aria-hidden="true" style={{ display: 'block', width: '100%', height: '100%' }} />
       {!props.suspended && <ActorLayer {...props} scene={scene} dynamicEdges={props.dynamicEdges || EMPTY_EDGES} camera={camera} />}

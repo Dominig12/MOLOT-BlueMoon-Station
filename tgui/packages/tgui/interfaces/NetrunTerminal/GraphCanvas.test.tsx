@@ -131,3 +131,39 @@ test('large map painter yields between steps while retaining every marker', () =
   expect(iterations).toBeLessThan(1500);
   expect(markers).toBe(600);
 });
+
+
+test('drag moves the retained bitmap with SVG before pointer release', () => {
+  const pointer = window.PointerEvent, request = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
+  Object.defineProperty(window, 'PointerEvent', { value: MouseEvent, configurable: true });
+  const frames = new Map<number, FrameRequestCallback>();
+  let next = 0;
+  window.requestAnimationFrame = jest.fn((callback) => { frames.set(++next, callback); return next; });
+  window.cancelAnimationFrame = jest.fn((id) => { frames.delete(id); });
+  const ctx = { setTransform: jest.fn(), drawImage: jest.fn() } as unknown as CanvasRenderingContext2D;
+  const getContext = jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx);
+  const painter = jest.spyOn(GraphRenderer.prototype, 'paintChunks').mockImplementation(function* () { yield; yield; });
+  const nodes = Array.from({ length: 400 }, (_, i) => ({ ...node, address: 'T' + i, px: (i % 20) * 96, py: Math.floor(i / 20) * 96 }));
+  const props = { ...overlay, nodes, edges: [], positions: new Map(nodes.map((entry) => [entry.address, entry])),
+    adjacency: new Map(), focus: null, onSelect: jest.fn() };
+  const screen = render(<GraphCanvas {...props} />);
+  const flush = () => act(() => { const callbacks = [...frames]; frames.clear(); callbacks.forEach(([, cb]) => cb(0)); });
+  flush(); flush(); flush();
+  const surface = screen.container.querySelector('[data-net-canvas]') as HTMLCanvasElement;
+  const viewport = screen.getByLabelText('Карта сети');
+  fireEvent.pointerDown(viewport, { button: 0, clientX: 100, clientY: 100 });
+  fireEvent.pointerMove(viewport, { clientX: 150, clientY: 125 });
+  expect(surface.style.transform).toContain('translate(50px, 25px)');
+  expect(frames.size).toBe(0);
+  fireEvent.pointerMove(viewport, { clientX: 170, clientY: 130 });
+  expect(surface.style.transform).toContain('translate(70px, 30px)');
+  expect(frames.size).toBe(0);
+  fireEvent.pointerUp(viewport, { clientX: 170, clientY: 130 });
+  expect(frames.size).toBe(1);
+  flush(); flush(); flush();
+  expect(painter).toHaveBeenCalledTimes(2);
+  expect(surface.style.transform).toContain('translate(0px, 0px) scale(1)');
+  screen.unmount(); painter.mockRestore(); getContext.mockRestore();
+  window.requestAnimationFrame = request; window.cancelAnimationFrame = cancel;
+  Object.defineProperty(window, 'PointerEvent', { value: pointer, configurable: true });
+});
