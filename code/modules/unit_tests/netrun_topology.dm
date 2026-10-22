@@ -562,3 +562,60 @@
 	TEST_ASSERT(finished, "Spatial neighbor search must finish one task step at a time")
 	TEST_ASSERT_EQUAL(graph.revision, revision_before, "Background preparation must not publish partial graph data")
 	TEST_ASSERT(job.comparisons > 0, "The job must evaluate APC neighbor candidates")
+
+
+/// Node lifecycle events keep infrastructure indexes up-to-date without scanning endpoints.
+/datum/unit_test/netrun_topology_registry_signals/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/apc_spot = scene.take(get_step(origin, NORTH), room)
+	var/turf/destination = scene.take(get_step(origin, EAST), room)
+	var/datum/netrun_topology/graph = SSnetrun.get_topology()
+	var/before = graph.infrastructure_revision
+	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, apc_spot)
+	var/datum/component/netrun_node/node = apc.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT_EQUAL(graph.registered_apcs[node.address], node, "New APC must enter the subscribed infrastructure registry")
+	TEST_ASSERT(graph.infrastructure_revision > before, "Registration invalidates the infrastructure index")
+	graph.index_infrastructure()
+	TEST_ASSERT(node.address in graph.apcs_by_sector[netrun_sector_for(apc_spot)], "New APC is discoverable in its physical sector")
+	var/revision_before_move = graph.infrastructure_revision
+	apc.forceMove(destination)
+	TEST_ASSERT(graph.infrastructure_revision > revision_before_move, "APC movement invalidates index through its signal")
+	graph.index_infrastructure()
+	TEST_ASSERT(node.address in graph.apcs_by_sector[netrun_sector_for(destination)], "Moved APC remains indexed at its new location")
+	var/address = node.address
+	qdel(apc)
+	TEST_ASSERT(!graph.registered_apcs[address], "Removed APC must leave the infrastructure registry")
+	TEST_ASSERT(!(address in SSnetrun.nodes_by_address), "Removed APC must leave the address registry")
+
+/// An ordinary endpoint keeps its address without entering the APC/relay registries.
+/datum/unit_test/netrun_topology_registry_excludes_endpoints/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_topology/graph = SSnetrun.get_topology()
+	var/apc_count = length(graph.registered_apcs)
+	var/relay_count = length(graph.registered_relays)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	TEST_ASSERT_EQUAL(length(graph.registered_apcs), apc_count, "Ordinary endpoints must not register as APCs")
+	TEST_ASSERT_EQUAL(length(graph.registered_relays), relay_count, "Ordinary endpoints must not register as relays")
+	TEST_ASSERT_EQUAL(SSnetrun.nodes_by_address[node.address], node, "Ordinary endpoint remains addressable")
+	var/visits = graph.indexed_infrastructure_visits
+	graph.index_infrastructure()
+	TEST_ASSERT_EQUAL(graph.indexed_infrastructure_visits, visits, "A new endpoint does not trigger infrastructure reindex")
+
+/// A temporary power loss does not change structural bindings or registry membership.
+/datum/unit_test/netrun_topology_registry_keeps_offline_apcs/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/apc_spot = scene.take(get_step(origin, NORTH), room)
+	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, apc_spot)
+	var/datum/component/netrun_node/node = apc.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/revision = graph.infrastructure_revision
+	apc.set_machine_stat(BROKEN)
+	node.reconcile_state()
+	TEST_ASSERT_EQUAL(graph.registered_apcs[node.address], node, "Offline APC stays physically registered")
+	TEST_ASSERT_EQUAL(graph.infrastructure_revision, revision, "Power failure is not a structural topology change")
