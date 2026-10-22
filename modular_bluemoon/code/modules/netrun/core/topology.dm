@@ -17,6 +17,123 @@
 	var/floor_distance = first_floor && second_floor ? abs(first_floor - second_floor) : abs(first.z - second.z)
 	return max(abs(first.x - second.x), abs(first.y - second.y), floor_distance)
 
+/// Exact Chebyshev nearest-neighbor index. Z distance only increases XY distance.
+#define NETRUN_APC_BUCKET_SIZE 16
+
+/datum/netrun_apc_spatial_index
+	var/list/cells = list()
+	var/list/positions
+	var/list/order = list()
+	var/min_x = INFINITY
+	var/max_x = -INFINITY
+	var/min_y = INFINITY
+	var/max_y = -INFINITY
+
+/datum/netrun_apc_spatial_index/New(list/addresses, list/positions_by_address)
+	. = ..()
+	positions = positions_by_address
+	for(var/i in 1 to length(addresses))
+		var/address = addresses[i]
+		var/turf/point = positions[address]
+		if(!point)
+			continue
+		order[address] = i
+		var/cx = round(point.x / NETRUN_APC_BUCKET_SIZE)
+		var/cy = round(point.y / NETRUN_APC_BUCKET_SIZE)
+		var/key = "[cx]:[cy]"
+		var/list/cell = cells[key]
+		if(!cell)
+			cell = list()
+			cells[key] = cell
+		cell += address
+		min_x = min(min_x, cx)
+		max_x = max(max_x, cx)
+		min_y = min(min_y, cy)
+		max_y = max(max_y, cy)
+
+/datum/netrun_apc_spatial_index/proc/nearest_edges(address)
+	var/datum/netrun_apc_neighbor_scan/scan = new(src, address)
+	while(!scan.advance())
+		continue
+	. = scan.best.Copy()
+	qdel(scan)
+
+/// Each advance performs at most one cell lookup or one physical distance check.
+/datum/netrun_apc_neighbor_scan
+	var/datum/netrun_apc_spatial_index/index
+	var/address
+	var/turf/point
+	var/cx
+	var/cy
+	var/ring = 0
+	var/dx = 0
+	var/dy = 0
+	var/max_ring = 0
+	var/list/cell
+	var/cell_cursor = 1
+	var/list/best = list()
+	var/limit = 1
+	var/comparisons = 0
+	var/done = FALSE
+
+/datum/netrun_apc_neighbor_scan/New(datum/netrun_apc_spatial_index/spatial, source_address)
+	. = ..()
+	index = spatial
+	address = source_address
+	point = spatial.positions[address]
+	cx = round(point.x / NETRUN_APC_BUCKET_SIZE)
+	cy = round(point.y / NETRUN_APC_BUCKET_SIZE)
+	limit = max(1, NETRUN_APC_NEIGHBORS)
+	max_ring = max(abs(spatial.min_x - cx), abs(spatial.max_x - cx), abs(spatial.min_y - cy), abs(spatial.max_y - cy))
+
+/datum/netrun_apc_neighbor_scan/proc/check_neighbor(other_address)
+	if(other_address == address)
+		return
+	var/turf/other = index.positions[other_address]
+	var/first = index.order[address] < index.order[other_address] ? address : other_address
+	var/second = first == address ? other_address : address
+	var/list/edge = list("from" = first, "to" = second, "distance" = netrun_topology_distance(point, other))
+	comparisons++
+	if(length(best) >= limit && cmp_netrun_physical_edge(edge, best[length(best)]) >= 0)
+		return
+	best += list(edge)
+	sortTim(best, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
+	if(length(best) > limit)
+		best.len = limit
+
+/datum/netrun_apc_neighbor_scan/proc/advance()
+	if(done)
+		return TRUE
+	if(cell && cell_cursor <= length(cell))
+		check_neighbor(cell[cell_cursor++])
+		return FALSE
+	cell = null
+	if(dx > ring)
+		// Outside ring R the XY lower bound is R*BUCKET_SIZE + 1.
+		// Strictly larger than the Kth distance also excludes tied candidates.
+		if(ring >= max_ring || (length(best) >= limit && best[length(best)]["distance"] <= ring * NETRUN_APC_BUCKET_SIZE))
+			done = TRUE
+			return TRUE
+		ring++
+		dx = -ring
+		dy = -ring
+		return FALSE
+	if(abs(dx) == ring || abs(dy) == ring)
+		var/key = "[cx + dx]:[cy + dy]"
+		cell = index.cells[key]
+		cell_cursor = 1
+	dy++
+	if(dy > ring)
+		dx++
+		dy = -ring
+	return FALSE
+
+/datum/netrun_apc_neighbor_scan/Destroy()
+	index = null
+	cell = null
+	best = null
+	return ..()
+
 /// Speculative APC topology construction in bounded work units.
 /// Never writes to the published graph. A live route request can still rebuild synchronously.
 /datum/netrun_apc_prebuild
@@ -32,6 +149,8 @@
 	var/list/positions
 	var/list/input_order
 	var/list/nearest
+	var/datum/netrun_apc_spatial_index/spatial
+	var/datum/netrun_apc_neighbor_scan/active_scan
 	var/list/components
 	var/list/candidates
 	var/list/seen_candidates
@@ -92,39 +211,26 @@
 		input_order[address] = i
 		nearest[address] = list()
 		components[address] = address
+	QDEL_NULL(spatial)
+	spatial = new(addresses, positions)
 	pair_i = 1
 	pair_j = 2
 	phase = "pairs"
 
 /datum/netrun_apc_prebuild/proc/scan_pair()
-	if(pair_i >= length(addresses))
+	if(pair_i > length(addresses))
 		phase = "select"
 		return
-	var/first = addresses[pair_i]
-	var/second = addresses[pair_j]
-	var/list/first_nearest = nearest[first]
-	var/list/second_nearest = nearest[second]
-	var/distance = netrun_topology_distance(positions[first], positions[second])
-	var/limit = max(1, NETRUN_APC_NEIGHBORS)
-	var/list/first_worst = length(first_nearest) >= limit ? first_nearest[length(first_nearest)] : null
-	var/list/second_worst = length(second_nearest) >= limit ? second_nearest[length(second_nearest)] : null
-	if(!first_worst || !second_worst || distance <= first_worst["distance"] || distance <= second_worst["distance"])
-		var/list/pair = list("from" = first, "to" = second, "distance" = distance)
-		if(!first_worst || cmp_netrun_physical_edge(pair, first_worst) < 0)
-			first_nearest += list(pair)
-			sortTim(first_nearest, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
-			if(length(first_nearest) > limit)
-				first_nearest.len = limit
-		if(!second_worst || cmp_netrun_physical_edge(pair, second_worst) < 0)
-			second_nearest += list(pair)
-			sortTim(second_nearest, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
-			if(length(second_nearest) > limit)
-				second_nearest.len = limit
-	comparisons++
-	pair_j++
-	if(pair_j > length(addresses))
-		pair_i++
-		pair_j = pair_i + 1
+	if(!active_scan)
+		active_scan = new(spatial, addresses[pair_i])
+	var/previous = active_scan.comparisons
+	var/finished = active_scan.advance()
+	comparisons += active_scan.comparisons - previous
+	if(!finished)
+		return
+	nearest[addresses[pair_i]] = active_scan.best.Copy()
+	QDEL_NULL(active_scan)
+	pair_i++
 
 /// The candidate collection is incremental rather than one large sort/union pass.
 /datum/netrun_apc_prebuild/proc/select_pairs()
@@ -220,6 +326,8 @@
 /datum/netrun_apc_prebuild/proc/store_sector()
 	links_by_sector[sector] = candidates
 	sector_index++
+	QDEL_NULL(active_scan)
+	QDEL_NULL(spatial)
 	addresses = null
 	positions = null
 	input_order = null
@@ -262,6 +370,8 @@
 	return completed
 
 /datum/netrun_apc_prebuild/Destroy()
+	QDEL_NULL(active_scan)
+	QDEL_NULL(spatial)
 	graph = null
 	return ..()
 
@@ -550,42 +660,21 @@
 /datum/netrun_topology/proc/connect_apcs(list/addresses)
 	if(length(addresses) < 2)
 		return
-	// Keep only the K closest pairs for each APC, not every O(N^2) candidate.
-	// The union exactly matches the original sorted quota-selection pass.
+	// Exact indexed search: nearby cells first, prune only provably farther cells.
 	var/list/nearest = list()
 	var/list/components = list()
 	var/list/input_order = list()
 	var/list/positions = list()
-	var/limit = max(1, NETRUN_APC_NEIGHBORS)
 	for(var/i in 1 to length(addresses))
 		var/address = addresses[i]
-		nearest[address] = list()
 		components[address] = address
 		input_order[address] = i
 		var/datum/component/netrun_node/apc = nodes[address]
 		positions[address] = get_turf(apc.parent)
-	for(var/i in 1 to length(addresses))
-		var/first = addresses[i]
-		var/list/first_nearest = nearest[first]
-		for(var/j = i + 1, j <= length(addresses), j++)
-			var/second = addresses[j]
-			var/list/second_nearest = nearest[second]
-			var/distance = netrun_topology_distance(positions[first], positions[second])
-			var/list/first_worst = length(first_nearest) >= limit ? first_nearest[length(first_nearest)] : null
-			var/list/second_worst = length(second_nearest) >= limit ? second_nearest[length(second_nearest)] : null
-			if(first_worst && second_worst && distance > first_worst["distance"] && distance > second_worst["distance"])
-				continue
-			var/list/pair = list("from" = first, "to" = second, "distance" = distance)
-			if(!first_worst || cmp_netrun_physical_edge(pair, first_worst) < 0)
-				first_nearest += list(pair)
-				sortTim(first_nearest, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
-				if(length(first_nearest) > limit)
-					first_nearest.len = limit
-			if(!second_worst || cmp_netrun_physical_edge(pair, second_worst) < 0)
-				second_nearest += list(pair)
-				sortTim(second_nearest, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
-				if(length(second_nearest) > limit)
-					second_nearest.len = limit
+	var/datum/netrun_apc_spatial_index/spatial = new(addresses, positions)
+	for(var/address in addresses)
+		nearest[address] = spatial.nearest_edges(address)
+	qdel(spatial)
 	// Deduplicate each selected pair and preserve deterministic edge ordering.
 	var/list/candidate_pairs = list()
 	var/list/seen_pairs = list()

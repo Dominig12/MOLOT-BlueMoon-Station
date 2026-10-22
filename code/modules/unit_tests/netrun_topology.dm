@@ -508,3 +508,57 @@
 	graph.apc_prebuild = job
 	graph.rebuild()
 	TEST_ASSERT(!graph.dirty, "Finished staged candidates must commit atomically")
+
+
+/// Compare an exact XY index against a complete pair-distance oracle.
+/datum/unit_test/netrun_apc_spatial_exact_neighbors/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/list/addresses = list()
+	var/list/positions = list()
+	for(var/i in 1 to 24)
+		var/address = "SPATIAL-[i]"
+		addresses += address
+		var/x = origin.x + (i * 7) % 31
+		var/y = origin.y + (i * 11) % 23
+		var/turf/position = locate(x, y, origin.z)
+		positions[address] = position || origin
+	var/datum/netrun_apc_spatial_index/spatial = allocate(/datum/netrun_apc_spatial_index, addresses, positions)
+	var/limit = max(1, NETRUN_APC_NEIGHBORS)
+	for(var/first_index in 1 to length(addresses))
+		var/first_address = addresses[first_index]
+		var/list/expected = list()
+		for(var/second_index in 1 to length(addresses))
+			if(first_index == second_index)
+				continue
+			var/second_address = addresses[second_index]
+			var/from_address = first_index < second_index ? first_address : second_address
+			var/to_address = first_index < second_index ? second_address : first_address
+			expected += list(list("from" = from_address, "to" = to_address,
+				"distance" = netrun_topology_distance(positions[first_address], positions[second_address])))
+		sortTim(expected, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
+		if(length(expected) > limit)
+			expected.len = limit
+		TEST_ASSERT_EQUAL(json_encode(spatial.nearest_edges(first_address)), json_encode(expected),
+			"Spatial neighbors must exactly match exhaustive distance/order, including ties")
+
+/// Speculative spatial scans must finish across single-step advances without publishing.
+/datum/unit_test/netrun_apc_spatial_staged_neighbors/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	for(var/i in 1 to 12)
+		var/turf/spot = scene.take(locate(origin.x + (i * 7) % 25, origin.y + (i * 3) % 13, origin.z), room)
+		scene.machine(/obj/machinery/power/apc, spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/revision_before = graph.revision
+	graph.invalidate()
+	var/datum/netrun_apc_prebuild/job = allocate(/datum/netrun_apc_prebuild, graph)
+	var/finished = FALSE
+	for(var/i in 1 to 5000)
+		if(job.advance(1))
+			finished = TRUE
+			break
+	TEST_ASSERT(finished, "Spatial neighbor search must finish one task step at a time")
+	TEST_ASSERT_EQUAL(graph.revision, revision_before, "Background preparation must not publish partial graph data")
+	TEST_ASSERT(job.comparisons > 0, "The job must evaluate APC neighbor candidates")
