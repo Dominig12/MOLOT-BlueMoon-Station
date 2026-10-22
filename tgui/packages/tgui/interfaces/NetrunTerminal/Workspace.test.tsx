@@ -185,3 +185,37 @@ describe('Netrun workspace pages', () => {
     expect(within(page('terminal')).getByPlaceholderText('runner в #noosphere')).toBeTruthy();
   });
 });
+
+
+test('a tab switch retains the last confirmed route and node panel until map data returns', () => {
+  const selected = { ...node, can_hop: true };
+  const renderedMap = { nodes: [selected], edges: [], gateways: [], focus: selected.address,
+    revision: 1, route: { route: [selected.address], hops: 0, latency: 0, revision: 1, reachable: true } };
+  const entity = { host: 'OTHER', integrity: 80, max_integrity: 100 } as NetrunData['entity'];
+  const { panel, page, update } = setup({ workspace_view: 'map', map: renderedMap, selected, entity });
+  fireEvent.click(panel.getByText('Показать информацию об узле'));
+  expect(within(page('map')).getByText(/Путь: 0 пер/)).toBeTruthy();
+  expect(within(page('map')).getByText('Перейти в узел')).toBeTruthy();
+  fireEvent.click(panel.getByText('Терминал'));
+  update({ workspace_view: 'terminal', map: null, selected: null, entity: null });
+  fireEvent.click(panel.getByText('Карта'));
+  expect(within(page('map')).getByText(/Путь: 0 пер/)).toBeTruthy();
+  const cachedHop = within(page('map')).getByText('Перейти в узел').closest('button') as HTMLButtonElement;
+  expect(cachedHop.disabled).toBe(true);
+  update({ workspace_view: 'map', map: { ...renderedMap, route: { ...renderedMap.route, hops: 1, latency: 50 } }, selected, entity });
+  expect(within(page('map')).getByText(/Путь: 1 пер/)).toBeTruthy();
+  expect((within(page('map')).getByText('Перейти в узел').closest('button') as HTMLButtonElement).disabled).toBe(false);
+});
+
+test('a pinned window reappears immediately from the cache then respects authoritative closure', () => {
+  const { panel, page, update } = setup({
+    workspace_view: 'pinned', window: machine,
+    windows: [{ address: node.address, title: node.name, type: node.type, online: true }],
+  });
+  fireEvent.click(panel.getByText('Терминал'));
+  update({ workspace_view: 'terminal', window: null });
+  fireEvent.click(panel.getByText('Закреплённые узлы (1)'));
+  expect(within(page('pinned')).getByText('Состояние закреплённого сервера')).toBeTruthy();
+  update({ workspace_view: 'pinned', window: null, windows: [] });
+  expect(within(page('pinned')).queryByText('Состояние закреплённого сервера')).toBeNull();
+});

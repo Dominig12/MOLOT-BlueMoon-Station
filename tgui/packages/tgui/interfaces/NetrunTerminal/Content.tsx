@@ -33,6 +33,12 @@ export const NetrunContent = () => {
   const [compact, setCompact] = useState(() => window.innerWidth < 860);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const previousPage = useRef<WorkspaceView>(page === 'breach' ? 'terminal' : page);
+  const pinnedWindowCache = useRef<NetrunData['window']>(null);
+  if (data.workspace_view === 'pinned') {
+    pinnedWindowCache.current = machineWindow;
+  }
+  const shownWindow = machineWindow || (page === 'pinned' && data.workspace_view !== 'pinned'
+    ? pinnedWindowCache.current : null);
   const hadBreach = useRef(!!breach);
   const incomingCount = data.combat?.incoming?.length ?? 0;
   const webAvailable = data.networks.some((network) => network.id === 'web') || !!web;
@@ -143,7 +149,7 @@ export const NetrunContent = () => {
             </div>
           )}
           <div style={{ flex: '1 1 0', minHeight: 0, width: '100%', overflowY: 'auto' }}>
-            {machineWindow ? <WindowPanel window={machineWindow} />
+            {shownWindow ? <WindowPanel window={shownWindow} />
               : <Box color={THEME.muted} p={1}>Закреплённых узлов нет. Выберите узел на карте и откройте его окно.</Box>}
           </div>
         </WorkspacePage>

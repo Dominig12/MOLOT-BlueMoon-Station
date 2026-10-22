@@ -56,15 +56,17 @@ export const StationMap = (props: { suspended?: boolean } = {}) => {
   const [stream] = useState(() => new NetrunMapStream());
   const resyncSent = useRef(0);
   const latest = useRef<MapInput | null>(null);
-  if (!props.suspended) {
+  if (!props.suspended && data.map) {
     const resolved = stream.apply(data.map);
-    latest.current = {
-      map: data.map ? resolved : latest.current?.map || null, selectedAddress: data.selected?.address ?? null,
+    // The server omits map and selection while another workspace is active.
+    // Keep the last confirmed view on return, but discard an invalid transport epoch.
+    latest.current = resolved ? {
+      map: resolved, selectedAddress: data.selected?.address ?? null,
       selectedNetwork: data.selected_network?.id ?? null, jackAddress: data.jack?.address ?? null,
       entityHost: data.entity?.host ?? null, hasEntity: !!data.entity,
       pingRoute: data.ping_route ?? EMPTY_HOPS, events: data.events ?? EMPTY_EVENTS,
       waypoint: data.waypoint ?? null, search: data.search ?? EMPTY_SEARCH,
-    };
+    } : null;
   }
   useEffect(() => {
     if (!props.suspended && stream.resyncToken !== resyncSent.current) {
@@ -240,7 +242,10 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
         <Box color={THEME.muted} fontSize="10px" style={{ whiteSpace: 'nowrap' }}>
           {visibleNodes.length}/{nodes.length} · текущий этаж
         </Box>
-        {map.route && <StoredRouteStatus route={map.route} />}
+        <Box style={{ flex: '0 0 146px', minWidth: '146px', textAlign: 'right' }}>
+          {map.route ? <StoredRouteStatus route={map.route} />
+            : <Box color={THEME.muted} fontSize="10px">Путь: —</Box>}
+        </Box>
       </Box>
       <Box p={0.5} style={{ display: 'flex', gap: '4px', flex: '0 0 auto', overflowX: 'auto', overflowY: 'hidden', alignItems: 'center', borderBottom: `1px solid ${THEME.line}` }}>
         {types.map((type) => (<Button key={type} compact icon={NODE_ICONS[type] || 'circle'}
