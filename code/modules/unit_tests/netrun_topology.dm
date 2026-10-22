@@ -437,3 +437,49 @@
 	TEST_ASSERT_EQUAL(scheduler.counts[NETRUN_TASK_CRITICAL], 1, "New priority has the task")
 	TEST_ASSERT_EQUAL(scheduler.peak_queued_by_priority[NETRUN_TASK_BACKGROUND], 1, "Original queue high-water survives promotion")
 	TEST_ASSERT_EQUAL(scheduler.peak_queued_by_priority[NETRUN_TASK_CRITICAL], 1, "Promoted queue high-water is recorded")
+
+
+/// Speculative work cannot change the public graph until its atomic commit.
+/datum/unit_test/netrun_apc_prebuild_atomic/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/list/positions = list(get_step(origin, NORTH), get_step(origin, EAST), locate(origin.x + 5, origin.y + 1, origin.z), locate(origin.x + 6, origin.y + 1, origin.z))
+	for(var/turf/spot as anything in positions)
+		scene.take(spot, room)
+		scene.machine(/obj/machinery/power/apc, spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/previous_revision = graph.revision
+	var/previous_edges = json_encode(graph.edges)
+	graph.invalidate()
+	var/datum/netrun_apc_prebuild/job = allocate(/datum/netrun_apc_prebuild, graph)
+	var/progress = FALSE
+	for(var/i in 1 to 500)
+		if(job.advance(1))
+			progress = TRUE
+			break
+	TEST_ASSERT(progress, "APC build must finish in bounded slices")
+	TEST_ASSERT_EQUAL(graph.revision, previous_revision, "No partial revision is published")
+	TEST_ASSERT_EQUAL(json_encode(graph.edges), previous_edges, "The published graph is not modified")
+	graph.apc_prebuild = job
+	graph.rebuild()
+	TEST_ASSERT_EQUAL(json_encode(graph.edges), previous_edges, "Staged and synchronous candidate edges must match")
+	TEST_ASSERT_EQUAL(graph.revision, previous_revision + 1, "A single completed graph revision is published")
+
+/// Any new structural generation cancels obsolete work before it can be applied.
+/datum/unit_test/netrun_apc_prebuild_invalidated/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/second_spot = scene.take(get_step(origin, NORTH), room)
+	scene.machine(/obj/machinery/power/apc, origin)
+	scene.machine(/obj/machinery/power/apc, second_spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	graph.invalidate()
+	var/datum/netrun_apc_prebuild/job = allocate(/datum/netrun_apc_prebuild, graph)
+	graph.invalidate()
+	TEST_ASSERT(!job.valid_inputs(), "Old generation cannot publish stale APC edges")
+	graph.rebuild()
+	TEST_ASSERT(!graph.dirty, "Immediate routing retains synchronous fallback")

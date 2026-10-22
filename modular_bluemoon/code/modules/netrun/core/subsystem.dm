@@ -230,6 +230,7 @@ SUBSYSTEM_DEF(netrun)
 	var/datum/netrun_task_scheduler/task_scheduler
 	var/next_task_population = 0
 	var/task_populations = 0
+	var/apc_prebuild_steps = 0
 	/// Only sessions with timers, a live UI or an entity are processed.
 	var/list/active_consoles = list()
 	/// Moving devices and native states that genuinely lack notifications.
@@ -266,6 +267,7 @@ SUBSYSTEM_DEF(netrun)
 	if(task_scheduler)
 		var/datum/netrun_task_scheduler/scheduler = task_scheduler
 		msg += " Tasks:[scheduler.pending()] Q:[scheduler.counts[1]]/[scheduler.counts[2]]/[scheduler.counts[3]] Qpeak:[scheduler.peak_pending] Done:[scheduler.completed] Merge:[scheduler.merged] Pr:[scheduler.promoted] Budget:[round(scheduler.last_execution_ms, 0.1)]/[round(scheduler.last_budget_ms, 0.1)]ms"
+		msg += " APWork:[apc_prebuild_steps] APCmp:[topology?.apc_prebuild?.comparisons || 0]"
 		msg += " Exec:[scheduler.executed_by_priority[1]]/[scheduler.executed_by_priority[2]]/[scheduler.executed_by_priority[3]] WaitMax:[round(scheduler.max_wait_by_priority[1] / (1 SECONDS), 0.1)]/[round(scheduler.max_wait_by_priority[2] / (1 SECONDS), 0.1)]/[round(scheduler.max_wait_by_priority[3] / (1 SECONDS), 0.1)]s Late:[scheduler.overdue_by_priority[1]]/[scheduler.overdue_by_priority[2]]/[scheduler.overdue_by_priority[3]] Ovr:[scheduler.budget_overruns]/[scheduler.task_overruns]"
 	if(profile_armed)
 		msg += " Cam ms total/max F:[round(camera_feed_scan_ms, 0.1)]/[round(camera_feed_scan_max_ms, 0.1)] R:[round(camera_route_check_ms, 0.1)]/[round(camera_route_check_max_ms, 0.1)]"
@@ -350,6 +352,8 @@ SUBSYSTEM_DEF(netrun)
 		if(timed_nodes[node] <= world.time && !QDELETED(node))
 			scheduler.enqueue("node", node, NETRUN_TASK_NORMAL)
 	scheduler.enqueue("housekeeping", null, NETRUN_TASK_BACKGROUND)
+	if(get_topology().dirty)
+		scheduler.enqueue("apc_prebuild", get_topology(), NETRUN_TASK_BACKGROUND)
 
 /datum/controller/subsystem/netrun/proc/execute_task(datum/netrun_task/task)
 	var/datum/target = task.target()
@@ -382,10 +386,16 @@ SUBSYSTEM_DEF(netrun)
 			node.reconcile_state()
 			track_node(node)
 			last_processed_nodes++
+		if("apc_prebuild")
+			var/datum/netrun_topology/graph = target
+			if(graph.dirty)
+				apc_prebuild_steps++
+				if(!graph.advance_apc_prebuild(96) && graph.dirty)
+					get_task_scheduler().enqueue("apc_prebuild", graph, NETRUN_TASK_BACKGROUND)
 		if("housekeeping")
 			var/datum/netrun_topology/graph = get_topology()
-			if(graph.dirty && (length(active_consoles) || length(entities)))
-				ensure_topology()
+			if(graph.dirty)
+				get_task_scheduler().enqueue("apc_prebuild", graph, NETRUN_TASK_BACKGROUND)
 			graph.refresh_route_tables()
 			if(!patrol_initialized && length(networks))
 				initialize_patrol()
