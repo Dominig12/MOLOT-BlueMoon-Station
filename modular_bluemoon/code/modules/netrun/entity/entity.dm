@@ -480,6 +480,16 @@
 /datum/netrun_console/entity/log_source()
 	return "резидентный процесс"
 
+/datum/netrun_console/entity/needs_live_refresh()
+	. = ..()
+	if(.)
+		return
+	var/mob/camera/netrun_entity/entity = host
+	if(!entity)
+		return FALSE
+	// Integrity self-repair, stun/shield windows, hop cooldown and auto-travel all advance by time.
+	return entity.integrity < entity.max_integrity || entity.is_stunned() || world.time < entity.combat_shield_until || world.time < entity.next_hop || LAZYLEN(entity.travel_queue)
+
 /datum/netrun_console/entity/process_tick(delta)
 	. = ..()
 	var/mob/camera/netrun_entity/entity = host

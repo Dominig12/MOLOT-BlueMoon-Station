@@ -48,6 +48,12 @@
 	var/list/ui_projection_cache
 	/// TRUE when ui_routes is a borrowed shared table that must not be qdel()ed on teardown.
 	var/ui_routes_borrowed = FALSE
+	/// Resolved selected node for one pass; selected_address cannot change during serialization.
+	var/datum/component/netrun_node/ui_selected_node_cache
+	var/ui_selected_resolved = FALSE
+	/// Keep repainting until here: covers a live countdown plus a one-second tail so its final
+	/// frame (lock cleared, trace hit zero) is always drawn even though that has no change signal.
+	var/live_refresh_until = 0
 
 /datum/netrun_console/New(atom/host, origin)
 	src.host = host
@@ -299,7 +305,14 @@
 // MARK: Действия
 
 /datum/netrun_console/proc/selected_node()
-	return SSnetrun.find_node(map_view.selected_address)
+	// selected_address is fixed during one ui_data pass, and this is resolved many times per poll
+	// (string build + hash lookup each time); resolve it once per serialization pass.
+	if(ui_serializing && ui_selected_resolved)
+		return ui_selected_node_cache
+	. = SSnetrun.find_node(map_view.selected_address)
+	if(ui_serializing)
+		ui_selected_node_cache = .
+		ui_selected_resolved = TRUE
 
 /// Закрытая сеть публикует лишь шлюз и APC. Владелец видит собственное устройство.
 /datum/netrun_console/proc/node_visible(datum/component/netrun_node/node)
@@ -476,6 +489,35 @@
 			SSnetrun.dispatch_hunter(near)
 	owner.host?.netrun_traced(owner)
 
+/// Does the open UI currently show something that advances with world.time but emits no change
+/// signal of its own? Those are the only states that still need a once-per-second repaint; every
+/// other change already pushes itself through a domain signal, so a quiet UI can stop serializing.
+/datum/netrun_console/proc/needs_live_refresh()
+	if(intrusion.breach || intrusion.trace > 0 || is_locked())
+		return TRUE
+	if(world.time < next_command)
+		return TRUE
+	if(remote_session.watch_node)
+		return TRUE
+	if(length(combat_context.contacts) || length(combat_context.observed_ice) || combat_context.next_program > world.time)
+		return TRUE
+	for(var/id in combat_context.program_cd)
+		if(combat_context.program_cd[id] > world.time)
+			return TRUE
+	// Web pages (NTnet) and pinned machine windows carry external/async content that arrives with
+	// no netrun change signal, so those tabs keep polling; the map and terminal stay event-driven.
+	if(workspace_view == "web" || remote_session.active_window)
+		return TRUE
+	if(map_view.ping_route && world.time - map_view.ping_at < 6 SECONDS)
+		return TRUE
+	// The shared recent-events ribbon fades over four seconds on every live map.
+	var/events_len = length(SSnetrun.events)
+	if(events_len)
+		var/list/newest = SSnetrun.events[events_len]
+		if(world.time - newest["t"] < 4 SECONDS)
+			return TRUE
+	return FALSE
+
 /datum/netrun_console/proc/process_tick(delta)
 	intrusion.process_tick(delta)
 	if(connection.jack && !jack_valid())
@@ -484,8 +526,13 @@
 	remote_session.process_tick()
 	if(workspace_view != "map" || !is_ui_active())
 		map_view.suspend()
-	// Timers and combat may change the UI without changing the permitted graph.
-	if(is_ui_active() || intrusion.breach || intrusion.trace || is_locked())
+	// Event-driven changes already wake the console (domain signals -> invalidate_ui/activate).
+	// Only a live, event-less countdown on screen needs a periodic repaint; a quiet open UI rests
+	// instead of re-serializing identical data once per second. The one-second tail guarantees the
+	// countdown's closing frame is drawn once it stops being "live".
+	if(needs_live_refresh())
+		live_refresh_until = world.time + 1 SECONDS
+	if(world.time <= live_refresh_until)
 		invalidate_ui()
 
 /datum/netrun_intrusion_session/proc/process_tick(delta)
@@ -662,6 +709,9 @@
 	SEND_SIGNAL(src, COMSIG_NETRUN_CONSOLE_EVENT, text, kind)
 	if(length(log) > NETRUN_MAX_CONSOLE_LOG)
 		log.Cut(1, length(log) - NETRUN_MAX_CONSOLE_LOG + 1)
+	// A new log line is an event-less UI change (it can arrive from async delivery, ICE, timers);
+	// wake the console so it flushes instead of relying on a blanket per-second repaint.
+	invalidate_ui()
 
 /proc/netrun_access_name(level)
 	switch(level)

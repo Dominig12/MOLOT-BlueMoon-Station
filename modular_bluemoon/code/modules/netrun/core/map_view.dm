@@ -96,20 +96,20 @@
 	else if(node)
 		dirty_nodes[node.address] = TRUE
 	if(owner)
-		owner.ui_dirty = TRUE
+		owner.invalidate_ui()
 
 /datum/netrun_map_view/proc/on_topology_changed(datum/source)
 	SIGNAL_HANDLER
 	structure_dirty = TRUE
 	if(owner)
-		owner.ui_dirty = TRUE
+		owner.invalidate_ui()
 
 /datum/netrun_map_view/proc/invalidate(sensitive = TRUE)
 	dirty = TRUE
 	if(sensitive)
 		authorization_revision++
 	if(owner)
-		owner.ui_dirty = TRUE
+		owner.invalidate_ui()
 
 /// Reconciliation catches credentials and native state that have no change signal.
 /// One UI request shares a path tree; clicks during a puzzle never call this method.

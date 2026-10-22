@@ -14,6 +14,9 @@
 	ui = SStgui.try_update_ui(user, src, ui)
 	if(!ui)
 		ui = new(user, src, "NetrunTerminal", tgui_title)
+		// Event-driven: SSnetrun pushes updates through flush_ui only when state actually changes
+		// or a live countdown is ticking, instead of tgui re-serializing the graph every tick.
+		ui.set_autoupdate(FALSE)
 		ui.open()
 
 /datum/netrun_console/ui_data(mob/user, datum/ui_source)
@@ -41,6 +44,7 @@
 	ui_files = all_files()
 	ui_completion_cache = list()
 	ui_projection_cache = null
+	ui_selected_resolved = FALSE
 	ui_serializing = TRUE
 	var/list/session
 	if(user)
@@ -58,6 +62,8 @@
 	ui_files = null
 	ui_completion_cache = null
 	ui_projection_cache = null
+	ui_selected_node_cache = null
+	ui_selected_resolved = FALSE
 	ui_serializing = FALSE
 	if(ui_routes_borrowed)
 		// Borrowed the server's shared routing table; never destroy it on teardown.
