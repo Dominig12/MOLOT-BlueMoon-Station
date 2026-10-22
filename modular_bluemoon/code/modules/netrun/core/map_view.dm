@@ -36,6 +36,8 @@
 	var/wire_session_id = 0
 	/// REF strings and timestamps only: closed windows/users are never retained by this cache.
 	var/list/wire_sessions = list()
+	/// Avoid walking every viewer on each TGUI poll.
+	var/wire_cleanup_at = -INFINITY
 	var/list/wire_journal = list()
 	var/wire_journal_entries = 0
 	var/active_sector
@@ -440,11 +442,14 @@
 	else if(!session["ui"])
 		session["ui"] = ui_reference
 	session["seen"] = world.time
-	// Session records contain strings, not datum references, and expire when unused.
-	for(var/stale_key in wire_sessions)
-		var/list/stale = wire_sessions[stale_key]
-		if(world.time > stale["seen"] + 5 MINUTES)
-			wire_sessions -= stale_key
+	// The session map is read on every poll, but full expiry scans are periodic.
+	if(world.time >= wire_cleanup_at)
+		wire_cleanup_at = world.time + 1 MINUTES
+		SSnetrun.wire_session_sweeps++
+		for(var/stale_key in wire_sessions)
+			var/list/stale = wire_sessions[stale_key]
+			if(world.time > stale["seen"] + 5 MINUTES)
+				wire_sessions -= stale_key
 	return session
 
 /datum/netrun_map_view/proc/wire_payload(mob/user, datum/ui_source, list/session)

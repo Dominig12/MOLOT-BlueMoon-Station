@@ -23,6 +23,15 @@ SUBSYSTEM_DEF(netrun)
 	var/list/timed_nodes = list()
 	var/last_processed_nodes = 0
 	var/last_processed_consoles = 0
+	/// Counters in the subsystem status panel (since world startup).
+	var/camera_feed_scans = 0
+	var/camera_feed_cache_hits = 0
+	var/camera_route_borrows = 0
+	var/wire_session_sweeps = 0
+	var/camera_feed_scan_ms = 0
+	var/camera_feed_scan_max_ms = 0
+	var/camera_route_check_ms = 0
+	var/camera_route_check_max_ms = 0
 	var/pass_item_count = 0
 	var/list/currentbreaches = list()
 	var/breach_snapshot_active = FALSE
@@ -33,7 +42,9 @@ SUBSYSTEM_DEF(netrun)
 	var/datum/netrun_topology/topology
 
 /datum/controller/subsystem/netrun/stat_entry(msg)
-	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles]"
+	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles] F:[camera_feed_scans]/[camera_feed_cache_hits] R:[camera_route_borrows] W:[wire_session_sweeps]"
+	if(profile_armed)
+		msg += " Cam ms total/max F:[round(camera_feed_scan_ms, 0.1)]/[round(camera_feed_scan_max_ms, 0.1)] R:[round(camera_route_check_ms, 0.1)]/[round(camera_route_check_max_ms, 0.1)]"
 	return ..()
 
 /// Coalescing worksets keep quiet machines and terminals out of the one-second pass.

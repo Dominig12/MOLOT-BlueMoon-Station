@@ -255,8 +255,11 @@
 		table.geometry_revision = weight_revision
 		table.updated_at = world.time
 
-/datum/netrun_topology/proc/route_snapshot(datum/component/netrun_node/start)
+/// Borrowed snapshots must never be modified or qdel()ed by callers.
+/datum/netrun_topology/proc/route_snapshot(datum/component/netrun_node/start, borrow = FALSE)
 	if(QDELETED(start) || nodes[start.address] != start)
+		if(borrow)
+			return null
 		return new /datum/netrun_path_tree
 	route_used[start.address] = world.time
 	reconcile_availability()
@@ -264,7 +267,7 @@
 	var/datum/netrun_path_tree/table = route_tables[start.address]
 	if(!table || table.geometry_revision != weight_revision || table.availability_revision != availability_revision)
 		table = store_route_table(start)
-	return table.copy()
+	return borrow ? table : table.copy()
 
 /datum/netrun_console/proc/route_source()
 	return connection.route_source()

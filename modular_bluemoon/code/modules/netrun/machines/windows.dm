@@ -28,7 +28,20 @@
 		return null
 	var/atom/eye = node.is_online() && console.can_route(node) ? netrun_view_target() : null
 	if(!eye)
+		console.remote_session.feed_node = null
 		return list("Нет видеосигнала: проверьте питание, состояние оптики и прошивку.")
+	var/turf/eye_turf = get_turf(eye)
+	if(!eye_turf)
+		console.remote_session.feed_node = null
+		return list("Нет видеосигнала: проверьте питание, состояние оптики и прошивку.")
+	var/datum/netrun_remote_session/session = console.remote_session
+	// The text summary can lag by one second; the native camera view stays live.
+	// Permission, route and sensor readiness are still checked above on every poll.
+	if(session.feed_node == node && session.feed_eye == eye && session.feed_turf == eye_turf && session.feed_operator == console.operator && world.time < session.feed_updated_at + 1 SECONDS && session.feed_data)
+		SSnetrun.camera_feed_cache_hits++
+		return session.feed_data.Copy()
+	SSnetrun.camera_feed_scans++
+	var/feed_started = SSnetrun.profile_armed ? TICK_USAGE : 0
 	var/list/seen = list()
 	for(var/mob/living/person in view(7, eye))
 		if(person == eye)
@@ -36,6 +49,16 @@
 		seen += "[person.name] — [person.stat == DEAD ? "не двигается" : "движется"]"
 	if(!length(seen))
 		seen += "В поле зрения пусто."
+	if(SSnetrun.profile_armed)
+		var/feed_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - feed_started))
+		SSnetrun.camera_feed_scan_ms += feed_ms
+		SSnetrun.camera_feed_scan_max_ms = max(SSnetrun.camera_feed_scan_max_ms, feed_ms)
+	session.feed_node = node
+	session.feed_eye = eye
+	session.feed_turf = eye_turf
+	session.feed_operator = console.operator
+	session.feed_updated_at = world.time
+	session.feed_data = seen
 	return seen
 
 /// Обработать оконное действие машины. Возврат - текст результата или null
@@ -90,20 +113,23 @@
 		return null
 	var/level = owner.node_level(node)
 	var/atom/A = node.parent
+	var/route_ok = owner.can_route(node)
+	var/online = node.is_online()
+	var/unlocked = !owner.is_locked()
 	var/list/extra = list()
 	for(var/list/entry as anything in A.netrun_window_actions(owner, node))
-		entry["allowed"] = level >= (entry["access"] || NETRUN_ACCESS_GUEST) && owner.can_route(node) && node.is_online() && !owner.is_locked()
+		entry["allowed"] = level >= (entry["access"] || NETRUN_ACCESS_GUEST) && route_ok && online && unlocked
 		extra += list(entry)
 	var/datum/netrun_network/network = node.network
 	return list(
 		"address" = node.address,
 		"title" = node.get_name(),
 		"type" = node.node_type,
-		"online" = node.is_online(),
+		"online" = online,
 		"access" = level,
 		"legit" = owner.legit_node_level(node),
 		"security" = node.get_security(),
-		"can_breach" = owner.intrusion.can_breach && level >= NETRUN_ACCESS_GUEST && level < NETRUN_ACCESS_ROOT && owner.can_route(node),
+		"can_breach" = owner.intrusion.can_breach && level >= NETRUN_ACCESS_GUEST && level < NETRUN_ACCESS_ROOT && route_ok,
 		"network" = network ? list("id" = network.id, "name" = network.name, "code" = network.code, "access" = owner.network_level(network), "can_breach" = owner.intrusion.can_breach && owner.can_reach(network) && owner.network_level(network) < NETRUN_ACCESS_GUEST) : null,
 		"fields" = level >= NETRUN_ACCESS_USER ? A.netrun_window_fields(owner, node) : list(),
 		"commands" = node.command_entries(owner),
@@ -210,11 +236,29 @@
 		return null
 	if(!watch_node.is_online())
 		return null
-	// Refresh the moving endpoint before checking the retained path tree.
+	// Refresh moving endpoints before borrowing the retained routing table.
 	owner.refresh_route_node(watch_node)
-	var/datum/netrun_path_tree/tree = owner.make_path_tree(TRUE)
-	var/allowed = owner.can_route(watch_node, tree) && owner.node_level(watch_node, tree) >= NETRUN_ACCESS_USER
-	qdel(tree)
+	var/route_started = SSnetrun.profile_armed ? TICK_USAGE : 0
+	var/turf/here = get_turf(owner.host)
+	// Outside allowed wireless zones the connection uses a request-local restricted tree.
+	// Never modify the shared table (e.g. reached.Cut()) or delete it.
+	var/private_tree = owner.connection.wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z)))
+	var/datum/netrun_path_tree/tree
+	if(private_tree)
+		tree = owner.make_path_tree(TRUE)
+	else
+		var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+		var/datum/component/netrun_node/start = owner.physical_route_source()
+		graph = SSnetrun.ensure_topology()
+		tree = graph.route_snapshot(start, TRUE)
+		SSnetrun.camera_route_borrows++
+	var/allowed = tree && owner.can_route(watch_node, tree) && owner.node_level(watch_node, tree) >= NETRUN_ACCESS_USER
+	if(SSnetrun.profile_armed)
+		var/route_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - route_started))
+		SSnetrun.camera_route_check_ms += route_ms
+		SSnetrun.camera_route_check_max_ms = max(SSnetrun.camera_route_check_max_ms, route_ms)
+	if(private_tree)
+		qdel(tree)
 	if(!allowed)
 		return null
 	var/atom/source = watch_node.parent

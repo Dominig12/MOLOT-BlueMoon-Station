@@ -86,6 +86,13 @@
 	var/obj/effect/netrun_view_eye/watch_eye
 	var/web_site_id
 	var/web_slug
+	/// Cached text camera feed, scoped to this session and verified against live access.
+	var/datum/component/netrun_node/feed_node
+	var/atom/feed_eye
+	var/turf/feed_turf
+	var/mob/feed_operator
+	var/feed_updated_at = -INFINITY
+	var/list/feed_data
 
 /datum/netrun_remote_session/New(datum/netrun_console/owner)
 	src.owner = owner
@@ -96,6 +103,11 @@
 	active_window = null
 	web_site_id = null
 	web_slug = null
+	feed_node = null
+	feed_eye = null
+	feed_turf = null
+	feed_operator = null
+	feed_data = null
 	owner = null
 	return ..()
 
