@@ -16,6 +16,7 @@
 		ui.open()
 
 /datum/netrun_console/ui_data(mob/user)
+	last_ui_at = world.time
 	// Matrix clicks need no global discovery pass. The live delivery/finish
 	// checks own fresh trees; this snapshot only describes the visible panel.
 	refresh_route_node(selected_node())
@@ -378,6 +379,7 @@
 	return payload
 
 /datum/netrun_console/ui_act(action, list/params, datum/tgui/ui, datum/ui_state/state)
+	last_ui_at = world.time
 	invalidate_ui()
 	. = ..()
 	if(.)

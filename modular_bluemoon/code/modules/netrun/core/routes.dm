@@ -28,6 +28,7 @@
 	var/list/costs = list()
 	var/list/remote = list()
 	var/geometry_revision = 0
+	var/availability_revision = 0
 	/// A flat binary heap avoids one disposable datum for every relaxed endpoint.
 	var/list/frontier_addresses = list()
 	var/list/frontier_costs = list()
@@ -36,6 +37,7 @@
 /datum/netrun_path_tree/New(datum/netrun_topology/graph, datum/component/netrun_node/start)
 	source = start
 	geometry_revision = graph?.weight_revision || 0
+	availability_revision = graph?.availability_revision || 0
 	if(QDELETED(start) || !graph.nodes[start.address])
 		return
 	var/list/settled = list()
@@ -56,7 +58,7 @@
 			var/datum/component/netrun_node/next = graph.nodes[neighbor]
 			if(settled[neighbor] || QDELETED(next) || !netrun_link_available(current, next, TRUE))
 				continue
-			relax(neighbor, address, costs[address] + graph.edge_cost(address, neighbor), remote[address])
+			relax(neighbor, address, costs[address] + graph.cached_edge_cost(address, neighbor), remote[address])
 		// Every operational relay can reach every other relay at the same cost.
 		// The cheapest settled entry expands this virtual bucket exactly once.
 		if(relays_expanded || !graph.is_relay(current))
@@ -140,6 +142,7 @@
 	snapshot.costs = costs.Copy()
 	snapshot.remote = remote.Copy()
 	snapshot.geometry_revision = geometry_revision
+	snapshot.availability_revision = availability_revision
 	return snapshot
 
 /// Only physical paths are retained. Permissions and command authorization
@@ -166,12 +169,35 @@
 	route_tables[start.address] = table
 	return table
 
-/// SSnetrun refreshes active routes once per subsystem interval. A source
-/// unused for two intervals expires, so hidden maps do not keep rebuilding route trees.
+/// Unsigned native relay toggles and backbone settings have no common change signal.
+/// Their small infrastructure index is reconciled without walking the full graph.
+/datum/netrun_topology/proc/reconcile_availability()
+	var/disabled = !!SSnetworks.station_network?.setting_disabled
+	if(disabled != backbone_disabled)
+		backbone_disabled = disabled
+		availability_revision++
+	for(var/address in relay_addresses)
+		var/datum/component/netrun_node/node = nodes[address]
+		if(QDELETED(node))
+			continue
+		var/online = node.is_online()
+		if(online != node.last_online)
+			node.notify_changed(NETRUN_CHANGED_STATE)
+
+/// Geometry is already maintained by structural/movement signals. Reuse its cached
+/// edge weights while solving a tree instead of measuring every cable again.
+/datum/netrun_topology/proc/cached_edge_cost(first, second)
+	var/list/edge = edge_lookup["[first]>[second]"]
+	return edge ? edge["latency"] : edge_cost(first, second)
+
+/// A source unused for two intervals expires. Active tables are rebuilt only after
+/// forwarding or geometry changes, rather than unconditionally every second.
 /datum/netrun_topology/proc/refresh_route_tables()
 	if(world.time < route_refresh_at)
 		return
 	route_refresh_at = world.time + SSnetrun.wait
+	if(length(route_tables))
+		reconcile_availability()
 	for(var/address in route_used.Copy())
 		var/datum/component/netrun_node/start = nodes[address]
 		if(QDELETED(start) || route_used[address] < world.time - 2 * SSnetrun.wait)
@@ -179,15 +205,18 @@
 			route_tables -= address
 			route_used -= address
 			continue
-		store_route_table(start)
+		var/datum/netrun_path_tree/table = route_tables[address]
+		if(!table || table.geometry_revision != weight_revision || table.availability_revision != availability_revision)
+			store_route_table(start)
 
 /datum/netrun_topology/proc/route_snapshot(datum/component/netrun_node/start)
 	if(QDELETED(start) || nodes[start.address] != start)
 		return new /datum/netrun_path_tree
 	route_used[start.address] = world.time
+	reconcile_availability()
 	refresh_route_tables()
 	var/datum/netrun_path_tree/table = route_tables[start.address]
-	if(!table || table.geometry_revision != weight_revision)
+	if(!table || table.geometry_revision != weight_revision || table.availability_revision != availability_revision)
 		table = store_route_table(start)
 	return table.copy()
 

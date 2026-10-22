@@ -1,79 +1,139 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 
-import { PlacedNode } from './graphScene';
+import { GraphOverlay, markerColor, physicalPoint } from './graphRenderer';
+import { GraphScene, PlacedNode } from './graphScene';
 import { GraphPoint } from './mapLayout';
-import { NetEvent } from './types';
-
-/**
- * Reactive DOM layer drawn over the static canvas graph. It renders only the moving/volatile
- * things - resident processes (entities), hostile ICE and event ripples - so their frequent
- * updates re-render a handful of memoized DOM nodes instead of repainting the whole canvas.
- */
+import { NetEdge } from './types';
 
 const ACTOR_STYLE = `
-@keyframes netrun-ice-ring { 0%,100% { transform: translate(-50%,-50%) scale(1); opacity: .85; } 50% { transform: translate(-50%,-50%) scale(1.3); opacity: .35; } }
-@keyframes netrun-ripple { from { transform: translate(-50%,-50%) scale(.5); opacity: .75; } to { transform: translate(-50%,-50%) scale(2); opacity: 0; } }
-.netrun-actor { position: absolute; transform: translate(-50%,-50%); pointer-events: none; will-change: transform; }
-.netrun-ice-ring { position: absolute; left: 50%; top: 50%; width: 42px; height: 42px; margin: -21px 0 0 -21px; border-radius: 50%; border: 2px solid #e9545f; animation: netrun-ice-ring 1.6s ease-in-out infinite; }
-.netrun-badge { position: absolute; display: flex; align-items: center; justify-content: center; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 8px; font: 700 10px/14px monospace; box-shadow: 0 1px 3px rgba(0,0,0,.5); }
-.netrun-ripple { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; border: 2px solid; }
+@keyframes netrun-threat { 0%,100% { opacity:.85; } 50% { opacity:.3; } }
+@keyframes netrun-event { from { opacity:.8; } to { opacity:0; } }
+@keyframes netrun-flow { to { stroke-dashoffset:-36; } }
+.netrun-threat { animation:netrun-threat 1.6s ease-in-out infinite; }
+.netrun-event { animation:netrun-event 4s ease-out both; }
+.netrun-flow { animation:netrun-flow 1.2s linear infinite; }
+@media (prefers-reduced-motion:reduce) {
+  .netrun-threat,.netrun-flow { animation:none; }
+}
 `;
 
-type ActorProps = { node: PlacedNode; x: number; y: number };
-
-/** One node's moving occupants. Memoized: re-renders only when its own data or screen spot moves. */
-const Actor = memo((props: ActorProps) => {
-  const { node, x, y } = props;
-  return (
-    <div className="netrun-actor" style={{ left: `${x}px`, top: `${y}px` }}>
-      {!!node.ice && <div className="netrun-ice-ring" />}
-      {!!node.ice && (
-        <div className="netrun-badge" style={{ left: '8px', top: '-20px', background: '#ff6470', color: '#1a0708' }}>
-          {node.ice}
-        </div>
-      )}
-      {!!node.entities && (
-        <div className="netrun-badge" style={{ right: '8px', top: '-20px', background: '#f19bdc', color: '#2a0f24' }}>
-          {node.entities}
-        </div>
-      )}
-    </div>
-  );
-});
-
-type Props = {
-  actors: PlacedNode[];
-  events: NetEvent[];
-  points: Map<string, GraphPoint | undefined>;
-  vx: number; vy: number; vzoom: number;
-  width: number; height: number;
+type Camera = { x: number; y: number; zoom: number; width: number; height: number };
+type Props = GraphOverlay & {
+  scene: GraphScene;
+  dynamicEdges: NetEdge[];
+  adjacency: Map<string, Set<string>>;
+  camera: Camera;
 };
 
-export const ActorLayer = memo((props: Props) => {
-  const { actors, events, points, vx, vy, vzoom, width, height } = props;
-  const project = (point: GraphPoint) => ({ px: point.px * vzoom + vx, py: point.py * vzoom + vy });
-  const onScreen = (px: number, py: number) => px >= -40 && px <= width + 40 && py >= -40 && py <= height + 40;
+const segment = (from: GraphPoint, to: GraphPoint) => `M${from.px},${from.py}L${to.px},${to.py}`;
+const edgeSegment = (scene: GraphScene, edge: NetEdge) => {
+  const from = scene.byAddress.get(edge.from), to = scene.byAddress.get(edge.to);
+  return from && to ? segment(physicalPoint(from), physicalPoint(to)) : '';
+};
+
+const NodeBody = ({ node }: { node: PlacedNode }) => node.type === 'apc'
+  ? <rect x={-11} y={-11} width={22} height={22} />
+  : ['relay', 'gateway'].includes(node.type)
+    ? <path d="M14,0L7,12.12L-7,12.12L-14,0L-7,-12.12L7,-12.12Z" />
+    : ['server', 'terminal'].includes(node.type)
+      ? <path d="M0,-12L12,0L0,12L-12,0Z" />
+      : <circle r={8} />;
+
+/** Only changing markers get DOM elements; thousands of quiet devices remain canvas pixels. */
+const NodeActor = memo(({ node, selected, hosted, jacked, color, detailed }: {
+  node: PlacedNode; selected: boolean; hosted: boolean; jacked: boolean; color: string; detailed: boolean;
+}) => {
+  const highlighted = selected || hosted || jacked;
   return (
-    <div aria-hidden="true" data-net-actors style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 4 }}>
+    <g data-net-actor={node.address} data-net-dynamic-node={node.dynamic ? node.address : undefined} transform={`translate(${node.px} ${node.py})`}>
+      {highlighted && <circle data-net-selection r={20} fill="none"
+        stroke={selected ? '#eafff5' : hosted ? '#f8a3e6' : '#65b4d5'} strokeWidth={2} />}
+      {!!node.ice && <circle className={detailed ? 'netrun-threat' : undefined} r={22}
+        fill="none" stroke="#ef6b7c" strokeWidth={1.5} />}
+      {!node.ice && node.active && <circle className={detailed ? 'netrun-threat' : undefined} r={18}
+        fill="none" stroke="#ffc26b" strokeWidth={1.5} />}
+      {node.dynamic && (
+        <g data-net-dynamic-body fill={markerColor(node)} stroke={color} strokeWidth={1.5}>
+          <NodeBody node={node} />
+        </g>
+      )}
+      {!!node.entities && (
+        <g data-net-processes={node.entities} fill="#f19bdc">
+          <rect x={10} y={-20} width={detailed ? 12 : 6} height={detailed ? 12 : 6} rx={2} />
+          {detailed && <text x={16} y={-11} textAnchor="middle" fill="#2a0f24" fontSize={9} fontWeight={700}>{node.entities > 9 ? '+' : node.entities}</text>}
+        </g>
+      )}
+      {!!node.ice && (
+        <g data-net-ice={node.ice} fill="#ff6470">
+          <circle cx={-15} cy={-15} r={detailed ? 7 : 3.5} />
+          {detailed && <text x={-15} y={-12} textAnchor="middle" fill="#2a0f24" fontSize={9} fontWeight={700}>{node.ice > 9 ? '+' : node.ice}</text>}
+        </g>
+      )}
+    </g>
+  );
+}, (previous, next) => {
+  const a = previous.node, b = next.node;
+  return previous.selected === next.selected && previous.hosted === next.hosted && previous.jacked === next.jacked
+    && previous.color === next.color && previous.detailed === next.detailed
+    && a.px === b.px && a.py === b.py && a.type === b.type && a.dynamic === b.dynamic
+    && a.online === b.online && a.access === b.access && a.entities === b.entities && a.ice === b.ice && a.active === b.active;
+});
+
+/** Reactive SVG holds moving bodies, their links and volatile overlays; it never draws the base. */
+export const ActorLayer = memo((props: Props) => {
+  const { scene, camera, dynamicEdges, adjacency, selected, entityHost, jacked, gateways } = props;
+  const { x, y, zoom, width, height } = camera;
+  const visible = useMemo(() => scene.visible((-x - 32) / zoom, (-y - 32) / zoom,
+    (width - x + 32) / zoom, (height - y + 32) / zoom), [scene, x, y, zoom, width, height]);
+  const onScreen = (point: GraphPoint) => point.px * zoom + x >= -32 && point.px * zoom + x <= width + 32
+    && point.py * zoom + y >= -32 && point.py * zoom + y <= height + 32;
+  const route = (addresses: string[]) => {
+    let path = '';
+    for (let i = 1; i < addresses.length; i++) {
+      const from = scene.byAddress.get(addresses[i - 1]), to = scene.byAddress.get(addresses[i]);
+      if (from && to && adjacency.get(from.address)?.has(to.address)) { path += segment(physicalPoint(from), physicalPoint(to)); }
+    }
+    return path;
+  };
+  const selectedNode = scene.byAddress.get(selected);
+  const selectedNeighbors = adjacency.get(selected) || new Set<string>();
+  const selectedEdges = selectedNode ? [...selectedNeighbors].map((address) => scene.byAddress.get(address))
+    .filter((node): node is PlacedNode => !!node).map((node) => segment(physicalPoint(selectedNode), physicalPoint(node))).join('') : '';
+  const denseSelection = selectedNeighbors.size > 24;
+  return (
+    <svg data-net-actors aria-hidden="true" width="100%" height="100%"
+      style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
       <style>{ACTOR_STYLE}</style>
-      {events.map((event) => {
-        if (event.age >= 4) { return null; }
-        const anchor = points.get(event.to) || points.get(event.from);
-        if (!anchor) { return null; }
-        const spot = project(anchor);
-        if (!onScreen(spot.px, spot.py)) { return null; }
-        const color = event.kind === 'trace' ? '#f56670' : event.kind === 'purge' ? '#ff6470' : '#ffc26b';
-        return (
-          <div key={`ev:${event.kind}:${event.from}:${event.to}`} className="netrun-actor" style={{ left: `${spot.px}px`, top: `${spot.py}px` }}>
-            <div className="netrun-ripple" style={{ borderColor: color, animation: `netrun-ripple ${Math.max(0.6, 4 - event.age)}s ease-out forwards` }} />
-          </div>
-        );
-      })}
-      {actors.map((node) => {
-        const spot = project(node);
-        if (!onScreen(spot.px, spot.py)) { return null; }
-        return <Actor key={node.address} node={node} x={spot.px} y={spot.py} />;
-      })}
-    </div>
+      <g data-net-camera transform={`translate(${x} ${y}) scale(${zoom})`} fontFamily="monospace" strokeLinejoin="round" strokeLinecap="round">
+        <g data-net-dynamic-edges fill="none" strokeWidth={1.5}>
+          {dynamicEdges.map((edge) => (<path key={edge.id} data-net-dynamic-edge={edge.id} d={edgeSegment(scene, edge)}
+            stroke={edge.online === false ? '#52636e' : edge.kind === 'relay' ? '#3fb8ad' : '#4c8fa7'}
+            strokeDasharray={edge.online === false ? '4 5' : undefined} />))}
+          {visible.filter((node) => node.dynamic).map((node) => (<path key={`anchor:${node.address}`}
+            d={segment(physicalPoint(node), node)} stroke="rgba(117,163,180,.45)" strokeDasharray="2 3" />))}
+        </g>
+        {zoom >= .6 && <path data-net-selected-edges d={selectedEdges}
+          fill="none" stroke="#9ad0e0" strokeWidth={denseSelection ? 1 : 2.5} opacity={denseSelection ? .22 : 1} />}
+        <g fill="none" strokeWidth={3.5}>
+          <path data-net-route="selected" d={route(props.selectedRoute)} stroke="#50e8c0" strokeDasharray="11 7" className={zoom >= .3 ? 'netrun-flow' : undefined} />
+          <path data-net-route="waypoint" d={route(props.waypointRoute)} stroke="#e879b8" strokeDasharray="8 5" className={zoom >= .3 ? 'netrun-flow' : undefined} />
+          <path data-net-route="ping" d={route(props.pingRoute)} stroke="#ffc56b" strokeDasharray="4 5" className={zoom >= .3 ? 'netrun-flow' : undefined} />
+        </g>
+        {visible.filter((node) => node.dynamic || node.entities || node.ice || node.active
+          || node.address === selected || node.address === entityHost || node.address === jacked).map((node) => (<NodeActor
+            key={node.address} node={node} selected={node.address === selected} hosted={node.address === entityHost}
+            jacked={node.address === jacked} color={gateways.get(node.network)?.color || '#82a9ba'} detailed={zoom >= .6} />))}
+        {props.events.map((event, index) => {
+          const point = scene.byAddress.get(event.to) || scene.byAddress.get(event.from);
+          if (event.age >= 4 || !point || !onScreen(point)) { return null; }
+          return (<circle key={`${event.kind}:${event.from}:${event.to}:${index}`} data-net-event={event.kind}
+            className="netrun-event" cx={point.px} cy={point.py} r={23} fill="none" strokeWidth={1.5}
+            stroke={event.kind === 'trace' ? '#f56670' : '#ffc26b'} style={{ animationDelay: `${-event.age}s` }} />);
+        })}
+      </g>
+      <text x={12} y={height - 11} fill="#8faebe" fontFamily="monospace" fontSize={11}>
+        Север ↑ · {scene.nodes.length} узлов · {Math.round(zoom * 100)}%
+      </text>
+    </svg>
   );
 });

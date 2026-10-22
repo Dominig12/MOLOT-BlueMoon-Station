@@ -301,6 +301,15 @@
 	snapshot.reached.Cut()
 	TEST_ASSERT(stored.reached[target_node.address], "A client-specific routing restriction must not mutate the shared server table")
 	var/previous_revision = stored.revision
+	// Refreshing an unchanged active map must do zero new shortest-path builds.
+	for(var/i in 1 to 8)
+		graph.route_refresh_at = world.time
+		graph.refresh_route_tables()
+	TEST_ASSERT_EQUAL(graph.route_revision, previous_revision, "Eight unchanged display refreshes must build no new routing trees")
+	source_node.touch()
+	graph.route_refresh_at = world.time
+	graph.refresh_route_tables()
+	TEST_ASSERT_EQUAL(graph.route_revision, previous_revision, "Activity overlays must not invalidate the retained physical routing tree")
 	apc.set_machine_stat(BROKEN)
 	TEST_ASSERT(stored.reached[target_node.address], "The previous display snapshot must remain stable until its scheduled refresh")
 	TEST_ASSERT(!source.console.can_route(target_node), "A real request must immediately detect a broken APC without trusting the retained display path")

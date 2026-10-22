@@ -34,6 +34,9 @@
 	var/list/nearest_by_turf = list()
 	/// Moving an endpoint updates route costs without replacing its structural parent.
 	var/weight_revision = 0
+	/// Forwarding availability changes independently from graph geometry and occupancy.
+	var/availability_revision = 0
+	var/backbone_disabled
 
 /datum/netrun_topology/proc/invalidate()
 	dirty = TRUE

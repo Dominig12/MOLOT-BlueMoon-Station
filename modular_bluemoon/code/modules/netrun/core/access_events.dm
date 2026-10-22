@@ -12,6 +12,7 @@
 	if(processing_events || !length(pending_firewalls))
 		return
 	processing_events = TRUE
+	owner.map_view.invalidate()
 	owner.ui_node_levels?.Cut()
 	owner.ui_legit_levels?.Cut()
 	owner.network_level_cache?.Cut()

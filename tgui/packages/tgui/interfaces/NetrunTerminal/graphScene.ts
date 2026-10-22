@@ -12,6 +12,18 @@ export class GraphScene {
   byAddress = new Map<string, PlacedNode>();
   adjacency = new Map<string, Set<string>>();
   private cells = new Map<string, PlacedNode[]>();
+  private stationary: GraphScene | null = null;
+  private moving: GraphScene | null = null;
+
+  /** Reuse the stationary spatial index while live actor fields and movable positions change. */
+  static live(base: GraphScene, nodes: PlacedNode[], adjacency: Map<string, Set<string>>) {
+    const scene = new GraphScene();
+    scene.nodes = nodes; scene.edges = base.edges; scene.adjacency = adjacency;
+    scene.byAddress = new Map(nodes.map((node) => [node.address, node]));
+    scene.stationary = base;
+    scene.moving = new GraphScene(); scene.moving.update(nodes.filter((node) => node.dynamic), []);
+    return scene;
+  }
 
   update(nodes: PlacedNode[], edges: NetEdge[]) {
     this.nodes = nodes;
@@ -39,6 +51,11 @@ export class GraphScene {
   }
 
   visible(left: number, top: number, right: number, bottom: number) {
+    if (this.stationary) {
+      return [...this.stationary.visible(left, top, right, bottom)
+        .map((node) => this.byAddress.get(node.address)).filter((node): node is PlacedNode => !!node),
+      ...this.moving.visible(left, top, right, bottom)];
+    }
     // At overview zoom, iterating occupied cells avoids traversing millions of empty grid cells.
     if ((right - left) * (bottom - top) > this.nodes.length * GRAPH_GAP ** 2 * 4) {
       return this.nodes.filter((node) => node.px >= left && node.px <= right && node.py >= top && node.py <= bottom);

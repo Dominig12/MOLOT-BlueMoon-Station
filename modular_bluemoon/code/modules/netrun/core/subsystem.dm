@@ -14,6 +14,9 @@ SUBSYSTEM_DEF(netrun)
 	var/list/commands
 	var/list/currentrun = list()
 	var/list/currentnodes = list()
+	var/list/currentbreaches = list()
+	var/breach_snapshot_active = FALSE
+	var/reconcile_nodes = FALSE
 	/// Общая лента недавних событий сети - её видят все раннеры на карте.
 	/// list(list("kind","from","to","t"))
 	var/list/events = list()
@@ -24,14 +27,21 @@ SUBSYSTEM_DEF(netrun)
 	return ..()
 
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
-	// Когда никто не в сети, посекундная сверка каждого узла - пустая работа: топология
-	// перестроится лениво при следующем подключении. Пока нет раннеров (и разовая
-	// инициализация патрулей/лора завершена) - не сверяем узлы и не копируем их список.
-	var/reconcile = length(consoles) || length(entities) || !patrol_initialized || !lore_initialized
 	if(!resumed)
 		currentrun = consoles.Copy()
 		currentice = ice_processes.Copy()
-		currentnodes = reconcile ? nodes_by_address.Copy() : list()
+		currentbreaches = list()
+		reconcile_nodes = length(entities) || !patrol_initialized || !lore_initialized
+		// Every mapped terminal owns a console; its mere existence is not an active session.
+		// Build the breach candidate pool once instead of scanning all terminals per ICE.
+		for(var/datum/netrun_console/console as anything in currentrun)
+			if(QDELETED(console))
+				continue
+			if(console.intrusion.breach)
+				currentbreaches += console
+			if(console.is_ui_active() || console.intrusion.breach || console.intrusion.trace > 0 || console.connection.jack)
+				reconcile_nodes = TRUE
+		currentnodes = reconcile_nodes ? nodes_by_address.Copy() : list()
 	var/delta = wait / (1 SECONDS)
 	// Combat and open sessions go first: a heavy node sync must never starve ICE reactions
 	// or UI refresh, or a one-second fight would stretch to several real seconds under load.
@@ -39,9 +49,12 @@ SUBSYSTEM_DEF(netrun)
 		var/datum/netrun_ice/ice = currentice[length(currentice)]
 		currentice.len--
 		if(!QDELETED(ice))
+			breach_snapshot_active = TRUE
 			ice.process_ai(delta)
+			breach_snapshot_active = FALSE
 		if(MC_TICK_CHECK)
 			return
+	currentbreaches.Cut()
 	while(length(currentrun))
 		var/datum/netrun_console/console = currentrun[length(currentrun)]
 		currentrun.len--
@@ -51,7 +64,9 @@ SUBSYSTEM_DEF(netrun)
 			console.flush_ui()
 		if(MC_TICK_CHECK)
 			return
-	if(!reconcile)
+	if(!reconcile_nodes)
+		// Expire retained UI routes without building an unopened physical topology.
+		get_topology().refresh_route_tables()
 		return
 	// Вложенный предмет не получает MOVED при перемещении носителя. Сверяем топологию
 	// независимо от открытых интерфейсов, не создавая сигнал на каждом контейнере.
@@ -61,7 +76,10 @@ SUBSYSTEM_DEF(netrun)
 		var/datum/component/netrun_node/node = currentnodes[address]
 		currentnodes.len--
 		if(!QDELETED(node))
-			node.join_network()
+			// Static turf-bound machines already receive MOVED; only carried/mobile
+			// endpoints need a membership fallback when their carrier moves.
+			if(node.is_dynamic() || !node.binding_checked || node.binding_infra_revision != get_topology().infrastructure_revision)
+				node.join_network()
 			node.reconcile_state()
 		if(MC_TICK_CHECK)
 			return

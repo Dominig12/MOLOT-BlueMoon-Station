@@ -3,6 +3,8 @@ import { KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState 
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input } from '../../components';
 import { GraphCanvas, GraphCanvasHandle } from './GraphCanvas';
+import { GraphLayout } from './graphLayout';
+import { StaticMapProjection } from './mapLayers';
 import { createGraphLayoutCache, graphAdjacency, graphNeighborhood, GraphPoint, layoutGraph } from './mapLayout';
 import {
   ACCESS_NAMES, NetEdge, NetEvent, NetMap, NetNode, NetrunData, NODE_ICONS,
@@ -22,13 +24,14 @@ type MapInput = {
   events: NetEvent[];
   waypoint: Waypoint | null;
   search: SearchResult[];
+  suspended?: boolean;
 };
 const EMPTY_NODES: NetNode[] = [];
 const EMPTY_EDGES: NetEdge[] = [];
 const EMPTY_EVENTS: NetEvent[] = [];
 const EMPTY_HOPS: PingHop[] = [];
 const EMPTY_SEARCH: SearchResult[] = [];
-const EMPTY_ROUTE: string[] = [];
+const EMPTY_ADDRESSES: string[] = [];
 
 // TGUI polling replaces data objects even if their contents have not changed.
 // Retain component references so logs/combat ticks do not trigger map layouts.
@@ -36,6 +39,13 @@ const useSemanticValue = <T, >(value: T, signature: string): T => {
   const previous = useRef({ value, signature });
   if (previous.current.signature !== signature) { previous.current = { value, signature }; }
   return previous.current.value;
+};
+const useStableList = <T, >(items: T[]): T[] => {
+  const previous = useRef(items);
+  if (previous.current.length !== items.length || items.some((item, index) => item !== previous.current[index])) {
+    previous.current = items;
+  }
+  return previous.current;
 };
 
 export const StationMap = (props: { suspended?: boolean } = {}) => {
@@ -50,10 +60,10 @@ export const StationMap = (props: { suspended?: boolean } = {}) => {
       waypoint: data.waypoint ?? null, search: data.search ?? EMPTY_SEARCH,
     };
   }
-  return latest.current ? <MapSnapshot input={latest.current} act={act} /> : null;
+  return latest.current ? <MapSnapshot input={latest.current} act={act} suspended={props.suspended} /> : null;
 };
 
-const MapSnapshot = memo(({ input, act }: { input: MapInput; act: Act }) => {
+const MapSnapshot = memo(({ input, act, suspended }: { input: MapInput; act: Act; suspended?: boolean }) => {
   const rawNodes = input.map?.nodes ?? EMPTY_NODES;
   const rawEdges = input.map?.edges ?? EMPTY_EDGES;
   // Structural hash excludes mutable activity/access/route/trace fields.
@@ -66,7 +76,7 @@ const MapSnapshot = memo(({ input, act }: { input: MapInput; act: Act }) => {
   const stateKey = input.map?.state_revision;
   const nodes = useSemanticValue(rawNodes, stateKey === undefined ? JSON.stringify(rawNodes.map((node) => [
     node.address, node.type, node.uplink, node.name, node.network, node.sector, node.apc, node.x, node.y, node.z,
-    node.online, node.access, node.entities, node.ice, node.active, node.can_hop,
+    node.online, node.access, node.security, node.entities, node.ice, node.active, node.can_hop, node.dynamic,
   ])) : `${topologyKey}:${stateKey}`);
   const edges = useSemanticValue(rawEdges, stateKey === undefined ? JSON.stringify(rawEdges) : `${topologyKey}:${stateKey}`);
   const gateways = useSemanticValue(input.map?.gateways ?? [], JSON.stringify(input.map?.gateways ?? []));
@@ -75,20 +85,23 @@ const MapSnapshot = memo(({ input, act }: { input: MapInput; act: Act }) => {
     active_sector: input.map?.active_sector, active_z: input.map?.active_z, sectors: input.map?.sectors,
     apc_zones: input.map?.apc_zones, relay_destinations: input.map?.relay_destinations };
   const geography = useSemanticValue(geographyValue, JSON.stringify(geographyValue));
-  const map = useMemo(() => input.map ? { ...input.map, ...geography, nodes, edges, gateways, route: storedRoute } : null,
-    [!!input.map, input.map?.focus, input.map?.revision, input.map?.structure_revision, stateKey, geography, nodes, edges, gateways, storedRoute]);
+  const apcZones = useSemanticValue(input.map?.apc_zones, JSON.stringify(input.map?.apc_zones));
+  const map = useMemo(() => input.map ? { ...input.map, ...geography, apc_zones: apcZones, nodes, edges, gateways, route: storedRoute } : null,
+    [!!input.map, input.map?.focus, input.map?.revision, input.map?.structure_revision, input.map?.static_revision, stateKey, geography, apcZones, nodes, edges, gateways, storedRoute]);
   const pingRoute = useSemanticValue(input.pingRoute, JSON.stringify(input.pingRoute));
   const events = useSemanticValue(input.events, JSON.stringify(input.events));
   const waypoint = useSemanticValue(input.waypoint, JSON.stringify(input.waypoint));
-  return (<GraphMap {...input} map={map} topologyKey={topologyKey}
+  return (<GraphMap {...input} map={map} topologyKey={topologyKey} suspended={suspended}
     pingRoute={pingRoute} events={events} waypoint={waypoint} act={act} />);
 });
 
 const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   const { act, selectedAddress, selectedNetwork, jackAddress, entityHost, hasEntity,
-    map, topologyKey, pingRoute, events, waypoint, search } = props;
+    map, topologyKey, pingRoute, events, waypoint, search, suspended } = props;
   const viewport = useRef<GraphCanvasHandle>(null);
   const [layoutCache] = useState(createGraphLayoutCache);
+  const [dynamicLayout] = useState(() => new GraphLayout());
+  const [staticProjection] = useState(() => new StaticMapProjection());
   const [query, setQuery] = useState('');
   const [focusNearby, setFocusNearby] = useState(false);
   const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>({});
@@ -96,10 +109,14 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   const [searchReset, setSearchReset] = useState(0);
   const nodes = map?.nodes ?? EMPTY_NODES;
   const edges = map?.edges ?? EMPTY_EDGES;
-  const geometryKey = useMemo(() => map?.structure_revision === undefined
-    ? JSON.stringify(nodes.map((node) => [node.address, node.x, node.y, node.z])) : topologyKey,
-  [nodes, topologyKey, map?.structure_revision]);
-  const positions = useMemo(() => layoutGraph(nodes, edges, layoutCache), [geometryKey, layoutCache]);
+  const stationary = staticProjection.update(nodes, edges, map?.static_revision === undefined ? undefined
+    : `${map.active_sector}:${map.active_z}:${map.static_revision}`);
+  const staticPositions = useMemo(() => layoutGraph(stationary.nodes, stationary.edges, layoutCache), [stationary.geometry, layoutCache]);
+  const staticSlots = useMemo(() => new Set([...staticPositions.values()].map((point) => `${point.px},${point.py}`)), [staticPositions]);
+  const mobileNodes = useMemo(() => nodes.filter((entry) => entry.dynamic), [nodes]);
+  const mobileGeometry = useMemo(() => JSON.stringify(mobileNodes.map((entry) => [entry.address, entry.x, entry.y, entry.z])), [mobileNodes]);
+  const mobilePositions = useMemo(() => dynamicLayout.update(mobileNodes, [], staticSlots), [mobileGeometry, dynamicLayout, staticSlots]);
+  const positions = useMemo(() => new Map([...staticPositions, ...mobilePositions]), [staticPositions, mobilePositions]);
   const adjacency = useMemo(() => graphAdjacency(nodes, edges), [topologyKey]);
   const liveAdjacency = useMemo(() => graphAdjacency(nodes, edges.filter((edge) => edge.online !== false)), [topologyKey, edges]);
   const placed = useMemo<Placed[]>(() => nodes.map((node) => ({ ...node, ...positions.get(node.address) })), [nodes, positions]);
@@ -123,22 +140,15 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   const visibleIds = useMemo(() => new Set(visibleNodes.map((n) => n.address)), [visibleNodes]);
   const visibleEdges = useMemo(() => edges.filter((edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to)), [edges, visibleIds]);
   const visiblePoints = useMemo(() => new Map(visibleNodes.map((n) => [n.address, positions.get(n.address)])), [visibleNodes, positions]);
-  // The canvas draws only the static graph: keep its node reference stable across status ticks
-  // (entities/ICE/active), so a moving actor never forces a canvas repaint or scene rebuild.
-  const canvasSignature = useMemo(() => visibleNodes.map((n) =>
-    `${n.address}|${n.type}|${n.online}|${n.access}|${n.px}|${n.py}|${n.anchorX ?? ''}|${n.anchorY ?? ''}|${n.network}|${n.sector ?? ''}|${n.name}|${n.can_hop ?? ''}`).join(';'),
-  [visibleNodes]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- staleness is intentional: only a static-field change yields a new array.
-  const canvasNodes = useMemo(() => visibleNodes, [canvasSignature]);
-  const edgeSignature = useMemo(() => visibleEdges.map((edge) => `${edge.id}|${edge.online !== false}`).join(';'), [visibleEdges]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- same stable-reference intent as canvasNodes.
-  const canvasEdges = useMemo(() => visibleEdges, [edgeSignature]);
-  // Moving occupants for the reactive DOM layer above the canvas.
-  const actors = useMemo(() => visibleNodes.filter((node) => node.entities || node.ice), [visibleNodes]);
+  const staticPlaced = useMemo<Placed[]>(() => stationary.nodes.map((entry) => ({ ...entry, ...staticPositions.get(entry.address) })), [stationary.nodes, staticPositions]);
+  const canvasNodes = useStableList(useMemo(() => staticPlaced.filter((entry) => visibleIds.has(entry.address)), [staticPlaced, visibleIds]));
+  const canvasIds = useMemo(() => new Set(canvasNodes.map((entry) => entry.address)), [canvasNodes]);
+  const canvasEdges = useMemo(() => stationary.edges.filter((edge) => canvasIds.has(edge.from) && canvasIds.has(edge.to)), [stationary.edges, canvasIds]);
+  const dynamicIds = useMemo(() => new Set(mobileNodes.map((entry) => entry.address)), [mobileNodes]);
+  const dynamicEdges = useMemo(() => visibleEdges.filter((edge) => dynamicIds.has(edge.from) || dynamicIds.has(edge.to)), [visibleEdges, dynamicIds]);
   // End-to-end routes are never geometrically shortened through omitted nodes:
   // the canvas additionally verifies every adjacent pair against real edges.
-  const selectedRoute = map?.route?.reachable ? map.route.route : EMPTY_ROUTE;
-  const waypointRoute = waypoint?.route || EMPTY_ROUTE;
+  const selectedRoute = map?.route?.reachable ? map.route.route : EMPTY_ADDRESSES;
   const pingAddresses = useMemo(() => pingRoute.filter((hop) => hop.kind === 'node').map((hop) => hop.ref), [pingRoute]);
   const onSelect = useCallback((address: string) => { setPendingCenter(null); act('select', { address }); }, [act]);
   const locate = useCallback((address: string, own = false) => {
@@ -259,9 +269,10 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
                              </Box>}
       {!nodes.length && <Box p={1} color={THEME.muted}>На этом этаже нет доступных узлов.</Box>}
       <GraphCanvas key={`${map.active_sector || ''}:${map.active_z ?? ''}`} ref={viewport} adjacency={adjacency} nodes={canvasNodes} edges={canvasEdges} positions={visiblePoints}
+        actors={visibleNodes} dynamicEdges={dynamicEdges} suspended={suspended}
         gateways={gateways} selected={selectedAddress} jacked={jackAddress} focus={map.focus}
-        apcZones={map.apc_zones} actors={actors}
-        entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypointRoute}
+        apcZones={map.apc_zones}
+        entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || []}
         pingRoute={pingAddresses} events={events} onSelect={onSelect} />
       <Box p={0.5} color={THEME.muted} fontSize="10px" style={{ flexShrink: 0, borderTop: `1px solid ${THEME.line}`, background: '#0d222d' }}>
         □ APC · ⬡ реле · ◇ сервер/терминал · ○ устройство · подсветка — зона выбранного APC<br />

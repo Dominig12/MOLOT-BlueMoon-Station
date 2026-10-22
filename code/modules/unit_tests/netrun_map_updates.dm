@@ -37,6 +37,54 @@
 	for(var/list/edge as anything in map["edges"])
 		TEST_ASSERT(edge["from"] != old_address && edge["to"] != old_address, "Deleted endpoints must not leave dangling map edges")
 
+/// Work counters verify that live overlays do not rebuild the stationary projection.
+/datum/netrun_map_view/netrun_performance_test
+	var/rebuilds = 0
+
+/datum/netrun_map_view/netrun_performance_test/rebuild(datum/netrun_topology/graph)
+	rebuilds++
+	return ..()
+
+/datum/unit_test/netrun_map_incremental_work/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/apc_spot = scene.take(get_step(origin, NORTH), room)
+	var/turf/target_spot = scene.take(get_step(origin, EAST), room)
+	scene.machine(/obj/machinery/power/apc, apc_spot)
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, target_spot)
+	var/datum/component/netrun_node/node = target.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_console/console = source.console
+	qdel(console.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+	console.map_view = view
+	console.workspace_view = "map"
+	SSnetrun.ensure_topology()
+	var/list/payload = console.ui_data(null)
+	var/list/map = payload["map"]
+	var/paint = map["static_revision"]
+	var/generation = map["state_revision"]
+	var/builds = view.rebuilds
+	console.process_tick(1)
+	console.ui_data(null)
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "An idle console tick must reuse its permitted map instead of rebuilding every node")
+	node.touch()
+	payload = console.ui_data(null)
+	map = payload["map"]
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Activity must update its indexed entry without rebuilding the full projection")
+	TEST_ASSERT(map["state_revision"] > generation, "The live overlay must receive activity changes")
+	TEST_ASSERT_EQUAL(map["static_revision"], paint, "Activity must not invalidate the cached stationary canvas")
+	console.workspace_view = "terminal"
+	console.process_tick(1)
+	TEST_ASSERT(!view.subscribed, "A hidden map must stop receiving global node-change broadcasts")
+	node.touch()
+	TEST_ASSERT_EQUAL(length(view.dirty_nodes), 0, "Hidden maps must not collect per-node update queues")
+	console.workspace_view = "map"
+	console.ui_data(null)
+	TEST_ASSERT(view.subscribed && view.rebuilds > builds, "Returning to a suspended map must subscribe and reconcile changes once")
+
 /// A carried endpoint remains directly attached to its APC when crossing other machines.
 /datum/unit_test/netrun_topology_nested_host_rebind/Run()
 	var/turf/origin = run_loc_floor_bottom_left

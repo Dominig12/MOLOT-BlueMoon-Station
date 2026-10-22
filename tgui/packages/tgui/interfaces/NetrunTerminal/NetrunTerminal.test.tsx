@@ -6,6 +6,7 @@ import { debugReducer } from '../../debug';
 import { CombatPanel } from './CombatPanel';
 import { NetrunContent } from './Content';
 import { FilePanel } from './FilePanel';
+import { GraphRenderer } from './graphRenderer';
 import { GraphViewport } from './graphViewport';
 import * as mapGeometry from './mapLayout';
 import { MatrixPanel } from './Matrix';
@@ -63,6 +64,48 @@ const sent = (topic, action: string) => topic.mock.calls
   .map((call) => JSON.parse(call[0].payload));
 
 describe('Netrun terminal panels', () => {
+  test('moving endpoints and live overlays leave the canvas cached while stationary deletion repaints', () => {
+    const context = jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
+    const paint = jest.spyOn(GraphRenderer.prototype, 'paint').mockImplementation(() => undefined);
+    const originalFrame = window.requestAnimationFrame;
+    Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: undefined });
+    const layout = jest.spyOn(mapGeometry, 'layoutGraph');
+    try {
+      const peer = { ...node, address: 'PEER', x: 20 };
+      const mobile = { ...node, address: 'MOBILE', dynamic: true, type: 'deck', x: 30, uplink: node.address };
+      const initial = { gateways: [], focus: node.address, revision: 1, structure_revision: 1, state_revision: 1, static_revision: 1,
+        nodes: [node, peer, mobile], edges: [
+          { id: 'static', from: node.address, to: peer.address, kind: 'apc' as const },
+          { id: 'mobile', from: node.address, to: mobile.address, kind: 'endpoint' as const },
+        ] };
+      const topic = setup({ map: initial });
+      const panel = render(<StationMap />);
+      const initialPaints = paint.mock.calls.length;
+      expect(initialPaints).toBeGreaterThan(0);
+      expect(layout).toHaveBeenCalledTimes(1);
+      const marker = panel.container.querySelector('[data-net-dynamic-node="MOBILE"]');
+      expect(marker).not.toBeNull();
+      const before = marker.getAttribute('transform');
+      act(() => topic.store.dispatch(backendUpdate({ data: { selected: peer,
+        events: [{ kind: 'trace', from: mobile.address, to: peer.address, age: 0 }],
+        map: { ...initial, structure_revision: 2, state_revision: 2,
+          nodes: [{ ...node, entities: 2, ice: 1, active: true }, peer, { ...mobile, x: 25, uplink: peer.address }],
+          edges: [initial.edges[0], { ...initial.edges[1], from: peer.address }],
+          route: { reachable: true, route: [mobile.address, peer.address], hops: 1, latency: 200, revision: 2 } } } })));
+      panel.rerender(<StationMap />);
+      expect(paint).toHaveBeenCalledTimes(initialPaints);
+      expect(layout).toHaveBeenCalledTimes(1);
+      expect(panel.container.querySelector('[data-net-dynamic-node="MOBILE"]').getAttribute('transform')).not.toBe(before);
+      act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...initial, structure_revision: 3, state_revision: 3,
+        static_revision: 2, nodes: [peer, mobile], edges: [] } } })));
+      panel.rerender(<StationMap />);
+      expect(paint.mock.calls.length).toBeGreaterThan(initialPaints);
+    } finally {
+      paint.mockRestore(); context.mockRestore(); layout.mockRestore();
+      Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: originalFrame });
+    }
+  });
+
   test('sector/floor controls and relay destinations send explicit geographic actions', () => {
     const relay = { ...node, type: 'relay', z: 1, sector: 'station' };
     const topic = setup({ selected: relay, map: { gateways: [], nodes: [relay], edges: [], focus: relay.address, revision: 1,

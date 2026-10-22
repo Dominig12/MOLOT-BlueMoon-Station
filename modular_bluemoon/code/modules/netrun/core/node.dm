@@ -39,6 +39,7 @@
 	var/last_entities = -1
 	var/last_ice = -1
 	var/last_active
+	var/last_dynamic
 
 /datum/component/netrun_node/Initialize(node_type, list/command_ids, security = 1, list/required_access, storage_capacity = 0)
 	if(!isatom(parent))
@@ -62,13 +63,13 @@
 
 /datum/component/netrun_node/RegisterWithParent()
 	RegisterSignal(parent, COMSIG_ATOM_EMP_ACT, PROC_REF(on_emp))
-	RegisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN), PROC_REF(on_state_changed))
+	RegisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_OBJ_SETANCHORED), PROC_REF(on_state_changed))
 	if(ismovable(parent))
 		RegisterSignal(parent, COMSIG_MOVABLE_MOVED, PROC_REF(on_moved))
 
 /datum/component/netrun_node/UnregisterFromParent()
 	UnregisterSignal(parent, list(COMSIG_ATOM_EMP_ACT, COMSIG_MOVABLE_MOVED))
-	UnregisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN))
+	UnregisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_OBJ_SETANCHORED))
 
 /datum/component/netrun_node/Destroy()
 	var/datum/netrun_topology/topology = SSnetrun.get_topology()
@@ -121,7 +122,8 @@
 /datum/component/netrun_node/proc/on_moved(datum/source)
 	SIGNAL_HANDLER
 	join_network()
-	notify_changed(NETRUN_CHANGED_BINDING)
+	// refresh_node emits BINDING only when the actual APC attachment changes.
+	notify_changed(NETRUN_CHANGED_STATE)
 
 /datum/component/netrun_node/proc/on_state_changed(datum/source)
 	SIGNAL_HANDLER
@@ -137,16 +139,26 @@
 	var/entity_count = length(entities)
 	var/ice_count = length(netrun_ice)
 	var/active = world.time - last_activity < 5 SECONDS
-	if(online == last_online && security == last_security && entity_count == last_entities && ice_count == last_ice && active == last_active)
+	var/dynamic = is_dynamic()
+	if(online == last_online && security == last_security && entity_count == last_entities && ice_count == last_ice && active == last_active && dynamic == last_dynamic)
 		return
+	if(online != last_online)
+		SSnetrun.get_topology().availability_revision++
 	last_online = online
 	last_security = security
 	last_entities = entity_count
 	last_ice = ice_count
 	last_active = active
+	last_dynamic = dynamic
 	notify_changed(NETRUN_CHANGED_STATE)
 
 /datum/component/netrun_node/proc/notify_changed(flags = NETRUN_CHANGED_STATE)
+	// Availability is a separate routing generation: occupant/activity changes do not
+	// rebuild shortest paths, while power/EMP changes invalidate retained display paths.
+	var/online = is_online()
+	if(online != last_online)
+		last_online = online
+		SSnetrun.get_topology().availability_revision++
 	SEND_SIGNAL(src, COMSIG_NETRUN_NODE_CHANGED, src, flags)
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, src, flags)
 
@@ -214,6 +226,16 @@
 /datum/component/netrun_node/proc/used_storage()
 	return file_store?.used() || 0
 
+/// Anchored machines on a turf belong to the cached canvas; carried endpoints and mobs
+/// retain live positions and links in the reactive layer. Machines are movable atoms too.
+/datum/component/netrun_node/proc/is_dynamic()
+	if(ismob(parent))
+		return TRUE
+	if(!ismovable(parent))
+		return FALSE
+	var/atom/movable/endpoint = parent
+	return !endpoint.anchored || !isturf(endpoint.loc)
+
 /// Every endpoint, including a real relay, has at most one cached APC attachment.
 /datum/component/netrun_node/proc/uplink_node()
 	if(node_type == NETRUN_NODE_APC)
@@ -228,6 +250,7 @@
 		"address" = address,
 		"name" = get_name(),
 		"type" = istype(parent, /obj/machinery/ntnet_relay) ? "relay" : node_type,
+		"dynamic" = is_dynamic(),
 		"x" = T ? T.x : 0,
 		"y" = T ? T.y : 0,
 		"z" = T ? T.z : 0,

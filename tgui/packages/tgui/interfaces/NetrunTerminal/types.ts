@@ -5,6 +5,8 @@ export type NetNode = {
   x: number;
   y: number;
   z?: number;
+  /** Movable endpoints are rendered by the reactive layer above the stationary canvas. */
+  dynamic?: boolean;
   security: number;
   online: boolean;
   access: number;
@@ -252,7 +254,7 @@ export type Waypoint = {
 };
 
 export type NetEvent = {
-  kind: 'command' | 'intrusion' | 'breach' | 'trace' | 'purge';
+  kind: 'command' | 'intrusion' | 'breach' | 'trace';
   from: string | null;
   to: string | null;
   age: number;
@@ -286,6 +288,8 @@ export type NetMap = {
   /** Per-console projected graph generations; legacy snapshots use semantic comparison. */
   structure_revision?: number;
   state_revision?: number;
+  /** Stationary geometry/status only; actor movement and activity do not advance it. */
+  static_revision?: number;
   source_sector?: string | null;
   source_z?: number | null;
   active_sector?: string | null;

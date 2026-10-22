@@ -345,7 +345,10 @@
 	var/datum/netrun_program/program = SSnetrun.get_program("trace")
 	if(world.time < next_attack || world.time < (program_cd[program.id] || 0))
 		return
-	for(var/datum/netrun_console/console as anything in SSnetrun.consoles)
+	// During the subsystem pass this is one shared, bounded breach snapshot.
+	// Standalone callers still inspect live consoles; execution checks every candidate.
+	var/list/candidates = SSnetrun.breach_snapshot_active ? SSnetrun.currentbreaches : SSnetrun.consoles
+	for(var/datum/netrun_console/console as anything in candidates)
 		if(valid_trace_target(console) && begin_program(program, console))
 			return
 

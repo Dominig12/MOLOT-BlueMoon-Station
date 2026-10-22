@@ -10,6 +10,10 @@
 	var/ping_at = 0
 	var/structure_revision = 0
 	var/state_revision = 0
+	/// Only stationary geometry and paint data invalidate the cached canvas.
+	var/static_revision = 0
+	var/list/static_structure
+	var/subscribed = FALSE
 	var/dirty = TRUE
 	/// A structural change (binding, removal, topology) needs a full projection rebuild.
 	var/structure_dirty = TRUE
@@ -20,6 +24,10 @@
 	var/list/structure
 	var/list/node_entries = list()
 	var/list/edge_entries = list()
+	var/list/node_indexes = list()
+	var/list/incident_edges = list()
+	var/list/shown_addresses = list()
+	var/list/revealed_addresses = list()
 	var/list/context
 	var/active_sector
 	var/active_z
@@ -31,8 +39,23 @@
 /datum/netrun_map_view/New(datum/netrun_console/owner)
 	src.owner = owner
 	geometry = new
+
+/datum/netrun_map_view/proc/subscribe()
+	if(subscribed)
+		return
+	subscribed = TRUE
+	dirty = TRUE
 	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(on_node_changed))
 	RegisterSignal(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, PROC_REF(on_topology_changed))
+
+/// Closed/hidden maps do not receive every process movement elsewhere in the world.
+/datum/netrun_map_view/proc/suspend()
+	if(!subscribed)
+		return
+	subscribed = FALSE
+	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED))
+	dirty_nodes.Cut()
+	dirty = TRUE
 
 /datum/netrun_map_view/Destroy()
 	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED))
@@ -42,6 +65,11 @@
 	context = null
 	node_entries.Cut()
 	edge_entries.Cut()
+	node_indexes.Cut()
+	incident_edges.Cut()
+	shown_addresses.Cut()
+	revealed_addresses.Cut()
+	static_structure = null
 	owner = null
 	return ..()
 
@@ -70,6 +98,7 @@
 /// Reconciliation catches credentials and native state that have no change signal.
 /// One UI request shares a path tree; clicks during a puzzle never call this method.
 /datum/netrun_map_view/proc/payload()
+	subscribe()
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/focus = owner.map_focus_node()
 	var/turf/current = get_turf(owner.route_source()?.parent) || get_turf(owner.host)
@@ -81,7 +110,7 @@
 	source_z = current?.z
 	// Access is included so a credential change (an ID picked up or dropped) refreshes the
 	// projection through the context diff - no periodic full pass is needed to catch it.
-	var/list/current_context = list(owner.operator, owner.route_source()?.address, selected_address, waypoint_address, active_sector, active_z, owner.user_access())
+	var/list/current_context = list(owner.operator, owner.route_source()?.address, selected_address, waypoint_address, active_sector, active_z, owner.user_access(), owner.is_locked(), graph.availability_revision)
 	if(!netrun_snapshot_equal(context, current_context))
 		dirty = TRUE
 	context = current_context
@@ -94,6 +123,8 @@
 	var/list/result = snapshot.Copy()
 	result["focus"] = focus?.address
 	result["route"] = owner.map_route_payload(owner.selected_node() || focus)
+	// Readiness/stun can expire without changing the physical projection.
+	result["relay_destinations"] = relay_destinations(graph, owner.selected_node(), shown_addresses, node_entries)
 	return result
 
 /// Browsing a different sector never moves the runner or grants permissions.
@@ -116,6 +147,7 @@
 
 /datum/netrun_map_view/proc/rebuild(datum/netrun_topology/graph)
 	var/list/revealed = owner.route_reveal_addresses(owner.map_focus_node())
+	revealed_addresses = revealed
 	var/list/shown = list()
 	var/list/networks = list()
 	var/list/next_nodes = list()
@@ -125,6 +157,10 @@
 	var/list/sector_levels = list()
 	var/list/map_edges = list()
 	var/list/next_structure = list()
+	var/list/next_static_nodes = list()
+	var/list/next_static_edges = list()
+	node_indexes = list()
+	incident_edges = list()
 	var/reveal_all = owner.daemon_bonus("mapper")
 	for(var/address in graph.nodes)
 		var/datum/component/netrun_node/node = graph.nodes[address]
@@ -163,8 +199,12 @@
 		if(entry["sector"] != active_sector || entry["z"] != active_z)
 			continue
 		map_nodes += list(entry)
+		node_indexes[address] = length(map_nodes)
+		incident_edges[address] = list()
 		shown[address] = TRUE
-		next_structure[address] = list(entry["type"], entry["uplink"], entry["network"], entry["sector"], entry["x"], entry["y"], entry["z"])
+		next_structure[address] = structure_entry(entry)
+		if(!entry["dynamic"])
+			next_static_nodes[address] = static_entry(entry)
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(node.network)
 			networks[node.network.id] = node.network
@@ -178,6 +218,12 @@
 			entry = edge_entries[edge["id"]]
 		next_edges[edge["id"]] = entry
 		map_edges += list(entry)
+		var/list/from_edges = incident_edges[edge["from"]]
+		var/list/to_edges = incident_edges[edge["to"]]
+		from_edges += length(map_edges)
+		to_edges += length(map_edges)
+		if(!next_nodes[edge["from"]]["dynamic"] && !next_nodes[edge["to"]]["dynamic"])
+			next_static_edges[edge["id"]] = entry.Copy()
 		edge_structure += edge["id"]
 	var/list/gateways = list()
 	for(var/network_id in networks)
@@ -194,6 +240,10 @@
 			apc_zones += list(zone)
 	var/list/destinations = relay_destinations(graph, selected, shown, permitted_nodes)
 	var/list/new_structure = list(active_sector, active_z, next_structure, edge_structure)
+	var/list/new_static = list(next_static_nodes, next_static_edges, apc_zones)
+	if(!netrun_snapshot_equal(static_structure, new_static))
+		static_revision++
+	static_structure = new_static
 	if(!netrun_snapshot_equal(structure, new_structure))
 		structure_revision++
 	if(!snapshot || !netrun_snapshot_equal(snapshot["nodes"], map_nodes) || !netrun_snapshot_equal(snapshot["edges"], map_edges) || !netrun_snapshot_equal(snapshot["gateways"], gateways) || !netrun_snapshot_equal(snapshot["sectors"], sector_catalog) || !netrun_snapshot_equal(snapshot["apc_zones"], apc_zones) || !netrun_snapshot_equal(snapshot["relay_destinations"], destinations))
@@ -201,8 +251,9 @@
 	structure = new_structure
 	node_entries = next_nodes
 	edge_entries = next_edges
+	shown_addresses = shown
 	snapshot = list("nodes" = map_nodes, "edges" = map_edges, "gateways" = gateways,
-		"revision" = graph.revision, "structure_revision" = structure_revision, "state_revision" = state_revision,
+		"revision" = graph.revision, "structure_revision" = structure_revision, "state_revision" = state_revision, "static_revision" = static_revision,
 		"source_sector" = source_sector, "source_z" = source_z, "active_sector" = active_sector, "active_z" = active_z,
 		"sectors" = sector_catalog, "apc_zones" = apc_zones, "relay_destinations" = destinations)
 	dirty = FALSE
@@ -210,40 +261,83 @@
 	dirty_nodes.Cut()
 	refreshed_at = world.time
 
-/// Refresh only the nodes whose status changed (and their incident edges) without a full
-/// O(graph) pass. Membership and layout are unchanged, so only state_revision advances.
+/// Only O(changed nodes + their incident edges) work for a live map update.
 /datum/netrun_map_view/proc/apply_incremental(datum/netrun_topology/graph)
 	var/list/map_nodes = snapshot["nodes"]
 	var/list/map_edges = snapshot["edges"]
+	var/list/paint_nodes = static_structure[1]
+	var/list/paint_edges = static_structure[2]
+	var/list/structural_nodes = structure[3]
 	var/bumped = FALSE
+	var/static_changed = FALSE
+	var/geometry_changed = FALSE
+	var/list/changed_edges = list()
 	for(var/address in dirty_nodes)
 		var/list/previous = node_entries[address]
-		if(!previous)
-			continue // node is not part of the shown projection; its status does not affect the view
+		var/index = node_indexes[address]
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(QDELETED(node))
+			continue
+		var/turf/position = get_turf(node.parent)
+		var/now_shown = node.binding_sector == active_sector && position?.z == active_z && owner.can_route(node) && (owner.daemon_bonus("mapper") || (address in revealed_addresses) || owner.node_visible(node))
+		// Floor changes and a personal endpoint changing owner can change visibility
+		// without changing its APC attachment. Ordinary same-floor motion stays local.
+		if(!!index != !!now_shown)
+			rebuild(graph)
+			return
+		if(!previous || !index)
 			continue
 		var/list/entry = node.ui_entry(owner)
 		entry["network"] = node.network?.id
 		entry["sector"] = node.binding_sector
-		entry["neighbor_count"] = length(graph.neighbors(address))
+		entry["neighbor_count"] = previous["neighbor_count"]
 		if(netrun_snapshot_equal(previous, entry))
 			continue
-		var/index = map_nodes.Find(previous)
-		if(index)
-			map_nodes[index] = entry
+		// Anchoring/unanchoring transfers a marker between canvas and DOM layers.
+		if(previous["dynamic"] != entry["dynamic"])
+			rebuild(graph)
+			return
+		map_nodes[index] = entry
 		node_entries[address] = entry
 		bumped = TRUE
-		for(var/list/edge_entry as anything in map_edges)
-			if(edge_entry["from"] != address && edge_entry["to"] != address)
-				continue
-			var/online = netrun_link_available(graph.nodes[edge_entry["from"]], graph.nodes[edge_entry["to"]])
-			if(edge_entry["online"] != online)
-				edge_entry["online"] = online
+		var/list/node_structure = structure_entry(entry)
+		if(!netrun_snapshot_equal(structural_nodes[address], node_structure))
+			structural_nodes[address] = node_structure
+			geometry_changed = TRUE
+		if(!entry["dynamic"])
+			var/list/paint_entry = static_entry(entry)
+			if(!netrun_snapshot_equal(paint_nodes[address], paint_entry))
+				paint_nodes[address] = paint_entry
+				static_changed = TRUE
+		for(var/edge_index in incident_edges[address])
+			changed_edges["[edge_index]"] = edge_index
+	for(var/key in changed_edges)
+		var/index = changed_edges[key]
+		var/list/previous = map_edges[index]
+		var/list/entry = graph.edge_between(previous["from"], previous["to"]).Copy()
+		entry["online"] = netrun_link_available(graph.nodes[entry["from"]], graph.nodes[entry["to"]])
+		if(netrun_snapshot_equal(previous, entry))
+			continue
+		map_edges[index] = entry
+		edge_entries[entry["id"]] = entry
+		bumped = TRUE
+		if(paint_edges[entry["id"]])
+			paint_edges[entry["id"]] = entry.Copy()
+			static_changed = TRUE
 	dirty_nodes.Cut()
 	if(bumped)
-		state_revision++
-		snapshot["state_revision"] = state_revision
+		snapshot["state_revision"] = ++state_revision
+	if(geometry_changed)
+		snapshot["structure_revision"] = ++structure_revision
+	if(static_changed)
+		snapshot["static_revision"] = ++static_revision
+
+/datum/netrun_map_view/proc/structure_entry(list/entry)
+	return list(entry["type"], entry["uplink"], entry["network"], entry["sector"], entry["x"], entry["y"], entry["z"], entry["dynamic"])
+
+/// Transient occupants, activity, can_hop and selection belong to the live overlay.
+/datum/netrun_map_view/proc/static_entry(list/entry)
+	return list(entry["name"], entry["type"], entry["x"], entry["y"], entry["z"], entry["security"], entry["online"], entry["access"], entry["uplink"], entry["network"], entry["sector"])
 
 /datum/netrun_map_view/proc/relay_destinations(datum/netrun_topology/graph, datum/component/netrun_node/selected, list/shown, list/permitted)
 	. = list()

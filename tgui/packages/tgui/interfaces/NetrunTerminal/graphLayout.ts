@@ -36,7 +36,7 @@ export class GraphLayout {
   constructor(readonly cache = createGraphLayoutCache()) {}
   clear() { this.cache.positions.clear(); }
 
-  update(nodes: LayoutNode[], _edges: NetEdge[]): Map<string, GraphPoint> {
+  update(nodes: LayoutNode[], _edges: NetEdge[], blocked: ReadonlySet<string> = new Set()): Map<string, GraphPoint> {
     const sorted = [...nodes].sort((a, b) => a.address.localeCompare(b.address));
     const anchors = new Map(sorted.map((node) => [node.address, {
       px: (Number.isFinite(node.x) ? node.x : 0) * GRAPH_TILE,
@@ -48,7 +48,7 @@ export class GraphLayout {
     // Retain every stationary marker, including its stack offset, regardless of input order.
     for (const node of sorted) {
       const previous = this.cache.positions.get(node.address), anchor = anchors.get(node.address);
-      if (previous?.physical === anchor.physical && !occupied.has(key(previous))) {
+      if (previous?.physical === anchor.physical && !occupied.has(key(previous)) && !blocked.has(key(previous))) {
         placed.set(node.address, previous); occupied.add(key(previous));
       }
     }
@@ -60,7 +60,7 @@ export class GraphLayout {
       while (true) {
         const offset = spiral(slot++);
         point = { px: anchor.px + offset.px, py: anchor.py + offset.py };
-        if (!occupied.has(key(point)) && (key(point) === anchorKey || !reserved.has(key(point)))) { break; }
+        if (!occupied.has(key(point)) && !blocked.has(key(point)) && (key(point) === anchorKey || !reserved.has(key(point)))) { break; }
       }
       const cached = { ...point, anchorX: anchor.px, anchorY: anchor.py, physical: anchor.physical };
       placed.set(node.address, cached); occupied.add(key(point)); cursors.set(anchorKey, slot);

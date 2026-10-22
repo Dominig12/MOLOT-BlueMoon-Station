@@ -40,6 +40,8 @@
 	var/ui_uplink_value = FALSE
 	var/ui_uplink_refresh = -INFINITY
 	var/ui_dirty = TRUE
+	/// UI polling renews this lease, including consoles embedded in NTOS windows.
+	var/last_ui_at = -INFINITY
 
 /datum/netrun_console/New(atom/host, origin)
 	src.host = host
@@ -73,17 +75,25 @@
 
 /datum/netrun_console/proc/on_session_changed(datum/source)
 	SIGNAL_HANDLER
+	if(source == inventory)
+		map_view?.invalidate()
 	invalidate_ui()
 
 /// Never serialize UI or rebuild topology inside a synchronous signal handler.
 /datum/netrun_console/proc/invalidate_ui()
 	ui_dirty = TRUE
-	map_view?.invalidate()
+
+/datum/netrun_console/proc/is_ui_active()
+	return world.time <= last_ui_at + 3 * SSnetrun.wait
 
 /datum/netrun_console/proc/flush_ui()
 	if(!ui_dirty)
 		return
 	ui_dirty = FALSE
+	// TGUI already polls live windows. Do not serialize the same graph again
+	// from SSnetrun immediately after that poll (NTOS also owns its parent UI).
+	if(world.time < last_ui_at + SSnetrun.wait)
+		return
 	SStgui.update_uis(src)
 
 /datum/netrun_console/ui_host(mob/user)
@@ -444,7 +454,11 @@
 		log_line("Провод выдернут.", "average")
 		set_jack(null)
 	remote_session.process_tick()
-	map_view.invalidate()
+	if(workspace_view != "map" || !is_ui_active())
+		map_view.suspend()
+	// Timers and combat may change the UI without changing the permitted graph.
+	if(is_ui_active() || intrusion.breach || intrusion.trace || is_locked())
+		invalidate_ui()
 
 /datum/netrun_intrusion_session/proc/process_tick(delta)
 	if(breach)
@@ -556,6 +570,7 @@
 			owner.access_session.network_access[finished.target_id] = max(owner.access_session.network_access[finished.target_id] || 0, reward)
 		else
 			owner.access_session.node_access[finished.target_id] = max(owner.access_session.node_access[finished.target_id] || 0, reward)
+		owner.map_view.invalidate()
 		owner.log_line("Взлом завершён: [finished.target_name], уровень [netrun_access_name(reward)].", "good")
 		if(clean)
 			trace = 0
@@ -591,6 +606,7 @@
 
 /datum/netrun_console/proc/set_jack(datum/component/netrun_node/node)
 	connection.set_jack(node)
+	map_view.invalidate()
 	if(connection.jack)
 		map_view.viewed_network_id = node.network?.id
 		map_view.selected_address = node.address

@@ -156,3 +156,22 @@
 	entity.next_hop = world.time
 	entity.console.intrusion.lockout_until = world.time + 10 SECONDS
 	TEST_ASSERT(!entity.can_relay_hop(first_node), "A traced session must not use a relay gateway")
+
+/// Movable is a BYOND base type of anchored machines, not a map rendering policy.
+/datum/unit_test/netrun_dynamic_rendering_classification/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/obj/machinery/computer/netrun_terminal/terminal = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/datum/component/netrun_node/stationary = terminal.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT(!stationary.is_dynamic(), "A turf-bound anchored terminal must be part of the cached canvas despite being a movable atom")
+	var/obj/item/carrier = allocate(/obj/item, origin)
+	var/obj/item/endpoint = allocate(/obj/item, carrier)
+	endpoint.anchored = TRUE
+	var/datum/component/netrun_node/carried = endpoint.AddComponent(/datum/component/netrun_node, NETRUN_NODE_DECK)
+	TEST_ASSERT(carried.is_dynamic(), "An anchored endpoint inside a carrier still moves with that carrier and needs the reactive layer")
+	endpoint.forceMove(origin)
+	TEST_ASSERT(!carried.is_dynamic(), "A now turf-bound anchored endpoint must return to the static layer")
+	endpoint.anchored = FALSE
+	TEST_ASSERT(carried.is_dynamic(), "An unanchored endpoint must remain reactive even while standing on one turf")
