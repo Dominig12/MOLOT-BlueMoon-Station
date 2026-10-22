@@ -352,55 +352,37 @@
 		var/second = pair["to"]
 		add_edge(first, second, "apc")
 		components[apc_component(components, second)] = apc_component(components, first)
-	// Join any disconnected clusters using the cheapest next bridge. Every APC
-	// enters the connected set only once, so this is O(N^2) time, O(N) memory.
-	var/initial_root = apc_component(components, addresses[1])
-	var/list/attached = list()
-	var/list/unattached = list()
+	// The nearby-APC edges may form several disconnected groups.
+	// Connect every remaining group to the growing network in one bounded pass.
+	// Pair endpoints are canonical, NOT necessarily attached->unattached.
+	var/list/component_groups = list()
+	var/list/group_order = list()
 	for(var/address in addresses)
-		if(apc_component(components, address) == initial_root)
-			attached[address] = TRUE
-		else
-			unattached[address] = TRUE
-	if(!length(unattached))
+		var/root = apc_component(components, address)
+		var/list/members = component_groups[root]
+		if(!members)
+			members = list()
+			component_groups[root] = members
+			group_order += root
+		members += address
+	if(length(group_order) < 2)
 		return
-	var/list/best_bridges = list()
-	for(var/from_address in attached)
-		for(var/to_address in unattached)
-			var/first = input_order[from_address] < input_order[to_address] ? from_address : to_address
-			var/second = first == from_address ? to_address : from_address
-			var/list/pair = list("from" = first, "to" = second,
-				"distance" = netrun_topology_distance(positions[first], positions[second]))
-			var/list/current = best_bridges[to_address]
-			if(!current || cmp_netrun_physical_edge(pair, current) < 0)
-				best_bridges[to_address] = pair
-	while(length(unattached))
+	var/list/connected = component_groups[group_order[1]].Copy()
+	// Exactly one iteration per remaining component. No unbounded while loop.
+	for(var/i in 2 to length(group_order))
+		var/list/members = component_groups[group_order[i]]
 		var/list/bridge
-		for(var/to_address in unattached)
-			var/list/candidate = best_bridges[to_address]
-			if(!bridge || cmp_netrun_physical_edge(candidate, bridge) < 0)
-				bridge = candidate
-		if(!bridge)
-			break
-		add_edge(bridge["from"], bridge["to"], "apc")
-		var/new_root = apc_component(components, bridge["to"])
-		var/list/just_attached = list()
-		for(var/address in unattached)
-			if(apc_component(components, address) == new_root)
-				just_attached += address
-		for(var/address in just_attached)
-			unattached -= address
-			attached[address] = TRUE
-			best_bridges -= address
-		for(var/from_address in just_attached)
-			for(var/to_address in unattached)
+		for(var/from_address in connected)
+			for(var/to_address in members)
 				var/first = input_order[from_address] < input_order[to_address] ? from_address : to_address
 				var/second = first == from_address ? to_address : from_address
 				var/list/pair = list("from" = first, "to" = second,
 					"distance" = netrun_topology_distance(positions[first], positions[second]))
-				var/list/current = best_bridges[to_address]
-				if(!current || cmp_netrun_physical_edge(pair, current) < 0)
-					best_bridges[to_address] = pair
+				if(!bridge || cmp_netrun_physical_edge(pair, bridge) < 0)
+					bridge = pair
+		if(bridge)
+			add_edge(bridge["from"], bridge["to"], "apc")
+		connected += members
 
 /datum/netrun_topology/proc/rebuild()
 	if(rebuilding)
