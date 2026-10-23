@@ -195,6 +195,32 @@
 		view.record_wire_delta(previous, list(changed), list(), list(), list())
 	TEST_ASSERT(view.encode_wire(full, slow_session)["full"], "A gap beyond bounded history must send a fresh baseline instead of an incomplete delta")
 
+/// A missing or discarded TGUI update must not leave the client stuck with deltas.
+/// The snapshot is repeated only for the recovering viewer until its receipt.
+/datum/unit_test/netrun_map_resync_ack/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
+	var/datum/netrun_map_view/view = console.map_view
+	var/mob/living/user = allocate(/mob/living)
+	var/datum/tgui/ui = allocate(/datum/tgui, user, console, "NetrunTerminal")
+	var/list/session = view.wire_session(user, console, ui)
+	view.state_revision = 10
+	var/list/full = list("state_revision" = 10, "structure_revision" = 1, "static_revision" = 1,
+		"revision" = 1, "nodes" = list(), "edges" = list(), "gateways" = list(),
+		"sectors" = list(), "apc_zones" = list())
+	var/list/baseline = view.encode_wire(full, session)
+	TEST_ASSERT(baseline["full"], "Initial viewer must receive a full baseline")
+	TEST_ASSERT(!view.encode_wire(full, session)["full"], "An acknowledged ordinary cursor can receive deltas")
+	view.resync(ui)
+	TEST_ASSERT(view.encode_wire(full, session)["full"], "Resync must force a complete baseline")
+	var/list/repeated = view.encode_wire(full, session)
+	TEST_ASSERT(repeated["full"], "An unacknowledged full packet must be repeated if TGUI drops it")
+	TEST_ASSERT(!view.ack_full(ui, "forged", 10), "A forged epoch must not release the recovery cursor")
+	TEST_ASSERT(!view.ack_full(ui, repeated["epoch"], 9), "An out-of-date generation cannot release the cursor")
+	TEST_ASSERT(view.encode_wire(full, session)["full"], "Rejected receipts must leave the full baseline active")
+	TEST_ASSERT(view.ack_full(ui, repeated["epoch"], 10), "The matching UI can confirm the delivered baseline")
+	TEST_ASSERT(!view.encode_wire(full, session)["full"], "After confirmation the lightweight delta stream resumes")
+
 /// Reopening and NTOS program ownership must never share a cursor by accident.
 /datum/unit_test/netrun_map_wire_ui_sessions/Run()
 	var/obj/item/host = allocate(/obj/item)

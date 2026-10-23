@@ -24,7 +24,7 @@ class LabelOccupancy {
 
 export const layoutLabels = (nodes: PlacedNode[], view: GraphViewport, width: number, height: number,
   measure: (text: string) => number, priority: (node: PlacedNode) => number,
-  textFor: (node: PlacedNode) => string = (node) => node.name): GraphLabel[] => {
+  textFor: (node: PlacedNode) => string = (node) => node.name, maxLabels = Infinity): GraphLabel[] => {
   if (view.zoom < .5) { return []; }
   const occupied = new LabelOccupancy(), labels: GraphLabel[] = [];
   const radius = GRAPH_GLYPH_RADIUS * view.zoom;
@@ -33,6 +33,9 @@ export const layoutLabels = (nodes: PlacedNode[], view: GraphViewport, width: nu
     occupied.add({ left: point.px - radius - 4, right: point.px + radius + 4, top: point.py - radius - 4, bottom: point.py + radius + 4 });
   }
   for (const node of [...nodes].sort((a, b) => priority(b) - priority(a) || a.address.localeCompare(b.address))) {
+    // On large maps text measurement and glyph uploads are much more costly
+    // than the network strokes. Preserve all markers, but bound labels.
+    if (labels.length >= maxLabels) { break; }
     const point = view.project(node);
     const original = textFor(node);
     let text = original;

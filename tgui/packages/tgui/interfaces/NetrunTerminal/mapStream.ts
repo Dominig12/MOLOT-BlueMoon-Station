@@ -51,12 +51,21 @@ export class NetrunMapStream {
   private lastPacket: NetMapPacket | null = null;
   resyncToken = 0;
 
-  private resync() {
+  private resync(epoch?: string) {
     if (!this.waiting) { this.waiting = true; this.resyncToken++; }
-    this.snapshot = null;
-    this.nodes.clear(); this.edges.clear(); this.nodeIndexes.clear(); this.edgeIndexes.clear();
-    return null;
+    // A missing delta within the *same* authorization epoch does not revoke
+    // what the player could already see. Freeze the previous graph while
+    // requesting a fresh baseline; never apply further deltas while waiting.
+    // A new epoch can indicate lost credentials, so hide that old projection.
+    if (!this.snapshot || epoch !== this.epoch) {
+      this.snapshot = null;
+      this.nodes.clear(); this.edges.clear(); this.nodeIndexes.clear(); this.edgeIndexes.clear();
+    }
+    return this.snapshot;
   }
+
+  get needsResync() { return this.waiting; }
+  requestResync() { this.resync(this.epoch); }
 
   private metadata(packet: NetMapPacket, nodes: NetNode[], edges: NetEdge[], fresh = false): NetMap {
     const previous = this.snapshot;
@@ -83,18 +92,18 @@ export class NetrunMapStream {
     if (packet === this.lastPacket) { return this.snapshot; }
     this.lastPacket = packet;
     if (packet.full === false || packet.full === 0) {
-      if (!this.snapshot || this.waiting || packet.epoch !== this.epoch) { return this.resync(); }
+      if (!this.snapshot || this.waiting || packet.epoch !== this.epoch) { return this.resync(packet.epoch); }
       if (packet.state_revision < this.revision) { return this.snapshot; }
       if (packet.state_revision === this.revision) {
         // Route, selection and relay readiness may change without graph mutations.
         return this.metadata(packet, this.snapshot.nodes, this.snapshot.edges);
       }
-      if (packet.base_revision !== this.revision) { return this.resync(); }
+      if (packet.base_revision !== this.revision) { return this.resync(packet.epoch); }
       const nodes = patchEntries(this.snapshot.nodes, this.nodes, this.nodeIndexes,
         packet.nodes || [], packet.removed_nodes || [], (node) => node.address);
       const removedEdges = packet.removed_edges || [];
       // A malformed/lost update must not manufacture links to undisclosed endpoints.
-      if (packet.edges?.some((edge) => !this.nodes.has(edge.from) || !this.nodes.has(edge.to))) { return this.resync(); }
+      if (packet.edges?.some((edge) => !this.nodes.has(edge.from) || !this.nodes.has(edge.to))) { return this.resync(packet.epoch); }
       const orphaned = packet.removed_nodes?.length
         ? this.snapshot.edges.filter((edge) => !this.nodes.has(edge.from) || !this.nodes.has(edge.to)).map((edge) => edge.id) : [];
       const edges = patchEntries(this.snapshot.edges, this.edges, this.edgeIndexes,

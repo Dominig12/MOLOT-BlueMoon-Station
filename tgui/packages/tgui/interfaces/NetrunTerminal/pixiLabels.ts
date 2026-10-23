@@ -18,7 +18,7 @@ export class PixiLabels {
     this.layer = new pixi.Container(); this.layer.label = 'screen-labels';
     this.metric = this.newText();
   }
-  private newText() { return new this.pixi.Text({ text: '', style: { fontFamily: 'monospace', fontSize: 11, fill: 0x99b2c1 } }); }
+  private newText() { return new this.pixi.Text({ text: '', style: { fontFamily: 'monospace', fontSize: 12, fill: 0xa9c3d2 } }); }
 
   update(scene: GraphScene, overlay: GraphOverlay, view: GraphViewport, width: number, height: number,
     displayed: (node: PlacedNode) => PlacedNode) {
@@ -32,7 +32,7 @@ export class PixiLabels {
       : node.address === overlay.entityHost ? 8 : node.ice ? 6 : ['apc', 'gateway', 'relay'].includes(node.type) ? 3 : 0;
     const placed = layoutLabels(nodes, view, width, Math.max(0, height - 26), (text) => {
       this.metric.text = text; return this.metric.width;
-    }, priority, caption);
+    }, priority, caption, 80);
     const visible = new Set<string>();
     for (const label of placed) {
       visible.add(label.node.address);
@@ -47,8 +47,9 @@ export class PixiLabels {
       const rectangle = `${label.rect.left},${label.rect.top},${label.rect.right},${label.rect.bottom}`;
       if (rectangle !== entry.rectangle) {
         entry.rectangle = rectangle;
-        entry.background.clear().roundRect(label.rect.left, label.rect.top, label.rect.right - label.rect.left, 19, 3)
-          .fill({ color: 0x0b1d28, alpha: .94 });
+        entry.background.clear().roundRect(label.rect.left, label.rect.top, label.rect.right - label.rect.left, 19, 4)
+          .fill({ color: 0x102331, alpha: .9 })
+          .stroke({ color: 0x294b5b, width: .6, alpha: .6 });
       }
     }
     for (const [address, entry] of this.captions) {

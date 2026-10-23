@@ -57,7 +57,7 @@ export const useNetrunBackend = <TData extends NetrunData = NetrunData>() => {
   const latest = useRef(backend); latest.current = backend;
   const feedback = useContext(FeedbackContext);
   const act = useCallback((action: string, payload: object = {}) => {
-    if (!feedback || action === 'workspace_view' || action === 'set_handle') {
+    if (!feedback || action === 'workspace_view' || action === 'set_handle' || action === 'map_sync_ack') {
       return latest.current.act(action, payload);
     }
     const nonce = feedback.begin(action, payload, actionLabel(action, payload as Record<string, unknown>, latest.current.data));

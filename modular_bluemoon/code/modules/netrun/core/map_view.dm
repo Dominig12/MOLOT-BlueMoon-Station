@@ -472,8 +472,31 @@
 	if(!ui?.user || !ui.src_object)
 		return
 	var/key = "[REF(ui.user)]:[REF(ui.src_object)]"
-	wire_sessions -= key
+	var/list/session = wire_sessions[key]
+	if(!session)
+		session = list("id" = ++wire_session_id, "ui" = REF(ui))
+		wire_sessions[key] = session
+	// Sending a snapshot does not prove TGUI delivered it. Keep this viewer
+	// on full snapshots until its frontend explicitly acknowledges the epoch.
+	session["force_full"] = TRUE
+	session["revision"] = null
 	owner?.invalidate_ui()
+
+/// Acknowledge a full snapshot only from the UI that owns the wire cursor.
+/// A delayed receipt for an older epoch/revision must never unlock a new stream.
+/datum/netrun_map_view/proc/ack_full(datum/tgui/ui, epoch, revision)
+	if(!ui?.user || !ui.src_object || !istext(epoch))
+		return FALSE
+	// TGUI action transports may encode a numeric revision as text.
+	var/confirmed_revision = isnum(revision) ? revision : (istext(revision) ? text2num(revision) : null)
+	if(isnull(confirmed_revision))
+		return FALSE
+	var/key = "[REF(ui.user)]:[REF(ui.src_object)]"
+	var/list/session = wire_sessions[key]
+	if(!session || !session["force_full"] || session["epoch"] != epoch || session["revision"] != confirmed_revision)
+		return FALSE
+	session["force_full"] = FALSE
+	return TRUE
 
 /datum/netrun_map_view/proc/encode_wire(list/full, list/session)
 	var/epoch = "[REF(src)]:[wire_epoch]:[session["id"]]"
@@ -483,7 +506,7 @@
 	var/list/edge_updates = list()
 	var/list/removed_nodes = list()
 	var/list/removed_edges = list()
-	var/send_full = isnull(previous) || session["epoch"] != epoch || previous > state_revision
+	var/send_full = !!session["force_full"] || isnull(previous) || session["epoch"] != epoch || previous > state_revision
 	if(!send_full && previous != state_revision)
 		var/cursor = previous
 		for(var/list/batch as anything in wire_journal)

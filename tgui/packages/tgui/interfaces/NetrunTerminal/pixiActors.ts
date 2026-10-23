@@ -13,6 +13,7 @@ type Link = { graphic: Graphics; signature: string; bounds: GraphBox };
 type Segment = { from: GraphPoint; to: GraphPoint; length: number };
 type Route = { graphic: Graphics; signature: string; segments: Segment[]; until: number; began: number; tint: number };
 type Traffic = { born: number; point: GraphPoint; trace: boolean; segments: Segment[] };
+type Pulse = { born: number; point: GraphPoint; tint: number };
 const NO_BOX: GraphBox = { left: -Infinity, right: Infinity, top: -Infinity, bottom: Infinity };
 const sameOverlayData = (a: GraphOverlay | null, b: GraphOverlay) => a
   && a.gateways === b.gateways && a.entityHost === b.entityHost && a.jacked === b.jacked
@@ -49,6 +50,7 @@ export class PixiActors {
   private adjacency = new Map<string, Set<string>>();
   private selectedSignature = '';
   private traffic: Traffic[] = [];
+  private pulses: Pulse[] = [];
   private zoom = 1;
   private scale = 1;
   private detailed = true;
@@ -74,6 +76,11 @@ export class PixiActors {
     const affected = localOnly ? [...new Set([before.selected, before.hovered, overlay.selected, overlay.hovered])]
       .map((address) => scene.byAddress.get(address)).filter(Boolean) : scene.nodes;
     this.scene = scene; this.overlay = overlay; this.dynamicEdges = dynamicEdges; this.adjacency = adjacency;
+    // Short, event-triggered focus animation: never leave the GPU ticker running.
+    if (before?.selected !== overlay.selected && overlay.selected && !this.reducedMotion) {
+      const node = scene.byAddress.get(overlay.selected);
+      if (node) { this.pulses.push({ born: now, point: node, tint: 0x6fe9dc }); }
+    }
     if (!localOnly) {
       this.moving = scene.nodes.filter((node) => node.dynamic);
       this.blocked = new Set([...scene.edges, ...dynamicEdges].filter((edge) => edge.online === false)
@@ -89,6 +96,9 @@ export class PixiActors {
       }
       alive.add(node.address);
       let actor = this.nodes.get(node.address);
+      if (actor && node.ice && node.ice > (actor.node.ice || 0) && !this.reducedMotion) {
+        this.pulses.push({ born: now, point: node, tint: 0xf37b93 });
+      }
       if (!actor) {
         const group = new this.pixi.Container(); group.label = `device:${node.address}`;
         const body = new this.pixi.Graphics(), marks = new this.pixi.Graphics(); group.addChild(body, marks);
@@ -132,6 +142,7 @@ export class PixiActors {
       const point = scene.byAddress.get(event.to) || scene.byAddress.get(event.from);
       return point ? [{ born: now - Math.max(0, event.age) * 1000, point, trace: event.kind === 'trace', segments: this.eventPath(event.from, event.to) }] : [];
     }); }
+    if (this.pulses.length > 24) { this.pulses.splice(0, this.pulses.length - 24); }
     this.setViewport(this.bounds, this.zoom); return true;
   }
 
@@ -143,15 +154,23 @@ export class PixiActors {
     const signature = `${node.type}:${!!node.dynamic}:${fill}:${border}:${node.entities}:${node.ice}:${node.active}:${selected}:${overlay.selectionPending}:${hosted}:${jacked}:${hovered}:${this.scale}:${this.detailed}`;
     if (actor.signature === signature) { return; }
     actor.signature = signature; actor.body.clear(); actor.marks.clear();
-    if (node.dynamic) { markerPath(actor.body, node.type, 0, 0, this.scale).fill({ color: fill }).stroke({ color: border, width: 1.5 * this.scale }); }
-    const marks = actor.marks, scale = this.scale;
+    // No LOD enlargement of ordinary device bodies. This scale is reserved
+    // for LAN/ICE/entity contours (never the underlying node).
+    if (node.dynamic) { markerPath(actor.body, node.type, 0, 0, 1).fill({ color: fill }).stroke({ color: border, width: 1.5 }); }
+    const marks = actor.marks, scale = node.ice || node.entities
+      || node.type === 'gateway' || node.type === 'relay' ? this.scale : 1;
+    if (node.dynamic && (node.type === 'gateway' || node.type === 'relay')) {
+      marks.circle(0, 0, 19 * scale)
+        .stroke({ color: border, width: Math.min(3, scale * 1.3), alpha: .64 });
+    }
     if (selected || hosted || jacked || hovered) {
-      marks.circle(0, 0, (hovered && !selected ? 18 : 21) * scale).stroke({ color: selected ? overlay.selectionPending ? 0xffd18a : 0xeafff5 : hosted ? 0xf8a3e6 : jacked ? 0x65b4d5 : 0x8ed1ea, width: (selected ? 2 : 1.3) * scale, alpha: .95 });
-      if (selected) { marks.circle(0, 0, 25 * scale).stroke({ color: 0x70e6cd, width: scale, alpha: .25 }); }
+      marks.circle(0, 0, hovered && !selected ? 18 : 21).stroke({ color: selected ? overlay.selectionPending ? 0xffd18a : 0xeafff5 : hosted ? 0xf8a3e6 : jacked ? 0x65b4d5 : 0x8ed1ea, width: selected ? 2 : 1.3, alpha: .95 });
+      if (selected) { marks.circle(0, 0, 25).stroke({ color: 0x70e6cd, width: 1, alpha: .25 }); }
     }
     if (node.ice) {
       marks.circle(0, 0, 23 * scale).stroke({ color: 0xef6b7c, width: 1.5 * scale, alpha: .8 });
       marks.circle(-16 * scale, -16 * scale, (this.detailed ? 8 : 4) * scale).fill({ color: 0xff6470 });
+      marks.circle(0, 0, 28 * scale).stroke({ color: 0xff6470, width: Math.min(2.5, 1.1 * scale), alpha: .28 });
     } else if (node.active) { marks.circle(0, 0, 18 * scale).stroke({ color: 0xffc26b, width: 1.5 * scale, alpha: .8 }); }
     if (node.entities) { marks.roundRect(10 * scale, -23 * scale, (this.detailed ? 16 : 7) * scale, (this.detailed ? 13 : 7) * scale, 2 * scale).fill({ color: 0xf19bdc }); }
     const badges = this.detailed ? [node.ice ? { value: String(node.ice), x: -16 * scale, y: -16 * scale, color: 0x2d1017 } : null,
@@ -200,12 +219,16 @@ export class PixiActors {
 
   private paintRoute(addresses: string[], route: Route, now: number, ping = false) {
     const segments = this.segments(addresses), path = segments.map(({ from, to }) => `${from.px},${from.py}:${to.px},${to.py}`).join('|');
-    const signature = `${this.scale};${path}`;
+    const signature = path;
     if (route.signature === signature) { return; }
-    const changedPath = route.signature.slice(route.signature.indexOf(';') + 1) !== path;
+    const changedPath = route.signature !== path;
     route.signature = signature; route.segments = segments; route.graphic.clear();
-    for (const segment of segments) { segmentPath(route.graphic, segment.from, segment.to, (ping ? 5 : 10) * this.scale, 6 * this.scale); }
-    if (segments.length) { route.graphic.stroke({ color: route.tint, width: 3 * this.scale, alpha: .9 }); }
+    // Muted continuous path beneath bright dashes improves route legibility
+    // at fractional zoom without shaders or multiple display objects.
+    for (const segment of segments) { segmentPath(route.graphic, segment.from, segment.to); }
+    if (segments.length) { route.graphic.stroke({ color: route.tint, width: 4, alpha: .18 }); }
+    for (const segment of segments) { segmentPath(route.graphic, segment.from, segment.to, ping ? 5 : 10, 6); }
+    if (segments.length) { route.graphic.stroke({ color: route.tint, width: 2.5, alpha: .85 }); }
     if (ping && changedPath && segments.length) { route.began = now; route.until = now + 1800; }
   }
 
@@ -266,19 +289,26 @@ export class PixiActors {
       }
     }
     this.effects.clear();
+    this.pulses = this.pulses.filter((pulse) => now - pulse.born < 700);
+    for (const pulse of this.pulses) {
+      const progress = Math.max(0, (now - pulse.born) / 700);
+      this.effects.circle(pulse.point.px, pulse.point.py, 19 + progress * 21)
+        .stroke({ color: pulse.tint, width: 2.5 - 1.5 * progress, alpha: .8 * (1 - progress) });
+      animating = true;
+    }
     for (const event of this.traffic) {
       const age = Math.max(0, (now - event.born) / 1000); if (age >= 4) { continue; }
       const tint = event.trace ? 0xf56670 : 0xffc26b;
-      if (this.reducedMotion) { this.effects.circle(event.point.px, event.point.py, 24 * this.scale).stroke({ color: tint, width: 1.5 * this.scale, alpha: .65 }); continue; }
+      if (this.reducedMotion) { this.effects.circle(event.point.px, event.point.py, 24).stroke({ color: tint, width: 1.5, alpha: .65 }); continue; }
       const phase = (age % 1.2) / 1.2;
-      this.effects.circle(event.point.px, event.point.py, (20 + phase * 15) * this.scale).stroke({ color: tint, width: 1.5 * this.scale, alpha: (1 - phase) * (1 - age / 4) });
-      const packet = pointOn(event.segments, age % 1); if (packet) { this.effects.circle(packet.px, packet.py, 3 * this.scale).fill({ color: tint, alpha: .9 }); }
+      this.effects.circle(event.point.px, event.point.py, (20 + phase * 15)).stroke({ color: tint, width: 1.5, alpha: (1 - phase) * (1 - age / 4) });
+      const packet = pointOn(event.segments, age % 1); if (packet) { this.effects.circle(packet.px, packet.py, 3).fill({ color: tint, alpha: .9 }); }
       animating = true;
     }
     const ping = this.routes[2];
     if (!this.reducedMotion && now < ping.until && ping.segments.length) {
       const point = pointOn(ping.segments, ((now - ping.began) % 900) / 900);
-      if (point) { this.effects.circle(point.px, point.py, 5 * this.scale).fill({ color: ping.tint, alpha: .95 }); } animating = true;
+      if (point) { this.effects.circle(point.px, point.py, 5).fill({ color: ping.tint, alpha: .95 }); } animating = true;
     }
     return animating;
   }
@@ -298,5 +328,5 @@ export class PixiActors {
     }
     return best;
   }
-  destroy() { this.nodes.clear(); this.links.clear(); this.traffic = []; this.scene = null; this.overlay = null; destroyDisplay(this.world); }
+  destroy() { this.nodes.clear(); this.links.clear(); this.traffic = []; this.pulses = []; this.scene = null; this.overlay = null; destroyDisplay(this.world); }
 }

@@ -24,7 +24,7 @@ export type PixiSurface = {
 const validSize = (width: number, height: number) => Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0;
 /** Resolution adapts framebuffer memory; topology size never disables the map or drops objects. */
 export const framebufferResolution = (width: number, height: number, deviceRatio = 1) =>
-  Math.min(Math.max(.1, deviceRatio), 2, Math.sqrt(4194304 / (width * height)), 8192 / Math.max(width, height));
+  Math.min(Math.max(.1, deviceRatio), 2, Math.sqrt(3145728 / (width * height)), 8192 / Math.max(width, height));
 export const webglAvailable = () => typeof window !== 'undefined' && typeof window.WebGL2RenderingContext !== 'undefined';
 
 function disposeApplication(app: Application, canvas: HTMLCanvasElement, context: WebGL2RenderingContext) {
@@ -67,6 +67,7 @@ class NetrunPixiSurface implements PixiSurface {
   private labelDirty = true;
   private resolutionQuality = 1;
   private slowFrames = 0;
+  private lastRenderAt = -Infinity;
 
   constructor(private readonly app: Application, private readonly canvas: HTMLCanvasElement,
     private readonly context: WebGL2RenderingContext, pixi: PixiLibrary, width: number, height: number,
@@ -133,6 +134,10 @@ class NetrunPixiSurface implements PixiSurface {
   private render = (now: number) => {
     this.frame = null;
     if (this.disposed || this.suspended || this.failed || this.lost || document.hidden) { return; }
+    // Animation and repeated pointer events share a 30 FPS ceiling. There is
+    // no idle frame loop, so a quiet map consumes no GPU time.
+    if (now - this.lastRenderAt < 1000 / 30) { this.requestRender(); return; }
+    this.lastRenderAt = now;
     try {
       const began = performance.now();
       if (this.sizeDirty) {
@@ -159,9 +164,9 @@ class NetrunPixiSurface implements PixiSurface {
         this.labelDirty = false;
       }
       this.app.renderer.render({ container: this.app.stage });
-      this.slowFrames = performance.now() - began > 40 ? this.slowFrames + 1 : Math.max(0, this.slowFrames - 1);
-      if (this.slowFrames >= 3 && this.resolutionQuality > .5) {
-        this.resolutionQuality = Math.max(.5, this.resolutionQuality * .8); this.sizeDirty = true; this.slowFrames = 0;
+      this.slowFrames = performance.now() - began > 55 ? this.slowFrames + 1 : Math.max(0, this.slowFrames - 1);
+      if (this.slowFrames >= 3 && this.resolutionQuality > .85) {
+        this.resolutionQuality = Math.max(.85, this.resolutionQuality * .92); this.sizeDirty = true; this.slowFrames = 0;
       }
       if (animated || building || this.sizeDirty) { this.requestRender(); }
     } catch { this.reportUnavailable(); }
@@ -172,7 +177,13 @@ class NetrunPixiSurface implements PixiSurface {
     this.grid.clear();
     for (let px = ((x % step) + step) % step; px < this.width; px += step) { this.grid.moveTo(px, 0).lineTo(px, this.height); }
     for (let py = ((y % step) + step) % step; py < this.height; py += step) { this.grid.moveTo(0, py).lineTo(this.width, py); }
-    this.grid.stroke({ color: 0x468298, alpha: .12, width: 1 });
+    this.grid.stroke({ color: 0x468298, alpha: .08, width: 1 });
+    // Larger guide lines provide orientation at every zoom without textures,
+    // custom shaders or a persistent animation loop.
+    const major = step * 4;
+    for (let px = ((x % major) + major) % major; px < this.width; px += major) { this.grid.moveTo(px, 0).lineTo(px, this.height); }
+    for (let py = ((y % major) + major) % major; py < this.height; py += major) { this.grid.moveTo(0, py).lineTo(this.width, py); }
+    this.grid.stroke({ color: 0x548b9f, alpha: .15, width: 1.15 });
   }
   private onVisible = () => { if (document.hidden) { this.cancelFrame(); } else { this.requestRender(); } };
   private onMotion = () => {
@@ -214,12 +225,12 @@ export async function mountNetrunPixi(host: HTMLElement, width: number, height: 
   try { library = await import('pixi.js'); } catch { return null; }
   if (options.signal?.aborted) { return null; }
   const canvas = document.createElement('canvas');
-  const context = canvas.getContext('webgl2', { alpha: false, antialias: false, powerPreference: 'low-power' });
+  const context = canvas.getContext('webgl2', { alpha: false, antialias: true, powerPreference: 'low-power' });
   if (!context) { return null; }
   const app = new library.Application();
   try {
     await app.init({ canvas, context, width, height, preference: 'webgl', preferWebGLVersion: 2,
-      powerPreference: 'low-power', autoStart: false, sharedTicker: false, antialias: false, autoDensity: false,
+      powerPreference: 'low-power', autoStart: false, sharedTicker: false, antialias: true, autoDensity: false,
       resolution: framebufferResolution(width, height, window.devicePixelRatio || 1), background: 0x081420,
       eventFeatures: { move: false, globalMove: false, click: false, wheel: false } });
     app.stop();

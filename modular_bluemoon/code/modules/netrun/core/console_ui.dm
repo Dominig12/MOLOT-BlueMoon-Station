@@ -378,6 +378,11 @@
 	. = ..()
 	if(.)
 		return
+	// Protocol-only acknowledgement; it must not wake ICE, change selections,
+	// produce player action feedback or initiate another UI broadcast.
+	if(action == "map_sync_ack")
+		map_view.ack_full(ui, params["epoch"], params["revision"])
+		return TRUE
 	operator = ui.user
 	var/input_nonce = params["_netrun_action"]
 	if(istext(input_nonce) && length(input_nonce) <= NETRUN_INPUT_ACK_MAX_LENGTH)

@@ -54,7 +54,10 @@ const useStableList = <T, >(items: T[]): T[] => {
 export const StationMap = (props: { suspended?: boolean } = {}) => {
   const { act, data } = useBackend<NetrunData>();
   const [stream] = useState(() => new NetrunMapStream());
+  const [, refreshRecovery] = useState(0);
   const resyncSent = useRef(0);
+  const lastAcknowledged = useRef('');
+  const acknowledgementGeneration = useRef(0);
   const latest = useRef<MapInput | null>(null);
   if (!props.suspended && data.map) {
     const resolved = stream.apply(data.map);
@@ -74,10 +77,41 @@ export const StationMap = (props: { suspended?: boolean } = {}) => {
       act('map_resync');
     }
   }, [props.suspended, stream.resyncToken, act]);
+  useEffect(() => {
+    if (props.suspended || !stream.needsResync) { return; }
+    // Lost TGUI messages may include the requested full snapshot itself.
+    // Retry only while recovery is pending; ordinary map operation has no poll.
+    const timer = window.setInterval(() => {
+      if (stream.needsResync) { act('map_resync'); }
+    }, 3500);
+    return () => window.clearInterval(timer);
+  }, [props.suspended, stream.needsResync, stream, act]);
+  // Full snapshots can be discarded by TGUI before reaching React. Confirm
+  // only a baseline that the stream has actually accepted.
+  useEffect(() => {
+    const packet = !props.suspended ? data.map : null;
+    if (!packet || packet.full === false || packet.full === 0 || !packet.epoch
+      || packet.state_revision === undefined || stream.needsResync) { return; }
+    // A manual recovery may retransmit the same epoch/revision as the last
+    // acknowledged snapshot. That new recovery still needs its own receipt.
+    if (acknowledgementGeneration.current !== stream.resyncToken) {
+      acknowledgementGeneration.current = stream.resyncToken;
+      lastAcknowledged.current = '';
+    }
+    const key = `${packet.epoch}:${packet.state_revision}`;
+    if (lastAcknowledged.current === key) { return; }
+    lastAcknowledged.current = key;
+    act('map_sync_ack', { epoch: packet.epoch, revision: packet.state_revision });
+  }, [props.suspended, data.map, stream, act]);
   return latest.current ? <MapSnapshot input={latest.current} act={act} suspended={props.suspended} />
     : props.suspended ? null : <Box p={1} role="status" color={THEME.muted}>
       {stream.resyncToken ? 'Синхронизация карты после пропущенного обновления…' : 'Ожидание карты сети…'}
-      <Button compact ml={1} icon="rotate" content="Обновить карту" onClick={() => act('map_resync')} />
+      <Button compact ml={1} icon="rotate" content="Обновить карту" onClick={() => {
+        stream.requestResync();
+        resyncSent.current = stream.resyncToken;
+        refreshRecovery((value) => value + 1);
+        act('map_resync');
+      }} />
                                </Box>;
 };
 

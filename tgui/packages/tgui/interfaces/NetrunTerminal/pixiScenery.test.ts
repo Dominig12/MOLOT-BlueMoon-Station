@@ -44,3 +44,18 @@ test('unchanged spatial batches survive updates to another device', () => {
   layer.queue(next, base); finish(layer);
   expect(retained.destroyed).toBe(false); expect(retained.clears).toBe(clears);
 });
+
+test('overview keeps ordinary camera glyphs small while enlarging only LAN outlines', () => {
+  const scene = new GraphScene(); scene.update([
+    node('CAM', 0), { ...node('LAN', 200), type: 'gateway' },
+  ], []);
+  const layer = new PixiScenery(mockPixi);
+  layer.queue(scene, { gateways: new Map() });
+  finish(layer);
+  layer.setViewport({ left: -250, right: 450, top: -250, bottom: 250 }, .2);
+  finish(layer);
+  const radii = MockGraphics.graphics.flatMap((graphic) => graphic.calls
+    .filter((call) => call.op === 'circle').map((call) => call.args[2]));
+  expect(radii).toContain(8); // Body geometry is never inflated by camera zoom.
+  expect(radii.some((radius) => radius > 19)).toBe(true); // LAN outline alone remains prominent.
+});

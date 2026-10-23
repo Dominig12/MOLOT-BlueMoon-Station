@@ -68,3 +68,17 @@ test('reduced motion snaps devices and stops packet, fade and ping animation imm
   layer.update(next, state, [], next.adjacency, 10); expect(layer.animate(10)).toBe(false);
   expect(layer.hit({ px: 96, py: 0 }, 1)?.address).toBe('A');
 });
+
+test('zoomed-out Pixi actors keep device bodies small and enlarge ICE/entity rings only', () => {
+  const scene = new GraphScene(); scene.update([
+    { ...node('CAM'), dynamic: true },
+    { ...node('ICE', 100), dynamic: true, ice: 2, entities: 1 },
+  ], []);
+  const layer = new PixiActors(mockPixi);
+  layer.update(scene, overlay(), [], scene.adjacency, 0);
+  layer.setViewport({ left: -100, right: 300, top: -100, bottom: 100 }, .2);
+  const radii = MockGraphics.graphics.flatMap((graphic) => graphic.calls
+    .filter((call) => call.op === 'circle').map((call) => call.args[2]));
+  expect(radii).toContain(8);
+  expect(radii.some((radius) => radius >= 46)).toBe(true);
+});

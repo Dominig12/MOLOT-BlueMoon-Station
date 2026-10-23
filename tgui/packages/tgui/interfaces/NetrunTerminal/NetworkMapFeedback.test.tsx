@@ -64,3 +64,28 @@ test('a confirmed keyboard choice keeps its selection and never claims a rejecti
   await waitFor(() => expect(panel.getByText('Выбран: Сервер')).toBeTruthy());
   expect(panel.queryByText('Узел не выбран. Проверьте доступ и связь.')).toBeNull();
 });
+
+test('a dropped selection delta retains the GPU map, requests resync, and acknowledges the recovered snapshot', async () => {
+  const { panel, update } = setup();
+  await waitFor(() => expect(panel.getByLabelText('Карта сети').getAttribute('data-net-runtime')).toBe('ready'));
+  const full = { nodes: [source, peer], edges: [], gateways: [], focus: source.address,
+    revision: 1, structure_revision: 1, static_revision: 1, state_revision: 10,
+    epoch: 'session:one', full: 1 };
+  update({ map: full });
+  await waitFor(() => expect((global as any).Byond.topic.mock.calls
+    .some((call) => call[0]?.type === 'act/map_sync_ack')).toBe(true));
+
+  update({ map: { epoch: 'session:one', full: 0, base_revision: 9, state_revision: 11,
+    nodes: [], edges: [], focus: peer.address } });
+  expect(panel.queryByText(/Синхронизация карты после пропущенного обновления/)).toBeNull();
+  expect(panel.getByLabelText('Карта сети')).toBeTruthy();
+  await waitFor(() => expect((global as any).Byond.topic.mock.calls
+    .some((call) => call[0]?.type === 'act/map_resync')).toBe(true));
+
+  // The server can replay the exact same baseline revision; recovery still
+  // needs a second acknowledgement after the stream has been invalidated.
+  update({ map: { ...full, focus: peer.address } });
+  expect(panel.getByLabelText('Карта сети')).toBeTruthy();
+  await waitFor(() => expect((global as any).Byond.topic.mock.calls.filter(
+    (call) => call[0]?.type === 'act/map_sync_ack').length).toBeGreaterThanOrEqual(2));
+});

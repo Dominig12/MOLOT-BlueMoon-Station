@@ -99,7 +99,8 @@ export class PixiScenery {
       const border = pixiColor(base.gateways.get(node.network)?.color, 0x527287);
       const item = batch('3-node', node.px, node.py, fill, 1);
       item.nodes.push(node); item.signature.push(`${node.address}:${node.px},${node.py}:${node.type}:${border}:${this.scale}`);
-      const radius = 16 * this.scale;
+      const emphasized = node.type === 'gateway' || node.type === 'relay';
+      const radius = emphasized ? 19 * this.scale : 16;
       include(item.bounds, { left: node.px - radius, right: node.px + radius, top: node.py - radius, bottom: node.py + radius });
       if (++work % 128 === 0) { yield; }
     }
@@ -120,9 +121,17 @@ export class PixiScenery {
       for (const stroke of data.strokes) { graphic.moveTo(stroke.from.px, stroke.from.py).lineTo(stroke.to.px, stroke.to.py); }
       if (data.strokes.length) { graphic.stroke({ color: data.color, width: data.width, alpha: data.alpha }); }
       for (const node of data.nodes) {
-        markerPath(graphic, node.type, node.px, node.py, this.scale)
-          .fill({ color: data.color }).stroke({ color: pixiColor(base.gateways.get(node.network)?.color, 0x527287), width: 1.5 * this.scale });
-        if (this.scale === 1 && ['apc', 'server', 'terminal', 'camera'].includes(node.type)) {
+        const border = pixiColor(base.gateways.get(node.network)?.color, 0x527287);
+        // Ordinary devices shrink naturally with zoom. Only LAN gateway
+        // markers retain a visible outline in the far-out overview.
+        markerPath(graphic, node.type, node.px, node.py, 1)
+          .fill({ color: data.color, alpha: .94 })
+          .stroke({ color: border, width: 1.5 });
+        if (node.type === 'gateway' || node.type === 'relay') {
+          graphic.circle(node.px, node.py, 19 * this.scale)
+            .stroke({ color: border, width: Math.min(3, 1.3 * this.scale), alpha: .64 });
+        }
+        if (['apc', 'server', 'terminal', 'camera'].includes(node.type)) {
           graphic.moveTo(node.px - 4, node.py).lineTo(node.px + 4, node.py);
           if (node.type === 'apc') { graphic.moveTo(node.px, node.py - 4).lineTo(node.px, node.py + 4); }
           graphic.stroke({ color: 0x102331, width: 1.5 });

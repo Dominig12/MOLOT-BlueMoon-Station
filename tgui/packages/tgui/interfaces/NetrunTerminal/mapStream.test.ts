@@ -70,6 +70,28 @@ test('a missing baseline or a lost delta requests one resync and suppresses stal
   expect(restored.nodes.map((entry) => entry.address)).toEqual(['ONLY-PERMITTED']);
 });
 
+test('same-epoch lost delta retains the old map until a confirmed full snapshot', () => {
+  const stream = new NetrunMapStream();
+  const initial = stream.apply(baseline());
+  const retained = stream.apply(delta({ base_revision: 9, state_revision: 12 }));
+  expect(retained).toBe(initial);
+  expect(stream.needsResync).toBe(true);
+  expect(stream.resyncToken).toBe(1);
+  expect(stream.apply(delta({ base_revision: 10, state_revision: 13, nodes: [{ ...node, name: 'Unconfirmed' }] }))).toBe(initial);
+  expect(initial.nodes[0].name).toBe('APC');
+  const restored = stream.apply(baseline({ state_revision: 13, nodes: [{ ...node, name: 'Confirmed' }] }));
+  expect(restored.nodes[0].name).toBe('Confirmed');
+  expect(stream.needsResync).toBe(false);
+});
+
+test('new authorization epoch drops all previously disclosed nodes immediately', () => {
+  const stream = new NetrunMapStream();
+  stream.apply(baseline());
+  expect(stream.apply(delta({ epoch: 'ui:revoked', base_revision: 10, state_revision: 12 }))).toBeNull();
+  expect(stream.needsResync).toBe(true);
+  expect(stream.apply(baseline({ epoch: 'ui:revoked', nodes: [] })).nodes).toEqual([]);
+});
+
 test('authorization epochs replace the baseline and independent windows keep separate cursors', () => {
   const first = new NetrunMapStream(), second = new NetrunMapStream();
   first.apply(baseline({ apc_zones: [{ address: 'APC', z: 1, runs: [{ x: 1, y: 1, width: 3 }] }] }));
