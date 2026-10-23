@@ -402,6 +402,7 @@
 	var/lore_initialized = FALSE
 	/// Узлы защиты со спящими ячейками льда: address -> сколько ячеек ещё можно пробудить.
 	var/list/defense_nests = list()
+	var/datum/netrun_defense_director/defense_director
 
 /// Создать ICE в узле. Возвращает процесс.
 /datum/controller/subsystem/netrun/proc/spawn_ice(datum/component/netrun_node/where, ice_kind = NETRUN_ICE_SENTRY)
@@ -460,37 +461,64 @@
 				defense_nests[nest.address] = 2
 				nest.add_log("Узел защиты: спящие ячейки ICE в резерве.")
 
-/// Трассировка вскрыта: патрули устремляются к нарушителю, а гнёзда пробуждают спящие ячейки.
+/// A dedicated domain service owns network-local retaliation policy.
+/// Persistent hunters patrol independently; only temporary response units consume the dispatch cap.
+/datum/netrun_defense_director
+	var/datum/controller/subsystem/netrun/owner
+
+/datum/netrun_defense_director/New(datum/controller/subsystem/netrun/subsystem)
+	. = ..()
+	owner = subsystem
+
+/datum/netrun_defense_director/Destroy()
+	owner = null
+	return ..()
+
+/datum/netrun_defense_director/proc/alert(datum/component/netrun_node/target)
+	if(QDELETED(target) || !target.network)
+		return
+	var/datum/netrun_network/network = target.network
+	for(var/datum/netrun_ice/ice as anything in owner.ice_processes)
+		if(QDELETED(ice) || ice.kind != NETRUN_ICE_HUNTER || ice.node?.network != network)
+			continue
+		ice.hop_cooldown = 0
+		if(!ice.persistent)
+			ice.patrol_life = max(ice.patrol_life, 40)
+	for(var/nest_address in owner.defense_nests)
+		if(owner.defense_nests[nest_address] <= 0)
+			continue
+		var/datum/component/netrun_node/nest = owner.nodes_by_address[nest_address]
+		if(QDELETED(nest) || QDELETED(nest.parent) || nest.network != network || !nest.is_online())
+			continue
+		// Consume a cell only after a response process was actually created.
+		var/datum/netrun_ice/awoken = owner.spawn_ice(nest, NETRUN_ICE_HUNTER)
+		if(!awoken)
+			continue
+		owner.defense_nests[nest_address]--
+		awoken.hop_cooldown = 0
+		network.add_log("Пробуждена ячейка защиты: процесс направлен к нарушителю.")
+
+/datum/netrun_defense_director/proc/dispatch(datum/component/netrun_node/near)
+	if(QDELETED(near) || QDELETED(near.parent) || !near.network)
+		return
+	var/datum/netrun_network/network = near.network
+	var/active_responses = 0
+	for(var/datum/netrun_ice/ice as anything in owner.ice_processes)
+		if(QDELETED(ice) || ice.kind != NETRUN_ICE_HUNTER || ice.persistent || ice.node?.network != network)
+			continue
+		active_responses++
+		if(active_responses >= 3)
+			return
+	owner.spawn_ice(near, NETRUN_ICE_HUNTER)
+
+/// Backward-compatible public API. Network rules live in the defense director.
+/datum/controller/subsystem/netrun/proc/get_defense_director()
+	if(!defense_director)
+		defense_director = new(src)
+	return defense_director
+
 /datum/controller/subsystem/netrun/proc/alert_defenses(datum/component/netrun_node/target, datum/netrun_console/intruder)
-	if(QDELETED(target))
-		return
-	for(var/datum/netrun_ice/ice as anything in ice_processes)
-		if(ice.kind == NETRUN_ICE_HUNTER)
-			ice.hop_cooldown = 0
-			if(!ice.persistent)
-				ice.patrol_life = max(ice.patrol_life, 40)
-	for(var/nest_address in defense_nests)
-		if(defense_nests[nest_address] <= 0)
-			continue
-		var/datum/component/netrun_node/nest = nodes_by_address[nest_address]
-		if(QDELETED(nest) || QDELETED(nest.parent) || !nest.is_online())
-			continue
-		defense_nests[nest_address]--
-		var/datum/netrun_ice/awoken = spawn_ice(nest, NETRUN_ICE_HUNTER)
-		if(awoken)
-			awoken.hop_cooldown = 0
-			nest.network?.add_log("Пробуждена ячейка защиты: процесс направлен к нарушителю.")
+	get_defense_director().alert(target)
 
-/// Выслать охотника за нарушителем-сущностью (если он есть и до него есть сеть).
 /datum/controller/subsystem/netrun/proc/dispatch_hunter(datum/component/netrun_node/near)
-	if(QDELETED(near) || QDELETED(near.parent))
-		return
-	// Не плодим охотников: не больше трёх одновременно.
-	var/hunters = 0
-	for(var/datum/netrun_ice/ice as anything in ice_processes)
-		if(ice.kind == NETRUN_ICE_HUNTER)
-			hunters++
-	if(hunters >= 3)
-		return
-	spawn_ice(near, NETRUN_ICE_HUNTER)
-
+	get_defense_director().dispatch(near)
