@@ -48,8 +48,13 @@ export class NetworkViewportController {
   private lastZones: GraphOverlay['apcZones'];
   private hover: ViewportHover = null;
   private hud: ViewportHUD = { nodes: -1, zoom: -1 };
-  private press: { pointer: number; x: number; y: number; panX: number; panY: number; moved: boolean } | null = null;
+  private press: { pointer: number; x: number; y: number; panX: number; panY: number; moved: boolean;
+    lastX: number; lastY: number; lastAt: number; velocityX: number; velocityY: number } | null = null;
   private fitLimit: { scene: GraphScene; zones: GraphOverlay['apcZones']; width: number; height: number; zoom: number } | null = null;
+  private cameraInitialized = false;
+  private kineticFrame: number | null = null;
+  private kinetic: { vx: number; vy: number; last: number } | null = null;
+  private zoomEndTimer: number | null = null;
   private pendingSelection: string | null = null;
   private selectionHostAtStart: string | null = null;
   private pendingTimer: number | null = null;
@@ -66,7 +71,7 @@ export class NetworkViewportController {
     host.addEventListener('pointermove', this.pointerMove);
     host.addEventListener('pointerup', this.pointerUp);
     host.addEventListener('pointercancel', this.cancelGesture);
-    host.addEventListener('lostpointercapture', this.cancelGesture);
+    host.addEventListener('lostpointercapture', this.captureLost);
     host.addEventListener('pointerleave', this.pointerLeave);
     host.addEventListener('wheel', this.wheel, { passive: false });
     window.addEventListener('resize', this.resize);
@@ -88,22 +93,22 @@ export class NetworkViewportController {
     host?.removeEventListener('pointermove', this.pointerMove);
     host?.removeEventListener('pointerup', this.pointerUp);
     host?.removeEventListener('pointercancel', this.cancelGesture);
-    host?.removeEventListener('lostpointercapture', this.cancelGesture);
+    host?.removeEventListener('lostpointercapture', this.captureLost);
     host?.removeEventListener('pointerleave', this.pointerLeave);
     host?.removeEventListener('wheel', this.wheel);
     this.press = null;
+    this.cancelKinetic();
+    if (this.zoomEndTimer !== null) { window.clearTimeout(this.zoomEndTimer); this.zoomEndTimer = null; }
     this.clearSelectionTimers(); this.pendingSelection = null;
   }
 
   update(snapshot: ViewportSnapshot) {
-    const previousBase = this.snapshot.base;
-    const previousZones = this.snapshot.overlay.apcZones;
     this.snapshot = snapshot;
     if (!this.host) { return; }
     if (this.pendingSelection && (snapshot.overlay.selected === this.pendingSelection
       || (snapshot.overlay.entityHost === this.pendingSelection && snapshot.overlay.entityHost !== this.selectionHostAtStart))) { this.finishSelection('confirmed'); }
     if (snapshot.suspended) {
-      this.pauseSurface(); this.cancelGesture(); this.setHover(null);
+      this.cancelKinetic(); this.pauseSurface(); this.cancelGesture(); this.setHover(null);
       this.setStatus({ phase: 'paused' });
       return;
     }
@@ -113,9 +118,12 @@ export class NetworkViewportController {
       return;
     }
     if (this.hover && !snapshot.scene.byAddress.has(this.hover.address)) { this.setHover(null); }
-    if (this.camera.fitting && (this.status.phase === 'paused' || this.status.phase === 'empty'
-      || previousBase !== snapshot.base || previousZones !== snapshot.overlay.apcZones)) {
+    // Fit only the first populated view. Selecting a node can replace the
+    // projection, geography and window dimensions; those are not camera-reset events.
+    if (!this.cameraInitialized) {
       this.fitCamera();
+      this.cameraInitialized = true;
+      this.camera.fitting = false;
     }
     this.publishHUD();
     if (this.surface) {
@@ -132,10 +140,13 @@ export class NetworkViewportController {
   };
 
   fit = () => {
-    this.fitCamera(); this.publishCamera();
+    this.cancelKinetic();
+    this.fitCamera(); this.cameraInitialized = true; this.camera.fitting = false;
+    this.publishCamera();
   };
 
   center = (address: string) => {
+    this.cancelKinetic();
     const point = this.snapshot.scene.byAddress.get(address);
     if (!point) { return; }
     const { width, height } = this.size();
@@ -291,7 +302,7 @@ export class NetworkViewportController {
 
   private resize = () => {
     if (!this.host || this.snapshot.suspended || this.status.phase === 'empty') { return; }
-    if (this.camera.fitting) { this.fitCamera(); }
+    // Resizing the inspector is not an instruction to fit the whole network.
     this.present(); this.publishHUD();
   };
 
@@ -307,8 +318,14 @@ export class NetworkViewportController {
   private pointerDown = (event: PointerEvent) => {
     if (this.press || event.button !== 0 || this.snapshot.suspended || this.status.phase !== 'ready'
       || (event.target instanceof Element && event.target.closest('[data-net-overlay]'))) { return; }
+    this.cancelKinetic();
+    if (this.zoomEndTimer !== null) {
+      window.clearTimeout(this.zoomEndTimer); this.zoomEndTimer = null;
+    }
+    const now = performance.now();
     this.press = { pointer: event.pointerId, x: event.clientX, y: event.clientY,
-      panX: this.camera.x, panY: this.camera.y, moved: false };
+      panX: this.camera.x, panY: this.camera.y, moved: false,
+      lastX: event.clientX, lastY: event.clientY, lastAt: now, velocityX: 0, velocityY: 0 };
     this.host?.focus();
     try { this.host?.setPointerCapture?.(event.pointerId); } catch { /* Pointer may already have been released. */ }
   };
@@ -320,7 +337,16 @@ export class NetworkViewportController {
       if (press.pointer !== event.pointerId) { return; }
       const dx = event.clientX - press.x, dy = event.clientY - press.y;
       if (dx * dx + dy * dy > 16) { press.moved = true; }
-      if (press.moved) { this.camera.pan(press.panX + dx, press.panY + dy); this.setHover(null); this.publishCamera(); }
+      if (press.moved) {
+        const now = performance.now(), dt = Math.max(8, Math.min(64, now - press.lastAt));
+        const vx = (event.clientX - press.lastX) / dt, vy = (event.clientY - press.lastY) / dt;
+        press.velocityX = press.velocityX * .55 + vx * .45;
+        press.velocityY = press.velocityY * .55 + vy * .45;
+        press.lastX = event.clientX; press.lastY = event.clientY; press.lastAt = now;
+        this.surface?.setInteracting(true);
+        this.camera.pan(press.panX + dx, press.panY + dy);
+        this.setHover(null); this.publishCamera();
+      }
       return;
     }
     const node = this.hit(event.clientX, event.clientY), bounds = this.host?.getBoundingClientRect();
@@ -334,19 +360,69 @@ export class NetworkViewportController {
     if (!press.moved) {
       const node = this.hit(event.clientX, event.clientY);
       if (node) { this.previewSelection(node.address); this.callbacks.onSelect(node.address); }
+      this.surface?.setInteracting(false);
+    } else if (Math.hypot(press.velocityX, press.velocityY) > .1) {
+      this.startKinetic(press.velocityX, press.velocityY);
+    } else {
+      this.surface?.setInteracting(false);
     }
   };
 
+  private captureLost = () => {
+    // Browsers emit lostpointercapture after pointerup; do not cancel momentum
+    // that was started by releasing the pointer intentionally.
+    if (this.press) { this.cancelGesture(); }
+  };
   private cancelGesture = () => {
     const press = this.press; this.press = null;
+    this.cancelKinetic();
     if (press) { try { this.host?.releasePointerCapture?.(press.pointer); } catch { /* The browser may have cancelled capture already. */ } }
+    this.surface?.setInteracting(false);
   };
+
+  /** Friction only after pointer-up; no idle loop and no extra React renders. */
+  private startKinetic(vx: number, vy: number) {
+    if (typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.surface?.setInteracting(false);
+      return;
+    }
+    this.cancelKinetic(false);
+    this.kinetic = { vx, vy, last: performance.now() };
+    const step = (now: number) => {
+      this.kineticFrame = null;
+      const motion = this.kinetic;
+      if (!motion || !this.host || this.snapshot.suspended) { this.cancelKinetic(); return; }
+      const dt = Math.max(1, Math.min(40, now - motion.last));
+      motion.last = now;
+      const decay = Math.exp(-dt / 125);
+      const avg = (1 - decay) * 125;
+      this.camera.pan(this.camera.x + motion.vx * avg, this.camera.y + motion.vy * avg);
+      motion.vx *= decay; motion.vy *= decay;
+      this.publishCamera();
+      if (Math.hypot(motion.vx, motion.vy) > .045) {
+        this.kineticFrame = window.requestAnimationFrame(step);
+      } else { this.cancelKinetic(); }
+    };
+    this.kineticFrame = window.requestAnimationFrame(step);
+  }
+  private cancelKinetic(settle = true) {
+    if (this.kineticFrame !== null) { window.cancelAnimationFrame(this.kineticFrame); this.kineticFrame = null; }
+    this.kinetic = null;
+    if (settle) { this.surface?.setInteracting(false); }
+  }
   private pointerLeave = () => { this.setHover(null); };
 
   private wheel = (event: WheelEvent) => {
     if (event.ctrlKey || event.metaKey || this.snapshot.suspended || this.status.phase !== 'ready'
       || (event.target instanceof Element && event.target.closest('[data-net-overlay]'))) { return; }
-    event.preventDefault(); this.setHover(null);
+    event.preventDefault(); this.cancelKinetic(false); this.setHover(null);
+    this.surface?.setInteracting(true);
+    if (this.zoomEndTimer !== null) { window.clearTimeout(this.zoomEndTimer); }
+    this.zoomEndTimer = window.setTimeout(() => {
+      this.zoomEndTimer = null;
+      if (!this.press && !this.kinetic) { this.surface?.setInteracting(false); }
+    }, 120);
     const bounds = this.host?.getBoundingClientRect();
     if (!bounds) { return; }
     const dimensions = this.size();

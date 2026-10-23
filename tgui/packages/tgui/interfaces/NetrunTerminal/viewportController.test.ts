@@ -98,6 +98,55 @@ test('pan and zoom update the GPU camera without reuploading the graph or reconc
   } finally { controller.detach(); host.remove(); }
 });
 
+test('selection and graph projection changes preserve manual camera zoom, pan and GPU context', async () => {
+  const host = hostElement(), data = snapshot(), handlers = callbacks();
+  const factory = jest.fn(async (element: HTMLElement) => makePixiSurfaceMock(element));
+  const controller = new NetworkViewportController(data, handlers, factory);
+  try {
+    controller.attach(host);
+    const surface = await factory.mock.results[0].value;
+    await Promise.resolve();
+    const before = { x: controller.camera.x, y: controller.camera.y, zoom: controller.camera.zoom };
+    host.dispatchEvent(new WheelEvent('wheel',
+      { clientX: 360, clientY: 240, deltaY: 240, cancelable: true }));
+    pointer(host, 'pointerdown', 360, 240);
+    pointer(host, 'pointermove', 410, 275);
+    // Do not finish the gesture with momentum: selection updates can arrive during the pan.
+    controller.update({ ...data, overlay: { ...data.overlay, selected: null } });
+    expect(controller.camera.zoom).not.toBe(before.zoom);
+    const manuallyPlaced = { x: controller.camera.x, y: controller.camera.y, zoom: controller.camera.zoom };
+    const nextBase = new GraphScene(); nextBase.update([{ ...node, px: 700, py: 350 }], []);
+    controller.update({ ...data, base: nextBase, scene: nextBase,
+      overlay: { ...data.overlay, selected: 'APC', apcZones: [] } });
+    expect({ x: controller.camera.x, y: controller.camera.y, zoom: controller.camera.zoom }).toEqual(manuallyPlaced);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(surface.destroy).not.toHaveBeenCalled();
+    controller.update({ ...data, suspended: true });
+    controller.update(data);
+    expect({ x: controller.camera.x, y: controller.camera.y, zoom: controller.camera.zoom }).toEqual(manuallyPlaced);
+  } finally { controller.detach(); host.remove(); }
+});
+
+test('drag uses a retained Pixi scene and enables gesture mode without rebuilding scenery', async () => {
+  const host = hostElement(), data = snapshot(), handlers = callbacks();
+  const factory = jest.fn(async (element: HTMLElement) => makePixiSurfaceMock(element));
+  const controller = new NetworkViewportController(data, handlers, factory);
+  try {
+    controller.attach(host);
+    const surface = await factory.mock.results[0].value;
+    await Promise.resolve();
+    const uploads = surface.updateScene.mock.calls.length;
+    pointer(host, 'pointerdown', 360, 240);
+    pointer(host, 'pointermove', 395, 240);
+    pointer(host, 'pointermove', 440, 240);
+    expect(surface.setInteracting).toHaveBeenCalledWith(true);
+    expect(surface.updateCamera).toHaveBeenCalled();
+    expect(surface.updateScene).toHaveBeenCalledTimes(uploads);
+    pointer(host, 'pointerup', 440, 240);
+    expect(factory).toHaveBeenCalledTimes(1);
+  } finally { controller.detach(); host.remove(); }
+});
+
 test('a failed GPU start waits for an explicit retry and creates no 2D fallback', async () => {
   const host = hostElement(), data = snapshot(), handlers = callbacks();
   const factory = jest.fn(async (_element: HTMLElement): Promise<any> => null);

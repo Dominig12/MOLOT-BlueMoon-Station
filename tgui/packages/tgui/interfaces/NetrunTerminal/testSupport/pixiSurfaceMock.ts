@@ -23,6 +23,7 @@ export const makePixiSurfaceMock = (host: HTMLElement): MockPixiSurface => {
     updateScene: jest.fn((_scene: GraphScene, _base: GraphBase) => true),
     updateActors: jest.fn((scene: GraphScene, _overlay: GraphOverlay, _edges: NetEdge[], _adjacency: Map<string, Set<string>>) => { live = scene; }),
     updateCamera: jest.fn((_camera: { x: number; y: number; zoom: number }) => {}),
+    setInteracting: jest.fn((_interacting: boolean) => {}),
     resize: jest.fn((_width: number, _height: number) => true),
     hitTest: jest.fn((point: GraphPoint, zoom: number) => live?.hit(point, zoom) ?? null),
     setSuspended: jest.fn(),

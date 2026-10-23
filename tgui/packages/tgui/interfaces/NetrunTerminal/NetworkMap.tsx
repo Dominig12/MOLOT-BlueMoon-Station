@@ -374,7 +374,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
             setQuery(''); setSearchReset((value) => value + 1); setDisabledTypes({}); setFocusNearby(false);
           }} />
                                   </Box>}
-      <NetworkViewport key={`${map.active_sector || ''}:${map.active_z ?? ''}`} ref={viewport} adjacency={adjacency} nodes={stationaryNodes} edges={stationaryEdges}
+      <NetworkViewport ref={viewport} adjacency={adjacency} nodes={stationaryNodes} edges={stationaryEdges}
         actors={visibleNodes} dynamicEdges={dynamicEdges} suspended={suspended}
         gateways={gateways} selected={selectedAddress} jacked={jackAddress}
         apcZones={map.apc_zones}

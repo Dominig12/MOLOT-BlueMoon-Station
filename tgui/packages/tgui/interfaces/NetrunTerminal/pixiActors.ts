@@ -247,12 +247,14 @@ export class PixiActors {
   }
 
   setViewport(bounds: GraphBox, zoom: number) {
-    const nextScale = markerScale(zoom), detailed = zoom >= .6, geometryChanged = this.scale !== nextScale || this.detailed !== detailed;
+    const nextScale = markerScale(zoom), detailed = zoom >= .6;
+    const geometryChanged = this.scale !== nextScale || this.detailed !== detailed;
+    const zoomChanged = this.zoom !== zoom;
     this.bounds = bounds; this.zoom = zoom; this.scale = nextScale; this.detailed = detailed;
     for (const actor of this.nodes.values()) {
       if (geometryChanged && this.overlay) { this.paintActor(actor); }
       actor.group.visible = actor.px >= bounds.left - 32 * nextScale && actor.px <= bounds.right + 32 * nextScale && actor.py >= bounds.top - 32 * nextScale && actor.py <= bounds.bottom + 32 * nextScale;
-      for (const label of actor.labels) { label.scale.set(1 / zoom); }
+      if (zoomChanged) { for (const label of actor.labels) { label.scale.set(1 / zoom); } }
     }
     for (const link of this.links.values()) { link.graphic.visible = boxesIntersect(link.bounds, bounds); }
     if (geometryChanged && this.overlay) {

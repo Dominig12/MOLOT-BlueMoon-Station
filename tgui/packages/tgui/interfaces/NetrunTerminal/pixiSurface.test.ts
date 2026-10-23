@@ -83,6 +83,29 @@ test('context loss pauses frames, restores retained objects and removes all list
   expect(status).toHaveBeenCalledTimes(calls); expect(frames.size).toBe(0);
 });
 
+test('Pixi renders on every requested animation frame without artificial FPS throttling', async () => {
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const surface = await mountNetrunPixi(host, 800, 600);
+  const scene = new GraphScene();
+  scene.update([{ ...node('A'), dynamic: true }], []);
+  surface.updateScene(scene, overlay());
+  surface.updateActors(scene, overlay(), [], scene.adjacency);
+  const app = MockApplication.instances[0];
+  const framesRendered = [];
+  for (const timestamp of [8, 16, 24, 32]) {
+    const frame = [...frames.values()][0];
+    expect(frame).toBeDefined();
+    frames.clear(); clock = timestamp; frame(timestamp);
+    framesRendered.push(app.renderer.render.mock.calls.length);
+  }
+  expect(framesRendered[3]).toBeGreaterThan(framesRendered[0]);
+  surface.setInteracting(true);
+  surface.updateCamera({ x: 42, y: 53, zoom: 1.15 });
+  expect(frames.size).toBeGreaterThan(0);
+  surface.setInteracting(false);
+  flush(); surface.destroy();
+});
+
 test('finite live effects settle; reduced motion and document hiding cancel animation frames', async () => {
   const host = document.createElement('div'); document.body.appendChild(host);
   const surface = await mountNetrunPixi(host, 800, 600);

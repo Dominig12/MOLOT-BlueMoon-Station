@@ -16,6 +16,7 @@ export type PixiSurface = {
   updateScene: (scene: GraphScene, base: GraphBase) => boolean;
   updateActors: (scene: GraphScene, overlay: GraphOverlay, dynamicEdges: NetEdge[], adjacency: Map<string, Set<string>>) => void;
   updateCamera: (camera: PixiCamera) => void;
+  setInteracting: (interacting: boolean) => void;
   resize: (width: number, height: number) => boolean;
   hitTest: (point: GraphPoint, zoom: number) => PlacedNode | null;
   setSuspended: (suspended: boolean) => void;
@@ -67,14 +68,19 @@ class NetrunPixiSurface implements PixiSurface {
   private labelDirty = true;
   private resolutionQuality = 1;
   private slowFrames = 0;
-  private lastRenderAt = -Infinity;
+  private interacting = false;
+  private labelCamera: PixiCamera | null = null;
 
   constructor(private readonly app: Application, private readonly canvas: HTMLCanvasElement,
     private readonly context: WebGL2RenderingContext, pixi: PixiLibrary, width: number, height: number,
     private readonly onUnavailable: (() => void) | undefined, private readonly options: PixiMountOptions) {
     this.width = width; this.height = height;
     this.scenery = new PixiScenery(pixi); this.actors = new PixiActors(pixi); this.labels = new PixiLabels(pixi);
-    this.grid = new pixi.Graphics(); this.world = new pixi.Container(); this.world.label = 'station-world';
+    this.grid = new pixi.Graphics();
+    // A PixiJS v8 render group applies camera transforms on the GPU without
+    // reprocessing the static scenery tree for every pointer movement.
+    this.world = new pixi.Container({ isRenderGroup: true });
+    this.world.label = 'station-world';
     this.world.addChild(this.scenery.world, this.actors.world);
     this.app.stage.addChild(this.grid, this.world, this.labels.layer);
     this.motionQuery = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
@@ -103,7 +109,16 @@ class NetrunPixiSurface implements PixiSurface {
   updateCamera(camera: PixiCamera) {
     if (this.disposed || !Number.isFinite(camera.x) || !Number.isFinite(camera.y) || !Number.isFinite(camera.zoom) || camera.zoom <= 0) { return; }
     if (camera.x === this.camera.x && camera.y === this.camera.y && camera.zoom === this.camera.zoom) { return; }
-    this.camera = { x: camera.x, y: camera.y, zoom: camera.zoom }; this.cameraDirty = true; this.labelDirty = true; this.requestRender();
+    this.camera = { x: camera.x, y: camera.y, zoom: camera.zoom };
+    this.cameraDirty = true;
+    if (!this.interacting) { this.labelDirty = true; }
+    this.requestRender();
+  }
+  setInteracting(interacting: boolean) {
+    if (this.disposed || this.interacting === interacting) { return; }
+    this.interacting = interacting;
+    if (!interacting) { this.labelDirty = true; }
+    this.requestRender();
   }
   resize(width: number, height: number) {
     if (this.disposed || this.failed || !validSize(width, height)) { return false; }
@@ -123,7 +138,7 @@ class NetrunPixiSurface implements PixiSurface {
   setSuspended(suspended: boolean) {
     if (this.disposed || this.suspended === suspended) { return; }
     this.suspended = suspended;
-    if (suspended) { this.cancelFrame(); }
+    if (suspended) { this.cancelFrame(); this.interacting = false; }
     else { this.cameraDirty = true; this.labelDirty = true; this.requestRender(); }
   }
   private cancelFrame() { if (this.frame !== null) { window.cancelAnimationFrame(this.frame); this.frame = null; } }
@@ -134,10 +149,8 @@ class NetrunPixiSurface implements PixiSurface {
   private render = (now: number) => {
     this.frame = null;
     if (this.disposed || this.suspended || this.failed || this.lost || document.hidden) { return; }
-    // Animation and repeated pointer events share a 30 FPS ceiling. There is
-    // no idle frame loop, so a quiet map consumes no GPU time.
-    if (now - this.lastRenderAt < 1000 / 30) { this.requestRender(); return; }
-    this.lastRenderAt = now;
+    // Draw at the browser's native requestAnimationFrame cadence. Input
+    // coalesces into one frame; the map has no idle animation loop.
     try {
       const began = performance.now();
       if (this.sizeDirty) {
@@ -156,12 +169,30 @@ class NetrunPixiSurface implements PixiSurface {
       this.actors.setViewport(bounds, this.camera.zoom);
       const animated = this.actors.animate(now);
       this.scenery.setViewport(bounds, this.camera.zoom);
-      const building = this.scenery.advance(4);
-      this.scenery.setViewport(bounds, this.camera.zoom); this.actors.setViewport(bounds, this.camera.zoom);
+      const building = this.scenery.advance(this.interacting ? 1 : 4);
+      // New batches may have been created by advance(); reapply culling
+      // once without repeating the per-actor viewport work on every drag frame.
+      this.scenery.setViewport(bounds, this.camera.zoom);
       if (this.cameraDirty) { this.paintGrid(); this.cameraDirty = false; }
-      if (this.live && (this.labelDirty || this.actors.positionsChanged)) {
-        this.labels.update(this.live.scene, this.live.overlay, this.view, this.width, this.height, (node) => this.actors.pointFor(node));
-        this.labelDirty = false;
+      // Captions are in screen coordinates. During gestures transform the
+      // retained label layer with the GPU camera instead of measuring text,
+      // solving label collisions and uploading glyphs at every pointer event.
+      if (this.interacting && this.labelCamera) {
+        const ratio = this.camera.zoom / this.labelCamera.zoom;
+        this.labels.layer.scale.set(ratio);
+        this.labels.layer.position.set(
+          this.camera.x - this.labelCamera.x * ratio,
+          this.camera.y - this.labelCamera.y * ratio);
+        if (this.actors.positionsChanged) { this.labelDirty = true; }
+      } else {
+        if (this.live && (this.labelDirty || this.actors.positionsChanged)) {
+          this.labels.layer.scale.set(1);
+          this.labels.layer.position.set(0, 0);
+          this.labels.update(this.live.scene, this.live.overlay, this.view,
+            this.width, this.height, (node) => this.actors.pointFor(node));
+          this.labelCamera = { ...this.camera };
+          this.labelDirty = false;
+        }
       }
       this.app.renderer.render({ container: this.app.stage });
       this.slowFrames = performance.now() - began > 55 ? this.slowFrames + 1 : Math.max(0, this.slowFrames - 1);
