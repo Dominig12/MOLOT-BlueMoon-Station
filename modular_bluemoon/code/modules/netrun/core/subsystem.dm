@@ -248,6 +248,8 @@ SUBSYSTEM_DEF(netrun)
 	var/list/timed_nodes = list()
 	var/last_processed_nodes = 0
 	var/last_processed_consoles = 0
+	/// ICE not scheduled this pass because their LAN has no active threats.
+	var/last_sleeping_ice = 0
 	/// Topology rebuild instrumentation; timing only while adaptive profiling is armed.
 	var/topology_rebuilds = 0
 	var/topology_rebuild_ms = 0
@@ -271,7 +273,7 @@ SUBSYSTEM_DEF(netrun)
 	var/datum/netrun_topology/topology
 
 /datum/controller/subsystem/netrun/stat_entry(msg)
-	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles] T:[topology_rebuilds] F:[camera_feed_scans]/[camera_feed_cache_hits] R:[camera_route_borrows] W:[wire_session_sweeps] I:[topology?.indexed_infrastructure_visits || 0]"
+	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles] ICEsleep:[last_sleeping_ice] T:[topology_rebuilds] F:[camera_feed_scans]/[camera_feed_cache_hits] R:[camera_route_borrows] W:[wire_session_sweeps] I:[topology?.indexed_infrastructure_visits || 0]"
 	if(task_scheduler)
 		var/datum/netrun_task_scheduler/scheduler = task_scheduler
 		msg += " Tasks:[scheduler.pending()] Q:[scheduler.counts[1]]/[scheduler.counts[2]]/[scheduler.counts[3]] Qpeak:[scheduler.peak_pending] Done:[scheduler.completed] Merge:[scheduler.merged] Pr:[scheduler.promoted] Budget:[round(scheduler.last_execution_ms, 0.1)]/[round(scheduler.last_budget_ms, 0.1)]ms"
@@ -352,10 +354,35 @@ SUBSYSTEM_DEF(netrun)
 		reconcile = TRUE
 		var/priority = console.intrusion.breach || console.is_locked() ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL
 		scheduler.enqueue("console", console, priority)
-	var/has_entities = length(entities) > 0
-	var/has_breaches = length(currentbreaches) > 0
+	// Shared domain activity index: one active runner does not wake every ICE station-wide.
+	// Include both a resident entity's LAN and the target LAN of active breach sessions.
+	var/list/active_networks = list()
+	for(var/mob/camera/netrun_entity/entity as anything in entities)
+		if(QDELETED(entity))
+			continue
+		var/datum/netrun_network/resident_network = entity.host_node?.network
+		if(resident_network)
+			active_networks[resident_network.id] = TRUE
+	for(var/datum/netrun_console/console as anything in currentbreaches)
+		var/datum/netrun_breach/breach = console.intrusion.breach
+		if(!breach)
+			continue
+		var/datum/netrun_network/attacked_network
+		if(breach.target_kind == "network")
+			attacked_network = networks[breach.target_id]
+		else
+			var/datum/component/netrun_node/attacked_node = nodes_by_address[breach.target_id]
+			attacked_network = attacked_node?.network
+		if(attacked_network)
+			active_networks[attacked_network.id] = TRUE
+	last_sleeping_ice = 0
 	for(var/datum/netrun_ice/ice as anything in ice_processes)
-		if(QDELETED(ice) || !ice.needs_netrun_tick(has_entities, has_breaches))
+		if(QDELETED(ice))
+			continue
+		if(!ice.needs_netrun_tick(active_networks))
+			last_sleeping_ice++
+			// A previously queued periodic pass must not wake dormant ICE after its threat leaves.
+			scheduler.cancel("ice", ice)
 			continue
 		scheduler.enqueue("ice", ice, ice.pending_program ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL)
 	for(var/datum/component/netrun_node/node as anything in dirty_nodes)

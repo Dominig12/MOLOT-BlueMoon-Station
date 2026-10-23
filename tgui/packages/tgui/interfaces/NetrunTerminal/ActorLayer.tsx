@@ -85,6 +85,31 @@ export const ActorLayer = memo((props: Props) => {
   const { x, y, zoom, width, height } = camera;
   const visible = useMemo(() => scene.visible((-x - 32) / zoom, (-y - 32) / zoom,
     (width - x + 32) / zoom, (height - y + 32) / zoom), [scene, x, y, zoom, width, height]);
+  // Dynamic edges are indexed by endpoint, so dragging the camera only visits
+  // the small set of edges touching visible nodes instead of mounting every edge.
+  const dynamicIncidents = useMemo(() => {
+    const index = new Map<string, NetEdge[]>();
+    for (const edge of dynamicEdges) {
+      for (const address of [edge.from, edge.to]) {
+        const list = index.get(address) || [];
+        list.push(edge);
+        index.set(address, list);
+      }
+    }
+    return index;
+  }, [dynamicEdges]);
+  const viewportEdges = useMemo(() => {
+    const unique = new Set<string>();
+    const result: NetEdge[] = [];
+    for (const node of visible) {
+      for (const edge of dynamicIncidents.get(node.address) || []) {
+        if (unique.has(edge.id)) { continue; }
+        unique.add(edge.id);
+        result.push(edge);
+      }
+    }
+    return result;
+  }, [visible, dynamicIncidents]);
   const onScreen = (point: GraphPoint) => point.px * zoom + x >= -32 && point.px * zoom + x <= width + 32
     && point.py * zoom + y >= -32 && point.py * zoom + y <= height + 32;
   const route = (addresses: string[]) => {
@@ -106,7 +131,7 @@ export const ActorLayer = memo((props: Props) => {
       <style>{ACTOR_STYLE}</style>
       <g data-net-camera transform={`translate(${x} ${y}) scale(${zoom})`} fontFamily="monospace" strokeLinejoin="round" strokeLinecap="round">
         <g data-net-dynamic-edges fill="none" strokeWidth={1.5}>
-          {dynamicEdges.map((edge) => (<path key={edge.id} data-net-dynamic-edge={edge.id} d={edgeSegment(scene, edge)}
+          {viewportEdges.map((edge) => (<path key={edge.id} data-net-dynamic-edge={edge.id} d={edgeSegment(scene, edge)}
             stroke={edge.online === false ? '#52636e' : edge.kind === 'relay' ? '#3fb8ad' : '#4c8fa7'}
             strokeDasharray={edge.online === false ? '4 5' : undefined} />))}
           {visible.filter((node) => node.dynamic).map((node) => (<path key={`anchor:${node.address}`}

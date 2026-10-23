@@ -226,10 +226,13 @@
 
 // MARK: Поведение (AI)
 
-/// An idle sentry or permanent patrol needs no periodic AI if there are no intruders or breaches.
-/// Temporary hunters still tick so their lifetime can expire. Pending casts keep critical priority.
-/datum/netrun_ice/proc/needs_netrun_tick(has_entities, has_breaches)
-	return pending_program || (kind == NETRUN_ICE_HUNTER && !persistent) || has_entities || has_breaches
+/// Idle permanent defenders only wake for activity in their own LAN.
+/// Temporary hunters still tick so their lifetime expires; active casts always complete.
+/datum/netrun_ice/proc/needs_netrun_tick(list/active_networks)
+	if(pending_program || (kind == NETRUN_ICE_HUNTER && !persistent))
+		return TRUE
+	var/datum/netrun_network/host_network = node?.network
+	return host_network && active_networks?[host_network.id]
 
 /datum/netrun_ice/proc/process_ai(delta)
 	if(QDELETED(node) || QDELETED(node.parent))
@@ -483,13 +486,17 @@
 	if(QDELETED(target) || !target.network)
 		return
 	var/datum/netrun_network/network = target.network
+	var/active_responses = 0
 	for(var/datum/netrun_ice/ice as anything in owner.ice_processes)
 		if(QDELETED(ice) || ice.kind != NETRUN_ICE_HUNTER || ice.node?.network != network)
 			continue
 		ice.hop_cooldown = 0
 		if(!ice.persistent)
+			active_responses++
 			ice.patrol_life = max(ice.patrol_life, 40)
 	for(var/nest_address in owner.defense_nests)
+		if(active_responses >= 3)
+			break
 		if(owner.defense_nests[nest_address] <= 0)
 			continue
 		var/datum/component/netrun_node/nest = owner.nodes_by_address[nest_address]
@@ -500,6 +507,7 @@
 		if(!awoken)
 			continue
 		owner.defense_nests[nest_address]--
+		active_responses++
 		awoken.hop_cooldown = 0
 		network.add_log("Пробуждена ячейка защиты: процесс направлен к нарушителю.")
 

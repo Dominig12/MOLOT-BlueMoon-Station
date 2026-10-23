@@ -44,3 +44,24 @@ test('6000 quiet stationary devices create no actor elements and offscreen actor
   expect(container.querySelectorAll('[data-net-actor]')).toHaveLength(0);
   expect(container.querySelectorAll('[data-net-dynamic-body]')).toHaveLength(0);
 });
+
+
+test('offscreen dynamic links are not mounted until their endpoint enters the viewport', () => {
+  const near = { ...node, address: 'NEAR', dynamic: true, px: 64, py: 0 };
+  const farA = { ...node, address: 'FAR-A', dynamic: true, px: 90000, py: 90000 };
+  const farB = { ...node, address: 'FAR-B', dynamic: true, px: 90100, py: 90000 };
+  const edges: NetEdge[] = [
+    { id: 'near', from: 'APC', to: 'NEAR', kind: 'endpoint' },
+    { id: 'far', from: 'FAR-A', to: 'FAR-B', kind: 'endpoint' },
+  ];
+  const base = new GraphScene(); base.update([node], []);
+  const scene = GraphScene.live(base, [node, near, farA, farB], new Map());
+  const { container, rerender } = render(<ActorLayer {...overlay} camera={camera}
+    scene={scene} adjacency={new Map()} dynamicEdges={edges} />);
+  expect(container.querySelectorAll('[data-net-dynamic-edge]')).toHaveLength(1);
+  expect(container.querySelector('[data-net-dynamic-edge="near"]')).not.toBeNull();
+  expect(container.querySelector('[data-net-dynamic-edge="far"]')).toBeNull();
+  rerender(<ActorLayer {...overlay} camera={{ ...camera, x: -89800, y: -89800 }}
+    scene={scene} adjacency={new Map()} dynamicEdges={edges} />);
+  expect(container.querySelector('[data-net-dynamic-edge="far"]')).not.toBeNull();
+});

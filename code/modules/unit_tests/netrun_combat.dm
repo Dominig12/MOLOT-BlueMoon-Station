@@ -241,3 +241,23 @@
 	SSnetrun.dispatch_hunter(node)
 	SSnetrun.dispatch_hunter(node)
 	TEST_ASSERT_EQUAL(length(node.netrun_ice), before_count + 3, "A LAN can spawn at most three temporary response hunters")
+
+/// Network alarm waves must share the temporary responder cap with direct dispatch.
+/datum/unit_test/netrun_defense_alarm_quota/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_network/network = SSnetrun.get_network("netrun_defense_alarm_quota")
+	node.leave_network()
+	node.network = network
+	network.nodes += node
+	SSnetrun.defense_nests[node.address] = 5
+	SSnetrun.alert_defenses(node, null)
+	TEST_ASSERT_EQUAL(length(node.netrun_ice), 1, "One alarm wakes one local reserve")
+	SSnetrun.alert_defenses(node, null)
+	SSnetrun.alert_defenses(node, null)
+	SSnetrun.alert_defenses(node, null)
+	TEST_ASSERT_EQUAL(length(node.netrun_ice), 3, "Repeated alarms cannot exceed the shared three-response cap")
+	TEST_ASSERT_EQUAL(SSnetrun.defense_nests[node.address], 2, "Blocked alarms must not spend reserve cells")
+	SSnetrun.dispatch_hunter(node)
+	TEST_ASSERT_EQUAL(length(node.netrun_ice), 3, "Direct dispatch must respect alarm-generated responders")
+	SSnetrun.defense_nests -= node.address
