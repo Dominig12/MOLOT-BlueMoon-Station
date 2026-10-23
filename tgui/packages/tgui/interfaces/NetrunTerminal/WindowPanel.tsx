@@ -47,11 +47,11 @@ export const WindowPanel = (props: { window: MachineWindow }) => {
           Доступ к узлу закрыт. Подберите доступ, чтобы читать состояние и выполнять запросы.
         </Box>
       )}
-      {(w.can_breach || w.network?.can_breach) && (
+      {!!(w.can_breach || w.network?.can_breach) && (
         <Box mb={1}>
-          {w.can_breach && w.access < 2 && <AutoBreachButton kind="node" id={w.address} disabled={!w.online} />}
-          {w.network?.can_breach && <AutoBreachButton kind="network" id={w.network.id} />}
-          {w.can_breach && (
+          {!!w.can_breach && w.access < 2 && <AutoBreachButton kind="node" id={w.address} disabled={!w.online} />}
+          {!!w.network?.can_breach && <AutoBreachButton kind="network" id={w.network.id} />}
+          {!!w.can_breach && (
             <Button
               icon="key"
               color="caution"
@@ -60,7 +60,7 @@ export const WindowPanel = (props: { window: MachineWindow }) => {
               onClick={() => act('breach', { kind: 'node', id: w.address })}
             />
           )}
-          {w.network?.can_breach && (
+          {!!w.network?.can_breach && (
             <Button
               icon="network-wired"
               color="caution"
@@ -71,7 +71,7 @@ export const WindowPanel = (props: { window: MachineWindow }) => {
           )}
         </Box>
       )}
-      {w.feed && (
+      {!!w.feed && (
         <Box
           mb={1}
           p={1}
@@ -124,7 +124,7 @@ export const WindowPanel = (props: { window: MachineWindow }) => {
         commands={w.commands}
         onCommand={(id) => act('window_act', { address: w.address, waction: id })}
       />
-      {w.remote && <RemotePanel key={w.address} address={w.address} remote={w.remote} />}
+      {!!w.remote && <RemotePanel key={w.address} address={w.address} remote={w.remote} />}
       {!!w.logs?.length && (
         <Box mt={1} p={1} style={{ background: THEME.bg, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: '160px', overflowY: 'auto' }}>
           <Box color={THEME.muted} mb={0.5}>Журнал узла</Box>

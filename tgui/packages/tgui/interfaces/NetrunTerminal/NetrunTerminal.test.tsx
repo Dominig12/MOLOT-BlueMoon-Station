@@ -449,6 +449,45 @@ describe('Netrun terminal panels', () => {
     expect(sent(topic, 'command')).toEqual([{ id: command.id }]);
   });
 
+  test('BYOND numeric false flags do not print stray zeros in machine tabs', () => {
+    setup();
+    const { queryByText, getByText } = render(<WindowPanel window={{
+      ...machine,
+      can_breach: 0 as unknown as boolean,
+      feed: 0 as unknown as string[],
+      remote: 0 as never,
+      network: { id: 'eng', name: 'Engineering', code: 'NET-ENG', access: 1, can_breach: true },
+    }} />);
+    expect(queryByText('0')).toBeNull();
+    expect(getByText('Подобрать доступ к NET-ENG')).toBeTruthy();
+  });
+
+  test('sequence puzzle supports keyboard activation without changing action protocol', () => {
+    const topic = setup();
+    const { getByRole } = render(<MatrixPanel state={{
+      minigame: 'sequence', target: 'TEST', security: 1, size: 1,
+      time_left: 20, cells: [{ code: '7A', active: true, order: 1 }], daemons: [],
+      progress: 0, total: 1,
+    }} />);
+    fireEvent.keyDown(getByRole('button', { name: 'Выбрать код 7A, шаг 1' }), { key: 'Enter' });
+    expect(sent(topic, 'breach_pick')).toEqual([{ index: 1 }]);
+  });
+
+  test('map network chooser closes after selecting a gateway', () => {
+    const gateway = { id: 'engineering', code: 'NET-ENG', name: 'Engineering',
+      color: '#55cbe9', security: 2, access: 2, has_key: false, can_breach: false };
+    const topic = setup({ map: {
+      gateways: [gateway], focus: node.address, revision: 1, nodes: [node], edges: [],
+    } });
+    const panel = render(<StationMap />);
+    const menu = panel.container.querySelector<HTMLDetailsElement>('details.netrun-map-gateways');
+    expect(menu).not.toBeNull();
+    menu!.open = true;
+    fireEvent.click(panel.getByText('NET-ENG'));
+    expect(menu!.open).toBe(false);
+    expect(sent(topic, 'select_network')).toEqual([{ id: 'engineering' }]);
+  });
+
   test('machine tab shows commands, breach and native actions without parameters', () => {
     const topic = setup();
     const { container, getByText } = render(<WindowPanel window={{

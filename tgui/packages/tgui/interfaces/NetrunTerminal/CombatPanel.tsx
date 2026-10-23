@@ -88,7 +88,7 @@ export const CombatPanel = () => {
   return (
     <Box className="netrun-combat-panel" style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, height: '100%', width: '100%', overflowY: 'auto', boxSizing: 'border-box', fontFamily: 'monospace' }} p={1}>
       <div className="netrun-combat-content">
-      <Box color={THEME.muted} fontSize="11px" mb={0.5}>
+      <Box color={THEME.muted} fontSize="12px" mb={1}>
         <Icon name="crosshairs" mr={1} />
         {combat.node ? <>Узел боя: {combat.node_name} {combat.node}</> : 'Ответный бой'}
       </Box>
@@ -102,7 +102,7 @@ export const CombatPanel = () => {
         </Box>
       )}
       {combat.self && (
-        <Box mb={1} p={0.5} style={{ background: THEME.panel, border: `1px solid ${THEME.line}` }}>
+        <Box mb={1} p={1} className="netrun-self-panel" style={{ background: THEME.panel, border: `1px solid ${THEME.line}`, borderRadius: '8px' }}>
           <Box color={THEME.accent}>
             Вы {combat.self.stunned ? ' · ОГЛУШЕНЫ' : ''}{combat.self.shielded ? ' · ЩИТ АКТИВЕН' : ''}
           </Box>
@@ -113,7 +113,7 @@ export const CombatPanel = () => {
         </Box>
       )}
 
-      <Box color={THEME.muted} fontSize="10px" mb={0.5}>Цели и процессы</Box>
+      <Box color={THEME.muted} fontSize="12px" mb={1}>Цели и процессы</Box>
       <div className="netrun-combat-targets">
       {targets.length === 0 ? (
         <Box color={THEME.muted} mb={1}>Других процессов нет.</Box>
@@ -121,13 +121,15 @@ export const CombatPanel = () => {
         targets.map((t: CombatTarget) => (
           <Box
             key={t.ref}
+            className="netrun-combat-target"
             mb={0.5}
-            p={0.5}
+            p={1}
             onClick={() => !t.unavailable_reason && setTarget(t.ref)}
             style={{
               cursor: t.unavailable_reason ? 'default' : 'pointer',
               background: target === t.ref ? THEME.line : THEME.panel,
-              border: `1px solid ${t.hostile ? THEME.bad : THEME.line}`,
+              border: `1px solid ${target === t.ref ? THEME.accent : t.hostile ? THEME.bad : THEME.line}`,
+              borderRadius: '8px',
             }}
           >
             <Box color={t.hostile ? THEME.bad : THEME.text}>
@@ -155,7 +157,7 @@ export const CombatPanel = () => {
       )}
 
       </div>
-      <Box color={THEME.muted} fontSize="10px" mt={1} mb={0.5}>Боевые программы</Box>
+      <Box color={THEME.muted} fontSize="12px" mt={2} mb={1}>Боевые программы</Box>
       {programs.length === 0 ? (
         <Box color={THEME.muted}>Нет боевых программ. Запишите их на шард или добудьте из обломков ICE.</Box>
       ) : (
@@ -168,7 +170,8 @@ export const CombatPanel = () => {
                 key={p.uid}
                 icon={p.icon}
                 disabled={onCd || needTarget || !!p.unavailable_reason || combat.self?.stunned || data.locked > 0}
-                color={ROLE_COLORS[p.role]}
+                style={{ background: THEME.panel, border: `1px solid ${ROLE_COLORS[p.role] || THEME.line}`,
+                  minWidth: '138px', minHeight: '40px', borderRadius: '7px' }}
                 tooltip={`${p.desc}${p.consumable ? ' (одноразовая)' : ''}${p.unavailable_reason ? ` · ${p.unavailable_reason}` : ''}${onCd ? ` · перезарядка ${p.ready_in}с` : ''}`}
                 onClick={() => act('program_use', { uid: p.uid, target: p.needs_target ? target : null })}
               >

@@ -121,6 +121,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   const { act, selectedAddress, selectedNetwork, jackAddress, entityHost, hasEntity,
     map, topologyKey, pingRoute, events, waypoint, search, suspended } = props;
   const viewport = useRef<GraphCanvasHandle>(null);
+  const gatewaysMenu = useRef<HTMLDetailsElement>(null);
   const [layoutCache] = useState(createGraphLayoutCache);
   const [dynamicLayout] = useState(() => new GraphLayout());
   const [staticProjection] = useState(() => new StaticMapProjection());
@@ -259,14 +260,19 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
           tooltip={NODE_NAMES[type] || type}
           onClick={() => { setPendingCenter(null); setDisabledTypes((old) => ({ ...old, [type]: !old[type] })); }} />))}
         <Box ml={1} style={{ width: '1px', alignSelf: 'stretch', background: THEME.line, flexShrink: 0 }} />
-        <details className="netrun-map-gateways">
+        <details ref={gatewaysMenu} className="netrun-map-gateways" onKeyDown={(event) => {
+          if (event.key === 'Escape') { event.currentTarget.open = false; }
+        }}>
           <summary>Сети ({(map.gateways ?? []).length}){selectedNetwork ? ` · ${(map.gateways ?? []).find((net) => net.id === selectedNetwork)?.code || ''}` : ''}</summary>
           <div className="netrun-map-gateways__list">
         {(map.gateways ?? []).map((gateway) => (<Button key={gateway.id} compact content={[gateway.code, gatewaySectors.get(gateway.id)].filter(Boolean).join(' · ')}
           icon={gateway.has_key ? 'key' : gateway.access ? 'network-wired' : 'lock'}
           selected={selectedNetwork === gateway.id}
           tooltip={`${gateway.name} · ${ACCESS_NAMES[gateway.access]} · защита ${gateway.security}`}
-          style={{ color: gateway.color, flexShrink: 0 }} onClick={() => act('select_network', { id: gateway.id })} />))}
+          style={{ color: gateway.color, flexShrink: 0 }} onClick={() => {
+            if (gatewaysMenu.current) { gatewaysMenu.current.open = false; }
+            act('select_network', { id: gateway.id });
+          }} />))}
           </div>
         </details>
       </Box>

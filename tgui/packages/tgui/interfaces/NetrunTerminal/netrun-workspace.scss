@@ -360,3 +360,77 @@
 @media (prefers-reduced-motion: reduce) {
   .netrun-command-grid .Button, .netrun-breach-card td { transition: none !important; }
 }
+
+/* Readable labels and keyboard-focused breach cells. */
+.netrun-navigation__tabs .Tab { min-height: 70px; }
+.netrun-navigation__label {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+.netrun-breach-card td[role="button"]:focus-visible {
+  outline: 2px solid #e5f1fa;
+  outline-offset: 1px;
+}
+.netrun-breach-card td[role="button"]:hover {
+  background: rgba(85, 203, 233, .28) !important;
+  border-color: #e5f1fa !important;
+}
+
+/* Live combat and native machine integrations. */
+.netrun-combat-targets {
+  grid-template-columns: repeat(auto-fill, minmax(270px, 320px));
+  align-items: start;
+}
+.netrun-combat-target {
+  min-height: 118px;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.netrun-combat-target:hover { background: #1d3344 !important; }
+.netrun-combat-target .Icon { margin-right: 6px; }
+.netrun-self-panel { padding: 11px !important; }
+.netrun-combat-programs { gap: 8px !important; padding: 4px 0; }
+.netrun-combat-programs .Button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 8px 12px !important;
+  color: var(--net-text) !important;
+}
+.netrun-combat-programs .Button.Button--disabled { opacity: .45; }
+.netrun-remote-panel {
+  margin-top: 14px !important;
+  padding: 12px;
+  background: var(--net-panel);
+  border: 1px solid var(--net-border);
+  border-radius: 8px;
+}
+.netrun-remote-tree details {
+  padding: 4px 8px;
+  margin: 3px 0;
+  background: #101f2c;
+  border-left: 2px solid var(--net-border);
+}
+.netrun-remote-tree summary {
+  cursor: pointer;
+  color: var(--net-text);
+  padding: 3px 0;
+}
+.netrun-remote-tree summary:hover { color: var(--net-accent); }
+.netrun-remote-action {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 8px 0;
+  border-top: 1px solid var(--net-border);
+}
+.netrun-remote-action input {
+  min-height: 31px;
+  border-radius: 6px;
+}
+@media (max-width: 650px) {
+  .netrun-combat-targets { grid-template-columns: 1fr; }
+}

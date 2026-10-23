@@ -18,17 +18,20 @@ export const physicalPoint = (node: PlacedNode): GraphPoint => ({ px: node.ancho
 
 /** Draws only stationary scenery. Its canvas is retained until scenery or the camera changes. */
 export class GraphRenderer {
-  private drawShape(ctx: CanvasRenderingContext2D, node: PlacedNode) {
-    if (node.type === 'apc') { ctx.rect(node.px - 11, node.py - 11, 22, 22); }
+  private drawShape(ctx: CanvasRenderingContext2D, node: PlacedNode, zoom: number) {
+    // At overview scales a native world-space glyph becomes a subpixel dot.
+    // Keep a capped minimum screen size without changing camera, spatial index or hit rules.
+    const scale = zoom < .5 ? Math.min(3, .5 / Math.max(zoom, .01)) : 1;
+    if (node.type === 'apc') { ctx.rect(node.px - 11 * scale, node.py - 11 * scale, 22 * scale, 22 * scale); }
     else if (['gateway', 'relay'].includes(node.type)) {
       for (let corner = 0; corner < 6; corner++) {
-        const angle = corner * Math.PI / 3, px = node.px + Math.cos(angle) * 14, py = node.py + Math.sin(angle) * 14;
+        const angle = corner * Math.PI / 3, px = node.px + Math.cos(angle) * 14 * scale, py = node.py + Math.sin(angle) * 14 * scale;
         if (!corner) { ctx.moveTo(px, py); } else { ctx.lineTo(px, py); }
       }
       ctx.closePath();
     } else if (['server', 'terminal'].includes(node.type)) {
-      ctx.moveTo(node.px, node.py - 12); ctx.lineTo(node.px + 12, node.py); ctx.lineTo(node.px, node.py + 12); ctx.lineTo(node.px - 12, node.py); ctx.closePath();
-    } else { ctx.arc(node.px, node.py, 8, 0, Math.PI * 2); }
+      ctx.moveTo(node.px, node.py - 12 * scale); ctx.lineTo(node.px + 12 * scale, node.py); ctx.lineTo(node.px, node.py + 12 * scale); ctx.lineTo(node.px - 12 * scale, node.py); ctx.closePath();
+    } else { ctx.arc(node.px, node.py, 8 * scale, 0, Math.PI * 2); }
   }
 
   private drawEdges(ctx: CanvasRenderingContext2D, scene: GraphScene, view: GraphViewport,
@@ -94,7 +97,7 @@ export class GraphRenderer {
     this.drawEdges(ctx, scene, view, width, height);
     const visible = scene.visible(left - GRAPH_GLYPH_RADIUS, top - GRAPH_GLYPH_RADIUS, right + GRAPH_GLYPH_RADIUS, bottom + GRAPH_GLYPH_RADIUS);
     for (const node of visible) {
-      ctx.beginPath(); this.drawShape(ctx, node);
+      ctx.beginPath(); this.drawShape(ctx, node, zoom);
       ctx.fillStyle = markerColor(node); ctx.fill(); ctx.lineWidth = 1.5;
       ctx.strokeStyle = base.gateways.get(node.network)?.color || '#527287'; ctx.stroke();
       if (zoom >= .6 && ['apc', 'server', 'terminal', 'camera'].includes(node.type)) {
@@ -169,7 +172,7 @@ export class GraphRenderer {
     }
     ctx.globalAlpha = 1; ctx.setLineDash([]);
     for (const node of visible) {
-      ctx.beginPath(); this.drawShape(ctx, node);
+      ctx.beginPath(); this.drawShape(ctx, node, zoom);
       ctx.fillStyle = markerColor(node); ctx.fill();
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = base.gateways.get(node.network)?.color || '#527287';
@@ -254,7 +257,7 @@ export class GraphRenderer {
     const visible = scene.visible(left - GRAPH_GLYPH_RADIUS, top - GRAPH_GLYPH_RADIUS,
       right + GRAPH_GLYPH_RADIUS, bottom + GRAPH_GLYPH_RADIUS);
     for (const node of visible) {
-      ctx.beginPath(); this.drawShape(ctx, node);
+      ctx.beginPath(); this.drawShape(ctx, node, zoom);
       ctx.fillStyle = markerColor(node); ctx.fill(); ctx.lineWidth = 1.5;
       ctx.strokeStyle = base.gateways.get(node.network)?.color || '#527287'; ctx.stroke();
       if (zoom >= .6 && ['apc', 'server', 'terminal', 'camera'].includes(node.type)) {
