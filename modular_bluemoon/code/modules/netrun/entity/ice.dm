@@ -226,6 +226,11 @@
 
 // MARK: Поведение (AI)
 
+/// An idle sentry or permanent patrol needs no periodic AI if there are no intruders or breaches.
+/// Temporary hunters still tick so their lifetime can expire. Pending casts keep critical priority.
+/datum/netrun_ice/proc/needs_netrun_tick(has_entities, has_breaches)
+	return pending_program || (kind == NETRUN_ICE_HUNTER && !persistent) || has_entities || has_breaches
+
 /datum/netrun_ice/proc/process_ai(delta)
 	if(QDELETED(node) || QDELETED(node.parent))
 		host_lost()

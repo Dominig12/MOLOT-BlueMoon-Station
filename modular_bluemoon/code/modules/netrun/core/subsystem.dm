@@ -228,6 +228,8 @@ SUBSYSTEM_DEF(netrun)
 	/// id = /datum/netrun_command
 	var/list/commands
 	var/datum/netrun_task_scheduler/task_scheduler
+	/// One reusable handler per task kind; each handler owns its execution rules.
+	var/list/task_handlers
 	var/next_task_population = 0
 	var/task_populations = 0
 	var/apc_prebuild_steps = 0
@@ -350,8 +352,10 @@ SUBSYSTEM_DEF(netrun)
 		reconcile = TRUE
 		var/priority = console.intrusion.breach || console.is_locked() ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL
 		scheduler.enqueue("console", console, priority)
+	var/has_entities = length(entities) > 0
+	var/has_breaches = length(currentbreaches) > 0
 	for(var/datum/netrun_ice/ice as anything in ice_processes)
-		if(QDELETED(ice))
+		if(QDELETED(ice) || !ice.needs_netrun_tick(has_entities, has_breaches))
 			continue
 		scheduler.enqueue("ice", ice, ice.pending_program ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL)
 	for(var/datum/component/netrun_node/node as anything in dirty_nodes)
@@ -368,52 +372,100 @@ SUBSYSTEM_DEF(netrun)
 	if(get_topology().dirty)
 		scheduler.enqueue("apc_prebuild", get_topology(), NETRUN_TASK_BACKGROUND)
 
+/// Task behavior is polymorphic; the subsystem only schedules and coordinates it.
+/datum/netrun_task_handler
+	var/kind
+	var/datum/controller/subsystem/netrun/owner
+
+/datum/netrun_task_handler/New(datum/controller/subsystem/netrun/subsystem)
+	. = ..()
+	owner = subsystem
+
+/datum/netrun_task_handler/Destroy()
+	owner = null
+	return ..()
+
+/datum/netrun_task_handler/proc/execute(datum/target)
+	return
+
+/datum/netrun_task_handler/ice
+	kind = "ice"
+
+/datum/netrun_task_handler/ice/execute(datum/netrun_ice/ice)
+	var/delta = ice.last_netrun_tick ? max(0, world.time - ice.last_netrun_tick) / (1 SECONDS) : 1
+	ice.last_netrun_tick = world.time
+	owner.breach_snapshot_active = TRUE
+	ice.process_ai(delta)
+	owner.breach_snapshot_active = FALSE
+
+/datum/netrun_task_handler/console
+	kind = "console"
+
+/datum/netrun_task_handler/console/execute(datum/netrun_console/console)
+	var/delta = console.last_netrun_tick ? max(0, world.time - console.last_netrun_tick) / (1 SECONDS) : 1
+	console.last_netrun_tick = world.time
+	console.access_session.process_events()
+	console.process_tick(delta)
+	console.flush_ui()
+	owner.last_processed_consoles++
+	if(!QDELETED(console) && !console.needs_processing())
+		owner.active_consoles -= console
+
+/datum/netrun_task_handler/node
+	kind = "node"
+
+/datum/netrun_task_handler/node/execute(datum/component/netrun_node/node)
+	owner.dirty_nodes -= node
+	var/datum/netrun_topology/graph = owner.get_topology()
+	if(node.is_dynamic() || !node.binding_checked || node.binding_infra_revision != graph.infrastructure_revision)
+		node.join_network()
+	node.reconcile_state()
+	owner.track_node(node)
+	owner.last_processed_nodes++
+
+/datum/netrun_task_handler/apc_prebuild
+	kind = "apc_prebuild"
+
+/datum/netrun_task_handler/apc_prebuild/execute(datum/netrun_topology/graph)
+	if(!graph.dirty)
+		return
+	owner.apc_prebuild_steps++
+	if(!graph.advance_apc_prebuild(96) && graph.dirty)
+		owner.get_task_scheduler().enqueue("apc_prebuild", graph, NETRUN_TASK_BACKGROUND)
+
+/datum/netrun_task_handler/housekeeping
+	kind = "housekeeping"
+
+/datum/netrun_task_handler/housekeeping/execute(datum/target)
+	var/datum/netrun_topology/graph = owner.get_topology()
+	if(graph.dirty)
+		owner.get_task_scheduler().enqueue("apc_prebuild", graph, NETRUN_TASK_BACKGROUND)
+	graph.refresh_route_tables()
+	if(!owner.patrol_initialized && length(owner.networks))
+		owner.initialize_patrol()
+	if(!owner.lore_initialized && length(owner.nodes_by_address))
+		owner.initialize_lore()
+
+/datum/controller/subsystem/netrun/proc/get_task_handler(kind)
+	if(!task_handlers)
+		task_handlers = list()
+		for(var/path in subtypesof(/datum/netrun_task_handler))
+			var/handler_kind = initial(path.kind)
+			if(!handler_kind)
+				continue
+			task_handlers[handler_kind] = new path(src)
+	return task_handlers[kind]
+
 /datum/controller/subsystem/netrun/proc/execute_task(datum/netrun_task/task)
+	if(!task)
+		return
+	var/datum/netrun_task_handler/handler = get_task_handler(task.kind)
+	if(!handler)
+		return
 	var/datum/target = task.target()
 	if(task.kind != "housekeeping" && QDELETED(target))
 		return
-	switch(task.kind)
-		if("ice")
-			var/datum/netrun_ice/ice = target
-			var/delta = ice.last_netrun_tick ? max(0, world.time - ice.last_netrun_tick) / (1 SECONDS) : 1
-			ice.last_netrun_tick = world.time
-			breach_snapshot_active = TRUE
-			ice.process_ai(delta)
-			breach_snapshot_active = FALSE
-		if("console")
-			var/datum/netrun_console/console = target
-			var/delta = console.last_netrun_tick ? max(0, world.time - console.last_netrun_tick) / (1 SECONDS) : 1
-			console.last_netrun_tick = world.time
-			console.access_session.process_events()
-			console.process_tick(delta)
-			console.flush_ui()
-			last_processed_consoles++
-			if(!QDELETED(console) && !console.needs_processing())
-				active_consoles -= console
-		if("node")
-			var/datum/component/netrun_node/node = target
-			dirty_nodes -= node
-			var/datum/netrun_topology/graph = get_topology()
-			if(node.is_dynamic() || !node.binding_checked || node.binding_infra_revision != graph.infrastructure_revision)
-				node.join_network()
-			node.reconcile_state()
-			track_node(node)
-			last_processed_nodes++
-		if("apc_prebuild")
-			var/datum/netrun_topology/graph = target
-			if(graph.dirty)
-				apc_prebuild_steps++
-				if(!graph.advance_apc_prebuild(96) && graph.dirty)
-					get_task_scheduler().enqueue("apc_prebuild", graph, NETRUN_TASK_BACKGROUND)
-		if("housekeeping")
-			var/datum/netrun_topology/graph = get_topology()
-			if(graph.dirty)
-				get_task_scheduler().enqueue("apc_prebuild", graph, NETRUN_TASK_BACKGROUND)
-			graph.refresh_route_tables()
-			if(!patrol_initialized && length(networks))
-				initialize_patrol()
-			if(!lore_initialized && length(nodes_by_address))
-				initialize_lore()
+	handler.execute(target)
 
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
 	var/slice_start_usage = TICK_USAGE
