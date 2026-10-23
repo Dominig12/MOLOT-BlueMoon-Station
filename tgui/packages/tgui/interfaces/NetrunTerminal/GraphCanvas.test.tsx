@@ -229,3 +229,28 @@ test('zoom preview uses an incident edge index and retains crisp labels', () => 
   expect(marks.edges).toBeGreaterThan(0);
   expect(marks.arcs).toBe(1);
 });
+
+
+// A wheel burst must not rescan thousands of nodes and APC area runs per event.
+test('wheel fit bounds are reused until geometry changes', () => {
+  const fitPoints = jest.spyOn(GraphScene.prototype, 'fitPoints');
+  const nodes = Array.from({ length: 500 }, (_, i) => ({
+    ...node, address: `CACHE${i}`, px: i * 96, py: 0,
+  }));
+  const props = { ...overlay, nodes, edges: [],
+    positions: new Map(nodes.map((entry) => [entry.address, entry])),
+    adjacency: new Map(), focus: null, onSelect: jest.fn() };
+  const screen = render(<GraphCanvas {...props} />);
+  const viewport = screen.getByLabelText('Карта сети');
+  const initial = fitPoints.mock.calls.length;
+  expect(initial).toBeGreaterThan(0);
+  for (let i = 0; i < 8; i++) {
+    fireEvent.wheel(viewport, { clientX: 300, clientY: 200, deltaY: -20 });
+  }
+  expect(fitPoints).toHaveBeenCalledTimes(initial);
+  screen.rerender(<GraphCanvas {...props} nodes={[...nodes, { ...node, address: 'EXTRA', px: 90000 }]} />);
+  fireEvent.wheel(viewport, { clientX: 300, clientY: 200, deltaY: -20 });
+  expect(fitPoints).toHaveBeenCalledTimes(initial + 1);
+  screen.unmount();
+  fitPoints.mockRestore();
+});

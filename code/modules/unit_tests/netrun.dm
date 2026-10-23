@@ -252,3 +252,39 @@
 	var/list/machine_access = machine.daemons[1]
 	var/list/gateway_access = gateway.daemons[1]
 	TEST_ASSERT(length(gateway_access["sequence"]) > length(machine_access["sequence"]), "Gateway access must require a longer sequence")
+
+
+/// Task handlers are reusable strategy objects with a stable, explicit dispatch registry.
+/datum/unit_test/netrun_scheduler_task_handlers/Run()
+	var/datum/netrun_task_handler/ice_handler = SSnetrun.get_task_handler("ice")
+	var/datum/netrun_task_handler/node_handler = SSnetrun.get_task_handler("node")
+	TEST_ASSERT(istype(ice_handler, /datum/netrun_task_handler/ice), "ICE work must use its own task handler")
+	TEST_ASSERT(istype(node_handler, /datum/netrun_task_handler/node), "Node work must use its own task handler")
+	TEST_ASSERT_EQUAL(ice_handler, SSnetrun.get_task_handler("ice"), "Task handlers should be reused")
+	TEST_ASSERT_NULL(SSnetrun.get_task_handler("unknown_kind"), "Unknown kinds must not run unrelated tasks")
+
+/// Per-LAN scheduling keeps idle patrols asleep while preserving local response.
+/datum/unit_test/netrun_scheduler_idle_ice/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_network/local_network = SSnetrun.get_network("netrun_scheduler_local")
+	var/datum/netrun_network/foreign_network = SSnetrun.get_network("netrun_scheduler_foreign")
+	node.leave_network()
+	node.network = local_network
+	local_network.nodes += node
+	var/datum/netrun_ice/patrol = allocate(/datum/netrun_ice, node, NETRUN_ICE_HUNTER)
+	patrol.persistent = TRUE
+	var/list/active_networks = list()
+	TEST_ASSERT(!patrol.needs_netrun_tick(active_networks), "Idle permanent hunters must not queue work")
+	active_networks[foreign_network.id] = TRUE
+	TEST_ASSERT(!patrol.needs_netrun_tick(active_networks), "A foreign LAN must not wake local ICE")
+	active_networks[local_network.id] = TRUE
+	TEST_ASSERT(patrol.needs_netrun_tick(active_networks), "Local network activity must wake defenders")
+	active_networks.Cut()
+	patrol.pending_program = SSnetrun.get_program("strike")
+	TEST_ASSERT(patrol.needs_netrun_tick(active_networks), "An in-progress cast must stay scheduled")
+	patrol.pending_program = null
+	patrol.persistent = FALSE
+	TEST_ASSERT(patrol.needs_netrun_tick(active_networks), "Temporary hunters must advance lifetime")
+	var/datum/netrun_ice/sentry = allocate(/datum/netrun_ice, node, NETRUN_ICE_SENTRY)
+	TEST_ASSERT(!sentry.needs_netrun_tick(active_networks), "Idle sentries must stay dormant")

@@ -97,3 +97,61 @@ test('BYOND numeric boolean flags select the same baseline and delta protocol', 
   expect(next.nodes[0].entities).toBe(2);
   expect(stream.resyncToken).toBe(0);
 });
+
+
+// Changing an edge's endpoints updates its incident index; later unrelated deletions
+// must not remove the redirected link.
+test('reconnecting an existing link preserves it when its old endpoint disappears', () => {
+  const stream = new NetrunMapStream();
+  const a = { ...node, address: 'A' }, b = { ...node, address: 'B' };
+  const c = { ...node, address: 'C' };
+  stream.apply(baseline({ nodes: [a, b, c],
+    edges: [{ id: 'link', from: 'A', to: 'B', kind: 'endpoint' }] }));
+  stream.apply(delta({ edges: [{ id: 'link', from: 'A', to: 'C', kind: 'endpoint' }] }));
+  const oldRemoved = stream.apply(delta({ base_revision: 11, state_revision: 12, removed_nodes: ['B'] }));
+  expect(oldRemoved.edges).toEqual([{ id: 'link', from: 'A', to: 'C', kind: 'endpoint' }]);
+  const next = stream.apply(delta({ base_revision: 12, state_revision: 13, removed_nodes: ['C'] }));
+  expect(next.edges).toEqual([]);
+});
+
+test('single node deletion does not make an extra full pass through the edge array', () => {
+  const stream = new NetrunMapStream();
+  const nodes = Array.from({ length: 3001 }, (_, id) => ({ ...node, address: `N${id}` }));
+  const original = Array.from({ length: 3000 }, (_, i) =>
+    ({ id: `E${i}`, from: 'N0', to: `N${i + 1}`, kind: 'endpoint' as const }));
+  let reads = 0;
+  const edges = new Proxy(original, {
+    get(target, prop, receiver) { if (typeof prop === 'string' && Number.isInteger(Number(prop))) { reads++; }
+      return Reflect.get(target, prop, receiver); },
+  });
+  stream.apply(baseline({ nodes, edges }));
+  reads = 0;
+  const updated = stream.apply(delta({ removed_nodes: ['N1'] }));
+  expect(updated.edges).toHaveLength(2999);
+  expect(reads).toBeGreaterThanOrEqual(3000);
+  expect(reads).toBeLessThan(4500);
+});
+
+test('an edge may refer to a node reintroduced in the same update', () => {
+  const stream = new NetrunMapStream();
+  stream.apply(baseline());
+  const result = stream.apply(delta({
+    nodes: [{ ...node, address: 'NEW' }], removed_nodes: ['NEW'],
+    edges: [{ id: 'added', from: 'APC', to: 'NEW', kind: 'endpoint' }],
+  }));
+  expect(result.nodes.map((entry) => entry.address)).toEqual(['APC', 'NEW']);
+  expect(result.edges).toHaveLength(1);
+  expect(stream.resyncToken).toBe(0);
+});
+
+test('invalid link upserts request resync without accepting unauthorized endpoints', () => {
+  const stream = new NetrunMapStream();
+  stream.apply(baseline());
+  const result = stream.apply(delta({ removed_nodes: ['APC'],
+    edges: [{ id: 'invalid', from: 'APC', to: 'HIDDEN', kind: 'endpoint' }] }));
+  expect(result).toBeNull();
+  expect(stream.resyncToken).toBe(1);
+  expect(stream.apply(delta({ state_revision: 12 }))).toBeNull();
+  expect(stream.resyncToken).toBe(1);
+  expect(stream.apply(baseline({ epoch: 'ui:authorized', nodes: [], edges: [] })).nodes).toEqual([]);
+});

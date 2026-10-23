@@ -197,3 +197,67 @@
 	TEST_ASSERT_EQUAL(length(console.combat_targets()), 0, "A moved attacker must not retain its original remote contact")
 	console.intrusion.lockout_until = world.time + 10 SECONDS
 	TEST_ASSERT(!console.program_use(strike.uid, REF(ice)), "Trace lockout must still reject every combat action")
+
+ 
+/// An intrusion in one LAN cannot wake reserves or reset hunters in another LAN.
+/datum/unit_test/netrun_defense_network_isolation/Run()
+	var/obj/item/host_a = allocate(/obj/item)
+	var/obj/item/host_b = allocate(/obj/item)
+	var/datum/component/netrun_node/a = host_a.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/component/netrun_node/b = host_b.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_network/network_a = SSnetrun.get_network("netrun_defense_test_a")
+	var/datum/netrun_network/network_b = SSnetrun.get_network("netrun_defense_test_b")
+	a.leave_network()
+	b.leave_network()
+	a.network = network_a
+	b.network = network_b
+	network_a.nodes += a
+	network_b.nodes += b
+	var/datum/netrun_ice/ice_a = allocate(/datum/netrun_ice, a, NETRUN_ICE_HUNTER)
+	var/datum/netrun_ice/ice_b = allocate(/datum/netrun_ice, b, NETRUN_ICE_HUNTER)
+	ice_a.hop_cooldown = world.time + 10 SECONDS
+	ice_b.hop_cooldown = world.time + 10 SECONDS
+	SSnetrun.defense_nests[b.address] = 1
+	SSnetrun.alert_defenses(a, null)
+	TEST_ASSERT_EQUAL(ice_a.hop_cooldown, 0, "The alarm must activate local hunters")
+	TEST_ASSERT(ice_b.hop_cooldown > world.time, "Foreign hunters must keep their cooldown")
+	TEST_ASSERT_EQUAL(SSnetrun.defense_nests[b.address], 1, "Foreign defense nests must not be consumed")
+	SSnetrun.defense_nests -= b.address
+
+/// Persistent patrols do not exhaust the emergency hunter quota.
+/datum/unit_test/netrun_defense_dispatch_quota/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_network/network = SSnetrun.get_network("netrun_defense_test_quota")
+	node.leave_network()
+	node.network = network
+	network.nodes += node
+	var/datum/netrun_ice/patrol = allocate(/datum/netrun_ice, node, NETRUN_ICE_HUNTER)
+	patrol.persistent = TRUE
+	var/before_count = length(node.netrun_ice)
+	SSnetrun.dispatch_hunter(node)
+	TEST_ASSERT_EQUAL(length(node.netrun_ice), before_count + 1, "Persistent patrols must not occupy emergency response slots")
+	SSnetrun.dispatch_hunter(node)
+	SSnetrun.dispatch_hunter(node)
+	SSnetrun.dispatch_hunter(node)
+	TEST_ASSERT_EQUAL(length(node.netrun_ice), before_count + 3, "A LAN can spawn at most three temporary response hunters")
+
+/// Network alarm waves must share the temporary responder cap with direct dispatch.
+/datum/unit_test/netrun_defense_alarm_quota/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_network/network = SSnetrun.get_network("netrun_defense_alarm_quota")
+	node.leave_network()
+	node.network = network
+	network.nodes += node
+	SSnetrun.defense_nests[node.address] = 5
+	SSnetrun.alert_defenses(node, null)
+	TEST_ASSERT_EQUAL(length(node.netrun_ice), 1, "One alarm wakes one local reserve")
+	SSnetrun.alert_defenses(node, null)
+	SSnetrun.alert_defenses(node, null)
+	SSnetrun.alert_defenses(node, null)
+	TEST_ASSERT_EQUAL(length(node.netrun_ice), 3, "Repeated alarms cannot exceed the shared three-response cap")
+	TEST_ASSERT_EQUAL(SSnetrun.defense_nests[node.address], 2, "Blocked alarms must not spend reserve cells")
+	SSnetrun.dispatch_hunter(node)
+	TEST_ASSERT_EQUAL(length(node.netrun_ice), 3, "Direct dispatch must respect alarm-generated responders")
+	SSnetrun.defense_nests -= node.address

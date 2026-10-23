@@ -27,6 +27,10 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   const paintVersion = useRef(0);
   const paintJob = useRef<{ version: number; iterator: Generator<void, void, unknown>; surface: HTMLCanvasElement; viewport: GraphViewport } | null>(null);
   const paintedView = useRef<{ x: number; y: number; zoom: number } | null>(null);
+  // Wheel events frequently arrive several times per frame. A fitted view only
+  // changes when scene geometry, powered-area runs or viewport dimensions change.
+  const fittedView = useRef<{ scene: GraphScene; zones: Props['apcZones'];
+    width: number; height: number; x: number; y: number; zoom: number } | null>(null);
   const wheelActive = useRef(false);
   const wheelFinish = useRef<number | null>(null);
   const down = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
@@ -39,6 +43,18 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   const retained = useRef(scene); retained.current = scene;
   const scenery = useRef(base); scenery.current = base;
   const size = useCallback(() => ({ width: container.current?.clientWidth || 720, height: container.current?.clientHeight || 480 }), []);
+  const fitting = useCallback((width: number, height: number) => {
+    const scene = retained.current;
+    const zones = latest.current.apcZones;
+    const previous = fittedView.current;
+    if (previous?.scene === scene && previous.zones === zones
+      && previous.width === width && previous.height === height) { return previous; }
+    const candidate = new GraphViewport();
+    candidate.fit(scene.fitPoints(zones), width, height);
+    const result = { scene, zones, width, height, x: candidate.x, y: candidate.y, zoom: candidate.zoom };
+    fittedView.current = result;
+    return result;
+  }, []);
   const syncCamera = useCallback(() => {
     const dimensions = size();
     setCamera((previous) => previous.x === view.x && previous.y === view.y && previous.zoom === view.zoom
@@ -131,8 +147,11 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     syncBitmapCamera();
   };
   const fit = useCallback(() => {
-    const { width, height } = size(); view.fit(retained.current.fitPoints(latest.current.apcZones), width, height); syncCamera(); syncBitmapCamera(); queuePaint();
-  }, [view, queuePaint, size, syncCamera, syncBitmapCamera]);
+    const { width, height } = size();
+    const fitted = fitting(width, height);
+    view.x = fitted.x; view.y = fitted.y; view.zoom = fitted.zoom; view.fitting = true;
+    syncCamera(); syncBitmapCamera(); queuePaint();
+  }, [view, queuePaint, size, fitting, syncCamera, syncBitmapCamera]);
   const center = useCallback((address: string) => {
     const point = retained.current.byAddress.get(address);
     if (!point) { return; }
@@ -214,8 +233,8 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
       onWheel={(event) => {
         event.preventDefault(); setTooltip(null);
         const bounds = event.currentTarget.getBoundingClientRect(), dimensions = size();
-        const fitted = new GraphViewport(); fitted.fit(retained.current.fitPoints(latest.current.apcZones), dimensions.width, dimensions.height);
-        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, fitted.zoom);
+        const zoomLimit = fitting(dimensions.width, dimensions.height).zoom;
+        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, zoomLimit);
         syncCamera(); syncBitmapCamera();
         wheelActive.current = true;
         paintVersion.current++;
