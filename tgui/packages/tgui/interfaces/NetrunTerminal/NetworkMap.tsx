@@ -232,7 +232,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
         {map.source_sector && (map.source_sector !== map.active_sector || map.source_z !== map.active_z) && <Button compact
           icon="location-crosshairs" content="Точка подключения" onClick={() => act('map_sector', { id: map.source_sector, z: map.source_z })} />}
                                 </Box>}
-      <Box p={1} style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', borderBottom: `1px solid ${THEME.line}`, background: '#0d222d' }}>
+      <Box className="netrun-map-tools" p={1} style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', borderBottom: `1px solid ${THEME.line}`, background: THEME.panel }}>
         <Input key={searchReset} width="156px" placeholder="поиск узла…" value={query}
           onInput={(_event, value) => { setPendingCenter(null); setQuery(value); }}
           onEnter={(_event, value) => act('search', { text: value })} />
@@ -253,17 +253,22 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
             : <Box color={THEME.muted} fontSize="10px">Путь: —</Box>}
         </Box>
       </Box>
-      <Box p={0.5} style={{ display: 'flex', gap: '4px', flex: '0 0 auto', overflowX: 'auto', overflowY: 'hidden', alignItems: 'center', borderBottom: `1px solid ${THEME.line}` }}>
+      <Box className="netrun-map-filterbar" p={0.5} style={{ display: 'flex', gap: '4px', flex: '0 0 auto', alignItems: 'center', borderBottom: `1px solid ${THEME.line}` }}>
         {types.map((type) => (<Button key={type} compact icon={NODE_ICONS[type] || 'circle'}
           selected={!disabledTypes[type]} aria-label={`Фильтр: ${NODE_NAMES[type] || type}`}
           tooltip={NODE_NAMES[type] || type}
           onClick={() => { setPendingCenter(null); setDisabledTypes((old) => ({ ...old, [type]: !old[type] })); }} />))}
         <Box ml={1} style={{ width: '1px', alignSelf: 'stretch', background: THEME.line, flexShrink: 0 }} />
+        <details className="netrun-map-gateways">
+          <summary>Сети ({(map.gateways ?? []).length}){selectedNetwork ? ` · ${(map.gateways ?? []).find((net) => net.id === selectedNetwork)?.code || ''}` : ''}</summary>
+          <div className="netrun-map-gateways__list">
         {(map.gateways ?? []).map((gateway) => (<Button key={gateway.id} compact content={[gateway.code, gatewaySectors.get(gateway.id)].filter(Boolean).join(' · ')}
           icon={gateway.has_key ? 'key' : gateway.access ? 'network-wired' : 'lock'}
           selected={selectedNetwork === gateway.id}
           tooltip={`${gateway.name} · ${ACCESS_NAMES[gateway.access]} · защита ${gateway.security}`}
           style={{ color: gateway.color, flexShrink: 0 }} onClick={() => act('select_network', { id: gateway.id })} />))}
+          </div>
+        </details>
       </Box>
       {waypoint && <Box p={0.5} style={{ background: '#12202a', borderBottom: `1px solid ${THEME.line}` }}>
         <WaypointRoute wp={waypoint} onClear={() => act('clear_waypoint')} onNext={(address) => act('select', { address })} />

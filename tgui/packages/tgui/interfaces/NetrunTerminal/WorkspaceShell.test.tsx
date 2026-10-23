@@ -20,6 +20,8 @@ test('workspace shell keeps navigation and map slots available', () => {
   expect(container.querySelector('.netrun-shell')).toBeTruthy();
   expect(container.querySelector('.netrun-header')).toBeTruthy();
   expect(container.querySelector('.netrun-navigation')).toBeTruthy();
+  expect(container.querySelector('.netrun-navigation__label')).toBeTruthy();
+  expect(container.querySelector('.netrun-files-layout')).toBeTruthy();
   expect(getByRole('tab', { name: 'Карта' })).toBeTruthy();
   expect(container.querySelector('[data-net-layout="workspace"]')).toBeTruthy();
 });

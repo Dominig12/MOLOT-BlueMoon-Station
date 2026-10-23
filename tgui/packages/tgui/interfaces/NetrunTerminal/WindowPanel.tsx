@@ -31,6 +31,7 @@ export const WindowPanel = (props: { window: MachineWindow }) => {
         </Box>
       }
     >
+      <div className="netrun-machine">
       {!w.online && (
         <Box color={THEME.bad} mb={1}>
           Узел не отвечает.
@@ -130,6 +131,7 @@ export const WindowPanel = (props: { window: MachineWindow }) => {
           {w.logs.map((line, index) => <div key={index}>{line}</div>)}
         </Box>
       )}
+      </div>
     </Section>
   );
 };

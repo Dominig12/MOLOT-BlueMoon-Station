@@ -101,7 +101,7 @@ export const NetrunContent = () => {
               rightSlot={tab.id === 'combat' && incomingCount ? <span aria-label={`Входящих атак: ${incomingCount}`}>! {incomingCount}</span> : undefined}
               onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(tab.id); } }}
               onClick={() => navigate(tab.id)} style={tab.id === 'combat' && incomingCount ? { color: THEME.bad } : undefined}>
-              {PAGE_NAMES[tab.id]}{tab.count ? ` (${tab.count})` : ''}
+              <span className="netrun-navigation__label">{PAGE_NAMES[tab.id]}{tab.count ? ` (${tab.count})` : ''}</span>
             </Tabs.Tab>
           ))}
         </Tabs>
@@ -121,15 +121,15 @@ export const NetrunContent = () => {
         <WorkspacePage id="map" active={page}>
           <div style={{ display: 'flex', flex: '1 1 0', minWidth: 0, minHeight: 0, gap: '7px', position: 'relative' }}>
             <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ flex: '0 0 auto', textAlign: 'right', minHeight: '22px' }}>
+              <div className="netrun-inspector-toggle" style={{ flex: '0 0 auto', textAlign: 'right', minHeight: '22px' }}>
                 <Button compact icon={sidebarOpen ? 'angles-right' : 'angles-left'}
                   content={sidebarOpen ? 'Скрыть информацию об узле' : 'Показать информацию об узле'}
                   onClick={() => setSidebarOpen(!sidebarOpen)} />
               </div>
               <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}><StationMap suspended={page !== 'map'} /></div>
             </div>
-            <div data-net-layout="sidebar" style={{ display: sidebarOpen ? 'block' : 'none',
-              flex: compact ? 'none' : '0 0 282px', width: compact ? 'min(84%, 310px)' : '282px',
+            <div className="netrun-inspector" data-net-layout="sidebar" style={{ display: sidebarOpen ? 'block' : 'none',
+              flex: compact ? 'none' : '0 0 320px', width: compact ? 'min(88%, 350px)' : '320px',
               position: compact ? 'absolute' : 'relative', right: compact ? 0 : undefined, top: compact ? 0 : undefined,
               zIndex: compact ? 7 : undefined, minWidth: 0, minHeight: 0, height: '100%', overflowY: 'auto',
               overflowX: 'hidden', background: THEME.panel, border: `1px solid ${THEME.line}`,
@@ -203,7 +203,7 @@ const Header = () => {
           <span>{ORIGIN_NAMES[origin] || origin}</span>
         </span>
         <span className="netrun-indicator" data-state={uplink ? 'online' : 'offline'}>
-          <Icon name="circle" /> NTnet: {uplink ? 'связь есть' : 'нет связи'}
+          <Icon name="circle" /> Реле NTnet: {uplink ? 'доступно' : 'недоступно'}
         </span>
         {jack && <span className="netrun-indicator"><Icon name="plug" /> {jack.name}</span>}
         {entity && <span className="netrun-indicator" data-state={entity.integrity > entity.max_integrity * 0.25 ? 'online' : 'offline'}>

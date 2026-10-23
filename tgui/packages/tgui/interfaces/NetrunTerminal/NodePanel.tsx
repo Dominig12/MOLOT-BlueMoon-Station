@@ -162,6 +162,7 @@ export const NodePanel = () => {
         </Box>
       }
     >
+      <div className="netrun-node-detail">
       <LabeledList>
         <LabeledList.Item label="Адрес">
           <Box inline style={{ fontFamily: 'monospace' }}>
@@ -297,6 +298,7 @@ export const NodePanel = () => {
           {selected.logs.map((line, index) => <div key={index}>{line}</div>)}
         </Box>
       )}
+      </div>
     </Section>
   );
 };

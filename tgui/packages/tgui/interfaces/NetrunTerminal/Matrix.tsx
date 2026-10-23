@@ -4,8 +4,8 @@ import { useBackend } from '../../backend';
 import { Box, Button, Stack } from '../../components';
 import { MatrixState, NetrunData, THEME } from './types';
 
-const LIME = '#d8ff4a';
-const CELL = 30;
+const LIME = THEME.accent;
+const CELL = 42;
 
 /** Головоломка взлома. Тип выбирает сервер: протокол (matrix) или трассировка (sequence). */
 export const MatrixPanel = (props: { state: MatrixState }) => {
@@ -18,19 +18,19 @@ export const MatrixPanel = (props: { state: MatrixState }) => {
 // Компактная рамка: не растягивается на всю адаптивную область, а остаётся небольшой и по центру.
 const Shell = (props: { children: ReactNode }) => (
   <Box
-    p={1}
+    p={2}
+    className="netrun-breach-card"
     style={{
-      background: THEME.bg,
-      border: `1px solid ${LIME}55`,
-      boxShadow: `0 0 18px ${LIME}18`,
-      display: 'inline-block',
-      maxWidth: '560px',
-      width: 'fit-content',
+      background: THEME.panel,
+      border: `1px solid ${THEME.line}`,
+      display: 'block',
+      maxWidth: '800px',
+      width: '100%',
       maxHeight: '100%',
       overflowY: 'auto',
-      margin: 'auto',
+      margin: '24px auto',
       boxSizing: 'border-box',
-      borderRadius: '4px',
+      borderRadius: '10px',
     }}
   >
     {props.children}
@@ -41,7 +41,7 @@ const MatrixView = memo((props: { state: MatrixState; act: (action: string, payl
   const { state, act } = props;
   if (state.minigame === 'automatic') {
     return (
-      <Box p={2} style={{ width: '100%', overflowY: 'auto' }}>
+      <Box p={2} className="netrun-auto-breach" style={{ width: '100%', maxWidth: '760px', margin: '24px auto', overflowY: 'auto' }}>
         <Box bold color={LIME}>autobreach.exe · {state.target}</Box>
         <Box my={1}>Подбор доступа: {Math.round((state.progress ?? 0) * 100)}% · осталось {state.time_left} с</Box>
         <Box style={{ height: '12px', background: THEME.line }}>

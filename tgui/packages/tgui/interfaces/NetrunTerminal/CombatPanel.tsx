@@ -86,7 +86,8 @@ export const CombatPanel = () => {
   const programs = combat.programs ?? [];
   const selectedTarget = targets.find((t) => t.ref === target);
   return (
-    <Box style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, height: '100%', width: '100%', overflowY: 'auto', boxSizing: 'border-box', fontFamily: 'monospace' }} p={0.5}>
+    <Box className="netrun-combat-panel" style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, height: '100%', width: '100%', overflowY: 'auto', boxSizing: 'border-box', fontFamily: 'monospace' }} p={1}>
+      <div className="netrun-combat-content">
       <Box color={THEME.muted} fontSize="11px" mb={0.5}>
         <Icon name="crosshairs" mr={1} />
         {combat.node ? <>Узел боя: {combat.node_name} {combat.node}</> : 'Ответный бой'}
@@ -113,6 +114,7 @@ export const CombatPanel = () => {
       )}
 
       <Box color={THEME.muted} fontSize="10px" mb={0.5}>Цели и процессы</Box>
+      <div className="netrun-combat-targets">
       {targets.length === 0 ? (
         <Box color={THEME.muted} mb={1}>Других процессов нет.</Box>
       ) : (
@@ -152,11 +154,12 @@ export const CombatPanel = () => {
         ))
       )}
 
+      </div>
       <Box color={THEME.muted} fontSize="10px" mt={1} mb={0.5}>Боевые программы</Box>
       {programs.length === 0 ? (
         <Box color={THEME.muted}>Нет боевых программ. Запишите их на шард или добудьте из обломков ICE.</Box>
       ) : (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+        <div className="netrun-combat-programs" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
           {programs.map((p) => {
             const onCd = p.ready_in > 0;
             const needTarget = p.needs_target && (!selectedTarget || !!selectedTarget.unavailable_reason);
@@ -188,6 +191,7 @@ export const CombatPanel = () => {
           ))}
         </Box>
       )}
+      </div>
     </Box>
   );
 };
