@@ -375,6 +375,7 @@
 		console.delete_local_file(file)
 		console.log_line("Карточка [program.name] израсходована.", "average")
 	changed()
+	console.finish_user_action(node)
 	return TRUE
 
 /datum/netrun_console/proc/salvage_payload(datum/component/netrun_node/local_node, local_known = FALSE)

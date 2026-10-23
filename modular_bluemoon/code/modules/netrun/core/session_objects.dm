@@ -61,6 +61,7 @@
 /datum/netrun_intrusion_session
 	var/datum/netrun_console/owner
 	var/datum/netrun_breach/breach
+	var/last_breach_tick = 0
 	var/trace = 0
 	var/trace_mult = 1
 	var/last_illegal = -INFINITY

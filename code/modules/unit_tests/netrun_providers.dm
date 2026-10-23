@@ -129,6 +129,8 @@
 	TEST_ASSERT_NOTNULL(provider, "The pressure-pump provider must be available on an intact machine")
 	TEST_ASSERT(!console.do_remote_request(node, provider, "pressure", list("pressure" = 300), node.network, console.operator), "GUEST must not control an atmospheric machine")
 	var/mob/living/carbon/human/user = allocate(/mob/living/carbon/human)
+	var/obj/item/clothing/under/color/grey/uniform = allocate(/obj/item/clothing/under/color/grey)
+	TEST_ASSERT(user.equip_to_slot_if_possible(uniform, ITEM_SLOT_ICLOTHING, disable_warning = TRUE), "The native ID slot must have its required uniform")
 	var/obj/item/card/id/card = allocate(/obj/item/card/id)
 	card.access = list(ACCESS_ATMOSPHERICS)
 	TEST_ASSERT(user.equip_to_slot_if_possible(card, ITEM_SLOT_ID, disable_warning = TRUE), "The native pump operator must wear the actual atmospheric ID")

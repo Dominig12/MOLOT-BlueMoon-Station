@@ -1,6 +1,6 @@
 SUBSYSTEM_DEF(netrun)
 	name = "Netrun"
-	wait = 2
+	wait = NETRUN_DEFAULT_FIRE_INTERVAL
 	flags = SS_BACKGROUND
 	runlevels = RUNLEVEL_GAME | RUNLEVEL_POSTGAME
 
@@ -91,12 +91,13 @@ SUBSYSTEM_DEF(netrun)
 	else
 		poll_nodes -= node
 	var/next_expiry = INFINITY
+	var/datum/netrun_execution_limits/limits = get_execution_limits()
 	if(node.offline_until > world.time)
 		next_expiry = min(next_expiry, node.offline_until)
 	if(node.firewall_until > world.time)
 		next_expiry = min(next_expiry, node.firewall_until)
-	if(node.last_activity + 5 SECONDS > world.time)
-		next_expiry = min(next_expiry, node.last_activity + 5 SECONDS)
+	if(node.last_activity + limits.node_activity_duration > world.time)
+		next_expiry = min(next_expiry, node.last_activity + limits.node_activity_duration)
 	if(next_expiry < INFINITY)
 		timed_nodes[node] = next_expiry
 	else
@@ -110,7 +111,7 @@ SUBSYSTEM_DEF(netrun)
 
 /datum/controller/subsystem/netrun/proc/get_task_scheduler()
 	if(!task_scheduler)
-		task_scheduler = new
+		task_scheduler = new(get_execution_limits())
 		RegisterSignal(src, COMSIG_NETRUN_TOPOLOGY_DIRTY, PROC_REF(on_topology_dirty))
 	return task_scheduler
 
@@ -154,21 +155,22 @@ SUBSYSTEM_DEF(netrun)
 		scheduler.enqueue("apc_prebuild", get_topology(), NETRUN_TASK_BACKGROUND)
 
 /datum/controller/subsystem/netrun/proc/execute_task(datum/netrun_task/task)
-	return task.execute(src)
+	return task.execute(src, get_execution_limits())
 
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
 	var/slice_start_usage = TICK_USAGE
 	if(!resumed)
 		current_pass_cost_ms = 0
+	var/datum/netrun_execution_limits/limits = get_execution_limits(TRUE)
 	var/datum/netrun_task_scheduler/scheduler = get_task_scheduler()
+	scheduler.configure(limits)
 	if(!resumed && world.time >= next_task_population)
 		last_processed_nodes = 0
 		last_processed_consoles = 0
 		populate_tasks()
-		next_task_population = world.time + 1 SECONDS
-	var/pressure = clamp(TICK_USAGE / 100, 0, 1)
-	var/budget_ms = clamp(2.0 * (1 - pressure), 0.30, 2.0)
-	var/max_items = clamp(round(budget_ms / max(scheduler.average_ms, 0.05)), 2, 48)
+		next_task_population = world.time + limits.population_interval
+	var/budget_ms = limits.budget_for(TICK_USAGE)
+	var/max_items = limits.tasks_for(budget_ms, scheduler.average_ms)
 	var/executed = 0
 	while(executed < max_items)
 		if(executed && max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage)) >= budget_ms)
@@ -177,10 +179,11 @@ SUBSYSTEM_DEF(netrun)
 		if(!task)
 			break
 		var/task_started = TICK_USAGE
+		var/task_started_at = world.time
 		var/datum/target = task.target()
 		execute_task(task)
 		var/cost_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - task_started))
-		scheduler.note_execution(task, cost_ms)
+		scheduler.note_execution(task, cost_ms, task_started_at)
 		if(cost_ms > budget_ms)
 			scheduler.task_overruns++
 		if(profile_armed)

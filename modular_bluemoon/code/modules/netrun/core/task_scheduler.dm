@@ -5,6 +5,7 @@
 	var/priority
 	var/datum/weakref/target_ref
 	var/enqueued_at
+	var/interactive = FALSE
 	/// Intrusive FIFO links: cancellation and promotion unlink in constant time.
 	var/datum/netrun_task_queue/queue
 	var/datum/netrun_task/previous
@@ -27,7 +28,7 @@
 	target_ref = null
 	return ..()
 
-/datum/netrun_task/proc/execute(datum/controller/subsystem/netrun/worker)
+/datum/netrun_task/proc/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
 	return FALSE
 
 /// A queue never contains cancelled tasks or obsolete priority entries.
@@ -77,7 +78,7 @@
 /datum/netrun_task/node
 	kind = "node"
 
-/datum/netrun_task/node/execute(datum/controller/subsystem/netrun/worker)
+/datum/netrun_task/node/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
 	var/datum/component/netrun_node/node = target()
 	if(QDELETED(node))
 		return FALSE
@@ -93,7 +94,7 @@
 /datum/netrun_task/console
 	kind = "console"
 
-/datum/netrun_task/console/execute(datum/controller/subsystem/netrun/worker)
+/datum/netrun_task/console/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
 	var/datum/netrun_console/console = target()
 	if(QDELETED(console))
 		return FALSE
@@ -104,7 +105,7 @@
 	// Dive-link processing can end the dive and destroy the originating console.
 	if(QDELETED(console))
 		return TRUE
-	console.flush_ui()
+	console.flush_ui(interactive)
 	worker.last_processed_consoles++
 	if(!QDELETED(console) && !console.needs_processing())
 		worker.active_consoles -= console
@@ -113,7 +114,7 @@
 /datum/netrun_task/ice
 	kind = "ice"
 
-/datum/netrun_task/ice/execute(datum/controller/subsystem/netrun/worker)
+/datum/netrun_task/ice/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
 	var/datum/netrun_ice/ice = target()
 	if(QDELETED(ice))
 		return FALSE
@@ -122,16 +123,20 @@
 	worker.breach_snapshot_active = TRUE
 	ice.process_ai(delta)
 	worker.breach_snapshot_active = FALSE
+	if(!QDELETED(ice) && (interactive || ice.pending_program || ice.reaction.timer_id))
+		ice.reaction.schedule_next()
 	return TRUE
 
 /datum/netrun_task/housekeeping
 	kind = "housekeeping"
 
-/datum/netrun_task/housekeeping/execute(datum/controller/subsystem/netrun/worker)
+/datum/netrun_task/housekeeping/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	if(!limits)
+		limits = worker.get_execution_limits()
 	var/datum/netrun_topology/graph = worker.get_topology()
 	if(graph.dirty)
 		worker.get_task_scheduler().enqueue("apc_prebuild", graph, NETRUN_TASK_BACKGROUND)
-	graph.refresh_route_tables()
+	graph.refresh_route_tables(limits.route_refresh_interval, limits.route_expiry_interval)
 	if(!worker.patrol_initialized && length(worker.networks))
 		worker.initialize_patrol()
 	if(!worker.lore_initialized && length(worker.nodes_by_address))
@@ -142,12 +147,14 @@
 /datum/netrun_task/apc_prebuild
 	kind = "apc_prebuild"
 
-/datum/netrun_task/apc_prebuild/execute(datum/controller/subsystem/netrun/worker)
+/datum/netrun_task/apc_prebuild/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	if(!limits)
+		limits = worker.get_execution_limits()
 	var/datum/netrun_topology/graph = target()
 	if(QDELETED(graph) || !graph.dirty)
 		return FALSE
 	worker.apc_prebuild_steps++
-	if(!graph.advance_apc_prebuild(96) && graph.dirty)
+	if(!graph.advance_apc_prebuild(limits.apc_operations) && graph.dirty)
 		worker.get_task_scheduler().enqueue(kind, graph, NETRUN_TASK_BACKGROUND)
 	return TRUE
 
@@ -165,6 +172,9 @@
 /datum/netrun_task_scheduler
 	var/list/by_key = list()
 	var/list/queues
+	var/datum/netrun_task_queue/interactive_queue
+	var/interactive_streak = 0
+	var/interactive_burst = NETRUN_DEFAULT_INTERACTIVE_BURST
 	var/list/counts = list(0, 0, 0)
 	var/dispatch_cursor = 0
 	var/merged = 0
@@ -174,7 +184,10 @@
 	var/last_budget_ms = 0
 	var/last_execution_ms = 0
 	var/last_executed = 0
-	var/average_ms = 0.1
+	var/average_ms = NETRUN_DEFAULT_TASK_INITIAL_COST_MS
+	var/cost_smoothing = NETRUN_DEFAULT_TASK_COST_SMOOTHING
+	var/list/priority_rotation = NETRUN_DEFAULT_TASK_PRIORITY_ROTATION
+	var/list/late_after = list(NETRUN_DEFAULT_TASK_CRITICAL_LATE_AFTER, NETRUN_DEFAULT_TASK_NORMAL_LATE_AFTER, NETRUN_DEFAULT_TASK_BACKGROUND_LATE_AFTER)
 	var/max_task_ms = 0
 	/// Keys are task kinds; values are /datum/netrun_task_profile.
 	var/list/profiles = list()
@@ -187,15 +200,27 @@
 	var/task_overruns = 0
 	var/peak_pass_ms = 0
 
-/datum/netrun_task_scheduler/New()
+/datum/netrun_task_scheduler/New(datum/netrun_execution_limits/limits)
 	. = ..()
 	queues = list(new /datum/netrun_task_queue, new /datum/netrun_task_queue, new /datum/netrun_task_queue)
+	interactive_queue = new
+	if(limits)
+		configure(limits)
+
+/// A worker supplies normalized tuning; standalone scheduler fixtures retain the same defaults.
+/datum/netrun_task_scheduler/proc/configure(datum/netrun_execution_limits/limits)
+	priority_rotation = limits.priority_rotation
+	late_after = limits.late_after
+	cost_smoothing = limits.cost_smoothing
+	interactive_burst = limits.interactive_burst
+	if(!completed)
+		average_ms = limits.initial_cost_ms
 
 /datum/netrun_task_scheduler/proc/pending()
 	return length(by_key)
 
 /datum/netrun_task_scheduler/proc/append_task(datum/netrun_task/task)
-	var/datum/netrun_task_queue/queue = queues[task.priority]
+	var/datum/netrun_task_queue/queue = task.interactive ? interactive_queue : queues[task.priority]
 	queue.append(task)
 
 /// Registry metadata is read once; new work kinds only add a task subtype.
@@ -208,25 +233,27 @@
 				types_by_kind[initial(path.kind)] = path
 	return types_by_kind[kind] ? types_by_kind[kind] : /datum/netrun_task
 
-/datum/netrun_task_scheduler/proc/enqueue(kind, datum/target, priority = NETRUN_TASK_NORMAL)
+/datum/netrun_task_scheduler/proc/enqueue(kind, datum/target, priority = NETRUN_TASK_NORMAL, interactive = FALSE)
 	if(!kind || (target && QDELETED(target)))
 		return FALSE
-	priority = clamp(priority, NETRUN_TASK_CRITICAL, NETRUN_TASK_BACKGROUND)
+	priority = IS_FINITE(priority) ? clamp(round(priority), NETRUN_TASK_CRITICAL, NETRUN_TASK_BACKGROUND) : NETRUN_TASK_NORMAL
 	var/key = "[kind]:[target ? REF(target) : "global"]"
 	var/datum/netrun_task/existing = by_key[key]
 	if(existing && !QDELETED(existing))
 		merged++
-		if(priority < existing.priority)
+		if(priority < existing.priority || (interactive && !existing.interactive))
 			existing.queue.remove(existing)
 			counts[existing.priority]--
-			existing.priority = priority
-			counts[priority]++
-			peak_queued_by_priority[priority] = max(peak_queued_by_priority[priority], counts[priority])
+			existing.priority = min(priority, existing.priority)
+			existing.interactive ||= interactive
+			counts[existing.priority]++
+			peak_queued_by_priority[existing.priority] = max(peak_queued_by_priority[existing.priority], counts[existing.priority])
 			append_task(existing)
 			promoted++
 		return FALSE
 	var/path = task_type(kind)
 	var/datum/netrun_task/task = new path(kind, key, priority, target)
+	task.interactive = interactive
 	by_key[key] = task
 	counts[priority]++
 	peak_queued_by_priority[priority] = max(peak_queued_by_priority[priority], counts[priority])
@@ -257,31 +284,40 @@
 	return task
 
 /datum/netrun_task_scheduler/proc/take()
-	var/static/list/rotation = list(NETRUN_TASK_CRITICAL, NETRUN_TASK_NORMAL, NETRUN_TASK_CRITICAL, NETRUN_TASK_BACKGROUND, NETRUN_TASK_CRITICAL, NETRUN_TASK_NORMAL, NETRUN_TASK_CRITICAL)
+	if(interactive_queue.first && interactive_streak < interactive_burst)
+		return take_interactive()
+	interactive_streak = 0
+	var/list/rotation = priority_rotation
 	for(var/i in 1 to length(rotation))
 		dispatch_cursor = (dispatch_cursor % length(rotation)) + 1
 		var/datum/netrun_task/task = take_priority(rotation[dispatch_cursor])
 		if(task)
 			return task
-	return null
+	return take_interactive()
+
+/// Explicit input bypasses population and the weighted rotation, but retains pass budgets.
+/// One ordinary dispatch after a bounded burst prevents sustained input starving maintenance.
+/datum/netrun_task_scheduler/proc/take_interactive()
+	var/datum/netrun_task/task = interactive_queue.take()
+	if(!task)
+		return null
+	interactive_streak++
+	by_key -= task.key
+	counts[task.priority]--
+	return task
 
 /// Time is measured on the worker side; enqueue-to-start delay is also recorded.
-/datum/netrun_task_scheduler/proc/note_execution(datum/netrun_task/task, cost_ms)
+/datum/netrun_task_scheduler/proc/note_execution(datum/netrun_task/task, cost_ms, started_at = world.time)
 	if(!task)
 		return
 	completed++
 	var/priority = task.priority
-	var/wait_ds = max(0, world.time - task.enqueued_at)
-	var/deadline_ds = 20 SECONDS
-	switch(priority)
-		if(NETRUN_TASK_CRITICAL)
-			deadline_ds = 2 SECONDS
-		if(NETRUN_TASK_NORMAL)
-			deadline_ds = 5 SECONDS
+	var/wait_ds = max(0, started_at - task.enqueued_at)
+	var/deadline_ds = late_after[priority]
 	executed_by_priority[priority]++
 	max_wait_by_priority[priority] = max(max_wait_by_priority[priority], wait_ds)
 	max_task_ms = max(max_task_ms, cost_ms)
-	average_ms = average_ms * 0.85 + cost_ms * 0.15
+	average_ms = average_ms * (1 - cost_smoothing) + cost_ms * cost_smoothing
 	var/datum/netrun_task_profile/profile = profiles[task.kind]
 	if(!profile)
 		profile = new
@@ -312,5 +348,6 @@
 		qdel(profiles[kind])
 	profiles.Cut()
 	QDEL_LIST(queues)
+	QDEL_NULL(interactive_queue)
 	return ..()
 

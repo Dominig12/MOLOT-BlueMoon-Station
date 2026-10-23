@@ -177,7 +177,7 @@
 	phase = "sector"
 
 /// One bounded advancement, including all phase changes.
-/datum/netrun_apc_prebuild/proc/advance(max_operations = 96)
+/datum/netrun_apc_prebuild/proc/advance(max_operations = NETRUN_DEFAULT_APC_PREBUILD_OPERATIONS)
 	if(QDELETED(graph) || !graph.dirty || generation != graph.infrastructure_revision)
 		return FALSE
 	for(var/i in 1 to max_operations)

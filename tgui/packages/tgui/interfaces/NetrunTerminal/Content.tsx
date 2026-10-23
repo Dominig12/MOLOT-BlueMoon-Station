@@ -1,8 +1,7 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
-
 import './netrun-workspace.scss';
 
-import { useBackend } from '../../backend';
+import { ReactNode, useEffect, useRef, useState } from 'react';
+
 import { Box, Button, Icon, Tabs } from '../../components';
 import { CombatPanel } from './CombatPanel';
 import { MatrixPanel } from './Matrix';
@@ -11,6 +10,7 @@ import { NodePanel } from './NodePanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
 import { SessionStatus } from './SessionStatus';
 import { ACCESS_COLORS, ACCESS_NAMES, NetrunData, THEME, WorkspaceView } from './types';
+import { NetrunFeedbackProvider, useNetrunBackend as useBackend } from './useNetrunBackend';
 import { WebPanel } from './WebPanel';
 import { WindowPanel } from './WindowPanel';
 
@@ -26,7 +26,9 @@ const PAGE_NAMES: Record<WorkspaceView, string> = {
 };
 
 /** Each workspace remains mounted so navigation preserves drafts, filters and map position. */
-export const NetrunContent = () => {
+export const NetrunContent = () => <NetrunFeedbackProvider><NetrunWorkspace /></NetrunFeedbackProvider>;
+
+const NetrunWorkspace = () => {
   const { act, data } = useBackend<NetrunData>();
   const { breach, web, windows, window: machineWindow } = data;
   const storedPage = data.workspace_view === 'breach' && !breach ? 'terminal' : data.workspace_view;
@@ -208,7 +210,7 @@ const Header = () => {
         {!!jack && <span className="netrun-indicator"><Icon name="plug" /> {jack.name}</span>}
         {!!entity && <span className="netrun-indicator" data-state={entity.integrity > entity.max_integrity * 0.25 ? 'online' : 'offline'}>
           Целостность {entity.integrity}/{entity.max_integrity}
-        </span>}
+                     </span>}
         <div className="netrun-trace" aria-label={locked > 0 ? `Блокировка: ${locked} с` : `Трассировка: ${Math.round(trace)}%`}>
           {locked > 0 ? <strong style={{ color: THEME.bad }}>БЛОКИРОВКА {locked}s</strong> : (
             <>

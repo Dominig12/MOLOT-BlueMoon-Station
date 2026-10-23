@@ -6,6 +6,8 @@
 node tools/netrun/run-tests.mjs --list
 node tools/netrun/run-tests.mjs
 node tools/netrun/run-tests.mjs --filter scheduler
+node tools/netrun/run-tests.mjs --filter execution
+node tools/netrun/run-tests.mjs --filter interaction
 ```
 
 Runner находит `netrun_*` тесты с `Run()` только в файлах `netrun*.dm`,
@@ -15,6 +17,14 @@ Runner находит `netrun_*` тесты с `Run()` только в файл�
 ошибка сборки, отсутствие отчёта, пропущенный тест, SKIPPED или FAIL дают exit 1.
 Production `_compile_options.dm` не меняется. Для нестандартного расположения
 BYOND задайте `DM_EXE`: штатный build runner ищет DreamDaemon рядом с компилятором.
+
+`execution` проверяет изменяемые лимиты подсистемы, CPU-бюджет и справедливость
+очередей; `interaction` — немедленный ответ, токен receipt, допуск TGUI и отличие
+опроса от ввода. `ice_reactive` проверяет событийный запуск защиты с сохранением
+телеграфа и cooldown. Тесты `provider_native` проверяют штатные `ui_status`,
+доступ по настоящему ID и привязку native UI к исходному устройству.
+Настройки и диагностика сервера описаны в
+[DEVELOPMENT.md](../../modular_bluemoon/code/modules/netrun/DEVELOPMENT.md).
 
 `--list` только печатает выборку; `--filter` ищет подстроку без учёта регистра.
 Пустая выборка считается ошибкой. Не запускайте несколько DM миров одновременно

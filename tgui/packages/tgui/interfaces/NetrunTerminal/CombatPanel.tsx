@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 
-import { useBackend } from '../../backend';
 import { Box, Button, Icon } from '../../components';
 import { CombatTarget, NetrunData, THEME } from './types';
+import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 const ROLE_COLORS: Record<string, string> = {
   attack: THEME.bad,

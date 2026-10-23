@@ -1,8 +1,8 @@
 import { memo, ReactNode, useCallback, useMemo } from 'react';
 
-import { useBackend } from '../../backend';
 import { Box, Button, Stack } from '../../components';
 import { MatrixState, NetrunData, THEME } from './types';
+import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 const LIME = THEME.accent;
 const CELL = 46;

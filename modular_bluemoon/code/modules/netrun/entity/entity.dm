@@ -84,6 +84,7 @@
 	node.touch()
 	update_vision()
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_NODE_CHANGED, null, node)
+	console.finish_user_action(node)
 	return TRUE
 
 /// Запоминаем пройденный путь погружения. При возврате на уже пройденный узел
@@ -99,6 +100,7 @@
 	old.notify_changed(NETRUN_CHANGED_OCCUPANTS)
 	host_node = null
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_NODE_CHANGED, old, null)
+	old.wake_defenses()
 
 /// Можно ли перепрыгнуть в узел
 /mob/camera/netrun_entity/proc/can_enter(datum/component/netrun_node/node, datum/netrun_path_tree/tree)

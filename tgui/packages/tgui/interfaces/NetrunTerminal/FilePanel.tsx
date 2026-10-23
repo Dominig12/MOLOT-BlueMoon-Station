@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 
-import { useBackend } from '../../backend';
 import { Box, Button, Input } from '../../components';
 import { NetrunData, THEME } from './types';
+import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 export const FilePanel = () => {
   const { data } = useBackend<NetrunData>();

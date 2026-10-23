@@ -1,4 +1,3 @@
-import { useBackend } from '../../backend';
 import { Box, Button, Icon, Section } from '../../components';
 import { AutoBreachButton } from './AutoBreachButton';
 import { CommandList } from './CommandList';
@@ -11,6 +10,7 @@ import {
   NODE_ICONS,
   THEME,
 } from './types';
+import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 /** Окно машины: состояние, команды-запросы и особые действия (часть под взломом) */
 export const WindowPanel = (props: { window: MachineWindow }) => {

@@ -143,7 +143,8 @@
 	var/security = get_security()
 	var/entity_count = length(entities)
 	var/ice_count = length(netrun_ice)
-	var/active = world.time - last_activity < 5 SECONDS
+	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
+	var/active = world.time - last_activity < limits.node_activity_duration
 	var/dynamic = is_dynamic()
 	if(!pending_state_notification && online == last_online && security == last_security && entity_count == last_entities && ice_count == last_ice && active == last_active && dynamic == last_dynamic)
 		return
@@ -255,6 +256,7 @@
 	return bound_apc
 
 /datum/component/netrun_node/proc/ui_entry(datum/netrun_console/console)
+	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
 	var/turf/T = get_turf(parent)
 	var/datum/component/netrun_node/uplink = uplink_node()
 	. = list(
@@ -270,7 +272,7 @@
 		"access" = console.node_level(src),
 		"entities" = length(entities),
 		"ice" = LAZYLEN(netrun_ice),
-		"active" = world.time - last_activity < 5 SECONDS,
+		"active" = world.time - last_activity < limits.node_activity_duration,
 		"uplink" = uplink?.address,
 		"apc" = bound_apc?.address,
 	)

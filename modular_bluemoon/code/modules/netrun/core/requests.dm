@@ -50,6 +50,9 @@
 		qdel(src)
 		return FALSE
 	sent = TRUE
+	// Circuits are autonomous; explicit player packets enter the interactive lane.
+	if(console.origin != NETRUN_ORIGIN_CIRCUIT)
+		console.note_user_action()
 	if(delay <= 0)
 		return deliver()
 	timer_id = addtimer(CALLBACK(src, PROC_REF(deliver)), delay, TIMER_STOPPABLE | TIMER_DELETE_ME)
@@ -66,6 +69,8 @@
 	delivering = TRUE
 	if(!cancelled && !QDELETED(console) && !QDELETED(node))
 		. = execute()
+		if(!QDELETED(console) && console.origin != NETRUN_ORIGIN_CIRCUIT)
+			console.finish_user_action(QDELETED(node) ? null : node)
 	qdel(src)
 
 /datum/netrun_request/delivery/proc/execute()

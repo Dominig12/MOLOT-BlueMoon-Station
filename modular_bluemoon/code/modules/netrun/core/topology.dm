@@ -402,14 +402,14 @@
 	if(length(group_order) < 2)
 		return
 	var/datum/netrun_apc_bridges/bridges = new(component_groups, group_order, positions, input_order)
-	while(!bridges.advance(96))
+	while(!bridges.advance(NETRUN_DEFAULT_APC_PREBUILD_OPERATIONS))
 		continue
 	for(var/list/edge as anything in bridges.links)
 		add_edge(edge["from"], edge["to"], "apc")
 	qdel(bridges)
 
 /// Prepare expensive APC work without changing published nodes, edges or adjacency.
-/datum/netrun_topology/proc/advance_apc_prebuild(max_operations = 96)
+/datum/netrun_topology/proc/advance_apc_prebuild(max_operations = NETRUN_DEFAULT_APC_PREBUILD_OPERATIONS)
 	if(!dirty || rebuilding)
 		QDEL_NULL(apc_prebuild)
 		return TRUE

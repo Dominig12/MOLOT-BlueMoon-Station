@@ -224,15 +224,15 @@
 
 /// A source unused for two intervals expires. This housekeeping never solves a tree:
 /// an invalidated table is rebuilt lazily only if its UI actually requests it.
-/datum/netrun_topology/proc/refresh_route_tables()
+/datum/netrun_topology/proc/refresh_route_tables(refresh_interval = NETRUN_DEFAULT_ROUTE_REFRESH_INTERVAL, expiry_interval = NETRUN_DEFAULT_ROUTE_EXPIRY_INTERVAL)
 	if(world.time < route_refresh_at)
 		return
-	route_refresh_at = world.time + 1 SECONDS
+	route_refresh_at = world.time + refresh_interval
 	if(length(route_tables))
 		reconcile_availability()
 	for(var/address in route_used.Copy())
 		var/datum/component/netrun_node/start = nodes[address]
-		if(QDELETED(start) || route_used[address] < world.time - 2 SECONDS)
+		if(QDELETED(start) || route_used[address] < world.time - expiry_interval)
 			qdel(route_tables[address])
 			route_tables -= address
 			route_used -= address
@@ -263,7 +263,8 @@
 		return new /datum/netrun_path_tree
 	route_used[start.address] = world.time
 	reconcile_availability()
-	refresh_route_tables()
+	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
+	refresh_route_tables(limits.route_refresh_interval, limits.route_expiry_interval)
 	var/datum/netrun_path_tree/table = route_tables[start.address]
 	if(!table || table.geometry_revision != weight_revision || table.availability_revision != availability_revision)
 		table = store_route_table(start)

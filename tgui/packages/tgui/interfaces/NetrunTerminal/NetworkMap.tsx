@@ -1,16 +1,16 @@
 import { KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input } from '../../components';
-import { GraphCanvas, GraphCanvasHandle } from './GraphCanvas';
 import { GraphLayout } from './graphLayout';
 import { StaticMapProjection } from './mapLayers';
 import { createGraphLayoutCache, graphAdjacency, graphNeighborhood, GraphPoint, layoutGraph } from './mapLayout';
 import { NetrunMapStream } from './mapStream';
+import { NetworkViewport, NetworkViewportHandle } from './NetworkViewport';
 import {
   ACCESS_NAMES, NetEdge, NetEvent, NetMap, NetNode, NetrunData, NODE_ICONS,
   NODE_NAMES, PingHop, SearchResult, THEME, Waypoint,
 } from './types';
+import { useNetrunBackend as useBackend, useNetrunFeedback } from './useNetrunBackend';
 
 type Placed = NetNode & GraphPoint;
 type Act = (action: string, payload?: object) => void;
@@ -120,7 +120,10 @@ const MapSnapshot = memo(({ input, act, suspended }: { input: MapInput; act: Act
 const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   const { act, selectedAddress, selectedNetwork, jackAddress, entityHost, hasEntity,
     map, topologyKey, pingRoute, events, waypoint, search, suspended } = props;
-  const viewport = useRef<GraphCanvasHandle>(null);
+  const viewport = useRef<NetworkViewportHandle>(null);
+  const feedback = useNetrunFeedback();
+  const latestFeedback = useRef(feedback); latestFeedback.current = feedback;
+  const selectionIntent = useRef<{ address: string; action: string; previousNonce?: string; nonce?: string } | null>(null);
   const gatewaysMenu = useRef<HTMLDetailsElement>(null);
   const [layoutCache] = useState(createGraphLayoutCache);
   const [dynamicLayout] = useState(() => new GraphLayout());
@@ -162,24 +165,45 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
       .some((text) => text.toLowerCase().includes(q)))), [placed, disabledTypes, nearby, q]);
   const visibleIds = useMemo(() => new Set(visibleNodes.map((n) => n.address)), [visibleNodes]);
   const visibleEdges = useMemo(() => edges.filter((edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to)), [edges, visibleIds]);
-  const visiblePoints = useMemo(() => new Map(visibleNodes.map((n) => [n.address, positions.get(n.address)])), [visibleNodes, positions]);
   const staticPlaced = useMemo<Placed[]>(() => stationary.nodes.map((entry) => ({ ...entry, ...staticPositions.get(entry.address) })), [stationary.nodes, staticPositions]);
-  const canvasNodes = useStableList(useMemo(() => staticPlaced.filter((entry) => visibleIds.has(entry.address)), [staticPlaced, visibleIds]));
-  const canvasIds = useMemo(() => new Set(canvasNodes.map((entry) => entry.address)), [canvasNodes]);
-  const canvasEdges = useMemo(() => stationary.edges.filter((edge) => canvasIds.has(edge.from) && canvasIds.has(edge.to)), [stationary.edges, canvasIds]);
+  const stationaryNodes = useStableList(useMemo(() => staticPlaced.filter((entry) => visibleIds.has(entry.address)), [staticPlaced, visibleIds]));
+  const stationaryIds = useMemo(() => new Set(stationaryNodes.map((entry) => entry.address)), [stationaryNodes]);
+  const stationaryEdges = useMemo(() => stationary.edges.filter((edge) => stationaryIds.has(edge.from) && stationaryIds.has(edge.to)), [stationary.edges, stationaryIds]);
   const dynamicIds = useMemo(() => new Set(mobileNodes.map((entry) => entry.address)), [mobileNodes]);
   const dynamicEdges = useMemo(() => visibleEdges.filter((edge) => dynamicIds.has(edge.from) || dynamicIds.has(edge.to)), [visibleEdges, dynamicIds]);
   // End-to-end routes are never geometrically shortened through omitted nodes:
-  // the canvas additionally verifies every adjacent pair against real edges.
+  // the Pixi route layer additionally verifies every adjacent pair against real edges.
   const selectedRoute = map?.route?.reachable ? map.route.route : EMPTY_ADDRESSES;
   const pingAddresses = useMemo(() => pingRoute.filter((hop) => hop.kind === 'node').map((hop) => hop.ref), [pingRoute]);
-  const onSelect = useCallback((address: string) => { setPendingCenter(null); act('select', { address }); }, [act]);
+  const previewSelection = useCallback((address: string, action = 'select') => {
+    viewport.current?.previewSelection(address);
+    selectionIntent.current = { address, action, previousNonce: latestFeedback.current?.nonce };
+  }, []);
+  const onSelect = useCallback((address: string) => {
+    setPendingCenter(null); previewSelection(address); act('select', { address });
+  }, [act, previewSelection]);
   const locate = useCallback((address: string, own = false) => {
     setQuery(''); setSearchReset((value) => value + 1); setFocusNearby(false); setDisabledTypes({}); setPendingCenter(address);
+    previewSelection(address, own ? 'focus_host' : 'select');
     if (own) { act('focus_host'); } else { act('select', { address }); }
-  }, [act]);
+  }, [act, previewSelection]);
   useEffect(() => {
-    // A cross-floor selection arrives after the click. Wait for its committed canvas scene.
+    const intent = selectionIntent.current;
+    if (!intent) { return; }
+    if (selectedAddress === intent.address) { selectionIntent.current = null; return; }
+    if (!feedback || feedback.action !== intent.action
+      || (feedback.action === 'select' && feedback.payload.address !== intent.address)) { return; }
+    if (!intent.nonce && feedback.nonce !== intent.previousNonce) { intent.nonce = feedback.nonce; }
+    // A correlated receipt confirms immediate selection processing, not the
+    // success of delayed movement or machine commands. Those keep their own state.
+    if (feedback.phase === 'received' && feedback.nonce === intent.nonce
+      && (feedback.action === 'select' || feedback.action === 'focus_host')) {
+      viewport.current?.rejectSelection('Узел не выбран. Проверьте доступ и связь.');
+      selectionIntent.current = null;
+    }
+  }, [feedback, selectedAddress]);
+  useEffect(() => {
+    // A cross-floor selection arrives after the click. Wait for its committed viewport scene.
     if (pendingCenter && selectedAddress === pendingCenter && visibleIds.has(pendingCenter) && viewport.current) {
       viewport.current.center(pendingCenter); setPendingCenter(null);
     }
@@ -213,7 +237,10 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
         + (projection <= 0 ? 100000 : 0);
       if (score < bestScore) { best = node; bestScore = score; }
     }
-    if (best) { act(hopping ? 'hop' : 'select', { address: best.address }); }
+    if (best) {
+      if (hopping) { previewSelection(best.address, 'hop'); act('hop', { address: best.address }); }
+      else { onSelect(best.address); }
+    }
   };
 
   if (!map) { return null; }
@@ -278,7 +305,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
       </Box>
       {!!waypoint && <Box p={0.5} style={{ background: '#12202a', borderBottom: `1px solid ${THEME.line}` }}>
         <WaypointRoute wp={waypoint} onClear={() => act('clear_waypoint')} onNext={(address) => act('select', { address })} />
-                   </Box>}
+                     </Box>}
       {relayDestinations.length > 0 && <Box data-net-relay-destinations p={0.75} style={{ flex: '0 0 auto', maxHeight: '112px', overflowY: 'auto', borderBottom: `1px solid ${THEME.line}` }}>
         <Box color={THEME.muted} fontSize="10px">Реле NTnet · направления перехода</Box>
         {relayDestinations.map((destination) => (<Box key={`${destination.from}:${destination.to}`} mt={0.5} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -313,9 +340,9 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
             setQuery(''); setSearchReset((value) => value + 1); setDisabledTypes({}); setFocusNearby(false);
           }} />
                                   </Box>}
-      <GraphCanvas key={`${map.active_sector || ''}:${map.active_z ?? ''}`} ref={viewport} adjacency={adjacency} nodes={canvasNodes} edges={canvasEdges} positions={visiblePoints}
+      <NetworkViewport key={`${map.active_sector || ''}:${map.active_z ?? ''}`} ref={viewport} adjacency={adjacency} nodes={stationaryNodes} edges={stationaryEdges}
         actors={visibleNodes} dynamicEdges={dynamicEdges} suspended={suspended}
-        gateways={gateways} selected={selectedAddress} jacked={jackAddress} focus={map.focus}
+        gateways={gateways} selected={selectedAddress} jacked={jackAddress}
         apcZones={map.apc_zones}
         entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || EMPTY_ADDRESSES}
         pingRoute={pingAddresses} events={events} onSelect={onSelect} />

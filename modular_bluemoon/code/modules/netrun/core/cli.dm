@@ -41,6 +41,17 @@
 	var/list/cli_cached_payload
 	var/cli_cached_revision = 0
 
+/// Authorization/loadout events invalidate both retained projections and an in-flight UI key.
+/datum/netrun_console/proc/invalidate_projection_caches()
+	ui_projection_cache = null
+	ui_catalog_context = null
+	ui_network_catalog = null
+	ui_completion_cache?.Cut()
+	cli_projection_context = null
+	cli_projection_values = null
+	cli_cached_context = null
+	cli_cached_payload = null
+
 /datum/controller/subsystem/netrun/proc/get_cli_commands()
 	if(!cli_commands)
 		cli_commands = list()

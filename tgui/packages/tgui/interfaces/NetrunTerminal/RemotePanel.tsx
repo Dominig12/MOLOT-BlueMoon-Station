@@ -1,9 +1,9 @@
 import { useState } from 'react';
 
-import { useBackend } from '../../backend';
 import { Box, Button } from '../../components';
 import { remoteArguments, remoteParameterValue } from './remoteParameters';
 import { ACCESS_NAMES, MachineWindow, NetrunData, THEME } from './types';
+import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 type Remote = NonNullable<MachineWindow['remote']>;
 
@@ -108,7 +108,7 @@ const RemoteAction = (props: { address: string; action: Remote['actions'][number
       />
       {!!(!action.allowed && action.reason || request.error) && <Box role="status" color={THEME.warn} fontSize="11px">
         {!action.allowed && action.reason || request.error}
-                                                              </Box>}
+                                                                </Box>}
     </Box>
   );
 };

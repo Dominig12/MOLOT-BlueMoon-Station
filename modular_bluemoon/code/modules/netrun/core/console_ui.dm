@@ -80,12 +80,14 @@
 
 /datum/netrun_console/proc/build_ui_data(mob/user, datum/ui_source, list/session)
 	var/list/data = list()
+	data["input_ack"] = input_ack
 	data["origin"] = origin
 	data["workspace_view"] = workspace_view
 	data["wireless"] = connection.wireless
 	if(!intrusion.breach || world.time >= ui_uplink_refresh)
 		ui_uplink_value = has_uplink()
-		ui_uplink_refresh = world.time + 1 SECONDS
+		var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
+		ui_uplink_refresh = world.time + limits.ui_refresh_interval
 	data["uplink"] = ui_uplink_value
 	data["trace"] = round(intrusion.trace, 0.1)
 	data["locked"] = is_locked() ? round((intrusion.lockout_until - world.time) / (1 SECONDS)) : 0
@@ -373,12 +375,21 @@
 	return payload
 
 /datum/netrun_console/ui_act(action, list/params, datum/tgui/ui, datum/ui_state/state)
-	note_ui_activity()
-	invalidate_ui()
 	. = ..()
 	if(.)
 		return
 	operator = ui.user
+	var/input_nonce = params["_netrun_action"]
+	if(istext(input_nonce) && length(input_nonce) <= NETRUN_INPUT_ACK_MAX_LENGTH)
+		input_ack = input_nonce
+	note_user_action()
+	. = handle_ui_action(action, params, ui)
+	if(!QDELETED(src))
+		finish_user_action(selected_node())
+	return .
+
+/// Dispatch follows the ordinary TGUI permission check; denied domain actions still get receipt.
+/datum/netrun_console/proc/handle_ui_action(action, list/params, datum/tgui/ui)
 	if(action == "map_resync")
 		map_view.resync(ui)
 		return TRUE

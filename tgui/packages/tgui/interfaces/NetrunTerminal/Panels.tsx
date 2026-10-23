@@ -1,11 +1,11 @@
 import { KeyboardEvent, memo, useState } from 'react';
 
-import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input, Section } from '../../components';
 import { FilePanel } from './FilePanel';
 import { fileFormat, fileIcon } from './NodePanel';
 import { LogLine, NetFile, NetrunData, THEME } from './types';
 import { useFollowOutput } from './useFollowOutput';
+import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 const KIND_COLORS: Record<string, string> = {
   good: THEME.good,

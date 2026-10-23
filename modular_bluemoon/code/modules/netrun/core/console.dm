@@ -43,6 +43,10 @@
 	var/ui_uplink_value = FALSE
 	var/ui_uplink_refresh = -INFINITY
 	var/ui_dirty = TRUE
+	/// Acknowledgement confirms receipt only, never access or action success.
+	var/input_ack
+	var/ui_flushing = FALSE
+	var/datum/netrun_interaction/interaction
 	/// UI polling renews this lease, including consoles embedded in NTOS windows.
 	var/last_ui_at = -INFINITY
 	/// TRUE only inside one ui_data serialization pass; enables per-pass projection reuse.
@@ -70,6 +74,7 @@
 	remote_session = new(src)
 	map_view = new(src)
 	combat_context = new(src)
+	interaction = new(src)
 	RegisterSignal(inventory, COMSIG_NETRUN_INVENTORY_CHANGED, PROC_REF(on_session_changed))
 	RegisterSignal(src, COMSIG_NETRUN_COMBAT_CHANGED, PROC_REF(on_session_changed))
 	SSnetrun.consoles += src
@@ -80,8 +85,10 @@
 /datum/netrun_console/Destroy()
 	SSnetrun.consoles -= src
 	SSnetrun.active_consoles -= src
+	SSnetrun.currentbreaches -= src
 	SSnetrun.task_scheduler?.cancel("console", src)
 	QDEL_NULL(combat_context)
+	QDEL_NULL(interaction)
 	QDEL_NULL(map_view)
 	QDEL_NULL(remote_session)
 	QDEL_NULL(intrusion)
@@ -96,6 +103,7 @@
 	SIGNAL_HANDLER
 	if(source == inventory)
 		map_view?.invalidate()
+		invalidate_projection_caches()
 	invalidate_ui()
 
 /// Never serialize UI or rebuild topology inside a synchronous signal handler.
@@ -119,20 +127,29 @@
 	return origin == NETRUN_ORIGIN_ENTITY || is_ui_active() || intrusion.breach || intrusion.trace > 0 || is_locked() || connection.jack || remote_session.watch_node
 
 /datum/netrun_console/proc/is_ui_active()
-	if(world.time <= last_ui_at + 3 SECONDS)
+	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
+	if(world.time <= last_ui_at + limits.ui_activity_lease)
 		return TRUE
 	if(!operator?.client)
 		return FALSE
 	var/datum/source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
 	return !!SStgui.get_open_ui(operator, source)
 
-/datum/netrun_console/proc/flush_ui()
-	if(!ui_dirty)
+/datum/netrun_console/proc/flush_ui(immediate = FALSE)
+	if(!ui_dirty || ui_serializing || ui_flushing)
 		return
-	if(world.time < last_ui_at + 1 SECONDS || !is_ui_active())
+	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
+	if((!immediate || !limits.interactive_flush) && world.time < last_ui_at + limits.ui_refresh_interval)
 		return
-	var/datum/source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
+	if(!is_ui_active())
+		return
+	ui_flushing = TRUE
 	ui_dirty = FALSE
+	push_ui_update()
+	ui_flushing = FALSE
+
+/datum/netrun_console/proc/push_ui_update()
+	var/datum/source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
 	SStgui.update_uis(source)
 
 /datum/netrun_console/ui_host(mob/user)
@@ -543,12 +560,16 @@
 	// instead of re-serializing identical data once per second. The one-second tail guarantees the
 	// countdown's closing frame is drawn once it stops being "live".
 	if(needs_live_refresh())
-		live_refresh_until = world.time + 1 SECONDS
+		var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
+		live_refresh_until = world.time + limits.ui_refresh_interval
 	if(world.time <= live_refresh_until)
 		invalidate_ui()
 
 /datum/netrun_intrusion_session/proc/process_tick(delta)
 	if(breach)
+		// Wakes may occur twice in one tick; charge only time spent in this breach.
+		delta = min(delta, max(0, world.time - last_breach_tick) / (1 SECONDS))
+		last_breach_tick = world.time
 		if(!breach.valid_target())
 			owner.log_line("Взлом отменён: цель недоступна или переменила сеть.", "bad")
 			QDEL_NULL(breach)
@@ -607,6 +628,8 @@
 			target_name = "прошивка [target_name]"
 		node.touch()
 	breach = automatic ? new /datum/netrun_breach/automatic(owner, kind, id, target_name, security) : new /datum/netrun_breach(owner, kind, id, target_name, security)
+	last_breach_tick = world.time
+	SSnetrun.currentbreaches |= owner
 	if(kind != "network")
 		var/datum/component/netrun_node/target = SSnetrun.find_node(id)
 		breach.target_network = target.network
@@ -620,6 +643,14 @@
 	// Взлом защищённой цели поднимает сторожевой ICE.
 	if(kind != "network")
 		SSnetrun.raise_defenses(owner, SSnetrun.find_node(id))
+	owner.note_user_action()
+	if(kind == "network")
+		var/datum/netrun_network/target_network = SSnetrun.networks[id]
+		for(var/datum/component/netrun_node/target as anything in target_network.nodes)
+			target.wake_defenses()
+	else
+		var/datum/component/netrun_node/target = SSnetrun.find_node(id)
+		target?.wake_defenses()
 	owner.log_line("Запущен взлом: [target_name].", "average")
 	owner.workspace_view = "breach"
 	return TRUE

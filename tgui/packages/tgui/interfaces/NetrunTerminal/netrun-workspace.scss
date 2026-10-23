@@ -1,5 +1,144 @@
 // NetRun's visual vocabulary is scoped to the workspace. Existing tgui widgets
 // retain their interaction, disabled and focus semantics; the map stays mounted.
+.netrun-viewport {
+  position: relative;
+  isolation: isolate;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 190px;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+  background: radial-gradient(ellipse at center, #102c3b 0%, #07121c 80%);
+
+  &:focus-visible {
+    outline: 2px solid var(--net-accent, #55cbe9);
+    outline-offset: -2px;
+  }
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.netrun-viewport__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.netrun-viewport__state {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  color: var(--net-text, #e5f1fa);
+  background: rgba(7, 18, 28, .9);
+  cursor: default;
+
+  > .Icon {
+    font-size: 28px;
+    color: var(--net-accent, #55cbe9);
+  }
+
+  p {
+    max-width: 400px;
+    margin: 0;
+    color: var(--net-muted, #8298a8);
+    line-height: 1.55;
+  }
+}
+
+.netrun-viewport__hud {
+  position: absolute;
+  z-index: 2;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  color: #a9c4d4;
+  background: rgba(8, 19, 29, .9);
+  border: 1px solid rgba(85, 203, 233, .2);
+  border-radius: 7px;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.netrun-viewport__north {
+  color: #71e0ef;
+  font-weight: 700;
+}
+
+.netrun-viewport__selection {
+  position: absolute;
+  z-index: 3;
+  top: 12px;
+  right: 12px;
+  max-width: calc(100% - 48px);
+  padding: 8px 11px;
+  overflow: hidden;
+  color: #b7ebf5;
+  background: rgba(8, 25, 37, .94);
+  border: 1px solid #376075;
+  border-radius: 7px;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+
+  &--confirmed { color: #74d8b4; }
+  &--rejected, &--timeout { color: #ffc26b; }
+}
+
+.netrun-viewport__tooltip {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  width: 218px;
+  max-width: calc(100% - 16px);
+  padding: 11px 13px;
+  color: #dbeaf3;
+  background: rgba(12, 30, 42, .97);
+  border: 1px solid #356278;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .35);
+  font-size: 11px;
+  pointer-events: none;
+
+  strong, code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  code {
+    color: #829eaf;
+  }
+}
+
+.netrun-viewport__online { color: #74d8b4; }
+.netrun-viewport__offline { color: #ec8f91; }
+
+@media (prefers-reduced-motion: reduce) {
+  .netrun-viewport__state > .Icon { animation: none; }
+}
+
 .netrun-shell {
   --net-bg: #080f18;
   --net-panel: #101d29;

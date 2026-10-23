@@ -5,7 +5,7 @@ export type NetNode = {
   x: number;
   y: number;
   z?: number;
-  /** Movable endpoints are rendered by the reactive layer above the stationary canvas. */
+  /** Movable endpoints use the retained Pixi actor layer above stationary scenery. */
   dynamic?: boolean;
   security: number;
   online: boolean;
@@ -192,6 +192,8 @@ export type SearchResult = {
 export type WorkspaceView = 'terminal' | 'map' | 'files' | 'pinned' | 'combat' | 'breach' | 'web';
 
 export type NetrunData = {
+  /** Receipt of a UI request; it does not imply the game action succeeded. */
+  input_ack?: string | null;
   workspace_view?: WorkspaceView;
   origin: string;
   wireless: boolean;

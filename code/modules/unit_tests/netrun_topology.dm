@@ -390,6 +390,8 @@
 	var/previous_edges = json_encode(graph.edges)
 	graph.invalidate()
 	var/datum/netrun_apc_prebuild/job = allocate(/datum/netrun_apc_prebuild, graph)
+	// The one-step budget describes this fixture, not unrelated APCs on Runtime Station.
+	job.sectors = list(netrun_sector_for(origin))
 	var/progress = FALSE
 	for(var/i in 1 to 500)
 		if(job.advance(1))

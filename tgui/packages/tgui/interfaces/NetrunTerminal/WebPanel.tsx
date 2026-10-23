@@ -1,6 +1,6 @@
-import { useBackend } from '../../backend';
 import { Box, Button, Icon, Section } from '../../components';
 import { NetrunData, THEME, WebState } from './types';
+import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 /** Мост «сайты NTnet в терминале»: каталог сайтов и чтение страниц (только чтение) */
 export const WebPanel = (props: { web: WebState }) => {

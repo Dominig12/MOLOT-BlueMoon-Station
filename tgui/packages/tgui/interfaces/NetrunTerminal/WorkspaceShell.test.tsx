@@ -1,5 +1,6 @@
 import { render } from '@testing-library/react';
 import { combineReducers, createStore, setGlobalStore } from 'common/redux';
+
 import { backendReducer, backendUpdate } from '../../backend';
 import { debugReducer } from '../../debug';
 import { NetrunContent } from './Content';

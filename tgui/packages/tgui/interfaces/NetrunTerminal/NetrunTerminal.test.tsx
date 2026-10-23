@@ -6,7 +6,6 @@ import { debugReducer } from '../../debug';
 import { CombatPanel } from './CombatPanel';
 import { NetrunContent } from './Content';
 import { FilePanel } from './FilePanel';
-import { GraphRenderer } from './graphRenderer';
 import { GraphScene } from './graphScene';
 import { GraphViewport } from './graphViewport';
 import * as mapGeometry from './mapLayout';
@@ -14,8 +13,29 @@ import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog } from './Panels';
+import { mountNetrunPixi } from './pixiSurface';
+import type { MockPixiSurface } from './testSupport/pixiSurfaceMock';
 import { NetMap, NetMapDelta, NetrunData } from './types';
 import { WindowPanel } from './WindowPanel';
+
+jest.mock('./pixiSurface', () => ({
+  mountNetrunPixi: jest.fn(async (host: HTMLElement) =>
+    jest.requireActual('./testSupport/pixiSurfaceMock').makePixiSurfaceMock(host)),
+}));
+
+beforeEach(() => jest.mocked(mountNetrunPixi).mockImplementation(async (host) =>
+  jest.requireActual('./testSupport/pixiSurfaceMock').makePixiSurfaceMock(host)));
+afterEach(async () => {
+  await act(async () => {});
+  jest.restoreAllMocks();
+});
+
+const surfaceReady = async (): Promise<MockPixiSurface> => {
+  await act(async () => {});
+  const result = jest.mocked(mountNetrunPixi).mock.results.slice(-1)[0];
+  if (!result) { throw new Error('The visible map did not initialize its Pixi surface'); }
+  return await result.value as MockPixiSurface;
+};
 
 const command = {
   id: 'apc_breaker', name: 'Главный рубильник', desc: 'Переключить питание.',
@@ -62,35 +82,35 @@ const setup = (overrides: Partial<NetrunData> = {}) => {
 
 const sent = (topic, action: string) => topic.mock.calls
   .filter((call) => call[0]?.type === `act/${action}`)
-  .map((call) => JSON.parse(call[0].payload));
+  .map((call) => { const { _netrun_action: _receipt, ...payload } = JSON.parse(call[0].payload); return payload; });
 
 describe('Netrun terminal panels', () => {
-  test('quiet delta polls retain a 6000-node scene without layout, reindexing or canvas work', () => {
-    const context = jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
-    const paint = jest.spyOn(GraphRenderer.prototype, 'paint').mockImplementation(() => undefined);
+  test('quiet delta polls retain a 6000-node scene without layout or reindexing', async () => {
     const live = jest.spyOn(GraphScene, 'live');
     const index = jest.spyOn(GraphScene.prototype, 'update');
     const layout = jest.spyOn(mapGeometry, 'layoutGraph');
-    const originalFrame = window.requestAnimationFrame;
-    Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: undefined });
     try {
       const nodes = Array.from({ length: 6000 }, (_, i) => ({ ...node, address: `N${i}`, x: 10 + i % 80 * 2, y: 10 + Math.floor(i / 80) * 2 }));
       const initial: NetMap = { epoch: 'terminal-ui', full: true, gateways: [], focus: nodes[0].address,
         revision: 1, structure_revision: 1, static_revision: 1, state_revision: 1, nodes, edges: [] };
       const topic = setup({ map: initial });
       const panel = render(<StationMap />);
-      const counts = [paint, live, index, layout].map((spy) => spy.mock.calls.length);
+      const surface = await surfaceReady();
+      const retained = surface.updateScene.mock.calls.slice(-1)[0][0];
+      const counts = [live, index, layout].map((spy) => spy.mock.calls.length);
       for (let i = 0; i < 5; i++) {
         const idle: NetMapDelta = { epoch: 'terminal-ui', full: false, base_revision: 1, state_revision: 1, nodes: [], edges: [], focus: nodes[0].address };
         act(() => topic.store.dispatch(backendUpdate({ data: { map: idle, events: [], search: [] } })));
         panel.rerender(<StationMap />);
       }
       expect(panel.getByText('6000/6000 · текущий этаж')).toBeTruthy();
-      expect([paint, live, index, layout].map((spy) => spy.mock.calls.length)).toEqual(counts);
+      expect([live, index, layout].map((spy) => spy.mock.calls.length)).toEqual(counts);
+      expect(surface.updateScene.mock.calls.slice(-1)[0][0]).toBe(retained);
       expect(sent(topic, 'map_resync')).toEqual([]);
+      expect(panel.container.querySelectorAll('canvas[data-net-pixi]')).toHaveLength(1);
+      expect(panel.container.querySelector('[data-net-canvas]')).toBeNull();
     } finally {
-      context.mockRestore(); paint.mockRestore(); live.mockRestore(); index.mockRestore(); layout.mockRestore();
-      Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: originalFrame });
+      live.mockRestore(); index.mockRestore(); layout.mockRestore();
     }
   });
 
@@ -120,28 +140,23 @@ describe('Netrun terminal panels', () => {
     expect(sent(topic, 'map_resync')).toEqual([{}]);
   });
 
-  test('moving endpoints and live overlays leave the canvas cached while stationary deletion repaints', () => {
-    const context = jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
-    const paint = jest.spyOn(GraphRenderer.prototype, 'paint').mockImplementation(() => undefined);
-    const originalFrame = window.requestAnimationFrame;
-    Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: undefined });
+  test('moving endpoints update Pixi actors while stationary geometry stays retained', async () => {
     const layout = jest.spyOn(mapGeometry, 'layoutGraph');
     try {
-      const peer = { ...node, address: 'PEER', x: 20 };
-      const mobile = { ...node, address: 'MOBILE', dynamic: true, type: 'deck', x: 30, uplink: node.address };
-      const initial = { gateways: [], focus: node.address, revision: 1, structure_revision: 1, state_revision: 1, static_revision: 1,
+      const mobile = { ...node, address: 'MOBILE', type: 'deck', dynamic: true, x: 11, uplink: node.address };
+      const peer = { ...node, address: 'PEER', x: 30 };
+      const initial: NetMap = { gateways: [], focus: node.address, revision: 1,
+        structure_revision: 1, static_revision: 1, state_revision: 1,
         nodes: [node, peer, mobile], edges: [
-          { id: 'static', from: node.address, to: peer.address, kind: 'apc' as const },
-          { id: 'mobile', from: node.address, to: mobile.address, kind: 'endpoint' as const },
+          { id: 'backbone', from: node.address, to: peer.address, kind: 'apc' },
+          { id: 'mobile', from: node.address, to: mobile.address, kind: 'endpoint' },
         ] };
-      const topic = setup({ map: initial });
+      const topic = setup({ selected: mobile, map: initial });
       const panel = render(<StationMap />);
-      const initialPaints = paint.mock.calls.length;
-      expect(initialPaints).toBeGreaterThan(0);
+      const surface = await surfaceReady();
+      const retained = surface.updateScene.mock.calls.slice(-1)[0][0];
+      const first = surface.updateActors.mock.calls.slice(-1)[0][0].byAddress.get(mobile.address);
       expect(layout).toHaveBeenCalledTimes(1);
-      const marker = panel.container.querySelector('[data-net-dynamic-node="MOBILE"]');
-      expect(marker).not.toBeNull();
-      const before = marker.getAttribute('transform');
       act(() => topic.store.dispatch(backendUpdate({ data: { selected: peer,
         events: [{ kind: 'trace', from: mobile.address, to: peer.address, age: 0 }],
         map: { ...initial, structure_revision: 2, state_revision: 2,
@@ -149,17 +164,18 @@ describe('Netrun terminal panels', () => {
           edges: [initial.edges[0], { ...initial.edges[1], from: peer.address }],
           route: { reachable: true, route: [mobile.address, peer.address], hops: 1, latency: 200, revision: 2 } } } })));
       panel.rerender(<StationMap />);
-      expect(paint).toHaveBeenCalledTimes(initialPaints);
+      expect(surface.updateScene.mock.calls.slice(-1)[0][0]).toBe(retained);
+      const liveScene = surface.updateActors.mock.calls.slice(-1)[0][0];
+      expect(liveScene.byAddress.get(mobile.address).px).not.toBe(first.px);
+      expect(liveScene.byAddress.get(node.address)).toEqual(expect.objectContaining({ entities: 2, ice: 1, active: true }));
       expect(layout).toHaveBeenCalledTimes(1);
-      expect(panel.container.querySelector('[data-net-dynamic-node="MOBILE"]').getAttribute('transform')).not.toBe(before);
       act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...initial, structure_revision: 3, state_revision: 3,
         static_revision: 2, nodes: [peer, mobile], edges: [] } } })));
       panel.rerender(<StationMap />);
-      expect(paint.mock.calls.length).toBeGreaterThan(initialPaints);
-    } finally {
-      paint.mockRestore(); context.mockRestore(); layout.mockRestore();
-      Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: originalFrame });
-    }
+      const replaced = surface.updateScene.mock.calls.slice(-1)[0][0];
+      expect(replaced).not.toBe(retained);
+      expect(replaced.byAddress.has(node.address)).toBe(false);
+    } finally { layout.mockRestore(); }
   });
 
   test('sector/floor controls and relay destinations send explicit geographic actions', () => {
@@ -251,24 +267,7 @@ describe('Netrun terminal panels', () => {
     layout.mockRestore();
   });
 
-  test('dragging paints the newly exposed map before releasing the pointer', () => {
-    // A large scene uses viewport-only previews while the pointer moves.
-    // This guards against the old CSS-only pan that left blank map strips.
-    const paint = jest.spyOn(GraphRenderer.prototype, 'paint').mockImplementation(() => undefined);
-    const preview = jest.spyOn(GraphRenderer.prototype, 'paintPreview').mockImplementation(() => undefined);
-    const chunks = jest.spyOn(GraphRenderer.prototype, 'paintChunks').mockImplementation(function* () { yield; });
-    const context = jest.spyOn(HTMLCanvasElement.prototype, 'getContext')
-      .mockReturnValue({ drawImage: jest.fn(), setTransform: jest.fn() } as unknown as CanvasRenderingContext2D);
-    const originalFrame = window.requestAnimationFrame;
-    const originalCancel = window.cancelAnimationFrame;
-    const callbacks: FrameRequestCallback[] = [];
-    Object.defineProperty(window, 'requestAnimationFrame', { configurable: true,
-      value: (callback: FrameRequestCallback) => { callbacks.push(callback); return callbacks.length; } });
-    Object.defineProperty(window, 'cancelAnimationFrame', { configurable: true, value: jest.fn() });
-    const flush = () => {
-      const callback = callbacks.shift();
-      if (callback) { act(() => callback(0)); }
-    };
+  test('dragging updates the Pixi camera before releasing the pointer without rebuilding geometry', async () => {
     const originalPointer = window.PointerEvent;
     Object.defineProperty(window, 'PointerEvent', { value: MouseEvent, configurable: true });
     try {
@@ -277,36 +276,32 @@ describe('Netrun terminal panels', () => {
       }));
       setup({ map: { gateways: [], focus: node.address, revision: 1, nodes: [node, ...many], edges: [] } });
       const panel = render(<StationMap />);
-      // Flush startup's staged background without measuring implementation details.
-      for (let i = 0; i < 5 && callbacks.length; i++) { flush(); }
+      const surface = await surfaceReady();
+      const geometry = surface.updateScene.mock.calls.slice(-1)[0][0];
+      const initial = { ...surface.updateCamera.mock.calls.slice(-1)[0][0] };
       const viewport = panel.getByLabelText('Карта сети');
       fireEvent.pointerDown(viewport, { clientX: 100, clientY: 100, button: 0 });
       fireEvent.pointerMove(viewport, { clientX: 220, clientY: 170 });
-      expect(preview).not.toHaveBeenCalled();
-      flush();
-      expect(preview).toHaveBeenCalledTimes(1);
+      expect(surface.updateCamera.mock.calls.slice(-1)[0][0]).toEqual(expect.objectContaining({ x: initial.x + 120, y: initial.y + 70 }));
       fireEvent.pointerMove(viewport, { clientX: 260, clientY: 180 });
-      flush();
-      expect(preview).toHaveBeenCalledTimes(2);
+      expect(surface.updateCamera.mock.calls.slice(-1)[0][0]).toEqual(expect.objectContaining({ x: initial.x + 160, y: initial.y + 80 }));
+      expect(surface.updateScene.mock.calls.slice(-1)[0][0]).toBe(geometry);
       fireEvent.pointerUp(viewport, { clientX: 260, clientY: 180 });
-      // Full-quality render is queued only after the drag has finished.
-      expect(callbacks.length).toBeGreaterThan(0);
       panel.unmount();
+      expect(surface.destroy).toHaveBeenCalledTimes(1);
     } finally {
-      paint.mockRestore(); preview.mockRestore(); chunks.mockRestore(); context.mockRestore();
       Object.defineProperty(window, 'PointerEvent', { configurable: true, value: originalPointer });
-      Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: originalFrame });
-      Object.defineProperty(window, 'cancelAnimationFrame', { configurable: true, value: originalCancel });
     }
   });
 
-  test('manual pan is preserved when a later structural update arrives', () => {
+  test('manual pan is preserved when a later structural update arrives', async () => {
     const originalPointer = window.PointerEvent;
     Object.defineProperty(window, 'PointerEvent', { value: MouseEvent, configurable: true });
     const fit = jest.spyOn(GraphViewport.prototype, 'fit');
     const topic = setup();
     const { getByText, getByLabelText, rerender } = render(<StationMap />);
     const viewport = getByLabelText('Карта сети');
+    await surfaceReady();
     fireEvent.pointerDown(viewport, { clientX: 100, clientY: 100, button: 0 });
     fireEvent.pointerMove(viewport, { clientX: 150, clientY: 150 });
     fireEvent.pointerUp(viewport, { clientX: 150, clientY: 150 });
@@ -410,7 +405,7 @@ describe('Netrun terminal panels', () => {
     expect(sent(topic, 'recover_salvage')).toEqual([{ uid: 'salvage-1' }]);
   });
 
-  test('stored route generations update status and overlay without recomputing graph geometry', () => {
+  test('stored route generations update status and overlay without recomputing graph geometry', async () => {
     const layout = jest.spyOn(mapGeometry, 'layoutGraph');
     const topic = setup();
     const map = topic.store.getState().backend.data.map;
@@ -418,7 +413,8 @@ describe('Netrun terminal panels', () => {
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, route } } })));
     const { container, getByText, getByTitle, rerender } = render(<StationMap />);
     expect(getByText('Путь: 1 пер. · 300 мс')).toBeTruthy();
-    expect(container.querySelector('canvas[data-net-canvas]')).not.toBeNull();
+    await surfaceReady();
+    expect(container.querySelector('canvas[data-net-pixi]')).not.toBeNull();
     expect(layout).toHaveBeenCalledTimes(1);
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, route: { ...route, revision: 8, latency: 400 } } } })));
     rerender(<StationMap />);
@@ -428,11 +424,13 @@ describe('Netrun terminal panels', () => {
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, route: { ...route, revision: 9, reachable: false } } } })));
     rerender(<StationMap />);
     expect(getByText('Путь: нет связи')).toBeTruthy();
-    expect(container.querySelectorAll('canvas[data-net-canvas]')).toHaveLength(1);
+    await surfaceReady();
+    expect(container.querySelectorAll('canvas[data-net-pixi]')).toHaveLength(1);
+    expect(container.querySelector('[data-net-canvas]')).toBeNull();
     layout.mockRestore();
   });
 
-  test('a stored path never draws a shortcut across missing intermediate vertices', () => {
+  test('a stored path never draws a shortcut across missing intermediate vertices', async () => {
     const topic = setup();
     const map = topic.store.getState().backend.data.map;
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...map, route: {
@@ -440,7 +438,9 @@ describe('Netrun terminal panels', () => {
     } } } })));
     const { container, getByText } = render(<StationMap />);
     expect(getByText('Путь: 2 пер. · 500 мс')).toBeTruthy();
-    expect(container.querySelectorAll('canvas[data-net-canvas]')).toHaveLength(1);
+    await surfaceReady();
+    expect(container.querySelectorAll('canvas[data-net-pixi]')).toHaveLength(1);
+    expect(container.querySelector('[data-net-canvas]')).toBeNull();
   });
 
   test('log polling reuses layout and a suspended map does not inspect replacement payloads', () => {
@@ -476,7 +476,7 @@ describe('Netrun terminal panels', () => {
     const map = container.querySelector<HTMLElement>('[data-net-layout="map"]');
     expect(workspace.style.flex).toContain('1 1');
     expect(map.style.height).toBe('100%');
-    expect(container.querySelector<HTMLElement>('[aria-label="Карта сети"]').style.flex).toContain('1 1');
+    expect(container.querySelector<HTMLElement>('[aria-label="Карта сети"]').classList.contains('netrun-viewport')).toBe(true);
     const files = container.querySelector<HTMLElement>('[data-net-files="remote"]');
     expect(files.style.overflowY).toBe('auto');
     const rows = [...files.querySelectorAll<HTMLElement>('[data-net-file-row]')];
@@ -514,13 +514,15 @@ describe('Netrun terminal panels', () => {
     expect(getByText('2/2 · текущий этаж')).toBeTruthy();
   });
 
-  test('large network renders with a single Canvas, regardless of number of vertices', () => {
+  test('large network uses one Pixi surface with no legacy map renderer or DOM per vertex', async () => {
     const large = Array.from({ length: 1100 }, (_, i) => ({ ...node, address: `CLIENT-${i}`, type: 'camera', uplink: node.address }));
     const edges = large.map((n) => ({ id: n.address, from: n.address, to: node.address, kind: 'endpoint' as const }));
     setup({ map: { gateways: [], focus: node.address, revision: 1, nodes: [node, ...large], edges } });
     const { container, getByText } = render(<StationMap />);
     expect(getByText('1101/1101 · текущий этаж')).toBeTruthy();
-    expect(container.querySelectorAll('canvas[data-net-canvas]')).toHaveLength(1);
+    await surfaceReady();
+    expect(container.querySelectorAll('canvas[data-net-pixi]')).toHaveLength(1);
+    expect(container.querySelector('[data-net-canvas]')).toBeNull();
     expect(container.querySelectorAll('[data-net-node]')).toHaveLength(0);
     expect(container.querySelectorAll('[data-net-edge]')).toHaveLength(0);
   });

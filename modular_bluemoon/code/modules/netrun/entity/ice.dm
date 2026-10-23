@@ -12,6 +12,7 @@
  */
 /datum/netrun_ice
 	var/last_netrun_tick = 0 // scheduler
+	var/datum/netrun_ice_reaction/reaction
 	var/name = "ICE"
 	var/datum/component/netrun_node/node
 	var/kind = NETRUN_ICE_SENTRY
@@ -43,6 +44,7 @@
 
 /datum/netrun_ice/New(datum/component/netrun_node/start, ice_kind)
 	last_netrun_tick = world.time
+	reaction = new(src)
 	if(ice_kind)
 		kind = ice_kind
 	if(kind == NETRUN_ICE_HUNTER)
@@ -58,6 +60,7 @@
 		anchor_ref = WEAKREF(start)
 
 /datum/netrun_ice/Destroy()
+	QDEL_NULL(reaction)
 	cancel_program()
 	SSnetrun.ice_processes -= src
 	SSnetrun.task_scheduler?.cancel("ice", src)
@@ -76,6 +79,8 @@
 	LAZYADD(new_node.netrun_ice, src)
 	new_node.notify_changed(NETRUN_CHANGED_OCCUPANTS)
 	SEND_SIGNAL(src, COMSIG_NETRUN_ICE_NODE_CHANGED, null, new_node)
+	if(length(new_node.entities))
+		reaction.wake()
 	return TRUE
 
 /datum/netrun_ice/proc/leave_node()
@@ -141,11 +146,13 @@
 		destroyed(attacker)
 	else
 		SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
+		reaction.wake()
 
 /datum/netrun_ice/proc/apply_stun(duration)
 	combat_stun_until = max(combat_stun_until, world.time + duration)
 	cancel_program()
 	SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
+	reaction.wake()
 
 /datum/netrun_ice/proc/apply_shield(pct, duration)
 	combat_shield_until = world.time + duration
@@ -259,7 +266,7 @@
 /// Нарушитель в узле: сущность без легального доступа ПОЛЬЗОВАТЕЛЯ к узлу.
 /datum/netrun_ice/proc/find_intruder(datum/component/netrun_node/where)
 	var/mob/camera/netrun_entity/enemy = enemy_ref?.resolve()
-	if(!QDELETED(enemy) && enemy.host_node == where)
+	if(!QDELETED(enemy) && enemy.host_node == where && world.time >= enemy.combat_ignore_until)
 		return enemy
 	var/mob/camera/netrun_entity/best
 	var/best_integrity = INFINITY
@@ -304,7 +311,7 @@
 		return FALSE
 	pending_program = program
 	pending_target_ref = WEAKREF(target)
-	attack_at = world.time + program.windup
+	attack_at = world.time + max(NETRUN_ICE_MIN_TELEGRAPH, program.windup)
 	program_cd[program.id] = attack_at + program.cooldown
 	var/datum/netrun_console/victim
 	if(istype(target, /mob/camera/netrun_entity))
@@ -317,9 +324,12 @@
 	SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
 	victim?.log_line("[name] готовит [program.name], срабатывание через [program.windup / (1 SECONDS)] с.", "bad")
 	node.add_log("[name]: подготовка [program.name].")
+	reaction.schedule_at(attack_at)
+	victim?.finish_user_action()
 	return TRUE
 
 /datum/netrun_ice/proc/cancel_program()
+	reaction?.clear_timer()
 	var/had_program = !!pending_program
 	pending_program = null
 	pending_target_ref = null
@@ -340,10 +350,14 @@
 	cancel_program()
 	next_attack = world.time + 0.5 SECONDS
 	netrun_apply_program(program, target, null, damage_factor)
+	if(istype(target, /datum/netrun_console))
+		var/datum/netrun_console/victim = target
+		victim.finish_user_action()
 	SSnetrun.post_event("intrusion", null, node?.address)
 	if(!QDELETED(target) && istype(target, /mob/camera/netrun_entity))
 		var/mob/camera/netrun_entity/entity = target
 		entity.console?.log_line("[name]: сработала [program.name].", "bad")
+		entity.console?.finish_user_action()
 
 /// Сторож без прямой цели давит на тех, кто ломает его узел или сеть.
 /datum/netrun_ice/proc/harass_intruders()

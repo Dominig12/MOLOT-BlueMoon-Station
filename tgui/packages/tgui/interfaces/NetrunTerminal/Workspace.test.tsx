@@ -4,7 +4,21 @@ import { combineReducers, createStore, setGlobalStore } from 'common/redux';
 import { backendReducer, backendUpdate } from '../../backend';
 import { debugReducer } from '../../debug';
 import { NetrunContent } from './Content';
+import { mountNetrunPixi } from './pixiSurface';
+import type { MockPixiSurface } from './testSupport/pixiSurfaceMock';
 import { MatrixState, NetrunData, WorkspaceView } from './types';
+
+jest.mock('./pixiSurface', () => ({
+  mountNetrunPixi: jest.fn(async (host: HTMLElement) =>
+    jest.requireActual('./testSupport/pixiSurfaceMock').makePixiSurfaceMock(host)),
+}));
+
+beforeEach(() => jest.mocked(mountNetrunPixi).mockImplementation(async (host) =>
+  jest.requireActual('./testSupport/pixiSurfaceMock').makePixiSurfaceMock(host)));
+afterEach(async () => {
+  await act(async () => {});
+  jest.restoreAllMocks();
+});
 
 const node = {
   address: 'TEST:0001', name: 'Сервер теста', type: 'server', x: 0, y: 0,
@@ -48,7 +62,7 @@ const setup = (overrides: Partial<NetrunData> = {}) => {
 
 const actions = (topic, action: string) => topic.mock.calls
   .filter((call) => call[0]?.type === `act/${action}`)
-  .map((call) => JSON.parse(call[0].payload));
+  .map((call) => { const { _netrun_action: _receipt, ...payload } = JSON.parse(call[0].payload); return payload; });
 
 describe('Netrun workspace pages', () => {
   let actionTime = Date.now();
@@ -64,7 +78,7 @@ describe('Netrun workspace pages', () => {
     expect(page('map').style.display).toBe('none');
     expect(page('files').style.display).toBe('none');
     expect(panel.container.querySelector('[data-net-layout="bottom"]')).toBeNull();
-    expect(panel.container.querySelector('canvas[data-net-canvas]')).toBeNull();
+    expect(panel.container.querySelector('[data-net-pixi]')).toBeNull();
     fireEvent.click(panel.getByText('Файлы'));
     expect(panel.getByRole('tabpanel', { name: 'Файлы' })).toBeTruthy();
     expect(page('terminal').style.display).toBe('none');
@@ -86,7 +100,7 @@ describe('Netrun workspace pages', () => {
     expect(actions(topic, 'workspace_view')).toEqual([{ page: 'terminal' }]);
   });
 
-  test('navigation preserves the command line, file draft, map filters and canvas instance', () => {
+  test('navigation preserves the command line, file draft, map filters and viewport instance', () => {
     const { panel, page, update } = setup();
     const cli = panel.getByPlaceholderText('help — список команд · ↑ история · Tab дополнение') as HTMLInputElement;
     fireEvent.change(cli, { target: { value: 'ping unfinished' } });
@@ -97,11 +111,12 @@ describe('Netrun workspace pages', () => {
     fireEvent.click(panel.getByText('Карта'));
     const search = panel.getByPlaceholderText('поиск узла…') as HTMLInputElement;
     fireEvent.input(search, { target: { value: 'Сервер' } });
-    const canvas = page('map').querySelector('canvas');
+    const viewport = page('map').querySelector('[data-net-viewport]');
+    expect(viewport).not.toBeNull();
     fireEvent.click(panel.getByText('Терминал'));
     update({ workspace_view: 'terminal', map: null, selected: null });
     expect(cli.value).toBe('ping unfinished');
-    expect(page('map').querySelector('canvas')).toBe(canvas);
+    expect(page('map').querySelector('[data-net-viewport]')).toBe(viewport);
     fireEvent.click(panel.getByText('Файлы'));
     expect(page('files').querySelector('textarea')).toBe(editor);
     expect(editor.value).toBe('Несохранённый документ');
@@ -112,7 +127,8 @@ describe('Netrun workspace pages', () => {
 
   test('opening a map node switches to pinned nodes and closing it keeps that page open', () => {
     const { panel, page, update, topic } = setup({ workspace_view: 'map' });
-    const canvas = page('map').querySelector('canvas');
+    const viewport = page('map').querySelector('[data-net-viewport]');
+    expect(viewport).not.toBeNull();
     fireEvent.click(panel.getByText('Показать информацию об узле'));
     fireEvent.click(within(page('map')).getByText('Закрепить'));
     expect(actions(topic, 'window_open')).toEqual([{ address: node.address }]);
@@ -120,14 +136,32 @@ describe('Netrun workspace pages', () => {
       windows: [{ address: node.address, title: node.name, type: node.type, online: true }] });
     expect(panel.getByRole('tabpanel', { name: 'Закреплённые узлы' })).toBeTruthy();
     expect(within(page('pinned')).getByText('Состояние закреплённого сервера')).toBeTruthy();
-    expect(page('map').querySelector('canvas')).toBe(canvas);
+    expect(page('map').querySelector('[data-net-viewport]')).toBe(viewport);
     fireEvent.click(panel.getByTitle(`Закрыть закреплённый узел ${node.name}`));
     expect(actions(topic, 'window_close')).toEqual([{ address: node.address }]);
     update({ workspace_view: 'pinned', window: null, windows: [] });
     expect(panel.getByRole('tabpanel', { name: 'Закреплённые узлы' })).toBeTruthy();
     expect(within(page('pinned')).getByText(/Закреплённых узлов нет/)).toBeTruthy();
     fireEvent.click(panel.getByText('Карта'));
-    expect(page('map').querySelector('canvas')).toBe(canvas);
+    expect(page('map').querySelector('[data-net-viewport]')).toBe(viewport);
+  });
+
+  test('workspace navigation retains the initialized Pixi surface and pauses hidden rendering', async () => {
+    const { panel, update } = setup({ workspace_view: 'map' });
+    await act(async () => {});
+    const result = jest.mocked(mountNetrunPixi).mock.results.slice(-1)[0];
+    expect(result).toBeTruthy();
+    const surface = await result.value as MockPixiSurface;
+    const element = surface.element;
+    expect(panel.container.querySelector('[data-net-pixi]')).toBe(element);
+    fireEvent.click(panel.getByRole('tab', { name: 'Файлы' }));
+    update({ workspace_view: 'files', map: null, selected: null });
+    expect(surface.setSuspended).toHaveBeenLastCalledWith(true);
+    expect(surface.destroy).not.toHaveBeenCalled();
+    fireEvent.click(panel.getByRole('tab', { name: 'Карта' }));
+    expect(surface.setSuspended).toHaveBeenLastCalledWith(false);
+    expect(jest.mocked(mountNetrunPixi)).toHaveBeenCalledTimes(1);
+    expect(panel.container.querySelector('[data-net-pixi]')).toBe(element);
   });
 
   test('an active breach has its own page while files and map retain their state', () => {

@@ -1,6 +1,6 @@
-import { useBackend } from '../../backend';
 import { Button } from '../../components';
 import { NetrunData } from './types';
+import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 export const AutoBreachButton = (props: { kind: 'node' | 'network'; id: string; disabled?: boolean }) => {
   const { act, data } = useBackend<NetrunData>();

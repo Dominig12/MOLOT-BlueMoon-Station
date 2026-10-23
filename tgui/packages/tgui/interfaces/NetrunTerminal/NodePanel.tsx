@@ -1,6 +1,5 @@
 import { useRef } from 'react';
 
-import { useBackend } from '../../backend';
 import { Box, Button, Icon, LabeledList, Section } from '../../components';
 import { AutoBreachButton } from './AutoBreachButton';
 import { CommandList } from './CommandList';
@@ -12,6 +11,7 @@ import {
   NODE_ICONS,
   THEME,
 } from './types';
+import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 export const NodePanel = () => {
   const { act, data } = useBackend<NetrunData>();
