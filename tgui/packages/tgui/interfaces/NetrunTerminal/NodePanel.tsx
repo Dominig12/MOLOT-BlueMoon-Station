@@ -26,7 +26,7 @@ export const NodePanel = () => {
       entity: data.entity, waypoint: data.waypoint,
     };
   }
-  const pending = !data.map || data.workspace_view !== 'map';
+  const pending = !data.map || (data.workspace_view !== undefined && data.workspace_view !== 'map');
   const display = pending && confirmed.current ? confirmed.current : data;
   const { selected, can_breach, breach, networks, selected_network } = display;
   if (!selected && selected_network) {

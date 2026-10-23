@@ -264,6 +264,27 @@
 		entry["source_node"] = ice.node?.address
 		. += list(entry)
 
+/// Observation is a subscription, not a countdown: idle observed ICE must not
+/// force permanent UI polling after the first encounter. Cast start/end emits signals.
+/datum/netrun_combat_context/proc/needs_live_refresh()
+	var/datum/self = console.combat_self()
+	for(var/id in observed_ice)
+		var/datum/weakref/reference = observed_ice[id]
+		var/datum/netrun_ice/ice = reference.resolve()
+		if(QDELETED(ice) || !ice.pending_program)
+			continue
+		var/datum/target = ice.pending_target()
+		if(target == console || (self && target == self))
+			return TRUE
+	if(console.workspace_view != "combat")
+		return FALSE
+	if(next_program > world.time)
+		return TRUE
+	for(var/id in program_cd)
+		if(program_cd[id] > world.time)
+			return TRUE
+	return FALSE
+
 /// Only the cross-tab warning is needed until the user opens the combat workspace.
 /// Do not compute routes, target permissions or load every program file on a puzzle tick.
 /datum/netrun_combat_context/proc/status_payload()

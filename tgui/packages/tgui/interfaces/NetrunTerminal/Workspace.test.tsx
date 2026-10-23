@@ -149,25 +149,52 @@ describe('Netrun workspace pages', () => {
     expect(editor.value).toBe('Сохранить после взлома');
   });
 
-  test('incoming ICE casts never insert a top banner or move the active workspace', () => {
+  test('incoming ICE casts use the reserved status row without moving tools or stealing focus', () => {
     const { panel, page, update, topic } = setup({ workspace_view: 'files' });
     fireEvent.click(within(page('files')).getByText('Новый текстовый файл'));
     const editor = page('files').querySelector('textarea');
     fireEvent.change(editor, { target: { value: 'Не терять фокус' } });
     const workspace = panel.container.querySelector('[data-net-layout="workspace"]');
-    const combatTab = panel.getByText('Бой').closest('[role="tab"]');
+    const status = panel.container.querySelector<HTMLElement>('[data-net-layout="status"]');
+    const statusHeight = status.style.height;
+    const combatTab = panel.getByRole('tab', { name: 'Бой' });
+    editor.focus();
     update({ combat: { node: null, node_name: null, self: null, targets: [], programs: [],
       incoming: [{ source: 'ICE-SENTRY', source_ref: 'ice-1', name: 'trace.exe', role: 'trace', power: 6, remaining: 3 }] } });
     expect(panel.getByRole('tabpanel', { name: 'Файлы' })).toBeTruthy();
-    expect(panel.queryByRole('alert')).toBeNull();
+    expect(panel.getByRole('alert').textContent).toContain('ICE-SENTRY готовит trace.exe');
+    expect(panel.container.querySelector('[data-net-layout="status"]')).toBe(status);
+    expect(status.style.height).toBe(statusHeight);
+    expect(document.activeElement).toBe(editor);
     expect(panel.container.querySelector('[data-net-layout="workspace"]')).toBe(workspace);
-    expect(panel.getByText('Бой !').closest('[role="tab"]')).toBe(combatTab);
+    expect(panel.getByRole('tab', { name: 'Бой' })).toBe(combatTab);
+    expect(within(combatTab).getByLabelText('Входящих атак: 1')).toBeTruthy();
     expect(editor.value).toBe('Не терять фокус');
     fireEvent.click(panel.getByText('Бой'));
     expect(panel.getByRole('tabpanel', { name: 'Бой' })).toBeTruthy();
-    expect(panel.getByText(/ICE-SENTRY готовит trace.exe/)).toBeTruthy();
+    expect(within(page('combat')).getByText(/ICE-SENTRY готовит trace.exe/)).toBeTruthy();
     expect(actions(topic, 'workspace_view').slice(-1)[0]).toEqual({ page: 'combat' });
     expect(editor.value).toBe('Не терять фокус');
+  });
+
+  test('the active automatic route can be cancelled from any workspace', () => {
+    const { panel, topic, update } = setup({ workspace_view: 'files',
+      entity: { name: 'Runner', integrity: 100, max_integrity: 100, host: node.address,
+        host_name: node.name, diving: true, travel: { target: 'TARGET', remaining: 3 } } });
+    expect(panel.getByText('Автопроход к TARGET · осталось переходов: 3')).toBeTruthy();
+    fireEvent.click(panel.getByLabelText('Остановить автопроход'));
+    expect(actions(topic, 'travel_cancel')).toEqual([{}]);
+    update({ entity: { name: 'Runner', integrity: 100, max_integrity: 100, host: node.address,
+      host_name: node.name, diving: true, travel: null } });
+    expect(panel.queryByLabelText('Остановить автопроход')).toBeNull();
+  });
+
+  test('workspace tabs support keyboard activation', () => {
+    const { panel, topic } = setup();
+    fireEvent.keyDown(panel.getByRole('tab', { name: 'Файлы' }), { key: 'Enter' });
+    expect(panel.getByRole('tabpanel', { name: 'Файлы' })).toBeTruthy();
+    expect(panel.getByRole('tab', { name: 'Файлы' }).getAttribute('aria-selected')).toBe('true');
+    expect(actions(topic, 'workspace_view')).toEqual([{ page: 'files' }]);
   });
 
   test('terminal chat is a subtab and WEB switches without closing pinned nodes', () => {
@@ -200,11 +227,11 @@ test('a tab switch retains the last confirmed route and node panel until map dat
   update({ workspace_view: 'terminal', map: null, selected: null, entity: null });
   fireEvent.click(panel.getByText('Карта'));
   expect(within(page('map')).getByText(/Путь: 0 пер/)).toBeTruthy();
-  const cachedHop = within(page('map')).getByText('Перейти в узел').closest('button') as HTMLButtonElement;
-  expect(cachedHop.disabled).toBe(true);
+  const cachedHop = within(page('map')).getByText('Перейти в узел').closest('.Button');
+  expect(cachedHop.classList.contains('Button--disabled')).toBe(true);
   update({ workspace_view: 'map', map: { ...renderedMap, route: { ...renderedMap.route, hops: 1, latency: 50 } }, selected, entity });
   expect(within(page('map')).getByText(/Путь: 1 пер/)).toBeTruthy();
-  expect((within(page('map')).getByText('Перейти в узел').closest('button') as HTMLButtonElement).disabled).toBe(false);
+  expect(within(page('map')).getByText('Перейти в узел').closest('.Button').classList.contains('Button--disabled')).toBe(false);
 });
 
 test('a pinned window reappears immediately from the cache then respects authoritative closure', () => {

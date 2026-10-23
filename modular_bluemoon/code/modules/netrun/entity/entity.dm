@@ -13,8 +13,8 @@
 	var/integrity = 100
 	var/max_integrity = 100
 	var/next_hop = 0
-	/// Очередь адресов автопрохода (travel_to): шагаем по ней по таймеру.
-	var/list/travel_queue
+	/// Owns the route and its single cancellable timer.
+	var/datum/netrun_entity_navigation/navigation
 	// Боевые состояния
 	var/combat_stun_until = 0
 	var/combat_shield_until = 0
@@ -29,6 +29,7 @@
 	. = ..()
 	dive_link = new(src)
 	console = new(src, NETRUN_ORIGIN_ENTITY)
+	navigation = new(src)
 	RegisterSignal(src, COMSIG_MOB_ALLOWED, PROC_REF(on_credential_access_check))
 	SSnetrun.entities += src
 	console_action = new
@@ -42,6 +43,7 @@
 
 /mob/camera/netrun_entity/Destroy()
 	SSnetrun.entities -= src
+	QDEL_NULL(navigation)
 	leave_node()
 	QDEL_NULL(console)
 	QDEL_NULL(console_action)
@@ -68,9 +70,11 @@
 
 // MARK: Узлы
 
-/mob/camera/netrun_entity/proc/enter_node(datum/component/netrun_node/node)
+/mob/camera/netrun_entity/proc/enter_node(datum/component/netrun_node/node, following_route = FALSE)
 	if(!node)
 		return FALSE
+	if(!following_route)
+		navigation?.cancel()
 	leave_node()
 	host_node = node
 	LAZYADD(node.entities, src)
@@ -131,11 +135,13 @@
 		return "Переход невозможен: узел не является прямым соседом или связь с ним недоступна."
 	return "Переход невозможен: нужен доступ ПОЛЬЗОВАТЕЛЯ к узлу или ключ его ЛВС."
 
-/mob/camera/netrun_entity/proc/hop(datum/component/netrun_node/node)
+/mob/camera/netrun_entity/proc/hop(datum/component/netrun_node/node, following_route = FALSE)
+	if(!following_route)
+		navigation?.cancel()
 	if(world.time < next_hop || is_stunned() || !can_enter(node))
 		return FALSE
 	next_hop = world.time + 1 SECONDS
-	enter_node(node)
+	enter_node(node, following_route)
 	return TRUE
 
 /// A gateway transition is an ordinary authorized hop between two operational relays.
@@ -151,60 +157,11 @@
 
 /// Путь из соседних узлов, в каждый из которых процесс может войти (online + USER/ключ).
 /mob/camera/netrun_entity/proc/enterable_path(datum/component/netrun_node/target)
-	if(QDELETED(target) || !host_node)
-		return list()
-	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	var/list/visited = list()
-	visited[host_node.address] = TRUE
-	var/list/came_from = list()
-	var/list/queue = list(host_node.address)
-	for(var/i = 1, i <= length(queue) && i <= 200, i++)
-		var/address = queue[i]
-		if(address == target.address)
-			var/list/path = list()
-			var/cursor = address
-			while(cursor && cursor != host_node.address)
-				path.Insert(1, cursor)
-				cursor = came_from[cursor]
-			return path
-		var/datum/component/netrun_node/current = graph.nodes[address]
-		for(var/neighbor in graph.neighbors(address))
-			if(visited[neighbor])
-				continue
-			var/datum/component/netrun_node/node = graph.nodes[neighbor]
-			if(QDELETED(node) || !netrun_link_available(current, node) || !node.is_online())
-				continue
-			if(console.node_level(node) < NETRUN_ACCESS_USER && !console.has_key(node.network, TRUE))
-				continue
-			visited[neighbor] = TRUE
-			came_from[neighbor] = address
-			queue += neighbor
-	return list()
+	return navigation.path_to(target)
 
 /// Автопроход по уже открытому пути: шаг за шагом к выбранному узлу.
 /mob/camera/netrun_entity/proc/travel_to(datum/component/netrun_node/target)
-	if(QDELETED(target) || target == host_node || !host_node || console.is_locked())
-		return FALSE
-	var/list/path = enterable_path(target)
-	if(!length(path))
-		return FALSE
-	travel_queue = path
-	travel_step()
-	return TRUE
-
-/mob/camera/netrun_entity/proc/travel_step()
-	if(!length(travel_queue) || QDELETED(src))
-		return
-	var/datum/component/netrun_node/next = SSnetrun.find_node(travel_queue[1])
-	travel_queue.Cut(1, 2)
-	if(!hop(next))
-		travel_queue = null
-		to_chat(src, span_warning("Автопроход прерван: следующий узел недоступен."))
-		return
-	if(length(travel_queue))
-		addtimer(CALLBACK(src, PROC_REF(travel_step)), 1.1 SECONDS)
-	else
-		to_chat(src, span_notice("Автопроход завершён."))
+	return navigation.start(target)
 
 /mob/camera/netrun_entity/Move(NewLoc, direct)
 	// Перемещение по сети идёт по положению узлов НА КАРТЕ, а не по их физическим
@@ -352,6 +309,7 @@
 		update_vision()
 
 /mob/camera/netrun_entity/proc/host_lost()
+	navigation?.cancel()
 	var/datum/netrun_network/network = host_node?.network
 	leave_node()
 	if(QDELETED(src))
@@ -488,7 +446,7 @@
 	if(!entity)
 		return FALSE
 	// Integrity self-repair, stun/shield windows, hop cooldown and auto-travel all advance by time.
-	return entity.integrity < entity.max_integrity || entity.is_stunned() || world.time < entity.combat_shield_until || world.time < entity.next_hop || LAZYLEN(entity.travel_queue)
+	return entity.integrity < entity.max_integrity || entity.is_stunned() || world.time < entity.combat_shield_until || world.time < entity.next_hop || entity.navigation?.is_active()
 
 /datum/netrun_console/entity/process_tick(delta)
 	. = ..()
@@ -518,6 +476,10 @@
 			if(!entity.travel_to(SSnetrun.find_node(params["address"])))
 				log_line("Автопроход невозможен: нет открытого пути к узлу.", "bad")
 			return TRUE
+		if("travel_cancel")
+			entity.navigation.cancel()
+			log_line("Автопроход отменён.")
+			return TRUE
 		if("return")
 			entity.return_to_body()
 			return TRUE
@@ -534,6 +496,7 @@
 		"host" = entity.host_node?.address,
 		"host_name" = entity.host_node?.get_name(),
 		"diving" = !!entity.dive_link.body,
+		"travel" = entity.navigation.ui_payload(),
 	)
 
 /datum/action/innate/netrun_console

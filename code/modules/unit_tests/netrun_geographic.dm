@@ -26,7 +26,12 @@
 	var/area/room = scene.room(/area/netrun_route_test)
 	var/list/addresses = list()
 	var/list/ordered_nodes = list()
-	for(var/offset in list(0, 1, 2, 20, 21, 22))
+	var/component_size = max(2, NETRUN_APC_NEIGHBORS + 1)
+	var/list/offsets = list()
+	for(var/base in list(0, 20))
+		for(var/i in 0 to component_size - 1)
+			offsets += base + i
+	for(var/offset in offsets)
 		var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, scene.take(locate(origin.x + offset, origin.y, origin.z), room))
 		var/datum/component/netrun_node/node = apc.GetComponent(/datum/component/netrun_node)
 		ordered_nodes += node
@@ -34,12 +39,12 @@
 		graph.nodes[node.address] = node
 		graph.adjacency[node.address] = list()
 	graph.connect_apcs(sort_list(addresses))
-	var/datum/component/netrun_node/first_tip = ordered_nodes[3]
-	var/datum/component/netrun_node/second_tip = ordered_nodes[4]
-	TEST_ASSERT_EQUAL(length(graph.edges), 7, "Two three-APC neighbor triangles need exactly one additional bridge")
+	var/datum/component/netrun_node/first_tip = ordered_nodes[component_size]
+	var/datum/component/netrun_node/second_tip = ordered_nodes[component_size + 1]
+	TEST_ASSERT_EQUAL(length(graph.edges), component_size * (component_size - 1) + 1, "Two fully connected nearest-neighbor clusters need exactly one additional bridge")
 	TEST_ASSERT_NOTNULL(graph.edge_between(first_tip.address, second_tip.address), "The bridge must join the physically closest pair between disconnected clusters")
 	var/datum/netrun_path_tree/tree = allocate(/datum/netrun_path_tree, graph, ordered_nodes[1])
-	var/datum/component/netrun_node/last = ordered_nodes[6]
+	var/datum/component/netrun_node/last = ordered_nodes[2 * component_size]
 	TEST_ASSERT(tree.reached[last.address], "The shortest bridge must make both neighbor clusters routable")
 
 /// Weighted routing must prefer a three-edge cable chain to a longer two-edge detour.
@@ -48,7 +53,7 @@
 	var/datum/netrun_topology/graph = allocate(/datum/netrun_topology)
 	var/list/nodes = list()
 	for(var/offset in list(0, 1, 2, 3, 10))
-		var/obj/item/host = allocate(/obj/item, locate(origin.x + offset, origin.y, origin.z))
+		var/obj/item/host = allocate(/obj/item, locate(10 + offset * NETRUN_LINK_TILES_PER_DS, origin.y, origin.z))
 		var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
 		nodes += node
 		graph.nodes[node.address] = node
@@ -65,18 +70,18 @@
 	graph.add_edge(near_second.address, target.address, "apc")
 	var/datum/netrun_path_tree/tree = allocate(/datum/netrun_path_tree, graph, source)
 	var/list/expected = list(source.address, near_first.address, near_second.address, target.address)
-	TEST_ASSERT_EQUAL(tree.costs[target.address], 3, "Three one-tile links must cost three deciseconds")
+	TEST_ASSERT_EQUAL(tree.costs[target.address], 3, "Three links of NETRUN_LINK_TILES_PER_DS tiles must cost three deciseconds")
 	TEST_ASSERT_EQUAL(json_encode(tree.addresses_to(target.address)), json_encode(expected), "Routing must minimize physical latency rather than edge count")
 
 /// Moving a still-bound endpoint changes both live latency and the next cached table.
 /datum/unit_test/netrun_geographic_moving_cost/Run()
-	var/turf/origin = run_loc_floor_bottom_left
+	var/turf/origin = locate(20, 30, run_loc_floor_bottom_left.z)
 	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
 	var/area/room = scene.room(/area/netrun_route_test)
-	scene.take(origin, room)
-	var/turf/apc_spot = scene.take(get_step(origin, NORTH), room)
-	var/turf/near_spot = scene.take(get_step(origin, EAST), room)
-	var/turf/far_spot = scene.take(locate(origin.x + 10, origin.y, origin.z), room)
+	scene.take(origin, room, TRUE)
+	var/turf/apc_spot = scene.take(get_step(origin, NORTH), room, TRUE)
+	var/turf/near_spot = scene.take(get_step(origin, EAST), room, TRUE)
+	var/turf/far_spot = scene.take(locate(origin.x + 10 * NETRUN_LINK_TILES_PER_DS, origin.y, origin.z), room, TRUE)
 	scene.machine(/obj/machinery/power/apc, apc_spot)
 	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
 	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, near_spot)
@@ -99,7 +104,7 @@
 	TEST_ASSERT_EQUAL(source.console.latency_to(node), 11, "Live command and ping latency must use actual world distances")
 	TEST_ASSERT(after.geometry_revision > before.geometry_revision, "A changed physical cost must advance the table's geometry generation")
 	TEST_ASSERT_EQUAL(graph.route_revision, builds, "Moving a destination leaf must repair its cost without rebuilding any retained tree")
-	var/turf/source_spot = scene.take(locate(origin.x + 4, origin.y, origin.z), room)
+	var/turf/source_spot = scene.take(locate(origin.x + 4 * NETRUN_LINK_TILES_PER_DS, origin.y, origin.z), room, TRUE)
 	source.forceMove(source_spot)
 	var/datum/netrun_path_tree/moved_source = source.console.make_path_tree(TRUE)
 	allocated += moved_source
@@ -111,13 +116,13 @@
 
 /// Uniform relay gateways work within a sector without storing a quadratic clique.
 /datum/unit_test/netrun_geographic_relay_bucket/Run()
-	var/turf/origin = run_loc_floor_bottom_left
+	var/turf/origin = locate(20, 30, run_loc_floor_bottom_left.z)
 	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
 	var/area/room = scene.room(/area/netrun_route_test)
-	var/turf/first_spot = scene.take(origin, room)
-	var/turf/second_spot = scene.take(locate(origin.x + 12, origin.y, origin.z), room)
-	scene.machine(/obj/machinery/power/apc, scene.take(get_step(first_spot, NORTH), room))
-	scene.machine(/obj/machinery/power/apc, scene.take(get_step(second_spot, NORTH), room))
+	var/turf/first_spot = scene.take(origin, room, TRUE)
+	var/turf/second_spot = scene.take(locate(origin.x + 12 * NETRUN_LINK_TILES_PER_DS, origin.y, origin.z), room, TRUE)
+	scene.machine(/obj/machinery/power/apc, scene.take(get_step(first_spot, NORTH), room, TRUE))
+	scene.machine(/obj/machinery/power/apc, scene.take(get_step(second_spot, NORTH), room, TRUE))
 	var/obj/machinery/ntnet_relay/first = scene.machine(/obj/machinery/ntnet_relay, first_spot)
 	var/obj/machinery/ntnet_relay/second = scene.machine(/obj/machinery/ntnet_relay, second_spot)
 	var/datum/component/netrun_node/first_node = first.GetComponent(/datum/component/netrun_node)

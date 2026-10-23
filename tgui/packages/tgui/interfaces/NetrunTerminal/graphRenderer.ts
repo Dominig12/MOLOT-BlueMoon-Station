@@ -148,20 +148,10 @@ export class GraphRenderer {
       }
     }
     const groups = new Map<string, { edges: NetEdge[]; kind: string; online: boolean }>();
-    const seen = new Set<string>();
-    for (const node of visible) {
-      for (const edge of scene.incidentEdges.get(node.address) || []) {
-        if (seen.has(edge.id)) { continue; }
-        seen.add(edge.id);
-        const a = scene.byAddress.get(edge.from), b = scene.byAddress.get(edge.to);
-        if (!a || !b) { continue; }
-        const from = physicalPoint(a), to = physicalPoint(b);
-        if (Math.max(from.px, to.px) < left || Math.min(from.px, to.px) > right
-          || Math.max(from.py, to.py) < top || Math.min(from.py, to.py) > bottom) { continue; }
-        const key = edge.kind + ':' + String(edge.online !== false);
-        const group = groups.get(key) || { edges: [], kind: edge.kind, online: edge.online !== false };
-        group.edges.push(edge); groups.set(key, group);
-      }
+    for (const edge of scene.visibleEdges(left, top, right, bottom)) {
+      const key = edge.kind + ':' + String(edge.online !== false);
+      const group = groups.get(key) || { edges: [], kind: edge.kind, online: edge.online !== false };
+      group.edges.push(edge); groups.set(key, group);
     }
     for (const group of groups.values()) {
       ctx.beginPath();
@@ -204,7 +194,7 @@ export class GraphRenderer {
 
 
   /** Paint a large scene on a private canvas across several animation frames. */
-  *paintChunks(ctx: CanvasRenderingContext2D, scene: GraphScene, view: GraphViewport, base: GraphBase,
+  * paintChunks(ctx: CanvasRenderingContext2D, scene: GraphScene, view: GraphViewport, base: GraphBase,
     width: number, height: number, ratio: number, chunk = 192): Generator<void, void, unknown> {
     const { x, y, zoom } = view;
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);

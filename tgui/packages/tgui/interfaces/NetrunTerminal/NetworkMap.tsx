@@ -74,7 +74,11 @@ export const StationMap = (props: { suspended?: boolean } = {}) => {
       act('map_resync');
     }
   }, [props.suspended, stream.resyncToken, act]);
-  return latest.current ? <MapSnapshot input={latest.current} act={act} suspended={props.suspended} /> : null;
+  return latest.current ? <MapSnapshot input={latest.current} act={act} suspended={props.suspended} />
+    : props.suspended ? null : <Box p={1} role="status" color={THEME.muted}>
+      {stream.resyncToken ? 'Синхронизация карты после пропущенного обновления…' : 'Ожидание карты сети…'}
+      <Button compact ml={1} icon="rotate" content="Обновить карту" onClick={() => act('map_resync')} />
+                               </Box>;
 };
 
 const MapSnapshot = memo(({ input, act, suspended }: { input: MapInput; act: Act; suspended?: boolean }) => {
@@ -181,7 +185,9 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   }, [pendingCenter, selectedAddress, visibleIds]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement) { return; }
+    if (event.ctrlKey || event.altKey || event.metaKey || !(event.target instanceof Element)
+      || !event.target.closest('[data-net-viewport]')
+      || event.target.closest('input, textarea, button, select, [contenteditable="true"]')) { return; }
     const key = event.code?.startsWith('Key') ? event.code.slice(3).toLowerCase() : event.key.toLowerCase();
     const directions: Record<string, [number, number]> = { w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] };
     if (!directions[key]) { return; }
@@ -285,10 +291,17 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
           </Box>
           <Button compact icon="location-arrow" selected={waypoint?.address === result.address}
             tooltip="Проложить маршрут" onClick={() => act('set_waypoint', { address: result.address })} />
-          {result.visible && <Button compact icon="diagram-project" tooltip="Выбрать на карте" onClick={() => onSelect(result.address)} />}
+          {result.visible && <Button compact icon="diagram-project" tooltip="Выбрать на карте"
+            aria-label={`Выбрать узел ${result.name} на карте`} onClick={() => locate(result.address)} />}
                                  </Box>))}
                              </Box>}
-      {!nodes.length && <Box p={1} color={THEME.muted}>На этом этаже нет доступных узлов.</Box>}
+      {!nodes.length ? <Box p={1} color={THEME.muted}>На этом этаже нет доступных узлов.</Box>
+        : !visibleNodes.length && <Box p={1} color={THEME.muted}>
+          Все узлы скрыты фильтрами.
+          <Button compact ml={1} icon="filter-circle-xmark" content="Сбросить фильтры" onClick={() => {
+            setQuery(''); setSearchReset((value) => value + 1); setDisabledTypes({}); setFocusNearby(false);
+          }} />
+                                  </Box>}
       <GraphCanvas key={`${map.active_sector || ''}:${map.active_z ?? ''}`} ref={viewport} adjacency={adjacency} nodes={canvasNodes} edges={canvasEdges} positions={visiblePoints}
         actors={visibleNodes} dynamicEdges={dynamicEdges} suspended={suspended}
         gateways={gateways} selected={selectedAddress} jacked={jackAddress} focus={map.focus}

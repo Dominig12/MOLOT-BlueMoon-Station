@@ -142,7 +142,7 @@
 		TEST_ASSERT(!pairs[forward] && !pairs[backward], "An undirected APC edge must be published only once")
 		pairs[forward] = TRUE
 		edge_count++
-	TEST_ASSERT_EQUAL(edge_count, 5, "The fixture's two-nearest union must publish five distinct APC links")
+	TEST_ASSERT_EQUAL(edge_count, NETRUN_APC_NEIGHBORS >= 3 ? 6 : 5, "The nearest-neighbor union must publish the expected unique links at the configured neighbor count")
 	var/list/visited = list(addresses[1])
 	var/list/frontier = list(addresses[1])
 	while(length(frontier))
@@ -335,7 +335,7 @@
 	var/list/map = payload["map"]
 	var/list/selected_route = map["route"]
 	TEST_ASSERT(!selected_route["reachable"], "The map must publish the selected target's unreachable server route, rather than a fictitious direct path")
-	graph.route_used[source_node.address] = world.time - 3 * SSnetrun.wait
+	graph.route_used[source_node.address] = world.time - 3 SECONDS
 	graph.route_refresh_at = world.time
 	graph.refresh_route_tables()
 	TEST_ASSERT_NULL(graph.route_tables[source_node.address], "An inactive map's routing table must expire instead of doing BFS forever")
@@ -375,3 +375,183 @@
 	TEST_ASSERT_EQUAL(after.previous[target_node.address], second_node.address, "The saved route's final forwarding hop must be the new APC")
 	TEST_ASSERT_NOTNULL(graph.route_tables[source_node.address], "The changed path must remain stored on the server after the UI copy is released")
 
+/// Retained upstream background-build and registry regressions.
+/datum/unit_test/netrun_apc_prebuild_atomic/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/list/positions = list(get_step(origin, NORTH), get_step(origin, EAST), locate(origin.x + 5, origin.y + 1, origin.z), locate(origin.x + 6, origin.y + 1, origin.z))
+	for(var/turf/spot as anything in positions)
+		scene.take(spot, room)
+		scene.machine(/obj/machinery/power/apc, spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/previous_revision = graph.revision
+	var/previous_edges = json_encode(graph.edges)
+	graph.invalidate()
+	var/datum/netrun_apc_prebuild/job = allocate(/datum/netrun_apc_prebuild, graph)
+	var/progress = FALSE
+	for(var/i in 1 to 500)
+		if(job.advance(1))
+			progress = TRUE
+			break
+	TEST_ASSERT(progress, "APC build must finish in bounded slices")
+	TEST_ASSERT_EQUAL(graph.revision, previous_revision, "No partial revision is published")
+	TEST_ASSERT_EQUAL(json_encode(graph.edges), previous_edges, "The published graph is not modified")
+	graph.apc_prebuild = job
+	graph.rebuild()
+	TEST_ASSERT_EQUAL(json_encode(graph.edges), previous_edges, "Staged and synchronous candidate edges must match")
+	TEST_ASSERT_EQUAL(graph.revision, previous_revision + 1, "A single completed graph revision is published")
+
+/// Infrastructure changes cancel obsolete APC work; endpoint changes do not.
+/datum/unit_test/netrun_apc_prebuild_invalidated/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/second_spot = scene.take(get_step(origin, NORTH), room)
+	scene.machine(/obj/machinery/power/apc, origin)
+	scene.machine(/obj/machinery/power/apc, second_spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	graph.invalidate()
+	var/datum/netrun_apc_prebuild/job = allocate(/datum/netrun_apc_prebuild, graph)
+	graph.infrastructure_changed()
+	TEST_ASSERT(!job.valid_inputs(), "Old infrastructure generation cannot publish stale APC edges")
+	graph.rebuild()
+	TEST_ASSERT(!graph.dirty, "Immediate routing retains synchronous fallback")
+
+
+/// Every phase of candidate collection and union progresses with a one-operation budget.
+/datum/unit_test/netrun_apc_prebuild_small_slices/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	for(var/i in 1 to 8)
+		var/turf/spot = scene.take(locate(origin.x + i, origin.y + 1, origin.z), room)
+		scene.machine(/obj/machinery/power/apc, spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	graph.invalidate()
+	var/datum/netrun_apc_prebuild/job = allocate(/datum/netrun_apc_prebuild, graph)
+	var/finished = FALSE
+	for(var/i in 1 to 3000)
+		if(job.advance(1))
+			finished = TRUE
+			break
+	TEST_ASSERT(finished, "A one-step task budget must eventually complete all APC phases")
+	TEST_ASSERT_EQUAL(length(job.links_by_sector), length(job.sectors), "Every sector must produce a complete candidate table")
+	TEST_ASSERT_EQUAL(graph.dirty, TRUE, "Building all candidates must not publish the graph")
+	graph.apc_prebuild = job
+	graph.rebuild()
+	TEST_ASSERT(!graph.dirty, "Finished staged candidates must commit atomically")
+
+
+/// Compare an exact XY index against a complete pair-distance oracle.
+/datum/unit_test/netrun_apc_spatial_exact_neighbors/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/list/addresses = list()
+	var/list/positions = list()
+	for(var/i in 1 to 24)
+		var/address = "SPATIAL-[i]"
+		addresses += address
+		var/x = origin.x + (i * 7) % 31
+		var/y = origin.y + (i * 11) % 23
+		var/turf/position = locate(x, y, origin.z)
+		positions[address] = position || origin
+	var/datum/netrun_apc_spatial_index/spatial = allocate(/datum/netrun_apc_spatial_index, addresses, positions)
+	var/limit = max(1, NETRUN_APC_NEIGHBORS)
+	for(var/first_index in 1 to length(addresses))
+		var/first_address = addresses[first_index]
+		var/list/expected = list()
+		for(var/second_index in 1 to length(addresses))
+			if(first_index == second_index)
+				continue
+			var/second_address = addresses[second_index]
+			var/from_address = first_index < second_index ? first_address : second_address
+			var/to_address = first_index < second_index ? second_address : first_address
+			expected += list(list("from" = from_address, "to" = to_address,
+				"distance" = netrun_topology_distance(positions[first_address], positions[second_address])))
+		sortTim(expected, GLOBAL_PROC_REF(cmp_netrun_physical_edge))
+		if(length(expected) > limit)
+			expected.len = limit
+		TEST_ASSERT_EQUAL(json_encode(spatial.nearest_edges(first_address)), json_encode(expected),
+			"Spatial neighbors must exactly match exhaustive distance/order, including ties")
+
+/// Speculative spatial scans must finish across single-step advances without publishing.
+/datum/unit_test/netrun_apc_spatial_staged_neighbors/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	for(var/i in 1 to 12)
+		var/turf/spot = scene.take(locate(origin.x + (i * 7) % 25, origin.y + (i * 3) % 13, origin.z), room)
+		scene.machine(/obj/machinery/power/apc, spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/revision_before = graph.revision
+	graph.invalidate()
+	var/datum/netrun_apc_prebuild/job = allocate(/datum/netrun_apc_prebuild, graph)
+	var/finished = FALSE
+	for(var/i in 1 to 5000)
+		if(job.advance(1))
+			finished = TRUE
+			break
+	TEST_ASSERT(finished, "Spatial neighbor search must finish one task step at a time")
+	TEST_ASSERT_EQUAL(graph.revision, revision_before, "Background preparation must not publish partial graph data")
+	TEST_ASSERT(job.comparisons > 0, "The job must evaluate APC neighbor candidates")
+
+
+/// Node lifecycle events keep infrastructure indexes up-to-date without scanning endpoints.
+/datum/unit_test/netrun_topology_registry_signals/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/apc_spot = scene.take(get_step(origin, NORTH), room)
+	var/turf/destination = scene.take(get_step(origin, EAST), room)
+	var/datum/netrun_topology/graph = SSnetrun.get_topology()
+	var/before = graph.infrastructure_revision
+	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, apc_spot)
+	var/datum/component/netrun_node/node = apc.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT_EQUAL(graph.registered_apcs[node.address], node, "New APC must enter the subscribed infrastructure registry")
+	TEST_ASSERT(graph.infrastructure_revision > before, "Registration invalidates the infrastructure index")
+	graph.index_infrastructure()
+	TEST_ASSERT(node.address in graph.apcs_by_sector[netrun_sector_for(apc_spot)], "New APC is discoverable in its physical sector")
+	var/revision_before_move = graph.infrastructure_revision
+	apc.forceMove(destination)
+	TEST_ASSERT(graph.infrastructure_revision > revision_before_move, "APC movement invalidates index through its signal")
+	graph.index_infrastructure()
+	TEST_ASSERT(node.address in graph.apcs_by_sector[netrun_sector_for(destination)], "Moved APC remains indexed at its new location")
+	var/address = node.address
+	qdel(apc)
+	TEST_ASSERT(!graph.registered_apcs[address], "Removed APC must leave the infrastructure registry")
+	TEST_ASSERT(!(address in SSnetrun.nodes_by_address), "Removed APC must leave the address registry")
+
+/// An ordinary endpoint keeps its address without entering the APC/relay registries.
+/datum/unit_test/netrun_topology_registry_excludes_endpoints/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_topology/graph = SSnetrun.get_topology()
+	var/apc_count = length(graph.registered_apcs)
+	var/relay_count = length(graph.registered_relays)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	TEST_ASSERT_EQUAL(length(graph.registered_apcs), apc_count, "Ordinary endpoints must not register as APCs")
+	TEST_ASSERT_EQUAL(length(graph.registered_relays), relay_count, "Ordinary endpoints must not register as relays")
+	TEST_ASSERT_EQUAL(SSnetrun.nodes_by_address[node.address], node, "Ordinary endpoint remains addressable")
+	var/visits = graph.indexed_infrastructure_visits
+	graph.index_infrastructure()
+	TEST_ASSERT_EQUAL(graph.indexed_infrastructure_visits, visits, "A new endpoint does not trigger infrastructure reindex")
+
+/// A temporary power loss does not change structural bindings or registry membership.
+/datum/unit_test/netrun_topology_registry_keeps_offline_apcs/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/apc_spot = scene.take(get_step(origin, NORTH), room)
+	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, apc_spot)
+	var/datum/component/netrun_node/node = apc.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/revision = graph.infrastructure_revision
+	apc.set_machine_stat(BROKEN)
+	node.reconcile_state()
+	TEST_ASSERT_EQUAL(graph.registered_apcs[node.address], node, "Offline APC stays physically registered")
+	TEST_ASSERT_EQUAL(graph.infrastructure_revision, revision, "Power failure is not a structural topology change")

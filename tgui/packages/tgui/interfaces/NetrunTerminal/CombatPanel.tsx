@@ -28,7 +28,7 @@ const IntegrityBar = (props: { cur: number; max: number }) => {
   );
 };
 
-/** Remains visible above the map/puzzle even while another bottom tab is open. */
+/** Shared warning for every workspace, including a running breach puzzle. */
 export const IncomingAttacks = (props: { onCombat: () => void; compact?: boolean }) => {
   const { act, data } = useBackend<NetrunData>();
   const incoming = data.combat?.incoming ?? [];
@@ -36,13 +36,14 @@ export const IncomingAttacks = (props: { onCombat: () => void; compact?: boolean
   if (props.compact) {
     const next = incoming.reduce((soonest, attack) => attack.remaining < soonest.remaining ? attack : soonest);
     return (
-      <Box role="alert" p={0.5} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center',
-        flexWrap: 'wrap', gap: '6px', border: `1px solid ${THEME.bad}`, background: THEME.bg }}>
-        <Box color={THEME.bad} bold style={{ flex: '1 1 160px', minWidth: 0 }}>
+      <Box role="alert" p={0.5} style={{ flex: '1 1 auto', minWidth: 0, height: '100%', boxSizing: 'border-box',
+        display: 'flex', alignItems: 'center', gap: '6px', border: `1px solid ${THEME.bad}`, background: THEME.bg }}>
+        <Box color={THEME.bad} bold title={incoming.map((attack) => `${attack.source} готовит ${attack.name} · через ${attack.remaining} с`).join('\n')}
+          style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '11px' }}>
           {next.source} готовит {next.name} · через {next.remaining} с{incoming.length > 1 ? ` · атак: ${incoming.length}` : ''}
         </Box>
-        <Button compact icon="crosshairs" content="Открыть бой" onClick={props.onCombat} />
-        {!!data.breach && <Button compact icon="stop" content="Прервать взлом" onClick={() => act('breach_abort')} />}
+        <Button compact icon="crosshairs" content="Открыть бой" style={{ flexShrink: 0 }} onClick={props.onCombat} />
+        {!!data.breach && <Button compact icon="stop" content="Прервать взлом" style={{ flexShrink: 0 }} onClick={() => act('breach_abort')} />}
       </Box>
     );
   }

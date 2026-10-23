@@ -30,6 +30,25 @@ test('a stationary tooltip reads live node data and disappears on removal or poi
   Object.defineProperty(window, 'PointerEvent', { value: originalPointer, configurable: true });
 });
 
+test('hiding a map during a drag releases the gesture before it is resumed', () => {
+  const originalPointer = window.PointerEvent;
+  Object.defineProperty(window, 'PointerEvent', { value: MouseEvent, configurable: true });
+  try {
+    const props = { ...overlay, nodes: [node], edges: [], actors: [node], positions: new Map([['APC', node]]),
+      adjacency: new Map(), focus: 'APC', onSelect: jest.fn() };
+    const panel = render(<GraphCanvas {...props} />);
+    const viewport = panel.getByLabelText('Карта сети');
+    fireEvent.pointerDown(viewport, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(viewport, { clientX: 180, clientY: 100 });
+    const moved = panel.container.querySelector('[data-net-camera]').getAttribute('transform');
+    panel.rerender(<GraphCanvas {...props} suspended />);
+    panel.rerender(<GraphCanvas {...props} />);
+    fireEvent.pointerMove(viewport, { clientX: 300, clientY: 300 });
+    expect(panel.container.querySelector('[data-net-camera]').getAttribute('transform')).toBe(moved);
+    expect(props.onSelect).not.toHaveBeenCalled();
+  } finally { Object.defineProperty(window, 'PointerEvent', { value: originalPointer, configurable: true }); }
+});
+
 test('stationary rendering has bounded geometry and contains no route or event animation', () => {
   const calls = new Map<string, jest.Mock>();
   const context = new Proxy({}, { get: (_target, name: string) => {
@@ -41,6 +60,35 @@ test('stationary rendering has bounded geometry and contains no route or event a
   expect(renderer.paint(context, scene, camera, overlay, 720, 480, 1)).toBeUndefined();
   expect(calls.get('lineTo').mock.calls).not.toContainEqual([96, 0]);
   for (const args of calls.get('rect').mock.calls) { expect(args[2]).toBeLessThanOrEqual(GRAPH_GLYPH_RADIUS * 2); }
+});
+
+test('continuous zoom preview retains a link crossing the screen between hidden endpoints', () => {
+  const calls = new Map<string, jest.Mock>();
+  const context = new Proxy({}, { get: (_target, name: string) => {
+    if (!calls.has(name)) { calls.set(name, name === 'measureText' ? jest.fn((value: string) => ({ width: value.length * 7 })) : jest.fn()); }
+    return calls.get(name);
+  } }) as CanvasRenderingContext2D;
+  const scene = new GraphScene();
+  scene.update([{ ...node, address: 'A', px: -10000 }, { ...node, address: 'B', px: 10000 }],
+    [{ id: 'crossing', from: 'A', to: 'B', kind: 'apc' }]);
+  const camera = new GraphViewport(); camera.x = 360; camera.y = 240; camera.zoom = 1;
+  expect(scene.visible(-360, -240, 360, 240)).toEqual([]);
+  new GraphRenderer().paintPreview(context, scene, camera, overlay, 720, 480, 1);
+  expect(calls.get('moveTo').mock.calls).toContainEqual([-10000, 0]);
+  expect(calls.get('lineTo').mock.calls).toContainEqual([10000, 0]);
+});
+
+test('continuous wheel input reuses the fit limit for an unchanged scene', () => {
+  const fitPoints = jest.spyOn(GraphScene.prototype, 'fitPoints');
+  try {
+    const panel = render(<GraphCanvas {...overlay} nodes={[node]} edges={[]} actors={[node]}
+      positions={new Map([['APC', node]])} adjacency={new Map()} focus="APC" onSelect={jest.fn()} />);
+    fitPoints.mockClear();
+    for (let i = 0; i < 6; i++) {
+      fireEvent.wheel(panel.getByLabelText('Карта сети'), { clientX: 360, clientY: 240, deltaY: -5 });
+    }
+    expect(fitPoints).toHaveBeenCalledTimes(1);
+  } finally { fitPoints.mockRestore(); }
 });
 
 test('APC shading follows each actual area run instead of inventing a rectangular powered zone', () => {

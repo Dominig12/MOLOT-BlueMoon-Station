@@ -1,0 +1,44 @@
+# Проверка Netrun
+
+Из корня репозитория, Node.js и BYOND из [dependencies.sh](../../dependencies.sh):
+
+```powershell
+node tools/netrun/run-tests.mjs --list
+node tools/netrun/run-tests.mjs
+node tools/netrun/run-tests.mjs --filter scheduler
+```
+
+Runner находит `netrun_*` тесты с `Run()` только в файлах `netrun*.dm`,
+подключённых из `_unit_tests.dm`, и записывает выборку в игнорируемый
+`tmp/netrun-tests.txt`. Затем вызывает штатный `tools/build/build.js dm-test`
+с профилем `hermetic`. Проверяется свежий `data/logs/ci-hermetic/unit_tests.json`:
+ошибка сборки, отсутствие отчёта, пропущенный тест, SKIPPED или FAIL дают exit 1.
+Production `_compile_options.dm` не меняется. Для нестандартного расположения
+BYOND задайте `DM_EXE`: штатный build runner ищет DreamDaemon рядом с компилятором.
+
+`--list` только печатает выборку; `--filter` ищет подстроку без учёта регистра.
+Пустая выборка считается ошибкой. Не запускайте несколько DM миров одновременно
+на одном checkout: общий build runner использует общую папку логов. Собственные
+запуски этого runner защищены `tmp/netrun-tests.lock`; после аварийного завершения
+удаляйте этот файл только после остановки оставшегося DreamDaemon.
+
+Frontend проверяется отдельно:
+
+```powershell
+# Один раз установить зависимости TGUI (используйте yarnPath из tgui/.yarnrc.yml).
+cd tgui
+node .yarn/releases/yarn-4.15.0.cjs install --immutable
+cd ..
+node tools/netrun/run-tests.mjs --frontend
+node tools/netrun/run-tests.mjs --frontend --filter SessionStatus
+```
+
+`--frontend` запускает только Jest для файлов `NetrunTerminal/**/*.test.*`
+и `*.spec.*`; BYOND при этом не нужен. Если вы поменяли версии зависимостей,
+снова установите их перед запуском.
+
+Самопроверка обнаружения тестов и проверки отчётов (без BYOND):
+
+```powershell
+node --test tools/netrun/run-tests.test.mjs
+```

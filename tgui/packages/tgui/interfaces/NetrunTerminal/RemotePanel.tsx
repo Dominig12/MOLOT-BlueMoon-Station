@@ -1,7 +1,8 @@
 import { useState } from 'react';
 
 import { useBackend } from '../../backend';
-import { Box, Button, Input } from '../../components';
+import { Box, Button } from '../../components';
+import { remoteArguments, remoteParameterValue } from './remoteParameters';
 import { ACCESS_NAMES, MachineWindow, NetrunData, THEME } from './types';
 
 type Remote = NonNullable<MachineWindow['remote']>;
@@ -22,7 +23,7 @@ export const RemotePanel = (props: { address: string; remote: Remote }) => (
       <DataTree value={props.remote.data} depth={0} />
     </Box>
     {props.remote.actions.map((action) => (
-      <RemoteAction key={action.id} address={props.address} action={action} />
+      <RemoteAction key={`${props.address}:${props.remote.interface}:${action.id}`} address={props.address} action={action} />
     ))}
   </Box>
 );
@@ -67,34 +68,41 @@ const RemoteAction = (props: { address: string; action: Remote['actions'][number
   const { action } = props;
   const params = action.params ?? [];
   const [values, setValues] = useState<Record<string, string>>({});
+  const request = remoteArguments(params, values);
   return (
     <Box mb={0.5}>
       {params.map((param) => (
-        <Box key={param.id} inline mr={0.5} mb={0.5}>
-          <Box inline mr={0.5}>{param.name}</Box>
-          <Input
-            width="130px"
-            value={values[param.id] ?? param.value ?? (param.type === 'number' ? String(param.min ?? 1) : '')}
+        <label key={param.id} style={{ display: 'inline-block', marginRight: '6px', marginBottom: '5px' }}>
+          <span style={{ marginRight: '5px' }}>{param.name}</span>
+          <input
+            aria-label={param.name}
+            inputMode={param.type === 'number' ? 'decimal' : 'text'}
+            value={remoteParameterValue(param, values)}
             disabled={!action.allowed}
-            onInput={(_event, value) => setValues({ ...values, [param.id]: value })}
+            onChange={(event) => setValues((previous) => ({ ...previous, [param.id]: event.target.value }))}
+            style={{ width: '130px', boxSizing: 'border-box', background: THEME.bg, color: THEME.text,
+              border: `1px solid ${THEME.line}`, padding: '3px 5px', fontFamily: 'monospace' }}
           />
-        </Box>
+          {param.type === 'number' && (param.min !== undefined || param.max !== undefined) && <span
+            style={{ color: THEME.muted, marginLeft: '5px', fontSize: '10px' }}>
+            {param.min ?? '…'}–{param.max ?? '…'}
+                                                                                              </span>}
+        </label>
       ))}
       <Button
         icon="paper-plane"
         content={action.name}
-        disabled={!action.allowed}
+        disabled={!action.allowed || !!request.error}
         color={action.danger ? 'bad' : undefined}
-        tooltip={`${action.desc || ''} Нужно: ${ACCESS_NAMES[action.access]}.`}
+        tooltip={`${action.desc || ''} Нужно: ${ACCESS_NAMES[action.access]}.${action.reason ? ` ${action.reason}` : ''}${request.error ? ` ${request.error}` : ''}`}
         onClick={() => {
-          const args: Record<string, string | number> = {};
-          for (const param of params) {
-            const value = values[param.id] ?? param.value ?? (param.type === 'number' ? String(param.min ?? 1) : '');
-            args[param.id] = param.type === 'number' ? Number(value) : value;
-          }
-          act('remote_act', { address: props.address, request: action.id, arguments: args });
+          if (request.error || !action.allowed) { return; }
+          act('remote_act', { address: props.address, request: action.id, arguments: request.args });
         }}
       />
+      {(!action.allowed && action.reason || request.error) && <Box role="status" color={THEME.warn} fontSize="11px">
+        {!action.allowed && action.reason || request.error}
+                                                              </Box>}
     </Box>
   );
 };

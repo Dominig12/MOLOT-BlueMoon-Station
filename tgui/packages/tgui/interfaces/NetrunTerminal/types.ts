@@ -132,6 +132,7 @@ export type EntityState = {
   host: string | null;
   host_name: string | null;
   diving: boolean;
+  travel?: { target: string; remaining: number } | null;
 };
 
 export type CombatTarget = {
@@ -390,7 +391,8 @@ export type MachineWindow = {
       access: number;
       allowed: boolean;
       danger?: boolean;
-      params?: { id: string; name: string; type: 'text' | 'number'; value?: string; min?: number; max?: number }[];
+      reason?: string | null;
+      params?: { id: string; name: string; type: 'text' | 'number'; value?: string | number; min?: number; max?: number }[];
     }[];
   } | null;
 };
@@ -419,6 +421,7 @@ export const ACCESS_NAMES = ['НЕТ', 'ГОСТЬ', 'ПОЛЬЗОВАТЕЛЬ',
 export const ACCESS_COLORS = ['#59606e', '#8b93a3', '#4ac0ff', '#3cdc8c'];
 
 export const NODE_ICONS: Record<string, string> = {
+  atmos: 'wind',
   relay: 'tower-broadcast',
   airlock: 'door-closed',
   apc: 'car-battery',
@@ -440,6 +443,7 @@ export const NODE_ICONS: Record<string, string> = {
 };
 
 export const NODE_NAMES: Record<string, string> = {
+  atmos: 'Атмосфера',
   relay: 'Реле NTnet',
   airlock: 'Шлюзы',
   apc: 'Щитки APC',

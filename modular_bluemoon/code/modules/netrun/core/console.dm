@@ -4,7 +4,8 @@
  * и отличаются только тем, откуда идёт подключение (origin) и куда бьёт трассировка.
  */
 /datum/netrun_console
-	var/last_netrun_tick = 0 // scheduler
+	/// The active interval starts when the scheduler wakes this session.
+	var/last_netrun_tick
 	var/datum/netrun_ui_source
 	var/name = "консоль"
 	/// Физический носитель: терминал, дека, имплант, компьютер или сущность
@@ -79,6 +80,7 @@
 /datum/netrun_console/Destroy()
 	SSnetrun.consoles -= src
 	SSnetrun.active_consoles -= src
+	SSnetrun.task_scheduler?.cancel("console", src)
 	QDEL_NULL(combat_context)
 	QDEL_NULL(map_view)
 	QDEL_NULL(remote_session)
@@ -102,6 +104,11 @@
 	activate()
 
 /datum/netrun_console/proc/activate()
+	if(QDELETED(src))
+		return
+	if(!SSnetrun.active_consoles[src])
+		// Time asleep must not become trace, damage or healing on the first active tick.
+		last_netrun_tick = world.time
 	SSnetrun.active_consoles[src] = TRUE
 
 /datum/netrun_console/proc/note_ui_activity()
@@ -505,15 +512,14 @@
 		return TRUE
 	if(remote_session.watch_node)
 		return TRUE
-	if(length(combat_context.contacts) || length(combat_context.observed_ice) || combat_context.next_program > world.time)
+	if(combat_context.needs_live_refresh())
 		return TRUE
-	for(var/id in combat_context.program_cd)
-		if(combat_context.program_cd[id] > world.time)
-			return TRUE
 	// Web pages (NTnet) and pinned machine windows carry external/async content that arrives with
 	// no netrun change signal, so those tabs keep polling; the map and terminal stay event-driven.
-	if(workspace_view == "web" || remote_session.active_window)
+	if(workspace_view == "web" || (workspace_view == "pinned" && remote_session.active_window))
 		return TRUE
+	if(workspace_view != "map")
+		return FALSE
 	if(map_view.ping_route && world.time - map_view.ping_at < 6 SECONDS)
 		return TRUE
 	// The shared recent-events ribbon fades over four seconds on every live map.
@@ -594,7 +600,7 @@
 		security = node.get_security() - (node == owner.connection.jack ? 1 : 0)
 		target_name = "[node.get_name()] [node.address]"
 		if(kind == "firmware")
-			var/datum/netrun_api/api = SSnetrun.get_api(node.parent)
+			var/datum/netrun_provider/api = SSnetrun.get_provider(node.parent)
 			if(!api?.allow_emag || owner.node_level(node) < NETRUN_ACCESS_ROOT || !owner.daemon_bonus("icepick"))
 				return FALSE
 			security = 5

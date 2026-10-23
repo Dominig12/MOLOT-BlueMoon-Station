@@ -38,6 +38,7 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     [base, props.actors, props.adjacency]);
   const retained = useRef(scene); retained.current = scene;
   const scenery = useRef(base); scenery.current = base;
+  const fitLimit = useRef<{ scene: GraphScene; zones: Props['apcZones']; width: number; height: number; zoom: number } | null>(null);
   const size = useCallback(() => ({ width: container.current?.clientWidth || 720, height: container.current?.clientHeight || 480 }), []);
   const syncCamera = useCallback(() => {
     const dimensions = size();
@@ -145,6 +146,7 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
       if (wheelFinish.current !== null) { window.clearTimeout(wheelFinish.current); wheelFinish.current = null; }
       wheelActive.current = false;
       paintJob.current = null;
+      down.current = null;
       setTooltip(null); return;
     }
     // Activity and movable geometry never invalidate the base or automatically change its camera.
@@ -211,11 +213,17 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
         const node = hit(event.clientX, event.clientY); if (node) { latest.current.onSelect(node.address); }
       }}
       onPointerCancel={() => { const moved = down.current?.moved; down.current = null; setTooltip(null); if (moved) { queuePaint(); } }}
+      onLostPointerCapture={() => { const moved = down.current?.moved; down.current = null; if (moved) { queuePaint(); } }}
       onWheel={(event) => {
         event.preventDefault(); setTooltip(null);
         const bounds = event.currentTarget.getBoundingClientRect(), dimensions = size();
-        const fitted = new GraphViewport(); fitted.fit(retained.current.fitPoints(latest.current.apcZones), dimensions.width, dimensions.height);
-        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, fitted.zoom);
+        let limit = fitLimit.current;
+        if (!limit || limit.scene !== retained.current || limit.zones !== latest.current.apcZones
+          || limit.width !== dimensions.width || limit.height !== dimensions.height) {
+          const fitted = new GraphViewport(); fitted.fit(retained.current.fitPoints(latest.current.apcZones), dimensions.width, dimensions.height);
+          limit = fitLimit.current = { scene: retained.current, zones: latest.current.apcZones, ...dimensions, zoom: fitted.zoom };
+        }
+        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, limit.zoom);
         syncCamera(); syncBitmapCamera();
         wheelActive.current = true;
         paintVersion.current++;

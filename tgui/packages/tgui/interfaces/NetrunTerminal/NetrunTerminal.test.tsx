@@ -536,6 +536,45 @@ describe('Netrun terminal panels', () => {
     expect(sent(topic, 'hop')).toEqual([{ address: 'D-TARGET' }]);
   });
 
+  test('locating a search result clears obstructing filters and centers its confirmed location', () => {
+    const target = { ...node, address: 'SEARCH-HIT', name: 'Камера теста', type: 'camera', x: 20 };
+    const topic = setup({ map: { nodes: [node, target], edges: [], gateways: [], focus: node.address, revision: 1 },
+      search: [{ address: target.address, name: target.name, type: target.type, network: 'test', online: true, visible: true }] });
+    const centered = jest.spyOn(GraphViewport.prototype, 'center');
+    try {
+      const panel = render(<StationMap />);
+      fireEvent.click(panel.getByLabelText('Фильтр: Камеры'));
+      fireEvent.input(panel.getByPlaceholderText('поиск узла…'), { target: { value: 'Нет совпадений' } });
+      expect(panel.getByText('Все узлы скрыты фильтрами.')).toBeTruthy();
+      fireEvent.click(panel.getByLabelText(`Выбрать узел ${target.name} на карте`));
+      expect(panel.getByText('2/2 · текущий этаж')).toBeTruthy();
+      expect((panel.getByPlaceholderText('поиск узла…') as HTMLInputElement).value).toBe('');
+      expect(sent(topic, 'select')).toEqual([{ address: target.address }]);
+      expect(centered).not.toHaveBeenCalled();
+      act(() => topic.store.dispatch(backendUpdate({ data: { selected: target } })));
+      panel.rerender(<StationMap />);
+      expect(centered).toHaveBeenCalledTimes(1);
+      expect(centered.mock.calls[0][0]).toMatchObject({ address: target.address });
+    } finally { centered.mockRestore(); }
+  });
+
+  test('map shortcuts leave modified keyboard commands and text editing alone', () => {
+    const topic = setup();
+    const panel = render(<StationMap />);
+    const viewport = panel.getByLabelText('Карта сети');
+    for (const modifiers of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
+      fireEvent.keyDown(viewport, { key: 'd', ...modifiers });
+    }
+    const textarea = document.createElement('textarea');
+    viewport.appendChild(textarea);
+    fireEvent.keyDown(textarea, { key: 'd' });
+    textarea.remove();
+    fireEvent.keyDown(panel.getByPlaceholderText('поиск узла…'), { key: 'd' });
+    expect(sent(topic, 'select')).toEqual([]);
+    fireEvent.keyDown(viewport, { key: 'd' });
+    expect(sent(topic, 'select')).toEqual([{ address: 'BBBB:0002' }]);
+  });
+
   test('a LAN key permits a guest to hop without enabling machine commands', () => {
     const host = { ...node, address: 'A-HOST' };
     const keyed = { ...node, address: 'KEY-CLIENT', type: 'camera', uplink: host.address,

@@ -12,6 +12,7 @@
 #define NETRUN_NODE_OPTIC "optic"
 #define NETRUN_NODE_TURRET "turret"
 #define NETRUN_NODE_VENDOR "vendor"
+#define NETRUN_NODE_ATMOS "atmos"
 #define NETRUN_NODE_TERMINAL "terminal"
 #define NETRUN_NODE_SERVER "server"
 #define NETRUN_NODE_CIRCUIT "circuit"
@@ -32,6 +33,11 @@
 #define NETRUN_ORIGIN_CIRCUIT "circuit"
 #define NETRUN_ORIGIN_PAI "pai"
 
+/// Shared by scheduler implementations and unit tests included before module sources.
+#define NETRUN_TASK_CRITICAL 1
+#define NETRUN_TASK_NORMAL 2
+#define NETRUN_TASK_BACKGROUND 3
+
 // Сети
 #define NETRUN_GLOBAL_ID "ntnet"
 #define NETRUN_LAN_PUBLIC "pub"
@@ -42,7 +48,7 @@
 #define NETRUN_LAN_SECURITY "sec"
 #define NETRUN_LAN_COMMAND "cmd"
 
-/// Geographic physical links: one world tile adds one decisecond of latency.
+/// Geographic physical links: each started block of tiles adds one decisecond.
 #define NETRUN_LINK_TILES_PER_DS 15
 #define NETRUN_RELAY_LATENCY 3
 #define NETRUN_APC_NEIGHBORS 3
@@ -91,6 +97,8 @@
 #define COMSIG_NETRUN_NODE_MOVED "netrun_node_moved"
 #define COMSIG_NETRUN_TOPOLOGY_DIRTY "netrun_topology_dirty"
 #define COMSIG_NETRUN_EVENT_POSTED "netrun_event_posted"
+/// Device atom: a provider's externally visible native state changed (no arguments).
+#define COMSIG_NETRUN_SERVICE_STATE_CHANGED "netrun_service_state_changed"
 
 /// Domain notifications. Handlers invalidate caches; they must not serialize UI.
 /// SSnetrun and node: (node, changed_flags).

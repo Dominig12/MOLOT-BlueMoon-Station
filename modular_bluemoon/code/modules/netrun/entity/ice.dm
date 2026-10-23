@@ -42,6 +42,7 @@
 	var/combat_shield_factor = 1
 
 /datum/netrun_ice/New(datum/component/netrun_node/start, ice_kind)
+	last_netrun_tick = world.time
 	if(ice_kind)
 		kind = ice_kind
 	if(kind == NETRUN_ICE_HUNTER)
@@ -59,6 +60,7 @@
 /datum/netrun_ice/Destroy()
 	cancel_program()
 	SSnetrun.ice_processes -= src
+	SSnetrun.task_scheduler?.cancel("ice", src)
 	leave_node()
 	anchor_ref = null
 	return ..()

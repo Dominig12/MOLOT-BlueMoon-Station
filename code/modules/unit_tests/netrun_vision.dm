@@ -119,7 +119,8 @@
 	entity.console.remote_session.watch_viewer = entity
 	TEST_ASSERT_EQUAL(entity.current_vision_target(), remote_camera, "An explicit stream did not take priority over the host's camera")
 	for(var/i in 1 to 3)
-		entity.console.process_tick(1)
+		// Exercise entity synchronization without a fabricated BYOND client/perspective.
+		entity.process_tick(1)
 		TEST_ASSERT_EQUAL(entity.current_vision_target(), remote_camera, "Processing bounced an explicit stream back to the host")
 		TEST_ASSERT_EQUAL(entity.host_node, host_node, "Watching another stream moved the resident process into its source")
 	remote_camera.status = FALSE

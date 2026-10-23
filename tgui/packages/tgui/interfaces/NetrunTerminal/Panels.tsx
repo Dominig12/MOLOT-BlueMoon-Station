@@ -1,10 +1,11 @@
-import { KeyboardEvent, memo, useEffect, useRef, useState } from 'react';
+import { KeyboardEvent, memo, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, Input, Section } from '../../components';
 import { FilePanel } from './FilePanel';
 import { fileFormat, fileIcon } from './NodePanel';
 import { LogLine, NetFile, NetrunData, THEME } from './types';
+import { useFollowOutput } from './useFollowOutput';
 
 const KIND_COLORS: Record<string, string> = {
   good: THEME.good,
@@ -39,18 +40,14 @@ const commonPrefix = (items: string[]): string => {
   return prefix;
 };
 
-export const ConsoleLog = () => {
+export const ConsoleLog = (props: { active?: boolean } = {}) => {
   const { act, data } = useBackend<NetrunData>();
-  const scroller = useRef<HTMLDivElement>(null);
+  const latestLine = data.log[data.log.length - 1];
+  const output = useFollowOutput(`${data.log.length}:${latestLine?.time}:${latestLine?.text}`, props.active);
   const [value, setValue] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const [histIdx, setHistIdx] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
-  useEffect(() => {
-    if (scroller.current) {
-      scroller.current.scrollTop = scroller.current.scrollHeight;
-    }
-  }, [data.log.length, data.log[data.log.length - 1]?.time, data.log[data.log.length - 1]?.text]);
 
   const entries = data.cli?.verbs ?? [];
 
@@ -59,6 +56,7 @@ export const ConsoleLog = () => {
     if (!text) {
       return;
     }
+    output.handleFollowLatest();
     act('cli', { text });
     setHistory((h) => {
       const next = h[h.length - 1] === text ? h : [...h, text];
@@ -147,7 +145,9 @@ export const ConsoleLog = () => {
         {' '}help &lt;команда&gt; — подробная справка · ↑/↓ история · Tab дополнение
       </Box>
       <div
-        ref={scroller}
+        ref={output.scroller}
+        onScroll={output.handleScroll}
+        aria-label="Журнал терминала"
         style={{
           flex: '1 1 auto',
           minHeight: '70px',
@@ -159,6 +159,7 @@ export const ConsoleLog = () => {
       >
         <LogLines lines={data.log} />
       </div>
+      {output.unread && <Button compact icon="arrow-down" content="К новым сообщениям" onClick={output.handleFollowLatest} />}
       <input
         value={value}
         onChange={(e) => {
@@ -299,19 +300,16 @@ export const EntityPanel = () => {
 };
 
 /** Канал #noosphere - общий чат сущностей и консолей (NTNRC) */
-export const NetChat = () => {
+export const NetChat = (props: { active?: boolean } = {}) => {
   const { act, data } = useBackend<NetrunData>();
   const { chat, uplink, entity } = data;
-  const scroller = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (scroller.current) {
-      scroller.current.scrollTop = scroller.current.scrollHeight;
-    }
-  }, [chat.messages.length]);
+  const output = useFollowOutput(`${chat.messages.length}:${chat.messages[chat.messages.length - 1]}`, props.active);
   return (
     <Box style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, display: 'flex', flexDirection: 'column', height: '100%', width: '100%', minHeight: 0 }}>
       <div
-        ref={scroller}
+        ref={output.scroller}
+        onScroll={output.handleScroll}
+        aria-label="Сообщения noosphere"
         style={{
           flex: '1 1 auto',
           minHeight: '70px',
@@ -333,6 +331,7 @@ export const NetChat = () => {
           </div>
         ))}
       </div>
+      {output.unread && <Button compact icon="arrow-down" content="К новым сообщениям" onClick={output.handleFollowLatest} />}
       <Box style={{ display: 'flex' }}>
         {!entity && (
           <Input
@@ -348,7 +347,7 @@ export const NetChat = () => {
             selfClear
             disabled={!uplink}
             placeholder={uplink ? `${chat.handle} в #noosphere` : 'Нет связи с NTnet'}
-            onEnter={(_e, value) => act('chat_send', { text: value })}
+            onEnter={(_e, value) => { output.handleFollowLatest(); act('chat_send', { text: value }); }}
             style={{ fontFamily: 'monospace', background: THEME.panel }}
           />
         </Box>

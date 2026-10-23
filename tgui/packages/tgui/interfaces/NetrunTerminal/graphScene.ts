@@ -1,3 +1,4 @@
+import { GraphEdgeIndex } from './graphEdgeIndex';
 import { GRAPH_GAP, GRAPH_TILE } from './graphLayout';
 import { graphAdjacency, GraphPoint } from './mapLayout';
 import { ApcZone, NetEdge, NetNode } from './types';
@@ -14,6 +15,7 @@ export class GraphScene {
   /** Cached incident edges let fast camera redraw inspect only on-screen connections. */
   incidentEdges = new Map<string, NetEdge[]>();
   private cells = new Map<string, PlacedNode[]>();
+  private edgeIndex = new GraphEdgeIndex();
   private stationary: GraphScene | null = null;
   private moving: GraphScene | null = null;
 
@@ -33,6 +35,7 @@ export class GraphScene {
     this.edges = edges;
     this.byAddress = new Map(nodes.map((node) => [node.address, node]));
     this.adjacency = graphAdjacency(nodes, edges);
+    this.edgeIndex.update(this.byAddress, edges);
     this.incidentEdges.clear();
     for (const edge of edges) {
       for (const address of [edge.from, edge.to]) {
@@ -90,5 +93,10 @@ export class GraphScene {
       if (next < distance || (next === distance && (!best || node.address < best.address))) { best = node; distance = next; }
     }
     return best;
+  }
+
+  visibleEdges(left: number, top: number, right: number, bottom: number): NetEdge[] {
+    return this.stationary ? this.stationary.visibleEdges(left, top, right, bottom)
+      : this.edgeIndex.visible(left, top, right, bottom);
   }
 }

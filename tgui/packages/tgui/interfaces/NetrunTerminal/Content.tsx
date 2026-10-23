@@ -7,6 +7,7 @@ import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
+import { SessionStatus } from './SessionStatus';
 import { ACCESS_COLORS, ACCESS_NAMES, NetrunData, THEME, WorkspaceView } from './types';
 import { WebPanel } from './WebPanel';
 import { WindowPanel } from './WindowPanel';
@@ -90,15 +91,20 @@ export const NetrunContent = () => {
       display: 'flex', flexDirection: 'column', boxSizing: 'border-box', overflow: 'hidden', padding: '8px', gap: '5px' }}>
       <Header />
       <div aria-label="Разделы нетрана" style={{ flex: '0 0 auto', minWidth: 0, overflowX: 'auto' }}>
-        <Tabs style={{ width: 'max-content', minWidth: '100%', whiteSpace: 'nowrap', overflow: 'visible' }}>
+        <Tabs role="tablist" aria-label="Рабочие страницы" style={{ width: 'max-content', minWidth: '100%', whiteSpace: 'nowrap', overflow: 'visible' }}>
           {tabs.map((tab) => (
-            <Tabs.Tab key={tab.id} icon={tab.icon} selected={page === tab.id}
+            <Tabs.Tab key={tab.id} icon={tab.icon} selected={page === tab.id} role="tab"
+              aria-selected={page === tab.id} tabIndex={0}
+              aria-label={PAGE_NAMES[tab.id]}
+              rightSlot={tab.id === 'combat' && incomingCount ? <span aria-label={`Входящих атак: ${incomingCount}`}>! {incomingCount}</span> : undefined}
+              onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(tab.id); } }}
               onClick={() => navigate(tab.id)} style={tab.id === 'combat' && incomingCount ? { color: THEME.bad } : undefined}>
               {PAGE_NAMES[tab.id]}{tab.count ? ` (${tab.count})` : ''}
             </Tabs.Tab>
           ))}
         </Tabs>
       </div>
+      <SessionStatus onCombat={() => navigate('combat')} onBreach={() => navigate('breach')} />
       <div data-net-layout="workspace" style={{ display: 'flex', flex: '1 1 0', minHeight: 0, minWidth: 0,
         position: 'relative', borderRadius: '7px', overflow: 'hidden' }}>
         <WorkspacePage id="terminal" active={page}>
@@ -107,8 +113,8 @@ export const NetrunContent = () => {
             <Tabs.Tab icon="terminal" selected={terminalTab === 'console'} onClick={() => setTerminalTab('console')}>Консоль</Tabs.Tab>
             <Tabs.Tab icon="comments" selected={terminalTab === 'chat'} onClick={() => setTerminalTab('chat')}>#noosphere</Tabs.Tab>
           </Tabs>
-          <div style={{ display: terminalTab === 'console' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}><ConsoleLog /></div>
-          <div style={{ display: terminalTab === 'chat' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}><NetChat /></div>
+          <div style={{ display: terminalTab === 'console' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}><ConsoleLog active={page === 'terminal' && terminalTab === 'console'} /></div>
+          <div style={{ display: terminalTab === 'chat' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}><NetChat active={page === 'terminal' && terminalTab === 'chat'} /></div>
         </WorkspacePage>
         <WorkspacePage id="map" active={page}>
           <div style={{ display: 'flex', flex: '1 1 0', minWidth: 0, minHeight: 0, gap: '7px', position: 'relative' }}>

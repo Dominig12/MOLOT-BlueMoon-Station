@@ -41,6 +41,8 @@
 	var/last_active
 	var/last_dynamic
 	var/pending_state_notification = FALSE
+	/// Owned subscription list, including every statically matching provider's signals.
+	var/list/subscribed_state_signals
 
 /datum/component/netrun_node/Initialize(node_type, list/command_ids, security = 1, list/required_access, storage_capacity = 0)
 	if(!isatom(parent))
@@ -62,26 +64,25 @@
 
 /datum/component/netrun_node/RegisterWithParent()
 	RegisterSignal(parent, COMSIG_ATOM_EMP_ACT, PROC_REF(on_emp))
-	RegisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED, COMSIG_OBJ_SETANCHORED), PROC_REF(on_state_changed))
+	subscribed_state_signals = list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED, COMSIG_OBJ_SETANCHORED) | SSnetrun.get_provider_state_signals(parent)
+	RegisterSignal(parent, subscribed_state_signals, PROC_REF(on_state_changed))
 	if(ismovable(parent))
 		RegisterSignal(parent, COMSIG_MOVABLE_MOVED, PROC_REF(on_moved))
-	if(istype(parent, /obj/machinery/door/airlock))
-		RegisterSignal(parent, COMSIG_ATOM_UPDATED_ICON, PROC_REF(on_state_changed))
 
 /datum/component/netrun_node/UnregisterFromParent()
 	UnregisterSignal(parent, list(COMSIG_ATOM_EMP_ACT, COMSIG_MOVABLE_MOVED))
-	UnregisterSignal(parent, COMSIG_ATOM_UPDATED_ICON)
-	UnregisterSignal(parent, list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED, COMSIG_OBJ_SETANCHORED))
+	UnregisterSignal(parent, subscribed_state_signals)
+	subscribed_state_signals = null
 
 /datum/component/netrun_node/Destroy()
 	SSnetrun.untrack_node(src)
 	SSnetrun.nodes_by_address -= address
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_UNREGISTERED, src)
 	notify_changed(NETRUN_CHANGED_REMOVED)
-	for(var/mob/camera/netrun_entity/entity as anything in entities)
+	for(var/mob/camera/netrun_entity/entity as anything in entities?.Copy())
 		entity.host_lost()
 	entities = null
-	for(var/datum/netrun_ice/ice as anything in netrun_ice)
+	for(var/datum/netrun_ice/ice as anything in netrun_ice?.Copy())
 		ice.host_lost()
 	netrun_ice = null
 	leave_network()
@@ -191,6 +192,9 @@
 
 /// Отвечает ли узел на удалённые запросы
 /datum/component/netrun_node/proc/is_online(remote = TRUE)
+	// Parent teardown may already have removed wires, organs or other native resources.
+	if(QDELETED(src) || QDELETED(parent))
+		return FALSE
 	if(world.time < offline_until)
 		return FALSE
 	var/atom/A = parent
@@ -214,7 +218,7 @@
 	var/atom/A = parent
 	. = command_ids.Copy()
 	. |= A.netrun_extra_commands()
-	var/datum/netrun_api/api = SSnetrun.get_api(A)
+	var/datum/netrun_provider/api = SSnetrun.get_provider(A)
 	if(api?.allow_emag)
 		. |= "firmware"
 

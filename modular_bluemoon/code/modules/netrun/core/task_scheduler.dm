@@ -1,14 +1,14 @@
-// NETRUN ADAPTIVE TASK SCHEDULER V1
-#define NETRUN_TASK_CRITICAL 1
-#define NETRUN_TASK_NORMAL 2
-#define NETRUN_TASK_BACKGROUND 3
-
+/// The scheduler owns pending tasks; tasks own their worker behavior and weak target.
 /datum/netrun_task
 	var/kind
 	var/key
 	var/priority
 	var/datum/weakref/target_ref
 	var/enqueued_at
+	/// Intrusive FIFO links: cancellation and promotion unlink in constant time.
+	var/datum/netrun_task_queue/queue
+	var/datum/netrun_task/previous
+	var/datum/netrun_task/next
 
 /datum/netrun_task/New(new_kind, new_key, new_priority, datum/target)
 	. = ..()
@@ -22,6 +22,135 @@
 /datum/netrun_task/proc/target()
 	return target_ref?.resolve()
 
+/datum/netrun_task/Destroy()
+	queue?.remove(src)
+	target_ref = null
+	return ..()
+
+/datum/netrun_task/proc/execute(datum/controller/subsystem/netrun/worker)
+	return FALSE
+
+/// A queue never contains cancelled tasks or obsolete priority entries.
+/datum/netrun_task_queue
+	var/datum/netrun_task/first
+	var/datum/netrun_task/last
+
+/datum/netrun_task_queue/proc/append(datum/netrun_task/task)
+	if(task.queue)
+		task.queue.remove(task)
+	task.queue = src
+	task.previous = last
+	if(last)
+		last.next = task
+	else
+		first = task
+	last = task
+
+/datum/netrun_task_queue/proc/remove(datum/netrun_task/task)
+	if(task.queue != src)
+		return FALSE
+	if(task.previous)
+		task.previous.next = task.next
+	else
+		first = task.next
+	if(task.next)
+		task.next.previous = task.previous
+	else
+		last = task.previous
+	task.queue = null
+	task.previous = null
+	task.next = null
+	return TRUE
+
+/datum/netrun_task_queue/proc/take()
+	var/datum/netrun_task/task = first
+	if(task)
+		remove(task)
+	return task
+
+/datum/netrun_task_queue/Destroy()
+	while(first)
+		qdel(take())
+	return ..()
+
+/// Each work kind is independently extensible, without a switch in SSnetrun.
+/datum/netrun_task/node
+	kind = "node"
+
+/datum/netrun_task/node/execute(datum/controller/subsystem/netrun/worker)
+	var/datum/component/netrun_node/node = target()
+	if(QDELETED(node))
+		return FALSE
+	worker.dirty_nodes -= node
+	var/datum/netrun_topology/graph = worker.get_topology()
+	if(node.is_dynamic() || !node.binding_checked || node.binding_infra_revision != graph.infrastructure_revision)
+		node.join_network()
+	node.reconcile_state()
+	worker.track_node(node)
+	worker.last_processed_nodes++
+	return TRUE
+
+/datum/netrun_task/console
+	kind = "console"
+
+/datum/netrun_task/console/execute(datum/controller/subsystem/netrun/worker)
+	var/datum/netrun_console/console = target()
+	if(QDELETED(console))
+		return FALSE
+	var/delta = isnull(console.last_netrun_tick) ? 0 : max(0, world.time - console.last_netrun_tick) / (1 SECONDS)
+	console.last_netrun_tick = world.time
+	console.access_session.process_events()
+	console.process_tick(delta)
+	// Dive-link processing can end the dive and destroy the originating console.
+	if(QDELETED(console))
+		return TRUE
+	console.flush_ui()
+	worker.last_processed_consoles++
+	if(!QDELETED(console) && !console.needs_processing())
+		worker.active_consoles -= console
+	return TRUE
+
+/datum/netrun_task/ice
+	kind = "ice"
+
+/datum/netrun_task/ice/execute(datum/controller/subsystem/netrun/worker)
+	var/datum/netrun_ice/ice = target()
+	if(QDELETED(ice))
+		return FALSE
+	var/delta = max(0, world.time - ice.last_netrun_tick) / (1 SECONDS)
+	ice.last_netrun_tick = world.time
+	worker.breach_snapshot_active = TRUE
+	ice.process_ai(delta)
+	worker.breach_snapshot_active = FALSE
+	return TRUE
+
+/datum/netrun_task/housekeeping
+	kind = "housekeeping"
+
+/datum/netrun_task/housekeeping/execute(datum/controller/subsystem/netrun/worker)
+	var/datum/netrun_topology/graph = worker.get_topology()
+	if(graph.dirty)
+		worker.get_task_scheduler().enqueue("apc_prebuild", graph, NETRUN_TASK_BACKGROUND)
+	graph.refresh_route_tables()
+	if(!worker.patrol_initialized && length(worker.networks))
+		worker.initialize_patrol()
+	if(!worker.lore_initialized && length(worker.nodes_by_address))
+		worker.initialize_lore()
+	return TRUE
+
+/// Bounded upstream topology preparation stays behind its own task implementation.
+/datum/netrun_task/apc_prebuild
+	kind = "apc_prebuild"
+
+/datum/netrun_task/apc_prebuild/execute(datum/controller/subsystem/netrun/worker)
+	var/datum/netrun_topology/graph = target()
+	if(QDELETED(graph) || !graph.dirty)
+		return FALSE
+	worker.apc_prebuild_steps++
+	if(!graph.advance_apc_prebuild(96) && graph.dirty)
+		worker.get_task_scheduler().enqueue(kind, graph, NETRUN_TASK_BACKGROUND)
+	return TRUE
+
 /// Aggregate statistics without keeping references to processed objects.
 /datum/netrun_task_profile
 	var/calls = 0
@@ -32,15 +161,10 @@
 	var/peak_wait_ds = 0
 	var/overdue = 0
 
-/// Tasks are merged by kind and target; tombstones allow cheap promotions.
+/// Tasks are merged by kind and target, with fair service for all three priorities.
 /datum/netrun_task_scheduler
 	var/list/by_key = list()
-	var/list/critical = list()
-	var/list/normal = list()
-	var/list/background = list()
-	var/critical_read = 1
-	var/normal_read = 1
-	var/background_read = 1
+	var/list/queues
 	var/list/counts = list(0, 0, 0)
 	var/dispatch_cursor = 0
 	var/merged = 0
@@ -63,17 +187,26 @@
 	var/task_overruns = 0
 	var/peak_pass_ms = 0
 
+/datum/netrun_task_scheduler/New()
+	. = ..()
+	queues = list(new /datum/netrun_task_queue, new /datum/netrun_task_queue, new /datum/netrun_task_queue)
+
 /datum/netrun_task_scheduler/proc/pending()
 	return length(by_key)
 
 /datum/netrun_task_scheduler/proc/append_task(datum/netrun_task/task)
-	switch(task.priority)
-		if(NETRUN_TASK_CRITICAL)
-			critical += task
-		if(NETRUN_TASK_NORMAL)
-			normal += task
-		if(NETRUN_TASK_BACKGROUND)
-			background += task
+	var/datum/netrun_task_queue/queue = queues[task.priority]
+	queue.append(task)
+
+/// Registry metadata is read once; new work kinds only add a task subtype.
+/datum/netrun_task_scheduler/proc/task_type(kind)
+	var/static/list/types_by_kind
+	if(!types_by_kind)
+		types_by_kind = list()
+		for(var/datum/netrun_task/path as anything in subtypesof(/datum/netrun_task))
+			if(initial(path.kind))
+				types_by_kind[initial(path.kind)] = path
+	return types_by_kind[kind] ? types_by_kind[kind] : /datum/netrun_task
 
 /datum/netrun_task_scheduler/proc/enqueue(kind, datum/target, priority = NETRUN_TASK_NORMAL)
 	if(!kind || (target && QDELETED(target)))
@@ -84,6 +217,7 @@
 	if(existing && !QDELETED(existing))
 		merged++
 		if(priority < existing.priority)
+			existing.queue.remove(existing)
 			counts[existing.priority]--
 			existing.priority = priority
 			counts[priority]++
@@ -91,7 +225,8 @@
 			append_task(existing)
 			promoted++
 		return FALSE
-	var/datum/netrun_task/task = new(kind, key, priority, target)
+	var/path = task_type(kind)
+	var/datum/netrun_task/task = new path(kind, key, priority, target)
 	by_key[key] = task
 	counts[priority]++
 	peak_queued_by_priority[priority] = max(peak_queued_by_priority[priority], counts[priority])
@@ -111,47 +246,15 @@
 	return TRUE
 
 /datum/netrun_task_scheduler/proc/take_priority(priority)
-	var/list/queue
-	var/read_at
-	switch(priority)
-		if(NETRUN_TASK_CRITICAL)
-			queue = critical
-			read_at = critical_read
-		if(NETRUN_TASK_NORMAL)
-			queue = normal
-			read_at = normal_read
-		if(NETRUN_TASK_BACKGROUND)
-			queue = background
-			read_at = background_read
-	if(!queue)
+	if(priority < NETRUN_TASK_CRITICAL || priority > NETRUN_TASK_BACKGROUND)
 		return null
-	var/datum/netrun_task/result
-	var/scanned = 0
-	while(read_at <= length(queue) && scanned < 32)
-		scanned++
-		var/datum/netrun_task/task = queue[read_at]
-		queue[read_at] = null
-		read_at++
-		if(QDELETED(task) || task.priority != priority || by_key[task.key] != task)
-			continue
-		by_key -= task.key
-		counts[priority]--
-		result = task
-		break
-	if(read_at > length(queue))
-		queue.Cut()
-		read_at = 1
-	else if(read_at > 64 && read_at > length(queue) / 2)
-		queue.Cut(1, read_at)
-		read_at = 1
-	switch(priority)
-		if(NETRUN_TASK_CRITICAL)
-			critical_read = read_at
-		if(NETRUN_TASK_NORMAL)
-			normal_read = read_at
-		if(NETRUN_TASK_BACKGROUND)
-			background_read = read_at
-	return result
+	var/datum/netrun_task_queue/queue = queues[priority]
+	var/datum/netrun_task/task = queue.take()
+	if(!task)
+		return null
+	by_key -= task.key
+	counts[priority]--
+	return task
 
 /datum/netrun_task_scheduler/proc/take()
 	var/static/list/rotation = list(NETRUN_TASK_CRITICAL, NETRUN_TASK_NORMAL, NETRUN_TASK_CRITICAL, NETRUN_TASK_BACKGROUND, NETRUN_TASK_CRITICAL, NETRUN_TASK_NORMAL, NETRUN_TASK_CRITICAL)
@@ -208,8 +311,6 @@
 	for(var/kind in profiles)
 		qdel(profiles[kind])
 	profiles.Cut()
-	critical.Cut()
-	normal.Cut()
-	background.Cut()
+	QDEL_LIST(queues)
 	return ..()
 

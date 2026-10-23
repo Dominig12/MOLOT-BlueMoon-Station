@@ -4,91 +4,67 @@
  * Неопубликованные действия машины через сеть вызвать нельзя.
  */
 /datum/netrun_api
-	var/atom_type
-	var/interface_name
-	var/allow_emag = FALSE
-	/// action id = list(name, desc, access, danger, params = list(list(id,name,type)))
-	var/list/actions = list()
+	parent_type = /datum/netrun_provider
+	state_signals = list(COMSIG_UI_ACT, COMSIG_ATOM_UPDATED_ICON)
 
-/datum/controller/subsystem/netrun
-	var/list/datum/netrun_api/apis
-	/// Adapter selection depends only on the atom type. A wrapper also caches no match.
-	var/list/api_type_cache
-
-/datum/controller/subsystem/netrun/proc/get_api(atom/A)
-	if(!A)
-		return
-	if(!apis)
-		apis = list()
-		api_type_cache = list()
-		for(var/datum/netrun_api/path as anything in subtypesof(/datum/netrun_api))
-			if(initial(path.atom_type))
-				apis += new path
-	if(!api_type_cache)
-		api_type_cache = list()
-	var/list/cached = api_type_cache[A.type]
-	if(cached)
-		return cached[1]
-	var/datum/netrun_api/best
-	for(var/datum/netrun_api/api as anything in apis)
-		if(istype(A, api.atom_type) && (!best || ispath(api.atom_type, best.atom_type)))
-			best = api
-	api_type_cache[A.type] = list(best)
-	return best
-
-/datum/netrun_api/proc/clean_params(action, list/input)
-	var/list/entry = actions[action]
-	if(!entry || !islist(input))
-		return
-	var/list/clean = list()
-	for(var/list/param as anything in entry["params"])
-		var/id = param["id"]
-		var/value = input[id]
-		if(isnull(value))
-			return
-		if(!istext(value) && !isnum(value))
-			return
-		value = trim("[value]")
-		if(!length(value) || length(value) > 256)
-			return
-		if(param["type"] == "number")
-			var/numeric = text2num(value)
-			if(isnull(numeric) || numeric < (param["min"] || 0) || numeric > (param["max"] || 100000))
-				return
-			value = numeric
-		clean[id] = value
-	return clean
-
-/datum/netrun_api/proc/payload(atom/A, datum/netrun_console/console, datum/component/netrun_node/node)
-	if(!interface_name || console.node_level(node) < NETRUN_ACCESS_USER || !console.can_route(node) || !node.is_online())
-		return null
-	var/list/entries = list()
-	for(var/action in actions)
-		var/list/entry = actions[action]
-		var/list/item = entry.Copy()
-		item["id"] = action
-		item["params"] = entry["params"] || list()
-		item["allowed"] = console.node_level(node) >= entry["access"] && !console.is_locked()
-		entries += list(item)
+/datum/netrun_api/read_data(atom/A, datum/netrun_console/console, datum/component/netrun_node/node)
+	if(!console.operator)
+		return list()
 	var/list/device_data = A.ui_static_data(console.operator) || list()
+	device_data = device_data.Copy()
 	var/list/live_data = A.ui_data(console.operator)
 	for(var/key in live_data)
 		device_data[key] = live_data[key]
-	return list("interface" = interface_name, "data" = device_data, "actions" = entries)
+	return device_data
+
+/// Native actions keep their own final checks and side effects. Providers never
+/// lend the operator silicon privileges, machine ID access, or a physical UI.
+/datum/netrun_api/execute(atom/target, action, list/arguments, datum/netrun_console/console, datum/component/netrun_node/node)
+	if(!interface_name || !console?.operator || QDELETED(node) || node.parent != target || action_unavailable_reason(target, action, console, node))
+		return FALSE
+	var/datum/ui_state/netrun_request/request_state = new(console, node, src, action)
+	// Network reachability replaces physical proximity only. Native ui_status may
+	// still reject an ID, a team's uniform, a lock, or another machine-specific policy.
+	var/status = min(request_state.can_use_topic(target, console.operator), target.ui_status(console.operator, request_state))
+	if(status != UI_INTERACTIVE)
+		qdel(request_state)
+		console.log_line("Штатный интерфейс устройства запретил запрос.", "bad")
+		return FALSE
+	var/list/entry = actions[action]
+	var/list/native_params = arguments.Copy()
+	for(var/list/param as anything in entry["params"])
+		if(param["native_text"])
+			var/id = param["id"]
+			native_params[id] = "[native_params[id]]"
+	var/list/fixed_params = entry["fixed_params"]
+	for(var/key in fixed_params)
+		native_params[key] = fixed_params[key]
+	var/datum/tgui/request = new(console.operator, target, interface_name)
+	request.state = request_state
+	request.status = status
+	world.PushUsr(console.operator, CALLBACK(target, TYPE_PROC_REF(/datum, ui_act), entry["native_action"] || action, native_params, request, request_state))
+	qdel(request)
+	qdel(request_state)
+	return TRUE
 
 /datum/netrun_console/proc/remote_payload(datum/component/netrun_node/node)
-	var/datum/netrun_api/api = SSnetrun.get_api(node.parent)
+	var/datum/netrun_provider/api = SSnetrun.get_provider(node.parent)
 	return api?.payload(node.parent, src, node)
 
 /datum/netrun_console/proc/remote_request(address, action, list/arguments)
 	var/datum/component/netrun_node/node = refresh_route_node(SSnetrun.find_node(address))
-	var/datum/netrun_api/api = node ? SSnetrun.get_api(node.parent) : null
+	var/datum/netrun_provider/api = node ? SSnetrun.get_provider(node.parent) : null
 	var/list/entry = api?.actions[action]
 	if(!entry)
 		return FALSE
 	var/datum/netrun_path_tree/tree = make_path_tree()
-	if(!can_route(node, tree) || !node.is_online() || is_locked() || node_level(node, tree) < entry["access"] || world.time < next_command)
+	if(!can_route(node, tree) || !node.is_online() || is_locked() || node_level(node, tree) < api.action_access(action) || world.time < next_command)
 		qdel(tree)
+		return FALSE
+	var/reason = api.action_unavailable_reason(node.parent, action, src, node)
+	if(reason)
+		qdel(tree)
+		log_line(reason, "bad")
 		return FALSE
 	var/list/clean = api.clean_params(action, arguments || list())
 	if(isnull(clean))
@@ -102,32 +78,59 @@
 	var/datum/netrun_request/remote/request = new(src, node, api, action, clean, node.network, operator)
 	return request.send(lat)
 
-/datum/netrun_console/proc/do_remote_request(datum/component/netrun_node/node, datum/netrun_api/api, action, list/params, datum/netrun_network/sent_network, mob/sender)
+/datum/netrun_console/proc/do_remote_request(datum/component/netrun_node/node, datum/netrun_provider/api, action, list/params, datum/netrun_network/sent_network, mob/sender)
 	var/datum/netrun_request/remote/request = new(src, node, api, action, params, sent_network, sender)
 	return request.send()
 
 /// Контекст проверенного сетевого запроса: не раздаёт привилегии или доступ мобу.
 /datum/ui_state/netrun_request
+	requires_physical_interaction = FALSE
 	var/datum/weakref/console_ref
 	var/datum/weakref/node_ref
+	var/datum/weakref/target_ref
+	var/datum/weakref/host_ref
+	var/datum/weakref/provider_ref
+	var/datum/weakref/network_ref
+	var/action
 
-/datum/ui_state/netrun_request/New(datum/netrun_console/console, datum/component/netrun_node/node)
+/datum/ui_state/netrun_request/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/netrun_provider/provider, action)
 	console_ref = WEAKREF(console)
 	node_ref = WEAKREF(node)
+	var/atom/target = node.parent
+	target_ref = WEAKREF(target)
+	var/datum/host = target.ui_host(console.operator)
+	if(!QDELETED(host))
+		host_ref = WEAKREF(host)
+	provider_ref = WEAKREF(provider)
+	if(node.network)
+		network_ref = WEAKREF(node.network)
+	src.action = action
 
 /datum/ui_state/netrun_request/can_use_topic(src_object, mob/user)
 	var/datum/netrun_console/console = console_ref?.resolve()
 	var/datum/component/netrun_node/node = node_ref?.resolve()
-	if(!console || !node || node.parent != src_object || console.operator != user || console.is_locked() || !node.is_online())
+	var/datum/netrun_provider/provider = provider_ref?.resolve()
+	var/atom/target = target_ref?.resolve()
+	var/datum/host = host_ref?.resolve()
+	if(!console || !node || !target || !host || node.parent != target || console.operator != user || console.is_locked() || !node.is_online())
+		return UI_CLOSE
+	// ui_status resolves ui_host(), e.g. a covered turret's native control cover.
+	// Both identities are fixed to this endpoint; an arbitrary or replacement host is denied.
+	if((src_object != target && src_object != host) || target.ui_host(user) != host)
+		return UI_CLOSE
+	var/list/entry = provider?.actions[action]
+	if(!entry || SSnetrun.get_provider(node.parent) != provider || provider.action_unavailable_reason(node.parent, action, console, node))
 		return UI_CLOSE
 	node.join_network()
+	if(node.network != network_ref?.resolve())
+		return UI_CLOSE
 	var/datum/netrun_path_tree/tree = console.make_path_tree()
-	var/allowed = console.can_route(node, tree) && console.node_level(node, tree) >= NETRUN_ACCESS_USER
+	var/allowed = console.can_route(node, tree) && console.node_level(node, tree) >= provider.action_access(action)
 	qdel(tree)
 	return allowed ? UI_INTERACTIVE : UI_CLOSE
 
 /datum/netrun_console/proc/apply_firmware_bypass(datum/component/netrun_node/node)
-	var/datum/netrun_api/api = SSnetrun.get_api(node.parent)
+	var/datum/netrun_provider/api = SSnetrun.get_provider(node.parent)
 	if(!api?.allow_emag)
 		return FALSE
 	var/atom/A = node.parent
