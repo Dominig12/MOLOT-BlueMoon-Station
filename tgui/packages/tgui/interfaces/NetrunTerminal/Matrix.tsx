@@ -4,8 +4,8 @@ import { useBackend } from '../../backend';
 import { Box, Button, Stack } from '../../components';
 import { MatrixState, NetrunData, THEME } from './types';
 
-const LIME = '#d8ff4a';
-const CELL = 30;
+const LIME = THEME.accent;
+const CELL = 46;
 
 /** Головоломка взлома. Тип выбирает сервер: протокол (matrix) или трассировка (sequence). */
 export const MatrixPanel = (props: { state: MatrixState }) => {
@@ -18,19 +18,19 @@ export const MatrixPanel = (props: { state: MatrixState }) => {
 // Компактная рамка: не растягивается на всю адаптивную область, а остаётся небольшой и по центру.
 const Shell = (props: { children: ReactNode }) => (
   <Box
-    p={1}
+    p={2}
+    className="netrun-breach-card"
     style={{
-      background: THEME.bg,
-      border: `1px solid ${LIME}55`,
-      boxShadow: `0 0 18px ${LIME}18`,
-      display: 'inline-block',
-      maxWidth: '560px',
-      width: 'fit-content',
+      background: THEME.panel,
+      border: `1px solid ${THEME.line}`,
+      display: 'block',
+      maxWidth: '800px',
+      width: '100%',
       maxHeight: '100%',
       overflowY: 'auto',
-      margin: 'auto',
+      margin: '24px auto',
       boxSizing: 'border-box',
-      borderRadius: '4px',
+      borderRadius: '10px',
     }}
   >
     {props.children}
@@ -41,7 +41,7 @@ const MatrixView = memo((props: { state: MatrixState; act: (action: string, payl
   const { state, act } = props;
   if (state.minigame === 'automatic') {
     return (
-      <Box p={2} style={{ width: '100%', overflowY: 'auto' }}>
+      <Box p={2} className="netrun-auto-breach" style={{ width: '100%', maxWidth: '760px', margin: '24px auto', overflowY: 'auto' }}>
         <Box bold color={LIME}>autobreach.exe · {state.target}</Box>
         <Box my={1}>Подбор доступа: {Math.round((state.progress ?? 0) * 100)}% · осталось {state.time_left} с</Box>
         <Box style={{ height: '12px', background: THEME.line }}>
@@ -72,7 +72,7 @@ const ProtocolView = (props: { state: MatrixState; act: (action: string, payload
         <Header target={state.target} security={state.security} timeLeft={state.time_left}
           subtitle={`выбор в ${state.pick_row ? 'строке' : 'столбце'}`} />
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px' }}>
-          <table style={{ borderCollapse: 'collapse', width: 'auto', flex: '0 0 auto' }}>
+          <table aria-label="Матрица протокола" style={{ borderCollapse: 'separate', borderSpacing: '3px', width: 'auto', flex: '0 0 auto' }}>
             <tbody>
               {rows.map((row, r) => (
                 <tr key={r}>
@@ -127,7 +127,7 @@ const SequenceView = (props: { state: MatrixState; act: (action: string, payload
           <Box style={{ height: '4px', width: `${total ? (progress / total) * 100 : 0}%`, background: LIME,
             borderRadius: '2px', transition: 'width 0.3s ease' }} />
         </Box>
-        <table style={{ borderCollapse: 'collapse', width: 'auto', margin: '6px auto 0' }}>
+        <table aria-label="Последовательность трассировки" style={{ borderCollapse: 'separate', borderSpacing: '3px', width: 'auto', margin: '12px auto' }}>
           <tbody>
             {rows.map((row, r) => (
               <tr key={r}>
@@ -171,13 +171,22 @@ const GridCell = memo((props: {
   const clickable = active && !!code;
   return (
     <td
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : -1}
+      aria-label={clickable ? `Выбрать код ${code}` : undefined}
       onClick={clickable ? () => onPick(index) : undefined}
+      onKeyDown={(event) => {
+        if (clickable && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          onPick(index);
+        }
+      }}
       style={{
-        width: `${CELL}px`, height: `${CELL}px`, textAlign: 'center', fontFamily: 'monospace', fontSize: '14px',
+        width: `${CELL}px`, height: `${CELL}px`, textAlign: 'center', fontFamily: 'monospace', fontSize: '15px',
         cursor: clickable ? 'pointer' : 'default',
-        color: !code ? THEME.line : active ? LIME : THEME.muted,
-        background: active ? 'rgba(216, 255, 74, 0.08)' : 'transparent',
-        border: `1px solid ${active ? 'rgba(216, 255, 74, 0.3)' : 'transparent'}`,
+        color: !code ? '#566b7a' : active ? '#e5f1fa' : '#91a8bc',
+        background: active ? 'rgba(85, 203, 233, 0.17)' : '#0c1a27',
+        border: `1px solid ${active ? LIME : THEME.line}`,
         transition: 'background 0.2s, color 0.2s',
       }}
     >
@@ -194,16 +203,25 @@ const SeqCell = memo((props: {
   const { cell, index, onPick } = props;
   const isTarget = (cell.order ?? 0) > 0;
   const clickable = !!cell.active;
-  const color = cell.done ? THEME.good : cell.active ? LIME : isTarget ? THEME.text : THEME.line;
+  const color = cell.done ? THEME.good : cell.active ? THEME.text : isTarget ? '#9cb6c8' : '#7992a6';
   return (
     <td
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : -1}
+      aria-label={clickable ? `Выбрать код ${cell.code}, шаг ${cell.order || ''}` : undefined}
       onClick={clickable ? () => onPick(index) : undefined}
+      onKeyDown={(event) => {
+        if (clickable && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          onPick(index);
+        }
+      }}
       style={{
-        width: `${CELL}px`, height: `${CELL}px`, textAlign: 'center', fontFamily: 'monospace', fontSize: '13px',
+        width: `${CELL}px`, height: `${CELL}px`, textAlign: 'center', fontFamily: 'monospace', fontSize: '15px',
         position: 'relative', cursor: clickable ? 'pointer' : 'default', color,
-        background: cell.done ? 'rgba(90, 220, 140, 0.12)' : cell.active ? 'rgba(216, 255, 74, 0.14)' : 'transparent',
-        border: `1px solid ${cell.active ? LIME : cell.done ? THEME.good + '66' : isTarget ? THEME.line : 'transparent'}`,
-        boxShadow: cell.active ? `0 0 8px ${LIME}aa` : undefined,
+        background: cell.done ? 'rgba(91, 218, 177, 0.17)' : cell.active ? 'rgba(85, 203, 233, 0.20)' : '#0c1a27',
+        border: `1px solid ${cell.active ? LIME : cell.done ? THEME.good + '66' : THEME.line}`,
+        boxShadow: cell.active ? `inset 0 0 0 1px ${LIME}66` : undefined,
         transition: 'background 0.2s, box-shadow 0.2s, border-color 0.2s',
       }}
     >

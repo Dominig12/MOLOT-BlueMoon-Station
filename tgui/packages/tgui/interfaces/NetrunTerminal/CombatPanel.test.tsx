@@ -47,6 +47,24 @@ describe('Netrun combat contacts', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
+  test('incoming countdown is shown once in reserved session status, not repeated inside combat', () => {
+    const { store, combat } = setup({
+      incoming: [{ source: 'ICE-SENTRY', name: 'strike.exe', role: 'attack',
+        power: 16, remaining: 2.3, source_ref: enemy.ref }],
+      self: { integrity: 74, max_integrity: 100, stunned: false },
+    });
+    const panel = render(<CombatPanel />);
+    expect(panel.queryByText(/ICE-SENTRY готовит strike.exe · через/)).toBeNull();
+    const self = panel.getByText('Вы');
+    expect(self).toBeTruthy();
+    act(() => store.dispatch(backendUpdate({ data: { combat: {
+      ...combat, incoming: [{ ...combat.incoming![0], remaining: 1.2 }],
+    } } })));
+    panel.rerender(<CombatPanel />);
+    expect(panel.queryByText(/ICE-SENTRY готовит strike.exe · через/)).toBeNull();
+    expect(panel.getByText('Вы')).toBeTruthy();
+  });
+
   test('a remote contact shows its actual node and uses the real source ref', () => {
     const { topic } = setup();
     const panel = render(<CombatPanel />);

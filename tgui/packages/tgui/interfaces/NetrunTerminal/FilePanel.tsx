@@ -46,12 +46,12 @@ const FileEditor = (props: { onCreated?: () => void }) => {
   return (
     <Box mt={0.5} p={0.5} style={{ background: THEME.bg }}>
       <Input fluid value={name} onInput={(_event, value) => setName(value)} />
-      {file && (
+      {!!file && (
         <Box mt={0.5} color={THEME.muted} fontSize="11px">
           {file.source === 'shard' ? 'Шард' : 'Локальная память'} · {file.kind} · {file.size}
         </Box>
       )}
-      {file?.kind === 'photo' && file.image && (
+      {file?.kind === 'photo' && !!file.image && (
         <div
           style={{
             marginTop: '6px',
@@ -94,7 +94,7 @@ const FileEditor = (props: { onCreated?: () => void }) => {
       <Box mt={0.5} style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
         {!file ? (
           <>
-            {data.shard && <Button compact icon="sd-card" content="На шард" selected={toShard} onClick={() => setToShard(!toShard)} />}
+            {!!data.shard && <Button compact icon="sd-card" content="На шард" selected={toShard} onClick={() => setToShard(!toShard)} />}
             <Button compact icon="save" content="Создать" disabled={!name.trim()} onClick={() => {
               setSubmitted({ previousUid: data.file?.uid ?? null, name, content });
               act('file_new', { name, content, to_shard: toShard });
@@ -104,7 +104,7 @@ const FileEditor = (props: { onCreated?: () => void }) => {
           <>
             <Button compact icon="signature" content="Переименовать" disabled={!name.trim() || name === file.name} onClick={() => act('file_rename', { uid: file.uid, name })} />
             {file.kind === 'text' && <Button compact icon="save" content="Сохранить" disabled={content === file.content} onClick={() => act('file_edit', { uid: file.uid, content })} />}
-            {data.shard && (
+            {!!data.shard && (
               <>
                 <Button compact icon="copy" tooltip={file.source === 'shard' ? 'Скопировать в память' : 'Скопировать на шард'} onClick={() => act('file_copy', { uid: file.uid, to_shard: file.source !== 'shard' })} />
                 <Button compact icon="arrow-right-arrow-left" tooltip={file.source === 'shard' ? 'Переместить в память' : 'Переместить на шард'} onClick={() => act('file_move', { uid: file.uid, to_shard: file.source !== 'shard' })} />
@@ -113,7 +113,7 @@ const FileEditor = (props: { onCreated?: () => void }) => {
           </>
         )}
       </Box>
-      {!file && submitted && (
+      {!file && !!submitted && (
         <Box mt={0.5} color={THEME.muted} fontSize="11px">
           Запрос отправлен. До подтверждения создания текст остаётся в редакторе; результат — в журнале.
         </Box>

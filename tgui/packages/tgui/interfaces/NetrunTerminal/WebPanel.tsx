@@ -93,9 +93,9 @@ const PageView = (props: { web: WebState }) => {
       <Box bold mb={1} color={THEME.accent}>
         {page!.title}
       </Box>
-      {page!.loading && <Box color={THEME.muted}>Загрузка страницы…</Box>}
-      {page!.failed && <Box color={THEME.bad}>Не удалось загрузить страницу.</Box>}
-      {page!.text && (
+      {!!page!.loading && <Box color={THEME.muted}>Загрузка страницы…</Box>}
+      {!!page!.failed && <Box color={THEME.bad}>Не удалось загрузить страницу.</Box>}
+      {!!page!.text && (
         <Box
           style={{
             whiteSpace: 'pre-wrap',

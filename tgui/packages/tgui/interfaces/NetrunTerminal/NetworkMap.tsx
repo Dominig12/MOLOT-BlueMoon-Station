@@ -121,6 +121,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   const { act, selectedAddress, selectedNetwork, jackAddress, entityHost, hasEntity,
     map, topologyKey, pingRoute, events, waypoint, search, suspended } = props;
   const viewport = useRef<GraphCanvasHandle>(null);
+  const gatewaysMenu = useRef<HTMLDetailsElement>(null);
   const [layoutCache] = useState(createGraphLayoutCache);
   const [dynamicLayout] = useState(() => new GraphLayout());
   const [staticProjection] = useState(() => new StaticMapProjection());
@@ -229,15 +230,15 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
           content={entry.name} aria-label={`Сектор: ${entry.name}`} onClick={() => { setPendingCenter(null); act('map_sector', { id: entry.id }); }} />))}
         {sector?.levels.map((z) => (<Button key={z} compact selected={z === map.active_z}
           content={`Z${z}`} aria-label={`Этаж Z${z}`} onClick={() => { setPendingCenter(null); act('map_sector', { id: sector.id, z }); }} />))}
-        {map.source_sector && (map.source_sector !== map.active_sector || map.source_z !== map.active_z) && <Button compact
+        {!!map.source_sector && (map.source_sector !== map.active_sector || map.source_z !== map.active_z) && <Button compact
           icon="location-crosshairs" content="Точка подключения" onClick={() => act('map_sector', { id: map.source_sector, z: map.source_z })} />}
                                 </Box>}
-      <Box p={1} style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', borderBottom: `1px solid ${THEME.line}`, background: '#0d222d' }}>
+      <Box className="netrun-map-tools" p={1} style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', borderBottom: `1px solid ${THEME.line}`, background: THEME.panel }}>
         <Input key={searchReset} width="156px" placeholder="поиск узла…" value={query}
           onInput={(_event, value) => { setPendingCenter(null); setQuery(value); }}
           onEnter={(_event, value) => act('search', { text: value })} />
         <Button compact icon="magnifying-glass" tooltip="Поиск узлов по всей сети" onClick={() => act('search', { text: query })} />
-        {hasEntity && entityHost && <Button compact icon="location-crosshairs" content="Мой узел"
+        {!!hasEntity && !!entityHost && <Button compact icon="location-crosshairs" content="Мой узел"
           onClick={() => locate(entityHost, true)} />}
         <Button compact icon="bullseye" content="Рядом" selected={focusNearby} disabled={!selectedAddress}
           tooltip="Показать окружение выбранного узла в 2 переходах" onClick={() => { setPendingCenter(null); setFocusNearby(!focusNearby); }} />
@@ -253,19 +254,29 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
             : <Box color={THEME.muted} fontSize="10px">Путь: —</Box>}
         </Box>
       </Box>
-      <Box p={0.5} style={{ display: 'flex', gap: '4px', flex: '0 0 auto', overflowX: 'auto', overflowY: 'hidden', alignItems: 'center', borderBottom: `1px solid ${THEME.line}` }}>
+      <Box className="netrun-map-filterbar" p={0.5} style={{ display: 'flex', gap: '4px', flex: '0 0 auto', alignItems: 'center', borderBottom: `1px solid ${THEME.line}` }}>
         {types.map((type) => (<Button key={type} compact icon={NODE_ICONS[type] || 'circle'}
           selected={!disabledTypes[type]} aria-label={`Фильтр: ${NODE_NAMES[type] || type}`}
           tooltip={NODE_NAMES[type] || type}
           onClick={() => { setPendingCenter(null); setDisabledTypes((old) => ({ ...old, [type]: !old[type] })); }} />))}
         <Box ml={1} style={{ width: '1px', alignSelf: 'stretch', background: THEME.line, flexShrink: 0 }} />
+        <details ref={gatewaysMenu} className="netrun-map-gateways" onKeyDown={(event) => {
+          if (event.key === 'Escape') { event.currentTarget.open = false; }
+        }}>
+          <summary>Сети ({(map.gateways ?? []).length}){selectedNetwork ? ` · ${(map.gateways ?? []).find((net) => net.id === selectedNetwork)?.code || ''}` : ''}</summary>
+          <div className="netrun-map-gateways__list">
         {(map.gateways ?? []).map((gateway) => (<Button key={gateway.id} compact content={[gateway.code, gatewaySectors.get(gateway.id)].filter(Boolean).join(' · ')}
           icon={gateway.has_key ? 'key' : gateway.access ? 'network-wired' : 'lock'}
           selected={selectedNetwork === gateway.id}
           tooltip={`${gateway.name} · ${ACCESS_NAMES[gateway.access]} · защита ${gateway.security}`}
-          style={{ color: gateway.color, flexShrink: 0 }} onClick={() => act('select_network', { id: gateway.id })} />))}
+          style={{ color: gateway.color, flexShrink: 0 }} onClick={() => {
+            if (gatewaysMenu.current) { gatewaysMenu.current.open = false; }
+            act('select_network', { id: gateway.id });
+          }} />))}
+          </div>
+        </details>
       </Box>
-      {waypoint && <Box p={0.5} style={{ background: '#12202a', borderBottom: `1px solid ${THEME.line}` }}>
+      {!!waypoint && <Box p={0.5} style={{ background: '#12202a', borderBottom: `1px solid ${THEME.line}` }}>
         <WaypointRoute wp={waypoint} onClear={() => act('clear_waypoint')} onNext={(address) => act('select', { address })} />
                    </Box>}
       {relayDestinations.length > 0 && <Box data-net-relay-destinations p={0.75} style={{ flex: '0 0 auto', maxHeight: '112px', overflowY: 'auto', borderBottom: `1px solid ${THEME.line}` }}>
@@ -323,6 +334,6 @@ const StoredRouteStatus = memo(({ route }: { route: NonNullable<NetMap['route']>
 const WaypointRoute = ({ wp, onClear, onNext }: { wp: Waypoint; onClear: () => void; onNext: (address: string) => void }) => (<Box inline
   color={wp.lost || !wp.reachable ? THEME.bad : THEME.accent} fontSize="10px">
   <Icon name="route" mr={1} />{wp.name} · {wp.lost ? 'цель потеряна' : wp.reachable ? `${wp.hops} переходов` : 'нет маршрута'}
-  {wp.next && <Button compact ml={1} icon="arrow-right" content="Следующий узел" onClick={() => onNext(wp.next)} />}
+  {!!wp.next && <Button compact ml={1} icon="arrow-right" content="Следующий узел" onClick={() => onNext(wp.next)} />}
   <Button compact icon="xmark" ml={1} onClick={onClear} />
                                                                                                                               </Box>);

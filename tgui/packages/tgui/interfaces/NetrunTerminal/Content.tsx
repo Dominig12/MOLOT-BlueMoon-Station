@@ -1,7 +1,9 @@
 import { ReactNode, useEffect, useRef, useState } from 'react';
 
+import './netrun-workspace.scss';
+
 import { useBackend } from '../../backend';
-import { Box, Button, Icon, Stack, Tabs } from '../../components';
+import { Box, Button, Icon, Tabs } from '../../components';
 import { CombatPanel } from './CombatPanel';
 import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
@@ -87,11 +89,11 @@ export const NetrunContent = () => {
   if (webAvailable || page === 'web') { tabs.push({ id: 'web', icon: 'globe' }); }
 
   return (
-    <Box style={{ color: THEME.text, background: THEME.panel, height: '100%', minHeight: 0, minWidth: 0,
-      display: 'flex', flexDirection: 'column', boxSizing: 'border-box', overflow: 'hidden', padding: '8px', gap: '5px' }}>
+    <Box className="netrun-shell" style={{ color: THEME.text, background: THEME.panel, height: '100%', minHeight: 0, minWidth: 0,
+      display: 'flex', flexDirection: 'column', boxSizing: 'border-box', overflow: 'hidden' }}>
       <Header />
-      <div aria-label="Разделы нетрана" style={{ flex: '0 0 auto', minWidth: 0, overflowX: 'auto' }}>
-        <Tabs role="tablist" aria-label="Рабочие страницы" style={{ width: 'max-content', minWidth: '100%', whiteSpace: 'nowrap', overflow: 'visible' }}>
+      <div className="netrun-navigation" aria-label="Разделы нетрана">
+        <Tabs role="tablist" aria-label="Рабочие страницы" className="netrun-navigation__tabs">
           {tabs.map((tab) => (
             <Tabs.Tab key={tab.id} icon={tab.icon} selected={page === tab.id} role="tab"
               aria-selected={page === tab.id} tabIndex={0}
@@ -99,14 +101,14 @@ export const NetrunContent = () => {
               rightSlot={tab.id === 'combat' && incomingCount ? <span aria-label={`Входящих атак: ${incomingCount}`}>! {incomingCount}</span> : undefined}
               onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(tab.id); } }}
               onClick={() => navigate(tab.id)} style={tab.id === 'combat' && incomingCount ? { color: THEME.bad } : undefined}>
-              {PAGE_NAMES[tab.id]}{tab.count ? ` (${tab.count})` : ''}
+              <span className="netrun-navigation__label">{PAGE_NAMES[tab.id]}{tab.count ? ` (${tab.count})` : ''}</span>
             </Tabs.Tab>
           ))}
         </Tabs>
       </div>
-      <SessionStatus onCombat={() => navigate('combat')} onBreach={() => navigate('breach')} />
-      <div data-net-layout="workspace" style={{ display: 'flex', flex: '1 1 0', minHeight: 0, minWidth: 0,
-        position: 'relative', borderRadius: '7px', overflow: 'hidden' }}>
+      <div className="netrun-status"><SessionStatus onCombat={() => navigate('combat')} onBreach={() => navigate('breach')} /></div>
+      <div className="netrun-workspace" data-net-layout="workspace" style={{ display: 'flex', flex: '1 1 0', minHeight: 0, minWidth: 0,
+        position: 'relative', borderRadius: '10px', overflow: 'hidden' }}>
         <WorkspacePage id="terminal" active={page}>
           <EntityPanel />
           <Tabs>
@@ -119,18 +121,18 @@ export const NetrunContent = () => {
         <WorkspacePage id="map" active={page}>
           <div style={{ display: 'flex', flex: '1 1 0', minWidth: 0, minHeight: 0, gap: '7px', position: 'relative' }}>
             <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ flex: '0 0 auto', textAlign: 'right', minHeight: '22px' }}>
+              <div className="netrun-inspector-toggle" style={{ flex: '0 0 auto', textAlign: 'right', minHeight: '22px' }}>
                 <Button compact icon={sidebarOpen ? 'angles-right' : 'angles-left'}
                   content={sidebarOpen ? 'Скрыть информацию об узле' : 'Показать информацию об узле'}
                   onClick={() => setSidebarOpen(!sidebarOpen)} />
               </div>
               <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}><StationMap suspended={page !== 'map'} /></div>
             </div>
-            <div data-net-layout="sidebar" style={{ display: sidebarOpen ? 'block' : 'none',
-              flex: compact ? 'none' : '0 0 282px', width: compact ? 'min(84%, 310px)' : '282px',
+            <div className="netrun-inspector" data-net-layout="sidebar" style={{ display: sidebarOpen ? 'block' : 'none',
+              flex: compact ? 'none' : '0 0 320px', width: compact ? 'min(88%, 350px)' : '320px',
               position: compact ? 'absolute' : 'relative', right: compact ? 0 : undefined, top: compact ? 0 : undefined,
               zIndex: compact ? 7 : undefined, minWidth: 0, minHeight: 0, height: '100%', overflowY: 'auto',
-              overflowX: 'hidden', background: '#0d222d', border: `1px solid ${THEME.line}`,
+              overflowX: 'hidden', background: THEME.panel, border: `1px solid ${THEME.line}`,
               borderRadius: '7px', boxSizing: 'border-box' }}>
               <NodeSidebar suspended={page !== 'map'} />
             </div>
@@ -190,51 +192,35 @@ const Header = () => {
   const { origin, uplink, trace, locked, wireless, jack, entity } = data;
   const traceColor = trace > 66 ? THEME.bad : trace > 33 ? THEME.warn : THEME.accent;
   return (
-    <Stack align="center" mb={1} style={{ fontFamily: 'monospace', flexWrap: 'wrap', rowGap: '4px' }}>
-      <Stack.Item>
-        <Icon name={wireless ? 'wifi' : 'ethernet'} color={uplink ? THEME.accent : THEME.bad} mr={1} />
-        {ORIGIN_NAMES[origin] || origin}
-      </Stack.Item>
-      <Stack.Item color={uplink ? THEME.good : THEME.bad} ml={2}>
-        NTnet: {uplink ? 'связь есть' : 'нет связи'}
-      </Stack.Item>
-      {jack && (
-        <Stack.Item ml={2} color={THEME.good}>
-          <Icon name="plug" mr={0.5} />
-          {jack.name}
-        </Stack.Item>
-      )}
-      {entity && (
-        <Stack.Item ml={2} color={entity.integrity > entity.max_integrity * 0.25 ? THEME.text : THEME.bad}>
+    <header className="netrun-header">
+      <div className="netrun-header__brand" aria-label="NetRun">
+        <span className="netrun-header__logo"><Icon name="network-wired" /></span>
+        <span className="netrun-header__title">NETRUN <small>NETWORK OPERATIONS</small></span>
+      </div>
+      <div className="netrun-header__indicators">
+        <span className="netrun-indicator" title={ORIGIN_NAMES[origin] || origin}>
+          <Icon name={wireless ? 'wifi' : 'ethernet'} color={uplink ? THEME.accent : THEME.bad} />
+          <span>{ORIGIN_NAMES[origin] || origin}</span>
+        </span>
+        <span className="netrun-indicator" data-state={uplink ? 'online' : 'offline'}>
+          <Icon name="circle" /> Реле NTnet: {uplink ? 'доступно' : 'недоступно'}
+        </span>
+        {!!jack && <span className="netrun-indicator"><Icon name="plug" /> {jack.name}</span>}
+        {!!entity && <span className="netrun-indicator" data-state={entity.integrity > entity.max_integrity * 0.25 ? 'online' : 'offline'}>
           Целостность {entity.integrity}/{entity.max_integrity}
-        </Stack.Item>
-      )}
-      <Stack.Item grow ml={2} style={{ minWidth: '180px' }}>
-        {locked > 0 ? (
-          <Box color={THEME.bad} bold>
-            БЛОКИРОВКА {locked}s
-          </Box>
-        ) : (
-          <Box style={{ position: 'relative', height: '14px', background: THEME.bg, border: `1px solid ${THEME.line}` }}>
-            <Box
-              style={{
-                position: 'absolute',
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: `${trace}%`,
-                background: traceColor,
-                opacity: 0.7,
-                transition: 'width 0.5s',
-              }}
-            />
-            <Box style={{ position: 'relative', fontSize: '10px', lineHeight: '14px', paddingLeft: '4px' }}>
-              ТРАССИРОВКА {Math.round(trace)}%
-            </Box>
-          </Box>
-        )}
-      </Stack.Item>
-    </Stack>
+        </span>}
+        <div className="netrun-trace" aria-label={locked > 0 ? `Блокировка: ${locked} с` : `Трассировка: ${Math.round(trace)}%`}>
+          {locked > 0 ? <strong style={{ color: THEME.bad }}>БЛОКИРОВКА {locked}s</strong> : (
+            <>
+              <div className="netrun-trace__label">ТРАССИРОВКА <strong>{Math.round(trace)}%</strong></div>
+              <div className="netrun-trace__track">
+                <div className="netrun-trace__fill" style={{ width: `${Math.max(0, Math.min(100, trace))}%`, background: traceColor }} />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </header>
   );
 };
 

@@ -17,9 +17,9 @@ const LABELS: Record<string, string> = {
 
 /** Data only: native actions are declared and validated by the machine adapter. */
 export const RemotePanel = (props: { address: string; remote: Remote }) => (
-  <Box mt={1}>
-    <Box bold mb={0.5}>Управление машиной · {props.remote.interface}</Box>
-    <Box p={1} mb={1} style={{ background: THEME.bg, maxHeight: '300px', overflowY: 'auto' }}>
+  <Box mt={1} className="netrun-remote-panel">
+    <Box bold mb={1}>Управление машиной · {props.remote.interface}</Box>
+    <Box p={1} mb={1} className="netrun-remote-tree" style={{ background: THEME.bg, maxHeight: '350px', overflowY: 'auto' }}>
       <DataTree value={props.remote.data} depth={0} />
     </Box>
     {props.remote.actions.map((action) => (
@@ -46,9 +46,15 @@ const DataTree = (props: { value: unknown; depth: number }) => {
   return (
     <div style={{ overflowWrap: 'anywhere' }}>
       {entries.map(([key, entry]) => {
-        const label = Array.isArray(value) ? `#${Number(key) + 1}` : LABELS[key] || key.replace(/_/g, ' ');
+        const display = entry && typeof entry === 'object'
+          ? (entry as Record<string, unknown>).name ?? (entry as Record<string, unknown>).title
+          : null;
+        const label = Array.isArray(value)
+          ? (typeof display === 'string' && display ? display : `#${Number(key) + 1}`)
+          : LABELS[key] || key.replace(/_/g, ' ');
         return entry && typeof entry === 'object' ? (
-          <details key={key} open={depth < 1} style={{ marginLeft: depth ? '8px' : 0 }}>
+          <details key={key} open={depth < 1 && !Array.isArray(entry) && Object.keys(entry).length <= 6}
+            style={{ marginLeft: depth ? '8px' : 0 }}>
             <summary>{label}</summary>
             <DataTree value={entry} depth={depth + 1} />
           </details>
@@ -70,7 +76,7 @@ const RemoteAction = (props: { address: string; action: Remote['actions'][number
   const [values, setValues] = useState<Record<string, string>>({});
   const request = remoteArguments(params, values);
   return (
-    <Box mb={0.5}>
+    <Box className="netrun-remote-action" mb={1}>
       {params.map((param) => (
         <label key={param.id} style={{ display: 'inline-block', marginRight: '6px', marginBottom: '5px' }}>
           <span style={{ marginRight: '5px' }}>{param.name}</span>
@@ -100,7 +106,7 @@ const RemoteAction = (props: { address: string; action: Remote['actions'][number
           act('remote_act', { address: props.address, request: action.id, arguments: request.args });
         }}
       />
-      {(!action.allowed && action.reason || request.error) && <Box role="status" color={THEME.warn} fontSize="11px">
+      {!!(!action.allowed && action.reason || request.error) && <Box role="status" color={THEME.warn} fontSize="11px">
         {!action.allowed && action.reason || request.error}
                                                               </Box>}
     </Box>

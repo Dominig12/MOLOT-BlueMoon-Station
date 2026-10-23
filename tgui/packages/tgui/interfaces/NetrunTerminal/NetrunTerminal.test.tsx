@@ -251,6 +251,55 @@ describe('Netrun terminal panels', () => {
     layout.mockRestore();
   });
 
+  test('dragging paints the newly exposed map before releasing the pointer', () => {
+    // A large scene uses viewport-only previews while the pointer moves.
+    // This guards against the old CSS-only pan that left blank map strips.
+    const paint = jest.spyOn(GraphRenderer.prototype, 'paint').mockImplementation(() => undefined);
+    const preview = jest.spyOn(GraphRenderer.prototype, 'paintPreview').mockImplementation(() => undefined);
+    const chunks = jest.spyOn(GraphRenderer.prototype, 'paintChunks').mockImplementation(function* () { yield; });
+    const context = jest.spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({ drawImage: jest.fn(), setTransform: jest.fn() } as unknown as CanvasRenderingContext2D);
+    const originalFrame = window.requestAnimationFrame;
+    const originalCancel = window.cancelAnimationFrame;
+    const callbacks: FrameRequestCallback[] = [];
+    Object.defineProperty(window, 'requestAnimationFrame', { configurable: true,
+      value: (callback: FrameRequestCallback) => { callbacks.push(callback); return callbacks.length; } });
+    Object.defineProperty(window, 'cancelAnimationFrame', { configurable: true, value: jest.fn() });
+    const flush = () => {
+      const callback = callbacks.shift();
+      if (callback) { act(() => callback(0)); }
+    };
+    const originalPointer = window.PointerEvent;
+    Object.defineProperty(window, 'PointerEvent', { value: MouseEvent, configurable: true });
+    try {
+      const many = Array.from({ length: 420 }, (_, index) => ({
+        ...node, address: `CAM:${index}`, type: 'camera', x: 10 + index, y: 10 + index,
+      }));
+      setup({ map: { gateways: [], focus: node.address, revision: 1, nodes: [node, ...many], edges: [] } });
+      const panel = render(<StationMap />);
+      // Flush startup's staged background without measuring implementation details.
+      for (let i = 0; i < 5 && callbacks.length; i++) { flush(); }
+      const viewport = panel.getByLabelText('Карта сети');
+      fireEvent.pointerDown(viewport, { clientX: 100, clientY: 100, button: 0 });
+      fireEvent.pointerMove(viewport, { clientX: 220, clientY: 170 });
+      expect(preview).not.toHaveBeenCalled();
+      flush();
+      expect(preview).toHaveBeenCalledTimes(1);
+      fireEvent.pointerMove(viewport, { clientX: 260, clientY: 180 });
+      flush();
+      expect(preview).toHaveBeenCalledTimes(2);
+      fireEvent.pointerUp(viewport, { clientX: 260, clientY: 180 });
+      // Full-quality render is queued only after the drag has finished.
+      expect(callbacks.length).toBeGreaterThan(0);
+      panel.unmount();
+    } finally {
+      paint.mockRestore(); preview.mockRestore(); chunks.mockRestore(); context.mockRestore();
+      Object.defineProperty(window, 'PointerEvent', { configurable: true, value: originalPointer });
+      Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: originalFrame });
+      Object.defineProperty(window, 'cancelAnimationFrame', { configurable: true, value: originalCancel });
+    }
+  });
+
   test('manual pan is preserved when a later structural update arrives', () => {
     const originalPointer = window.PointerEvent;
     Object.defineProperty(window, 'PointerEvent', { value: MouseEvent, configurable: true });
@@ -294,6 +343,38 @@ describe('Netrun terminal panels', () => {
     expect(getByText('1/1 · текущий этаж')).toBeTruthy();
     expect(layout).toHaveBeenCalledTimes(3);
     layout.mockRestore();
+  });
+
+  test('BYOND numeric false values never appear beside guest access or breach controls', () => {
+    const numericFalse = 0 as unknown as boolean;
+    setup({
+      selected: null, can_breach: numericFalse,
+      selected_network: {
+        id: 'med', code: 'NET-MED', name: 'ЛВС: Медблок',
+        color: '#55cbe9', security: 2, access: 0,
+        has_key: numericFalse, can_breach: numericFalse, log: [],
+      },
+    });
+    const panel = render(<NodePanel />);
+    expect(panel.getByText('ГОСТЬ')).toBeTruthy();
+    expect(panel.queryByText('0')).toBeNull();
+    expect(panel.queryByText('Подобрать доступ к сети')).toBeNull();
+    panel.unmount();
+  });
+
+  test('locked node with BYOND numeric false LAN flags has no ghost zero labels', () => {
+    const numericFalse = 0 as unknown as boolean;
+    setup({
+      can_breach: numericFalse,
+      selected: { ...node, access: 0, legit: 0,
+        lan: { id: 'med', code: 'NET-MED', name: 'ЛВС: Медблок',
+          color: '#55cbe9', security: 2, access: 0, has_key: numericFalse,
+          can_breach: numericFalse } },
+    });
+    const panel = render(<NodePanel />);
+    expect(panel.queryByText('0')).toBeNull();
+    expect(panel.queryByText('Подобрать доступ к ЛВС')).toBeNull();
+    expect(panel.queryByText('Подобрать доступ')).toBeNull();
   });
 
   test('automatic breach explicitly sends its mode and shows waiting progress instead of cells', () => {
@@ -401,10 +482,14 @@ describe('Netrun terminal panels', () => {
     const rows = [...files.querySelectorAll<HTMLElement>('[data-net-file-row]')];
     expect(rows.length).toBe(2);
     for (const row of rows) {
-      // Actions sit in a horizontal flex row, not a vertical column.
+      // Filename and buttons share a row; controls remain right-aligned.
       const actions = row.querySelector<HTMLElement>('[data-net-file-actions]');
+      expect(row.style.display).toBe('flex');
+      expect(row.style.alignItems).toBe('center');
       expect(actions.style.display).toBe('flex');
-      expect(actions.style.flexWrap).toBe('wrap');
+      expect(actions.style.flexWrap).toBe('nowrap');
+      expect(actions.style.justifyContent).toBe('flex-end');
+      expect(actions.style.flex).toContain('0 0');
     }
   });
 
@@ -447,6 +532,45 @@ describe('Netrun terminal panels', () => {
     expect(getByText('Заряд 75%')).toBeTruthy();
     fireEvent.click(getByText(command.name));
     expect(sent(topic, 'command')).toEqual([{ id: command.id }]);
+  });
+
+  test('BYOND numeric false flags do not print stray zeros in machine tabs', () => {
+    setup();
+    const { queryByText, getByText } = render(<WindowPanel window={{
+      ...machine,
+      can_breach: 0 as unknown as boolean,
+      feed: 0 as unknown as string[],
+      remote: 0 as never,
+      network: { id: 'eng', name: 'Engineering', code: 'NET-ENG', access: 1, can_breach: true },
+    }} />);
+    expect(queryByText('0')).toBeNull();
+    expect(getByText('Подобрать доступ к NET-ENG')).toBeTruthy();
+  });
+
+  test('sequence puzzle supports keyboard activation without changing action protocol', () => {
+    const topic = setup();
+    const { getByRole } = render(<MatrixPanel state={{
+      minigame: 'sequence', target: 'TEST', security: 1, size: 1,
+      time_left: 20, cells: [{ code: '7A', active: true, order: 1 }], daemons: [],
+      progress: 0, total: 1,
+    }} />);
+    fireEvent.keyDown(getByRole('button', { name: 'Выбрать код 7A, шаг 1' }), { key: 'Enter' });
+    expect(sent(topic, 'breach_pick')).toEqual([{ index: 1 }]);
+  });
+
+  test('map network chooser closes after selecting a gateway', () => {
+    const gateway = { id: 'engineering', code: 'NET-ENG', name: 'Engineering',
+      color: '#55cbe9', security: 2, access: 2, has_key: false, can_breach: false };
+    const topic = setup({ map: {
+      gateways: [gateway], focus: node.address, revision: 1, nodes: [node], edges: [],
+    } });
+    const panel = render(<StationMap />);
+    const menu = panel.container.querySelector<HTMLDetailsElement>('details.netrun-map-gateways');
+    expect(menu).not.toBeNull();
+    menu!.open = true;
+    fireEvent.click(panel.getByText('NET-ENG'));
+    expect(menu!.open).toBe(false);
+    expect(sent(topic, 'select_network')).toEqual([{ id: 'engineering' }]);
   });
 
   test('machine tab shows commands, breach and native actions without parameters', () => {

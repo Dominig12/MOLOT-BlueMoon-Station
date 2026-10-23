@@ -16,7 +16,7 @@ const KIND_COLORS: Record<string, string> = {
 
 const LogLines = memo((props: { lines: LogLine[] }) => (<>{props.lines.map((line, index) => (
   <div key={index} style={{ color: KIND_COLORS[line.kind] || THEME.text, whiteSpace: 'pre-wrap' }}>
-    {line.time && <span style={{ color: THEME.muted }}>{line.time} </span>}
+    {!!line.time && <span style={{ color: THEME.muted }}>{line.time} </span>}
     {line.text}
   </div>
 ))}
@@ -159,7 +159,7 @@ export const ConsoleLog = (props: { active?: boolean } = {}) => {
       >
         <LogLines lines={data.log} />
       </div>
-      {output.unread && <Button compact icon="arrow-down" content="К новым сообщениям" onClick={output.handleFollowLatest} />}
+      {!!output.unread && <Button compact icon="arrow-down" content="К новым сообщениям" onClick={output.handleFollowLatest} />}
       <input
         value={value}
         onChange={(e) => {
@@ -191,25 +191,34 @@ export const StoragePanel = () => {
   const { storage, shard, selected } = data;
   const canUpload = !!selected?.files && selected.access >= 2;
   return (
-    <Section title={`Память ${storage.used}/${storage.capacity}`} scrollable style={{ height: '100%', minHeight: '100%', boxSizing: 'border-box', overflowY: 'auto' }}>
-      <FileList files={storage.files} canUpload={canUpload} />
-      {shard && (
-        <Box mt={1}>
-          <Box color={THEME.muted} mb={0.5}>
-            <Icon name="sd-card" mr={1} />
-            {shard.name} {shard.used}/{shard.capacity}
-          </Box>
-          <FileList files={shard.files} canUpload={canUpload} />
-        </Box>
-      )}
-      {data.host_actions.length > 0 && (
-        <Box mt={1}>
-          {data.host_actions.map((a) => (
-            <Button key={a.id} icon={a.icon} content={a.name} onClick={() => act(a.id)} />
-          ))}
-        </Box>
-      )}
-      <FilePanel />
+    <Section title={`Память ${storage.used}/${storage.capacity}`} scrollable
+      style={{ height: '100%', minHeight: '100%', boxSizing: 'border-box', overflowY: 'auto' }}>
+      <div className="netrun-files-layout">
+        <div className="netrun-files-catalog">
+          <Box bold mb={1} color={THEME.text}>Локальные файлы</Box>
+          <FileList files={storage.files} canUpload={canUpload} />
+          {!!shard && (
+            <Box mt={2}>
+              <Box color={THEME.muted} mb={0.5}>
+                <Icon name="sd-card" mr={1} />
+                {shard.name} {shard.used}/{shard.capacity}
+              </Box>
+              <FileList files={shard.files} canUpload={canUpload} />
+            </Box>
+          )}
+          {data.host_actions.length > 0 && (
+            <Box mt={1}>
+              {data.host_actions.map((a) => (
+                <Button key={a.id} icon={a.icon} content={a.name} onClick={() => act(a.id)} />
+              ))}
+            </Box>
+          )}
+        </div>
+        <div className="netrun-files-preview">
+          <Box bold mb={1} color={THEME.text}>Просмотр и редактирование</Box>
+          <FilePanel />
+        </div>
+      </div>
     </Section>
   );
 };
@@ -331,7 +340,7 @@ export const NetChat = (props: { active?: boolean } = {}) => {
           </div>
         ))}
       </div>
-      {output.unread && <Button compact icon="arrow-down" content="К новым сообщениям" onClick={output.handleFollowLatest} />}
+      {!!output.unread && <Button compact icon="arrow-down" content="К новым сообщениям" onClick={output.handleFollowLatest} />}
       <Box style={{ display: 'flex' }}>
         {!entity && (
           <Input

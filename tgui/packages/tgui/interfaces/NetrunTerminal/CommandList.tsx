@@ -19,11 +19,12 @@ export const CommandList = (props: {
   // align in a column, and long names ellipsize instead of stretching the button.
   return (
     <Box
+      className="netrun-command-grid"
       style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(116px, 1fr))',
-        gridAutoRows: '24px',
-        gap: '4px',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(136px, 1fr))',
+        gridAutoRows: 'minmax(36px, auto)',
+        gap: '6px',
       }}
     >
       {commands.map((command) => (
@@ -31,11 +32,12 @@ export const CommandList = (props: {
           key={command.id}
           fluid
           ellipsis
+          className={command.danger ? 'netrun-command--danger' : command.illegal ? 'netrun-command--risky' : 'netrun-command--standard'}
           icon={command.icon}
           content={command.name}
           color={command.danger ? 'bad' : command.illegal ? 'average' : undefined}
           disabled={disabled || !command.allowed}
-          style={{ height: '100%', margin: 0, lineHeight: '24px', textAlign: 'left' }}
+          style={{ height: '100%', margin: 0, minHeight: '36px', textAlign: 'left' }}
           tooltip={
             (command.help || command.desc || '') + '\n' +
             `Нужно: ${ACCESS_NAMES[command.access]}.` +
