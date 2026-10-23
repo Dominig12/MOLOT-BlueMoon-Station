@@ -465,13 +465,13 @@ export const NODE_NAMES: Record<string, string> = {
 };
 
 export const THEME = {
-  bg: '#0b0e14',
-  panel: '#111620',
-  line: '#1f2a3a',
-  text: '#d4dcea',
-  muted: '#6f7a8c',
-  accent: '#4ac0ff',
-  good: '#3cdc8c',
-  warn: '#f0b040',
-  bad: '#ff5c6c',
+  bg: '#080f18',
+  panel: '#101d29',
+  line: '#294053',
+  text: '#e5f1fa',
+  muted: '#8298a8',
+  accent: '#55cbe9',
+  good: '#5bdab1',
+  warn: '#f5c477',
+  bad: '#f08387',
 };

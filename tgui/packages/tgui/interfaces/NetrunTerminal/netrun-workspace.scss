@@ -1,0 +1,211 @@
+// NetRun's visual vocabulary is scoped to the workspace. Existing tgui widgets
+// retain their interaction, disabled and focus semantics; the map stays mounted.
+.netrun-shell {
+  --net-bg: #080f18;
+  --net-panel: #101d29;
+  --net-elevated: #172736;
+  --net-border: #294053;
+  --net-accent: #55cbe9;
+  --net-text: #e5f1fa;
+  --net-muted: #8298a8;
+  position: relative;
+  isolation: isolate;
+  padding: 0 12px 12px 76px;
+  gap: 7px;
+  font-size: 13px;
+  background: var(--net-bg) !important;
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+
+  .Button {
+    border-radius: 6px;
+    transition: background-color 120ms ease, border-color 120ms ease;
+  }
+
+  .Button:focus-visible, button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--net-accent);
+    outline-offset: 2px;
+  }
+
+  .Section {
+    border-radius: 8px;
+  }
+
+  .Input {
+    border-radius: 6px;
+  }
+}
+
+.netrun-header {
+  flex: 0 0 67px;
+  margin-left: -64px;
+  margin-right: -12px;
+  padding: 0 16px 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 16px;
+  background: var(--net-panel);
+  border-bottom: 1px solid var(--net-border);
+}
+
+.netrun-header__brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 230px;
+}
+
+.netrun-header__logo {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  color: var(--net-accent);
+  background: var(--net-elevated);
+  border: 1px solid var(--net-border);
+  border-radius: 10px;
+  font-size: 18px;
+}
+
+.netrun-header__title {
+  display: flex;
+  flex-direction: column;
+  font-size: 16px;
+  letter-spacing: .09em;
+  font-weight: 700;
+  color: var(--net-text);
+  white-space: nowrap;
+}
+
+.netrun-header__title small {
+  font-size: 9px;
+  letter-spacing: .13em;
+  color: var(--net-muted);
+  font-weight: 500;
+}
+
+.netrun-header__indicators {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.netrun-indicator, .netrun-trace {
+  flex-shrink: 0;
+  padding: 9px 11px;
+  background: var(--net-elevated);
+  border: 1px solid var(--net-border);
+  border-radius: 7px;
+  color: var(--net-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.netrun-indicator .Icon { margin-right: 5px; color: var(--net-accent); }
+.netrun-indicator[data-state="online"] { color: #5bdab1; }
+.netrun-indicator[data-state="offline"] { color: #f08387; }
+.netrun-trace { width: 170px; padding: 6px 11px; }
+.netrun-trace__label { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: .05em; }
+.netrun-trace__label strong { color: var(--net-text); }
+.netrun-trace__track { height: 4px; margin-top: 5px; background: var(--net-bg); border-radius: 4px; overflow: hidden; }
+.netrun-trace__fill { height: 100%; transition: width 250ms ease; border-radius: inherit; }
+
+.netrun-navigation {
+  position: absolute;
+  top: 76px;
+  left: 7px;
+  bottom: 12px;
+  width: 56px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--net-panel);
+  border: 1px solid var(--net-border);
+  border-radius: 9px;
+  scrollbar-width: none;
+}
+.netrun-navigation::-webkit-scrollbar { display: none; }
+.netrun-navigation__tabs {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch;
+  gap: 5px;
+  padding: 6px 4px;
+  min-width: 0;
+  width: 100%;
+}
+.netrun-navigation__tabs .Tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 57px;
+  min-width: 0;
+  padding: 6px 3px !important;
+  font-size: 9px;
+  text-align: center;
+  line-height: 1.2;
+  border-radius: 7px;
+  white-space: normal !important;
+  word-break: break-word;
+}
+.netrun-navigation__tabs .Tab--selected {
+  background: #21465d !important;
+  color: var(--net-text);
+}
+.netrun-navigation__tabs .Tab .Icon { font-size: 18px; }
+.netrun-status {
+  flex: 0 0 auto;
+  padding: 0 9px;
+  background: var(--net-panel);
+  border: 1px solid var(--net-border);
+  border-radius: 8px;
+  min-width: 0;
+}
+.netrun-workspace {
+  border: 1px solid var(--net-border);
+  background: var(--net-bg);
+}
+.netrun-workspace [data-net-layout="map"] {
+  background-color: var(--net-bg) !important;
+  border-radius: 8px;
+}
+.netrun-workspace [data-net-layout="sidebar"] {
+  background: var(--net-panel) !important;
+  box-shadow: -7px 0 20px #0003;
+}
+@media (max-width: 900px) {
+  .netrun-header__brand { min-width: 130px; }
+  .netrun-header__title small { display: none; }
+  .netrun-header__indicators { gap: 5px; }
+  .netrun-indicator { padding: 8px; }
+  .netrun-indicator:first-child span { display: none; }
+  .netrun-trace { width: 130px; }
+}
+@media (max-width: 650px) {
+  .netrun-shell { padding: 0 6px 7px; }
+  .netrun-header { margin: 0 -6px; flex-basis: 52px; padding: 0 8px; }
+  .netrun-header__brand { min-width: 0; }
+  .netrun-header__title { font-size: 13px; }
+  .netrun-header__logo { width: 30px; height: 30px; }
+  .netrun-indicator { display: none; }
+  .netrun-trace { width: 120px; }
+  .netrun-navigation {
+    position: static;
+    width: 100%;
+    height: auto;
+    flex: 0 0 auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .netrun-navigation__tabs { flex-direction: row !important; width: max-content; min-width: 100%; }
+  .netrun-navigation__tabs .Tab { min-width: 65px; min-height: 39px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .netrun-shell .Button, .netrun-trace__fill { transition: none; }
+}
