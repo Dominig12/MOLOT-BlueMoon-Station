@@ -307,13 +307,16 @@ const RemoteFile = (props: { file: NetFile; root: boolean }) => {
   const { act, data } = useBackend<NetrunData>();
   const { file, root } = props;
   return (
-    <Box mb={0.5} p={0.5} data-net-file-row="remote" style={{ fontFamily: 'monospace', borderBottom: `1px solid ${THEME.line}` }}>
-      <Box style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+    <Box mb={0.5} p={0.5} data-net-file-row="remote" style={{ display: 'flex', alignItems: 'center',
+      minWidth: 0, gap: '6px', fontFamily: 'monospace', borderBottom: `1px solid ${THEME.line}` }}>
+      <Box title={file.name} style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden',
+        textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         <Icon name={fileIcon(file.kind)} mr={1} />
         {file.name}
         <Box inline ml={1} color={THEME.muted}>[{file.size}]</Box>
       </Box>
-      <Box data-net-file-actions="remote" mt={0.5} style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
+      <Box data-net-file-actions="remote" style={{ display: 'flex', flex: '0 0 auto', justifyContent: 'flex-end',
+        flexWrap: 'nowrap', gap: '3px' }}>
         {file.kind === 'text' && (
           <Button compact icon="eye" tooltip="Прочитать" onClick={() => act('read', { uid: file.uid })} />
         )}

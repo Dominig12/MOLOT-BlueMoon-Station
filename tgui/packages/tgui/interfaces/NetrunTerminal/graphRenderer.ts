@@ -150,6 +150,21 @@ export class GraphRenderer {
         ctx.fillRect(rx, ry, rw, GRAPH_TILE);
       }
     }
+    // Preview keeps physical APC anchor connectors visible during camera drag,
+    // matching the completed frame without scanning the entire graph.
+    ctx.strokeStyle = 'rgba(117,163,180,.45)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    for (const node of visible) {
+      const anchor = physicalPoint(node);
+      if (anchor.px !== node.px || anchor.py !== node.py) {
+        ctx.moveTo(anchor.px, anchor.py);
+        ctx.lineTo(node.px, node.py);
+      }
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
     const groups = new Map<string, { edges: NetEdge[]; kind: string; online: boolean }>();
     for (const edge of scene.visibleEdges(left, top, right, bottom)) {
       const key = edge.kind + ':' + String(edge.online !== false);

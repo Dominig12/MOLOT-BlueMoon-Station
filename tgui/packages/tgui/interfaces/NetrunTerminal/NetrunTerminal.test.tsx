@@ -251,6 +251,55 @@ describe('Netrun terminal panels', () => {
     layout.mockRestore();
   });
 
+  test('dragging paints the newly exposed map before releasing the pointer', () => {
+    // A large scene uses viewport-only previews while the pointer moves.
+    // This guards against the old CSS-only pan that left blank map strips.
+    const paint = jest.spyOn(GraphRenderer.prototype, 'paint').mockImplementation(() => undefined);
+    const preview = jest.spyOn(GraphRenderer.prototype, 'paintPreview').mockImplementation(() => undefined);
+    const chunks = jest.spyOn(GraphRenderer.prototype, 'paintChunks').mockImplementation(function* () { yield; });
+    const context = jest.spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({ drawImage: jest.fn(), setTransform: jest.fn() } as unknown as CanvasRenderingContext2D);
+    const originalFrame = window.requestAnimationFrame;
+    const originalCancel = window.cancelAnimationFrame;
+    const callbacks: FrameRequestCallback[] = [];
+    Object.defineProperty(window, 'requestAnimationFrame', { configurable: true,
+      value: (callback: FrameRequestCallback) => { callbacks.push(callback); return callbacks.length; } });
+    Object.defineProperty(window, 'cancelAnimationFrame', { configurable: true, value: jest.fn() });
+    const flush = () => {
+      const callback = callbacks.shift();
+      if (callback) { act(() => callback(0)); }
+    };
+    const originalPointer = window.PointerEvent;
+    Object.defineProperty(window, 'PointerEvent', { value: MouseEvent, configurable: true });
+    try {
+      const many = Array.from({ length: 420 }, (_, index) => ({
+        ...node, address: `CAM:${index}`, type: 'camera', x: 10 + index, y: 10 + index,
+      }));
+      setup({ map: { gateways: [], focus: node.address, revision: 1, nodes: [node, ...many], edges: [] } });
+      const panel = render(<StationMap />);
+      // Flush startup's staged background without measuring implementation details.
+      for (let i = 0; i < 5 && callbacks.length; i++) { flush(); }
+      const viewport = panel.getByLabelText('Карта сети');
+      fireEvent.pointerDown(viewport, { clientX: 100, clientY: 100, button: 0 });
+      fireEvent.pointerMove(viewport, { clientX: 220, clientY: 170 });
+      expect(preview).not.toHaveBeenCalled();
+      flush();
+      expect(preview).toHaveBeenCalledTimes(1);
+      fireEvent.pointerMove(viewport, { clientX: 260, clientY: 180 });
+      flush();
+      expect(preview).toHaveBeenCalledTimes(2);
+      fireEvent.pointerUp(viewport, { clientX: 260, clientY: 180 });
+      // Full-quality render is queued only after the drag has finished.
+      expect(callbacks.length).toBeGreaterThan(0);
+      panel.unmount();
+    } finally {
+      paint.mockRestore(); preview.mockRestore(); chunks.mockRestore(); context.mockRestore();
+      Object.defineProperty(window, 'PointerEvent', { configurable: true, value: originalPointer });
+      Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: originalFrame });
+      Object.defineProperty(window, 'cancelAnimationFrame', { configurable: true, value: originalCancel });
+    }
+  });
+
   test('manual pan is preserved when a later structural update arrives', () => {
     const originalPointer = window.PointerEvent;
     Object.defineProperty(window, 'PointerEvent', { value: MouseEvent, configurable: true });
@@ -401,10 +450,14 @@ describe('Netrun terminal panels', () => {
     const rows = [...files.querySelectorAll<HTMLElement>('[data-net-file-row]')];
     expect(rows.length).toBe(2);
     for (const row of rows) {
-      // Actions sit in a horizontal flex row, not a vertical column.
+      // Filename and buttons share a row; controls remain right-aligned.
       const actions = row.querySelector<HTMLElement>('[data-net-file-actions]');
+      expect(row.style.display).toBe('flex');
+      expect(row.style.alignItems).toBe('center');
       expect(actions.style.display).toBe('flex');
-      expect(actions.style.flexWrap).toBe('wrap');
+      expect(actions.style.flexWrap).toBe('nowrap');
+      expect(actions.style.justifyContent).toBe('flex-end');
+      expect(actions.style.flex).toContain('0 0');
     }
   });
 

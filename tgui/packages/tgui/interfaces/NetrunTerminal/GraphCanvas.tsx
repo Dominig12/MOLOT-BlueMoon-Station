@@ -67,16 +67,19 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     schedulePaint();
   }, [schedulePaint]);
   paintRef.current = () => {
-    if (latest.current.suspended || down.current?.moved) { paintJob.current = null; return; }
+    if (latest.current.suspended) { paintJob.current = null; return; }
     const surface = canvas.current, holder = container.current;
     const ctx = surface?.getContext('2d', { alpha: false });
     if (!surface || !holder || !ctx) { return; }
     const { width, height } = size();
     const ratio = Math.min(2, window.devicePixelRatio || 1, Math.sqrt(5000000 / (width * height)));
     const pixelsWide = Math.ceil(width * ratio), pixelsHigh = Math.ceil(height * ratio);
-    // Continuous wheel input replaces stretched bitmaps with sharp, viewport-only drawing
-    // once per animation frame; a complete staged paint follows when scrolling stops.
-    if (wheelActive.current && scenery.current.nodes.length + scenery.current.edges.length >= 384
+    // Repaint the *current viewport* on each animation frame while panning or
+    // zooming. Moving a stale bitmap alone left uncovered regions blank until
+    // pointer-up. The preview queries only visible nodes/edges; a full staged
+    // paint completes when the gesture ends.
+    const interacting = wheelActive.current || !!down.current?.moved;
+    if (interacting && scenery.current.nodes.length + scenery.current.edges.length >= 384
       && typeof window.requestAnimationFrame === 'function') {
       paintJob.current = null;
       if (surface.width !== pixelsWide || surface.height !== pixelsHigh) {
@@ -192,13 +195,11 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
           const dx = event.clientX - press.x, dy = event.clientY - press.y;
           if (dx * dx + dy * dy > 16) { press.moved = true; }
           if (press.moved) {
-            // Only the last completed bitmap follows the pointer; redraw once at drag end.
-            if (paintJob.current) { paintVersion.current++; paintJob.current = null; }
-            if (frame.current !== null) {
-              window.cancelAnimationFrame(frame.current); frame.current = null;
-            }
+            // Reuse the previous bitmap for immediate feedback, then draw any
+            // newly exposed map area at native resolution in the next frame.
+            // schedulePaint coalesces all pointer events to one paint per frame.
             view.pan(press.panX + dx, press.panY + dy);
-            setTooltip(null); syncCamera(); syncBitmapCamera();
+            setTooltip(null); syncCamera(); syncBitmapCamera(); queuePaint();
           }
           return;
         }
