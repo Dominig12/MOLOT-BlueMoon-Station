@@ -13,24 +13,18 @@ export type NetworkViewportHandle = { center: (address: string) => void; fit: ()
 export type NetworkViewportProps = GraphOverlay & {
   nodes: PlacedNode[];
   edges: NetEdge[];
-  actors?: PlacedNode[];
-  dynamicEdges?: NetEdge[];
   adjacency: Map<string, Set<string>>;
   suspended?: boolean;
   onSelect: (address: string) => void;
 };
-const EMPTY_EDGES: NetEdge[] = [];
 
 /** Pixi draws the map; the small React HUD retains native focus and readable status. */
 export const NetworkViewport = memo(forwardRef<NetworkViewportHandle, NetworkViewportProps>((props, externalRef) => {
   const host = useRef<HTMLDivElement>(null);
   const latest = useRef(props); latest.current = props;
   const hintId = useId();
-  const base = useMemo(() => { const scene = new GraphScene(); scene.update(props.nodes, props.edges); return scene; }, [props.nodes, props.edges]);
-  const scene = useMemo(() => props.actors ? GraphScene.live(base, props.actors, props.adjacency) : base,
-    [base, props.actors, props.adjacency]);
-  const snapshot = useMemo<ViewportSnapshot>(() => ({ base, scene, overlay: props,
-    dynamicEdges: props.dynamicEdges || EMPTY_EDGES, adjacency: props.adjacency, suspended: !!props.suspended }), [base, scene, props]);
+  const scene = useMemo(() => { const graph = new GraphScene(); graph.update(props.nodes, props.edges); return graph; }, [props.nodes, props.edges]);
+  const snapshot = useMemo<ViewportSnapshot>(() => ({ scene, overlay: props, suspended: !!props.suspended }), [scene, props]);
   const [status, setStatus] = useState<ViewportStatus>({ phase: props.suspended ? 'paused' : 'loading' });
   const [hud, setHUD] = useState<ViewportHUD>({ nodes: scene.nodes.length, zoom: 85 });
   const [hover, setHover] = useState<ViewportHover>(null);

@@ -16,19 +16,6 @@ export class GraphScene {
   incidentEdges = new Map<string, NetEdge[]>();
   private cells = new Map<string, PlacedNode[]>();
   private edgeIndex = new GraphEdgeIndex();
-  private stationary: GraphScene | null = null;
-  private moving: GraphScene | null = null;
-
-  /** Reuse the stationary spatial index while live actor fields and movable positions change. */
-  static live(base: GraphScene, nodes: PlacedNode[], adjacency: Map<string, Set<string>>) {
-    const scene = new GraphScene();
-    scene.nodes = nodes; scene.edges = base.edges; scene.adjacency = adjacency;
-    scene.incidentEdges = base.incidentEdges;
-    scene.byAddress = new Map(nodes.map((node) => [node.address, node]));
-    scene.stationary = base;
-    scene.moving = new GraphScene(); scene.moving.update(nodes.filter((node) => node.dynamic), []);
-    return scene;
-  }
 
   update(nodes: PlacedNode[], edges: NetEdge[]) {
     this.nodes = nodes;
@@ -65,11 +52,6 @@ export class GraphScene {
   }
 
   visible(left: number, top: number, right: number, bottom: number) {
-    if (this.stationary) {
-      return [...this.stationary.visible(left, top, right, bottom)
-        .map((node) => this.byAddress.get(node.address)).filter((node): node is PlacedNode => !!node),
-      ...this.moving.visible(left, top, right, bottom)];
-    }
     // At overview zoom, iterating occupied cells avoids traversing millions of empty grid cells.
     if ((right - left) * (bottom - top) > this.nodes.length * GRAPH_GAP ** 2 * 4) {
       return this.nodes.filter((node) => node.px >= left && node.px <= right && node.py >= top && node.py <= bottom);
@@ -96,7 +78,6 @@ export class GraphScene {
   }
 
   visibleEdges(left: number, top: number, right: number, bottom: number): NetEdge[] {
-    return this.stationary ? this.stationary.visibleEdges(left, top, right, bottom)
-      : this.edgeIndex.visible(left, top, right, bottom);
+    return this.edgeIndex.visible(left, top, right, bottom);
   }
 }

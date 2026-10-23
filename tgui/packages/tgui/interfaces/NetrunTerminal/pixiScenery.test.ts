@@ -76,7 +76,7 @@ test('lazy viewport chunks load only when visited and are reused when panning ba
   expect(first[0].visible).toBe(true);
   expect(loaded[1].visible).toBe(false);
 });
- while enlarging only LAN outlines', () => {
+test('ordinary static glyphs retain their body size at overview zoom', () => {
   const scene = new GraphScene(); scene.update([
     node('CAM', 0), { ...node('LAN', 200), type: 'gateway' },
   ], []);
@@ -88,5 +88,39 @@ test('lazy viewport chunks load only when visited and are reused when panning ba
   const radii = MockGraphics.graphics.flatMap((graphic) => graphic.calls
     .filter((call) => call.op === 'circle').map((call) => call.args[2]));
   expect(radii).toContain(8); // Body geometry is never inflated by camera zoom.
-  expect(radii.some((radius) => radius > 19)).toBe(true); // LAN outline alone remains prominent.
+  expect(radii.every((radius) => Number(radius) <= 16)).toBe(true); // LAN outlines belong to the live layer.
+});
+
+test('moving and removing a device update its old and new chunks and incident cables only', () => {
+  const scene = new GraphScene(); scene.update([node('A', 0), node('B', 10000), node('C', 20000)], [
+    { id: 'AB', from: 'A', to: 'B', kind: 'apc' },
+  ]);
+  const layer = new PixiScenery(mockPixi), base = { gateways: new Map() };
+  layer.queue(scene, base); finish(layer);
+  const untouched = MockGraphics.graphics.find((graphic) => graphic.label.startsWith('3-node:26,'));
+  const clears = untouched.clears;
+  const next = new GraphScene(); next.update([{ ...scene.nodes[0], px: 2000 }, ...scene.nodes.slice(1)], scene.edges);
+  layer.queue(next, base); finish(layer);
+  expect(untouched.destroyed).toBe(false); expect(untouched.clears).toBe(clears);
+  const cable = MockGraphics.graphics.find((graphic) => !graphic.destroyed && graphic.label.startsWith('1-edge:'));
+  expect(cable.calls).toContainEqual({ op: 'moveTo', args: [2000, 0] });
+  const removed = new GraphScene(); removed.update(scene.nodes.slice(1), []);
+  layer.queue(removed, base); finish(layer);
+  expect(MockGraphics.graphics.filter((graphic) => !graphic.destroyed && graphic.label.startsWith('1-edge:'))).toHaveLength(0);
+  expect(untouched.destroyed).toBe(false); expect(untouched.clears).toBe(clears);
+});
+
+test('a superseded partial build cannot leave stale primitives or discard the committed scene', () => {
+  const nodes = Array.from({ length: 512 }, (_, i) => node(`N${i}`, i * 96));
+  const first = new GraphScene(); first.update(nodes, []);
+  const layer = new PixiScenery(mockPixi), base = { gateways: new Map() };
+  layer.queue(first, base); finish(layer);
+  const discarded = new GraphScene(); discarded.update(nodes.map((entry) => ({ ...entry, online: false })), []);
+  layer.queue(discarded, base); expect(layer.advance(0)).toBe(true);
+  const final = new GraphScene(); final.update(nodes.slice(0, 1), []);
+  layer.queue(final, base); finish(layer);
+  const remaining = MockGraphics.graphics.filter((graphic) => !graphic.destroyed && graphic.label.startsWith('3-node:'));
+  expect(remaining).toHaveLength(1);
+  expect(remaining[0].calls.filter((call) => call.op === 'circle')).toHaveLength(1);
+  expect(remaining[0].calls.find((call) => call.op === 'fill')?.args[0]).toEqual(expect.objectContaining({ alpha: .94 }));
 });

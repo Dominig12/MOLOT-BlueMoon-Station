@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
 import { CombatTarget, NetrunData, THEME } from './types';
@@ -29,8 +29,8 @@ const IntegrityBar = (props: { cur: number; max: number }) => {
 };
 
 /** Shared warning for every workspace, including a running breach puzzle. */
-export const IncomingAttacks = (props: { onCombat: () => void; compact?: boolean }) => {
-  const { act, data } = useBackend<NetrunData>();
+const IncomingAttacksView = (props: { onCombat: () => void; compact?: boolean }) => {
+  const { act, data } = useBackend<NetrunData>(['combat', 'breach']);
   const incoming = data.combat?.incoming ?? [];
   if (!incoming.length) { return null; }
   if (props.compact) {
@@ -62,8 +62,8 @@ export const IncomingAttacks = (props: { onCombat: () => void; compact?: boolean
   );
 };
 
-export const CombatPanel = () => {
-  const { act, data } = useBackend<NetrunData>();
+const CombatPanelView = () => {
+  const { act, data } = useBackend<NetrunData>(['combat', 'locked']);
   const { combat } = data;
   const [target, setTarget] = useState<string | null>(null);
 
@@ -189,3 +189,7 @@ export const CombatPanel = () => {
     </Box>
   );
 };
+
+export const IncomingAttacks = memo(IncomingAttacksView);
+
+export const CombatPanel = memo(CombatPanelView);

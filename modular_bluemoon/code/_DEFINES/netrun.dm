@@ -148,6 +148,9 @@
 #define COMSIG_NETRUN_INVENTORY_CHANGED "netrun_inventory_changed"
 /// ICE and console: combat state changed.
 #define COMSIG_NETRUN_COMBAT_CHANGED "netrun_combat_changed"
+/// Shared UI state outside the physical map: (network), and a new channel message.
+#define COMSIG_NETRUN_NETWORK_CHANGED "netrun_network_changed"
+#define COMSIG_NETRUN_CHAT_CHANGED "netrun_chat_changed"
 /// SSnetrun: (ice, victim), emitted only after an attack is actually queued.
 #define COMSIG_NETRUN_ICE_CAST_STARTED "netrun_ice_cast_started"
 /// ICE: (old_node, new_node).

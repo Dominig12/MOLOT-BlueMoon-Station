@@ -14,7 +14,7 @@ export type PixiCamera = GraphCamera;
 export type PixiMountOptions = { signal?: AbortSignal; onStatus?: (status: 'ready' | 'lost') => void; reducedMotion?: boolean };
 export type PixiSurface = {
   updateScene: (scene: GraphScene, base: GraphBase) => boolean;
-  updateActors: (scene: GraphScene, overlay: GraphOverlay, dynamicEdges: NetEdge[], adjacency: Map<string, Set<string>>) => void;
+  updateActors: (scene: GraphScene, overlay: GraphOverlay) => void;
   updateCamera: (camera: PixiCamera) => void;
   setInteracting: (interacting: boolean) => void;
   resize: (width: number, height: number) => boolean;
@@ -100,17 +100,21 @@ class NetrunPixiSurface implements PixiSurface {
     }
     return true;
   }
-  updateActors(scene: GraphScene, overlay: GraphOverlay, edges: NetEdge[], adjacency: Map<string, Set<string>>) {
+  updateActors(scene: GraphScene, overlay: GraphOverlay) {
     if (this.disposed || this.failed) { return; }
     const prior = this.live;
-    if (prior && prior.scene === scene && prior.edges === edges && prior.adjacency === adjacency) {
+    if (prior && prior.scene === scene) {
       const a = prior.overlay, b = overlay;
       if (a.selected === b.selected && a.hovered === b.hovered && a.selectionPending === b.selectionPending
         && a.entityHost === b.entityHost && a.jacked === b.jacked && a.gateways === b.gateways
         && a.selectedRoute === b.selectedRoute && a.waypointRoute === b.waypointRoute
         && a.pingRoute === b.pingRoute && a.events === b.events) { return; }
     }
-    this.live = { scene, overlay, edges, adjacency };
+    // The UI provides one complete graph. Render-layer membership stays an
+    // internal cache detail, never a second transport/layout contract.
+    const edges = prior?.scene === scene ? prior.edges
+      : scene.edges.filter((edge) => scene.byAddress.get(edge.from)?.dynamic || scene.byAddress.get(edge.to)?.dynamic);
+    this.live = { scene, overlay, edges, adjacency: scene.adjacency };
     this.actorsDirty = true; this.labelDirty = true; this.requestRender();
   }
   updateCamera(camera: PixiCamera) {
@@ -172,8 +176,9 @@ class NetrunPixiSurface implements PixiSurface {
       this.world.position.set(this.camera.x, this.camera.y); this.world.scale.set(this.camera.zoom);
       this.view.x = this.camera.x; this.view.y = this.camera.y; this.view.zoom = this.camera.zoom;
       const bounds = viewBox(this.camera, this.width, this.height, 32);
-      this.actors.setViewport(bounds, this.camera.zoom);
       const animated = this.actors.animate(now);
+      // Cull after interpolation, including the final frame of a transition.
+      this.actors.setViewport(bounds, this.camera.zoom);
       // Visibility must be updated before advancing so newly revealed chunks
       // upload in this very frame, not after the last scheduled render.
       this.scenery.setViewport(bounds, this.camera.zoom);

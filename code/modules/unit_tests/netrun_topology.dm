@@ -278,7 +278,21 @@
 	cli = payload["cli"]
 	pools = cli["completions"]
 	node_addresses = pools["nodes"]
-	TEST_ASSERT(target_node.address in node_addresses, "The next UI update must include an endpoint revealed by its legitimate key")
+	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_path_tree/display_routes = SSnetrun.topology.route_tables[source_node.address]
+	var/list/diagnostic = list(
+		"target" = target_node.address,
+		"include" = source.console.cli_cached_context?[1],
+		"projected_nodes" = source.console.cli_projection_values?["nodes"],
+		"route_count" = length(display_routes?.reached),
+		"target_reached" = display_routes?.reached[target_node.address],
+		"nodes" = node_addresses,
+		"networks" = pools["networks"],
+		"has_key" = source.console.has_key(target_node.network),
+		"network_level" = source.console.network_level(target_node.network),
+	)
+	diagnostic["standalone_nodes"] = source.console.cli_completion_values("nodes")
+	TEST_ASSERT(target_node.address in node_addresses, "The next UI update must include an endpoint revealed by its legitimate key: [json_encode(diagnostic)]")
 	source.console.delete_local_file(key)
 	payload = source.console.ui_data(null)
 	cli = payload["cli"]

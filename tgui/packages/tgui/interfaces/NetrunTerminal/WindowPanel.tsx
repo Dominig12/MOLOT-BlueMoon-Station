@@ -1,3 +1,5 @@
+import { memo } from 'react';
+
 import { Box, Button, Icon, Section } from '../../components';
 import { AutoBreachButton } from './AutoBreachButton';
 import { CommandList } from './CommandList';
@@ -13,8 +15,8 @@ import {
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 /** Окно машины: состояние, команды-запросы и особые действия (часть под взломом) */
-export const WindowPanel = (props: { window: MachineWindow }) => {
-  const { act, data } = useBackend<NetrunData>();
+const WindowPanelView = (props: { window: MachineWindow }) => {
+  const { act, data } = useBackend<NetrunData>(['breach', 'locked']);
   const { window: w } = props;
   return (
     <Section
@@ -135,3 +137,5 @@ export const WindowPanel = (props: { window: MachineWindow }) => {
     </Section>
   );
 };
+
+export const WindowPanel = memo(WindowPanelView);

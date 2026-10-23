@@ -70,7 +70,7 @@ const DataTree = (props: { value: unknown; depth: number }) => {
 };
 
 const RemoteAction = (props: { address: string; action: Remote['actions'][number] }) => {
-  const { act } = useBackend<NetrunData>();
+  const { act } = useBackend<NetrunData>([]);
   const { action } = props;
   const params = action.params ?? [];
   const [values, setValues] = useState<Record<string, string>>({});

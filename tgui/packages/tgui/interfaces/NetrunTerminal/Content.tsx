@@ -1,6 +1,6 @@
 import './netrun-workspace.scss';
 
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { memo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
 import { Box, Button, Icon, Tabs } from '../../components';
 import { CombatPanel } from './CombatPanel';
@@ -10,7 +10,7 @@ import { NodePanel } from './NodePanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
 import { SessionStatus } from './SessionStatus';
 import { ACCESS_COLORS, ACCESS_NAMES, NetrunData, THEME, WorkspaceView } from './types';
-import { NetrunFeedbackProvider, useNetrunBackend as useBackend } from './useNetrunBackend';
+import { NetrunFeedbackProvider, useNetrunBackend as useBackend, useNetrunSelector } from './useNetrunBackend';
 import { WebPanel } from './WebPanel';
 import { WindowPanel } from './WindowPanel';
 
@@ -26,33 +26,39 @@ const PAGE_NAMES: Record<WorkspaceView, string> = {
 };
 
 /** Each workspace remains mounted so navigation preserves drafts, filters and map position. */
-export const NetrunContent = () => <NetrunFeedbackProvider><NetrunWorkspace /></NetrunFeedbackProvider>;
+export const NetrunContent = memo(() => {
+  // TGUI clears data when returning a browser window to its pool. Unmount
+  // subscribers together before a later session supplies its first snapshot.
+  const ready = useNetrunSelector((data) => !!data.storage && Array.isArray(data.windows) && Array.isArray(data.networks));
+  return ready ? <NetrunFeedbackProvider><NetrunWorkspace /></NetrunFeedbackProvider> : null;
+});
 
 const NetrunWorkspace = () => {
-  const { act, data } = useBackend<NetrunData>();
-  const { breach, web, windows, window: machineWindow } = data;
+  const { act } = useBackend([]);
+  const data = useNetrunSelector((state) => ({
+    workspace_view: state.workspace_view, breach: !!state.breach, web: !!state.web,
+    hasWindow: !!state.window, windowCount: state.windows?.length ?? 0,
+    incomingCount: state.combat?.incoming?.length ?? 0,
+    webAvailable: !!state.networks?.some((network) => network.id === 'web') || !!state.web,
+  }));
+  const { breach, web } = data;
   const storedPage = data.workspace_view === 'breach' && !breach ? 'terminal' : data.workspace_view;
   const [page, setPage] = useState<WorkspaceView>(() => storedPage
-    ?? (breach ? 'breach' : machineWindow ? 'pinned' : web ? 'web' : 'terminal'));
+    ?? (breach ? 'breach' : data.hasWindow ? 'pinned' : web ? 'web' : 'terminal'));
   const [terminalTab, setTerminalTab] = useState<'console' | 'chat'>('console');
   const [compact, setCompact] = useState(() => window.innerWidth < 860);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const previousPage = useRef<WorkspaceView>(page === 'breach' ? 'terminal' : page);
-  const pinnedWindowCache = useRef<NetrunData['window']>(null);
-  if (data.workspace_view === 'pinned') {
-    pinnedWindowCache.current = machineWindow;
-  }
-  const shownWindow = machineWindow || (page === 'pinned' && data.workspace_view !== 'pinned'
-    ? pinnedWindowCache.current : null);
   const hadBreach = useRef(!!breach);
-  const incomingCount = data.combat?.incoming?.length ?? 0;
-  const webAvailable = data.networks.some((network) => network.id === 'web') || !!web;
+  const { incomingCount, webAvailable } = data;
 
-  const navigate = (next: WorkspaceView) => {
+  const navigate = useCallback((next: WorkspaceView) => {
     if (next !== 'breach') { previousPage.current = next; }
     setPage(next);
     act('workspace_view', { page: next });
-  };
+  }, [act]);
+  const openCombat = useCallback(() => navigate('combat'), [navigate]);
+  const openBreach = useCallback(() => navigate('breach'), [navigate]);
 
   useEffect(() => {
     const resize = () => setCompact(window.innerWidth < 860);
@@ -83,7 +89,7 @@ const NetrunWorkspace = () => {
     { id: 'terminal', icon: 'terminal' },
     { id: 'map', icon: 'diagram-project' },
     { id: 'files', icon: 'folder-open' },
-    { id: 'pinned', icon: 'thumbtack', count: windows.length },
+    { id: 'pinned', icon: 'thumbtack', count: data.windowCount },
   ];
   // Keep the tab in a fixed place; a new ICE cast must not insert/remove controls.
   tabs.push({ id: 'combat', icon: 'crosshairs' });
@@ -108,7 +114,7 @@ const NetrunWorkspace = () => {
           ))}
         </Tabs>
       </div>
-      <div className="netrun-status"><SessionStatus onCombat={() => navigate('combat')} onBreach={() => navigate('breach')} /></div>
+      <div className="netrun-status"><SessionStatus onCombat={openCombat} onBreach={openBreach} /></div>
       <div className="netrun-workspace" data-net-layout="workspace" style={{ display: 'flex', flex: '1 1 0', minHeight: 0, minWidth: 0,
         position: 'relative', borderRadius: '10px', overflow: 'hidden' }}>
         <WorkspacePage id="terminal" active={page}>
@@ -143,37 +149,56 @@ const NetrunWorkspace = () => {
         </WorkspacePage>
         <WorkspacePage id="files" active={page} scrollable><StoragePanel /></WorkspacePage>
         <WorkspacePage id="pinned" active={page}>
-          {windows.length > 0 && (
-            <div style={{ flex: '0 0 auto', minWidth: 0, overflowX: 'auto' }}>
-              <Tabs style={{ width: 'max-content', minWidth: '100%', whiteSpace: 'nowrap', overflow: 'visible' }}>
-                {windows.map((tab) => (
-                  <Tabs.Tab key={tab.address} icon={tab.online ? undefined : 'triangle-exclamation'}
-                    selected={machineWindow?.address === tab.address}
-                    onClick={() => act('window_focus', { address: tab.address })}>
-                    {tab.title.length > 24 ? `${tab.title.slice(0, 23)}…` : tab.title}
-                    <Icon name="xmark" ml={0.5} title={`Закрыть закреплённый узел ${tab.title}`}
-                      onClick={(event) => { event.stopPropagation(); act('window_close', { address: tab.address }); }} />
-                  </Tabs.Tab>
-                ))}
-              </Tabs>
-            </div>
-          )}
-          <div style={{ flex: '1 1 0', minHeight: 0, width: '100%', overflowY: 'auto' }}>
-            {shownWindow ? <WindowPanel window={shownWindow} />
-              : <Box color={THEME.muted} p={1}>Закреплённых узлов нет. Выберите узел на карте и откройте его окно.</Box>}
-          </div>
+          <PinnedWorkspace active={page === 'pinned'} />
         </WorkspacePage>
         <WorkspacePage id="combat" active={page} scrollable><CombatPanel /></WorkspacePage>
         <WorkspacePage id="breach" active={page} scrollable>
-          {breach ? <MatrixPanel state={breach} /> : <Box color={THEME.muted} p={1}>Активного взлома нет.</Box>}
+          <BreachWorkspace />
         </WorkspacePage>
         <WorkspacePage id="web" active={page} scrollable>
-          {web ? <WebPanel web={web} /> : <Box color={THEME.muted} p={1}>Ожидание каталога WEB.</Box>}
+          <WebWorkspace />
         </WorkspacePage>
       </div>
     </Box>
   );
 };
+
+const BreachWorkspace = memo(() => {
+  const breach = useNetrunSelector((data) => data.breach);
+  return breach ? <MatrixPanel state={breach} /> : <Box color={THEME.muted} p={1}>Активного взлома нет.</Box>;
+});
+const WebWorkspace = memo(() => {
+  const web = useNetrunSelector((data) => data.web);
+  return web ? <WebPanel web={web} /> : <Box color={THEME.muted} p={1}>Ожидание каталога WEB.</Box>;
+});
+const PinnedWorkspace = memo(({ active }: { active: boolean }) => {
+  const { act, data } = useBackend(['workspace_view', 'windows', 'window']);
+  const { windows, window: machineWindow } = data;
+  const confirmed = useRef<NetrunData['window']>(null);
+  if (data.workspace_view === 'pinned') { confirmed.current = machineWindow; }
+  const shownWindow = machineWindow || (active && data.workspace_view !== 'pinned' ? confirmed.current : null);
+  return (<>
+    {windows.length > 0 && (
+      <div style={{ flex: '0 0 auto', minWidth: 0, overflowX: 'auto' }}>
+        <Tabs style={{ width: 'max-content', minWidth: '100%', whiteSpace: 'nowrap', overflow: 'visible' }}>
+          {windows.map((tab) => (
+            <Tabs.Tab key={tab.address} icon={tab.online ? undefined : 'triangle-exclamation'}
+              selected={machineWindow?.address === tab.address}
+              onClick={() => act('window_focus', { address: tab.address })}>
+              {tab.title.length > 24 ? `${tab.title.slice(0, 23)}…` : tab.title}
+              <Icon name="xmark" ml={0.5} title={`Закрыть закреплённый узел ${tab.title}`}
+                onClick={(event) => { event.stopPropagation(); act('window_close', { address: tab.address }); }} />
+            </Tabs.Tab>
+          ))}
+        </Tabs>
+      </div>
+    )}
+    <div style={{ flex: '1 1 0', minHeight: 0, width: '100%', overflowY: 'auto' }}>
+      {shownWindow ? <WindowPanel window={shownWindow} />
+        : <Box color={THEME.muted} p={1}>Закреплённых узлов нет. Выберите узел на карте и откройте его окно.</Box>}
+    </div>
+          </>);
+});
 
 const WorkspacePage = (props: { id: WorkspaceView; active: WorkspaceView; scrollable?: boolean; children: ReactNode }) => (
   <div role="tabpanel" aria-label={PAGE_NAMES[props.id]} aria-hidden={props.active !== props.id}
@@ -184,13 +209,13 @@ const WorkspacePage = (props: { id: WorkspaceView; active: WorkspaceView; scroll
   </div>
 );
 
-const NodeSidebar = (props: { suspended: boolean }) => {
+const NodeSidebar = memo((props: { suspended: boolean }) => {
   const content = useRef<ReactNode>(null);
   if (!props.suspended) { content.current = <NodePanel />; }
   return content.current;
-};
-const Header = () => {
-  const { data } = useBackend<NetrunData>();
+});
+const Header = memo(() => {
+  const { data } = useBackend<NetrunData>(['origin', 'uplink', 'trace', 'locked', 'wireless', 'jack', 'entity']);
   const { origin, uplink, trace, locked, wireless, jack, entity } = data;
   const traceColor = trace > 66 ? THEME.bad : trace > 33 ? THEME.warn : THEME.accent;
   return (
@@ -224,7 +249,7 @@ const Header = () => {
       </div>
     </header>
   );
-};
+});
 
 const Legend = () => (
   <Box mt={0.5} fontSize="10px" color={THEME.muted} style={{ fontFamily: 'monospace' }}>

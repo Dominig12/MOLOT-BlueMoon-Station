@@ -15,6 +15,16 @@
 /datum/controller/subsystem/netrun/netrun_execution_test/populate_tasks()
 	probe_populations++
 
+/// Direct fixture calls bypass MC dispatch, so supply its running state and restore globals.
+/datum/controller/subsystem/netrun/netrun_execution_test/proc/run_pass()
+	var/previous_state = state
+	var/previous_ticklimit = Master.current_ticklimit
+	state = SS_RUNNING
+	Master.current_ticklimit = INFINITY
+	fire()
+	Master.current_ticklimit = previous_ticklimit
+	state = previous_state
+
 /datum/netrun_task/execution_probe
 	kind = "execution_probe"
 
@@ -34,11 +44,11 @@
 	var/datum/netrun_task_scheduler/scheduler = worker.get_task_scheduler()
 	for(var/i in 1 to 7)
 		scheduler.enqueue("execution_probe", allocate(/datum), NETRUN_TASK_CRITICAL, TRUE)
-	worker.fire()
+	worker.run_pass()
 	TEST_ASSERT_EQUAL(worker.probe_calls, 3, "Even interactive input must obey the configured per-fire task limit")
 	TEST_ASSERT_EQUAL(worker.next_task_population, world.time + 17, "Population interval must come from subsystem tuning")
 	worker.task_max_per_pass = 1
-	worker.fire()
+	worker.run_pass()
 	TEST_ASSERT_EQUAL(worker.probe_calls, 4, "Changing the public maximum must apply on the next pass without rebuilding the scheduler")
 	TEST_ASSERT_EQUAL(worker.probe_populations, 1, "Extra responsive passes must not repopulate all background work")
 	worker.task_budget_ms = 4

@@ -43,6 +43,9 @@
 	var/ui_uplink_value = FALSE
 	var/ui_uplink_refresh = -INFINITY
 	var/ui_dirty = TRUE
+	/// Domain changes bypass the countdown repaint interval, still within scheduler budgets.
+	var/ui_event_pending = FALSE
+	var/ui_processing = FALSE
 	/// Acknowledgement confirms receipt only, never access or action success.
 	var/input_ack
 	var/ui_flushing = FALSE
@@ -83,6 +86,7 @@
 	log_line("Сеанс открыт.", "good")
 
 /datum/netrun_console/Destroy()
+	stop_ui_observation()
 	SSnetrun.consoles -= src
 	SSnetrun.active_consoles -= src
 	SSnetrun.currentbreaches -= src
@@ -107,9 +111,14 @@
 	invalidate_ui()
 
 /// Never serialize UI or rebuild topology inside a synchronous signal handler.
-/datum/netrun_console/proc/invalidate_ui()
+/datum/netrun_console/proc/invalidate_ui(immediate = TRUE)
+	if(QDELETED(src))
+		return
 	ui_dirty = TRUE
+	ui_event_pending ||= immediate
 	activate()
+	if(immediate && !ui_processing && is_ui_active())
+		SSnetrun.get_task_scheduler().enqueue("console", src, NETRUN_TASK_NORMAL)
 
 /datum/netrun_console/proc/activate()
 	if(QDELETED(src))
@@ -121,6 +130,7 @@
 
 /datum/netrun_console/proc/note_ui_activity()
 	last_ui_at = world.time
+	observe_ui_state()
 	activate()
 
 /datum/netrun_console/proc/needs_processing()
@@ -130,10 +140,8 @@
 	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
 	if(world.time <= last_ui_at + limits.ui_activity_lease)
 		return TRUE
-	if(!operator?.client)
-		return FALSE
 	var/datum/source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
-	return !!SStgui.get_open_ui(operator, source)
+	return !!length(SStgui.get_all_open_uis(source))
 
 /datum/netrun_console/proc/flush_ui(immediate = FALSE)
 	if(!ui_dirty || ui_serializing || ui_flushing)
@@ -145,6 +153,7 @@
 		return
 	ui_flushing = TRUE
 	ui_dirty = FALSE
+	ui_event_pending = FALSE
 	push_ui_update()
 	ui_flushing = FALSE
 
@@ -548,6 +557,10 @@
 	return FALSE
 
 /datum/netrun_console/proc/process_tick(delta)
+	if(!is_ui_active())
+		stop_ui_observation()
+	else
+		reconcile_ui_context()
 	intrusion.process_tick(delta)
 	if(connection.jack && !jack_valid())
 		log_line("Провод выдернут.", "average")
@@ -563,7 +576,7 @@
 		var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
 		live_refresh_until = world.time + limits.ui_refresh_interval
 	if(world.time <= live_refresh_until)
-		invalidate_ui()
+		invalidate_ui(FALSE)
 
 /datum/netrun_intrusion_session/proc/process_tick(delta)
 	if(breach)

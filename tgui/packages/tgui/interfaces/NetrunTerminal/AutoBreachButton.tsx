@@ -3,7 +3,7 @@ import { NetrunData } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 export const AutoBreachButton = (props: { kind: 'node' | 'network'; id: string; disabled?: boolean }) => {
-  const { act, data } = useBackend<NetrunData>();
+  const { act, data } = useBackend<NetrunData>(['can_autobreach', 'breach', 'locked']);
   if (!data.can_autobreach) { return null; }
   return (
     <Button icon="robot" content="Автовзлом" disabled={props.disabled || !!data.breach || data.locked > 0}

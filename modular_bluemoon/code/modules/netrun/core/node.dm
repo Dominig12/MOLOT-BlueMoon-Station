@@ -53,6 +53,7 @@
 	src.required_access = required_access
 	if(storage_capacity)
 		file_store = new(src, storage_capacity)
+		RegisterSignal(file_store, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_storage_changed))
 	address = SSnetrun.make_address()
 	SSnetrun.nodes_by_address[address] = src
 	topology_turf = get_turf(parent)
@@ -89,7 +90,9 @@
 	bound_apc = null
 	binding_area = null
 	topology_turf = null
-	QDEL_NULL(file_store)
+	if(file_store)
+		UnregisterSignal(file_store, COMSIG_NETRUN_STORAGE_CHANGED)
+		QDEL_NULL(file_store)
 	QDEL_LIST(salvage)
 	return ..()
 
@@ -133,6 +136,10 @@
 	SIGNAL_HANDLER
 	pending_state_notification = TRUE
 	SSnetrun.queue_node(src)
+
+/datum/component/netrun_node/proc/on_storage_changed(datum/source)
+	SIGNAL_HANDLER
+	notify_changed()
 
 /// The fallback samples only fields exposed by the graph, including timed states.
 /// Polls the timed/native status that has no change signal (power, firewall expiry, occupants,
@@ -213,6 +220,7 @@
 	logs += "[STATION_TIME_TIMESTAMP("hh:mm:ss", world.time)] [text]"
 	if(length(logs) > NETRUN_MAX_LOG)
 		logs.Cut(1, length(logs) - NETRUN_MAX_LOG + 1)
+	notify_changed()
 
 /// Все команды узла: базовые плюс зависящие от компонентов атома
 /datum/component/netrun_node/proc/all_command_ids()

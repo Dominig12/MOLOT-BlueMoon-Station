@@ -4,7 +4,7 @@ import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 /** Мост «сайты NTnet в терминале»: каталог сайтов и чтение страниц (только чтение) */
 export const WebPanel = (props: { web: WebState }) => {
-  const { act } = useBackend<NetrunData>();
+  const { act } = useBackend<NetrunData>([]);
   const { web } = props;
 
   if (!web.available) {
@@ -63,7 +63,7 @@ export const WebPanel = (props: { web: WebState }) => {
 };
 
 const PageList = (props: { web: WebState }) => {
-  const { act } = useBackend<NetrunData>();
+  const { act } = useBackend<NetrunData>([]);
   const { web } = props;
   return (
     <>
@@ -85,7 +85,7 @@ const PageList = (props: { web: WebState }) => {
 };
 
 const PageView = (props: { web: WebState }) => {
-  const { act } = useBackend<NetrunData>();
+  const { act } = useBackend<NetrunData>([]);
   const { page } = props.web;
   return (
     <Box>

@@ -57,14 +57,14 @@ test('deletion removes the endpoint and any remaining incident links', () => {
   expect(deleted.edges).toEqual([]);
 });
 
-test('a missing baseline or a lost delta requests one resync and suppresses stale authorized data', () => {
+test('a missing baseline requests one resync and a same-epoch gap freezes its confirmed baseline', () => {
   const stream = new NetrunMapStream();
   expect(stream.apply(delta())).toBeNull();
   expect(stream.resyncToken).toBe(1);
   expect(stream.apply(delta({ state_revision: 12 }))).toBeNull();
   expect(stream.resyncToken).toBe(1);
-  stream.apply(baseline());
-  expect(stream.apply(delta({ base_revision: 11, state_revision: 12 }))).toBeNull();
+  const confirmed = stream.apply(baseline());
+  expect(stream.apply(delta({ base_revision: 11, state_revision: 12 }))).toBe(confirmed);
   expect(stream.resyncToken).toBe(2);
   const restored = stream.apply(baseline({ nodes: [{ ...node, address: 'ONLY-PERMITTED' }], state_revision: 12 }));
   expect(restored.nodes.map((entry) => entry.address)).toEqual(['ONLY-PERMITTED']);

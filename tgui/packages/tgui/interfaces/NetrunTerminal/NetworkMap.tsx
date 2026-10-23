@@ -1,9 +1,8 @@
 import { KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Box, Button, Icon, Input } from '../../components';
-import { GraphLayout } from './graphLayout';
-import { StaticMapProjection } from './mapLayers';
-import { createGraphLayoutCache, graphAdjacency, graphNeighborhood, GraphPoint, layoutGraph } from './mapLayout';
+import { MapProjection } from './mapLayers';
+import { graphAdjacency, graphNeighborhood, GraphPoint } from './mapLayout';
 import { NetrunMapStream } from './mapStream';
 import { NetworkViewport, NetworkViewportHandle } from './NetworkViewport';
 import {
@@ -43,16 +42,8 @@ const useSemanticValue = <T, >(value: T, signature: string | undefined): T => {
   if (previous.current.signature !== signature) { previous.current = { value, signature }; }
   return previous.current.value;
 };
-const useStableList = <T, >(items: T[]): T[] => {
-  const previous = useRef(items);
-  if (previous.current.length !== items.length || items.some((item, index) => item !== previous.current[index])) {
-    previous.current = items;
-  }
-  return previous.current;
-};
-
-export const StationMap = (props: { suspended?: boolean } = {}) => {
-  const { act, data } = useBackend<NetrunData>();
+export const StationMap = memo((props: { suspended?: boolean } = {}) => {
+  const { act, data } = useBackend<NetrunData>(['map', 'selected', 'selected_network', 'jack', 'entity', 'ping_route', 'events', 'waypoint', 'search']);
   const [stream] = useState(() => new NetrunMapStream());
   const [, refreshRecovery] = useState(0);
   const resyncSent = useRef(0);
@@ -113,7 +104,7 @@ export const StationMap = (props: { suspended?: boolean } = {}) => {
         act('map_resync');
       }} />
                                </Box>;
-};
+});
 
 const MapSnapshot = memo(({ input, act, suspended }: { input: MapInput; act: Act; suspended?: boolean }) => {
   const rawNodes = input.map?.nodes ?? EMPTY_NODES;
@@ -159,9 +150,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   const latestFeedback = useRef(feedback); latestFeedback.current = feedback;
   const selectionIntent = useRef<{ address: string; action: string; previousNonce?: string; nonce?: string } | null>(null);
   const gatewaysMenu = useRef<HTMLDetailsElement>(null);
-  const [layoutCache] = useState(createGraphLayoutCache);
-  const [dynamicLayout] = useState(() => new GraphLayout());
-  const [staticProjection] = useState(() => new StaticMapProjection());
+  const [projection] = useState(() => new MapProjection());
   const [query, setQuery] = useState('');
   const [focusNearby, setFocusNearby] = useState(false);
   const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>({});
@@ -169,17 +158,9 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   const [searchReset, setSearchReset] = useState(0);
   const nodes = map?.nodes ?? EMPTY_NODES;
   const edges = map?.edges ?? EMPTY_EDGES;
-  const stationary = staticProjection.update(nodes, edges, map?.static_revision === undefined ? undefined
-    : `${map.epoch || ''}:${map.active_sector}:${map.active_z}:${map.static_revision}`);
-  const staticPositions = useMemo(() => layoutGraph(stationary.nodes, stationary.edges, layoutCache), [stationary.geometry, layoutCache]);
-  const staticSlots = useMemo(() => new Set([...staticPositions.values()].map((point) => `${point.px},${point.py}`)), [staticPositions]);
-  const mobileNodes = useMemo(() => nodes.filter((entry) => entry.dynamic), [nodes]);
-  const mobileGeometry = useMemo(() => JSON.stringify(mobileNodes.map((entry) => [entry.address, entry.x, entry.y, entry.z])), [mobileNodes]);
-  const mobilePositions = useMemo(() => dynamicLayout.update(mobileNodes, [], staticSlots), [mobileGeometry, dynamicLayout, staticSlots]);
-  const positions = useMemo(() => new Map([...staticPositions, ...mobilePositions]), [staticPositions, mobilePositions]);
+  const placed = projection.update(nodes, edges).nodes;
   const adjacency = useMemo(() => graphAdjacency(nodes, edges), [topologyKey]);
   const liveAdjacency = useMemo(() => graphAdjacency(nodes, edges.filter((edge) => edge.online !== false)), [topologyKey, edges]);
-  const placed = useMemo<Placed[]>(() => nodes.map((node) => ({ ...node, ...positions.get(node.address) })), [nodes, positions]);
   const byAddress = useMemo(() => new Map(placed.map((node) => [node.address, node])), [placed]);
   const gateways = useMemo(() => new Map((map?.gateways ?? []).map((gateway) => [gateway.id, gateway])), [map?.gateways]);
   const gatewaySectors = useMemo(() => {
@@ -199,12 +180,6 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
       .some((text) => text.toLowerCase().includes(q)))), [placed, disabledTypes, nearby, q]);
   const visibleIds = useMemo(() => new Set(visibleNodes.map((n) => n.address)), [visibleNodes]);
   const visibleEdges = useMemo(() => edges.filter((edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to)), [edges, visibleIds]);
-  const staticPlaced = useMemo<Placed[]>(() => stationary.nodes.map((entry) => ({ ...entry, ...staticPositions.get(entry.address) })), [stationary.nodes, staticPositions]);
-  const stationaryNodes = useStableList(useMemo(() => staticPlaced.filter((entry) => visibleIds.has(entry.address)), [staticPlaced, visibleIds]));
-  const stationaryIds = useMemo(() => new Set(stationaryNodes.map((entry) => entry.address)), [stationaryNodes]);
-  const stationaryEdges = useMemo(() => stationary.edges.filter((edge) => stationaryIds.has(edge.from) && stationaryIds.has(edge.to)), [stationary.edges, stationaryIds]);
-  const dynamicIds = useMemo(() => new Set(mobileNodes.map((entry) => entry.address)), [mobileNodes]);
-  const dynamicEdges = useMemo(() => visibleEdges.filter((edge) => dynamicIds.has(edge.from) || dynamicIds.has(edge.to)), [visibleEdges, dynamicIds]);
   // End-to-end routes are never geometrically shortened through omitted nodes:
   // the Pixi route layer additionally verifies every adjacent pair against real edges.
   const selectedRoute = map?.route?.reachable ? map.route.route : EMPTY_ADDRESSES;
@@ -374,8 +349,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
             setQuery(''); setSearchReset((value) => value + 1); setDisabledTypes({}); setFocusNearby(false);
           }} />
                                   </Box>}
-      <NetworkViewport ref={viewport} adjacency={adjacency} nodes={stationaryNodes} edges={stationaryEdges}
-        actors={visibleNodes} dynamicEdges={dynamicEdges} suspended={suspended}
+      <NetworkViewport ref={viewport} adjacency={adjacency} nodes={visibleNodes} edges={visibleEdges} suspended={suspended}
         gateways={gateways} selected={selectedAddress} jacked={jackAddress}
         apcZones={map.apc_zones}
         entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || EMPTY_ADDRESSES}

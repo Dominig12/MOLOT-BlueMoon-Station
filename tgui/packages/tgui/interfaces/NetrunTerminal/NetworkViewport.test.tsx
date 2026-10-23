@@ -61,7 +61,7 @@ test('tooltips read live data, highlight through Pixi and clear on endpoint remo
     fireEvent.pointerMove(panel.getByLabelText('Карта сети'), { clientX: 360, clientY: 240 });
     expect(panel.getByRole('tooltip').textContent).toContain('Первое имя');
     expect(surface.updateActors).toHaveBeenLastCalledWith(expect.any(GraphScene),
-      expect.objectContaining({ hovered: 'APC' }), expect.any(Array), expect.any(Map));
+      expect.objectContaining({ hovered: 'APC' }));
     panel.rerender(<NetworkViewport {...props} nodes={[{ ...node, name: 'Новое имя', online: false }]} />);
     expect(panel.getByRole('tooltip').textContent).toContain('Новое имя');
     expect(panel.getByRole('tooltip').textContent).toContain('Не отвечает');

@@ -238,7 +238,9 @@
 	var/list/ntos_session = console.map_view.wire_session(user, program, ntos_ui)
 	TEST_ASSERT_NOTEQUAL(ntos_session["id"], replacement["id"], "NTOS must bind its containing program rather than a hidden console UI")
 	console.map_view.resync(ntos_ui)
-	TEST_ASSERT_NOTEQUAL(console.map_view.wire_session(user, program, ntos_ui)["id"], ntos_session["id"], "Refresh recovery must replace just that UI's cursor")
+	var/list/recovering = console.map_view.wire_session(user, program, ntos_ui)
+	TEST_ASSERT_EQUAL(recovering, ntos_session, "Recovery must keep its viewer's cursor stable while waiting for an acknowledged baseline")
+	TEST_ASSERT(recovering["force_full"] && isnull(recovering["revision"]), "Recovery must invalidate only the selected viewer's delta baseline")
 	TEST_ASSERT_EQUAL(console.map_view.wire_session(user, console, reopened), replacement, "NTOS resync must preserve another valid viewer")
 
 /// A terminal poll retains shared completion pools while storage changes invalidate disclosure.

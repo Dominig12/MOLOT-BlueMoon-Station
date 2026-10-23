@@ -1,7 +1,7 @@
 import { act, fireEvent, render, within } from '@testing-library/react';
 import { combineReducers, createStore, setGlobalStore } from 'common/redux';
 
-import { backendReducer, backendUpdate } from '../../backend';
+import { backendReducer, backendSuspendSuccess, backendUpdate } from '../../backend';
 import { debugReducer } from '../../debug';
 import { NetrunContent } from './Content';
 import { mountNetrunPixi } from './pixiSurface';
@@ -72,6 +72,18 @@ describe('Netrun workspace pages', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
+  test('a pooled window clears its subscribers and drafts before a fresh session arrives', () => {
+    const { panel, store, page } = setup({ workspace_view: 'files' });
+    const baseline = store.getState().backend.data;
+    fireEvent.click(within(page('files')).getByText('Новый текстовый файл'));
+    fireEvent.change(page('files').querySelector('textarea'), { target: { value: 'Черновик старого сеанса' } });
+    act(() => store.dispatch(backendSuspendSuccess()));
+    expect(panel.container.querySelector('[data-net-layout="workspace"]')).toBeNull();
+    act(() => store.dispatch(backendUpdate({ data: baseline })));
+    expect(panel.getByRole('tabpanel', { name: 'Файлы' })).toBeTruthy();
+    expect(page('files').querySelector('textarea')).toBeNull();
+  });
+
   test('opens the terminal alone and gives every tool a dedicated workspace', () => {
     const { panel, page, topic } = setup();
     expect(panel.getByRole('tabpanel', { name: 'Терминал' })).toBeTruthy();
@@ -100,7 +112,7 @@ describe('Netrun workspace pages', () => {
     expect(actions(topic, 'workspace_view')).toEqual([{ page: 'terminal' }]);
   });
 
-  test('navigation preserves the command line, file draft, map filters and viewport instance', () => {
+  test('navigation preserves the command line, file draft, map filters and viewport instance', async () => {
     const { panel, page, update } = setup();
     const cli = panel.getByPlaceholderText('help — список команд · ↑ история · Tab дополнение') as HTMLInputElement;
     fireEvent.change(cli, { target: { value: 'ping unfinished' } });
@@ -123,9 +135,10 @@ describe('Netrun workspace pages', () => {
     fireEvent.click(panel.getByText('Карта'));
     expect(panel.getByPlaceholderText('поиск узла…')).toBe(search);
     expect(search.value).toBe('Сервер');
+    await act(async () => {});
   });
 
-  test('opening a map node switches to pinned nodes and closing it keeps that page open', () => {
+  test('opening a map node switches to pinned nodes and closing it keeps that page open', async () => {
     const { panel, page, update, topic } = setup({ workspace_view: 'map' });
     const viewport = page('map').querySelector('[data-net-viewport]');
     expect(viewport).not.toBeNull();
@@ -144,6 +157,7 @@ describe('Netrun workspace pages', () => {
     expect(within(page('pinned')).getByText(/Закреплённых узлов нет/)).toBeTruthy();
     fireEvent.click(panel.getByText('Карта'));
     expect(page('map').querySelector('[data-net-viewport]')).toBe(viewport);
+    await act(async () => {});
   });
 
   test('workspace navigation retains the initialized Pixi surface and pauses hidden rendering', async () => {
@@ -206,7 +220,8 @@ describe('Netrun workspace pages', () => {
     expect(editor.value).toBe('Не терять фокус');
     fireEvent.click(panel.getByText('Бой'));
     expect(panel.getByRole('tabpanel', { name: 'Бой' })).toBeTruthy();
-    expect(within(page('combat')).getByText(/ICE-SENTRY готовит trace.exe/)).toBeTruthy();
+    expect(panel.getByRole('alert').textContent).toContain('ICE-SENTRY готовит trace.exe');
+    expect(within(page('combat')).queryByText(/ICE-SENTRY готовит trace.exe/)).toBeNull();
     expect(actions(topic, 'workspace_view').slice(-1)[0]).toEqual({ page: 'combat' });
     expect(editor.value).toBe('Не терять фокус');
   });
@@ -248,7 +263,7 @@ describe('Netrun workspace pages', () => {
 });
 
 
-test('a tab switch retains the last confirmed route and node panel until map data returns', () => {
+test('a tab switch retains the last confirmed route and node panel until map data returns', async () => {
   const selected = { ...node, can_hop: true };
   const renderedMap = { nodes: [selected], edges: [], gateways: [], focus: selected.address,
     revision: 1, route: { route: [selected.address], hops: 0, latency: 0, revision: 1, reachable: true } };
@@ -266,6 +281,7 @@ test('a tab switch retains the last confirmed route and node panel until map dat
   update({ workspace_view: 'map', map: { ...renderedMap, route: { ...renderedMap.route, hops: 1, latency: 50 } }, selected, entity });
   expect(within(page('map')).getByText(/Путь: 1 пер/)).toBeTruthy();
   expect(within(page('map')).getByText('Перейти в узел').closest('.Button').classList.contains('Button--disabled')).toBe(false);
+  await act(async () => {});
 });
 
 test('a pinned window reappears immediately from the cache then respects authoritative closure', () => {

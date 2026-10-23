@@ -6,9 +6,9 @@ const node: PlacedNode = { address: 'APC', name: 'APC', type: 'apc', x: 0, y: 0,
   security: 1, online: true, access: 2, active: false, entities: 0, uplink: null };
 const snapshot = (): ViewportSnapshot => {
   const base = new GraphScene(); base.update([node], []);
-  return { base, scene: base, overlay: { gateways: new Map(), selected: 'APC', jacked: null,
+  return { scene: base, overlay: { gateways: new Map(), selected: 'APC', jacked: null,
     entityHost: null, selectedRoute: [], waypointRoute: [], pingRoute: [], events: [] },
-  adjacency: base.adjacency, dynamicEdges: [], suspended: false };
+  suspended: false };
 };
 const callbacks = () => ({ onStatus: jest.fn(), onHUD: jest.fn(), onHover: jest.fn(), onSelect: jest.fn() });
 const hostElement = () => {
@@ -116,7 +116,7 @@ test('selection and graph projection changes preserve manual camera zoom, pan an
     expect(controller.camera.zoom).not.toBe(before.zoom);
     const manuallyPlaced = { x: controller.camera.x, y: controller.camera.y, zoom: controller.camera.zoom };
     const nextBase = new GraphScene(); nextBase.update([{ ...node, px: 700, py: 350 }], []);
-    controller.update({ ...data, base: nextBase, scene: nextBase,
+    controller.update({ ...data, scene: nextBase,
       overlay: { ...data.overlay, selected: 'APC', apcZones: [] } });
     expect({ x: controller.camera.x, y: controller.camera.y, zoom: controller.camera.zoom }).toEqual(manuallyPlaced);
     expect(factory).toHaveBeenCalledTimes(1);
@@ -172,7 +172,7 @@ test('empty filters pause the same surface and final detach removes listeners an
   const surface = await factory.mock.results[0].value;
   await Promise.resolve();
   const empty = new GraphScene(); empty.update([], []);
-  controller.update({ ...data, base: empty, scene: empty });
+  controller.update({ ...data, scene: empty });
   expect(handlers.onStatus).toHaveBeenLastCalledWith({ phase: 'empty' });
   expect(surface.setSuspended).toHaveBeenLastCalledWith(true);
   controller.update(data);
@@ -189,7 +189,7 @@ test('empty filters pause the same surface and final detach removes listeners an
 test('a local selection highlights immediately while machine permissions remain server-confirmed', async () => {
   const host = hostElement(), data = snapshot();
   const peer = { ...node, address: 'PEER', name: 'Сервер', px: 96 };
-  data.base.update([node, peer], []);
+  data.scene.update([node, peer], []);
   const handlers = { ...callbacks(), onSelectionFeedback: jest.fn() };
   const factory = jest.fn(async (element: HTMLElement) => makePixiSurfaceMock(element));
   const controller = new NetworkViewportController(data, handlers, factory);
@@ -197,12 +197,12 @@ test('a local selection highlights immediately while machine permissions remain 
     controller.attach(host); const surface = await factory.mock.results[0].value; await Promise.resolve();
     controller.previewSelection('PEER');
     expect(surface.updateActors).toHaveBeenLastCalledWith(data.scene,
-      expect.objectContaining({ selected: 'PEER', selectionPending: true }), data.dynamicEdges, data.adjacency);
+      expect.objectContaining({ selected: 'PEER', selectionPending: true }));
     expect(data.overlay.selected).toBe('APC');
     expect(handlers.onSelectionFeedback).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'pending', address: 'PEER' }));
     controller.update({ ...data, overlay: { ...data.overlay, selected: 'PEER' } });
     expect(surface.updateActors).toHaveBeenLastCalledWith(data.scene,
-      expect.objectContaining({ selected: 'PEER', selectionPending: false }), data.dynamicEdges, data.adjacency);
+      expect.objectContaining({ selected: 'PEER', selectionPending: false }));
     expect(handlers.onSelectionFeedback).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'confirmed', address: 'PEER' }));
   } finally { controller.detach(); host.remove(); }
 });
@@ -221,7 +221,7 @@ test('a superseded selection cannot expire the new one and an unconfirmed choice
     jest.advanceTimersByTime(3000);
     expect(handlers.onSelectionFeedback).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'timeout', address: 'SECOND' }));
     expect(surface.updateActors).toHaveBeenLastCalledWith(data.scene,
-      expect.objectContaining({ selected: 'APC', selectionPending: false }), data.dynamicEdges, data.adjacency);
+      expect.objectContaining({ selected: 'APC', selectionPending: false }));
     controller.previewSelection('THIRD'); controller.rejectSelection('Узел больше недоступен.');
     expect(handlers.onSelectionFeedback).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'rejected', message: 'Узел больше недоступен.' }));
     controller.detach();

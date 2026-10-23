@@ -52,7 +52,7 @@ test('keyboard selection gives immediate GPU feedback and only the matching serv
   await waitFor(() => expect(panel.getByText('Узел не выбран. Проверьте доступ и связь.')).toBeTruthy());
   const surface = await mount.mock.results[0].value;
   expect(surface.updateActors).toHaveBeenLastCalledWith(expect.anything(),
-    expect.objectContaining({ selected: 'SOURCE', selectionPending: false }), expect.any(Array), expect.any(Map));
+    expect.objectContaining({ selected: 'SOURCE', selectionPending: false }));
 });
 
 test('a confirmed keyboard choice keeps its selection and never claims a rejection', async () => {

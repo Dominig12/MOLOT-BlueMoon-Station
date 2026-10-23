@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { memo, useRef } from 'react';
 
 import { Box, Button, Icon, LabeledList, Section } from '../../components';
 import { AutoBreachButton } from './AutoBreachButton';
@@ -13,8 +13,8 @@ import {
 } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
-export const NodePanel = () => {
-  const { act, data } = useBackend<NetrunData>();
+const NodePanelView = () => {
+  const { act, data } = useBackend<NetrunData>(['workspace_view', 'map', 'selected', 'selected_network', 'networks', 'can_breach', 'breach', 'entity', 'waypoint']);
   // A hidden workspace is serialized without selected-node details. Do not turn
   // the brief omission into a blank sidebar when the player returns to the map.
   const confirmed = useRef<Pick<NetrunData,
@@ -304,7 +304,7 @@ export const NodePanel = () => {
 };
 
 const RemoteFile = (props: { file: NetFile; root: boolean }) => {
-  const { act, data } = useBackend<NetrunData>();
+  const { act, data } = useBackend<NetrunData>(['shard']);
   const { file, root } = props;
   return (
     <Box mb={0.5} p={0.5} data-net-file-row="remote" style={{ display: 'flex', alignItems: 'center',
@@ -373,3 +373,5 @@ export const fileFormat = (name: string, kind: string) => {
   };
   return labels[kind] || 'DAT';
 };
+
+export const NodePanel = memo(NodePanelView);

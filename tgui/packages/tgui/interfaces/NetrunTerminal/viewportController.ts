@@ -2,7 +2,6 @@ import type { GraphOverlay } from './graphPresentation';
 import { GraphScene, PlacedNode } from './graphScene';
 import { GraphViewport } from './graphViewport';
 import type { PixiSurface } from './pixiSurface';
-import type { NetEdge } from './types';
 
 export type ViewportPhase = 'loading' | 'ready' | 'empty' | 'paused' | 'error';
 export type ViewportStatus = { phase: ViewportPhase; message?: string };
@@ -10,11 +9,8 @@ export type ViewportHUD = { nodes: number; zoom: number };
 export type ViewportHover = { address: string; x: number; y: number } | null;
 export type SelectionFeedback = { phase: 'pending' | 'confirmed' | 'rejected' | 'timeout'; address: string; label: string; message: string } | null;
 export type ViewportSnapshot = {
-  base: GraphScene;
   scene: GraphScene;
   overlay: GraphOverlay;
-  dynamicEdges: NetEdge[];
-  adjacency: Map<string, Set<string>>;
   suspended: boolean;
 };
 type Callbacks = {
@@ -244,12 +240,12 @@ export class NetworkViewportController {
       const { width, height } = this.size();
       surface.setSuspended(false);
       if (!surface.resize(width, height)) { this.fail(); return false; }
-      const { base, scene, overlay, dynamicEdges, adjacency } = this.snapshot;
-      if (base !== this.lastBase || overlay.gateways !== this.lastGateways || overlay.apcZones !== this.lastZones) {
-        if (!surface.updateScene(base, overlay)) { this.fail(); return false; }
-        this.lastBase = base; this.lastGateways = overlay.gateways; this.lastZones = overlay.apcZones;
+      const { scene, overlay } = this.snapshot;
+      if (scene !== this.lastBase || overlay.gateways !== this.lastGateways || overlay.apcZones !== this.lastZones) {
+        if (!surface.updateScene(scene, overlay)) { this.fail(); return false; }
+        this.lastBase = scene; this.lastGateways = overlay.gateways; this.lastZones = overlay.apcZones;
       }
-      surface.updateActors(scene, this.presentation(), dynamicEdges, adjacency);
+      surface.updateActors(scene, this.presentation());
       surface.updateCamera(this.camera);
       return true;
     } catch { this.fail(); return false; }
@@ -278,8 +274,8 @@ export class NetworkViewportController {
 
   private renderActors() {
     if (!this.surface || this.snapshot.suspended || this.status.phase !== 'ready') { return; }
-    const { scene, dynamicEdges, adjacency } = this.snapshot;
-    try { this.surface.updateActors(scene, this.presentation(), dynamicEdges, adjacency); }
+    const { scene } = this.snapshot;
+    try { this.surface.updateActors(scene, this.presentation()); }
     catch { this.fail(); }
   }
 

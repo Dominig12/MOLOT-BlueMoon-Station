@@ -1,6 +1,12 @@
+/// The ordinary allocator supplies a turf to argument-less constructors; this one takes limits.
+/datum/unit_test/proc/netrun_scheduler_fixture()
+	var/datum/netrun_task_scheduler/result = new
+	allocated += result
+	return result
+
 /// Scheduler tests do not mutate the live SSnetrun queues.
 /datum/unit_test/netrun_scheduler_dedup_and_priority/Run()
-	var/datum/netrun_task_scheduler/scheduler = allocate(/datum/netrun_task_scheduler)
+	var/datum/netrun_task_scheduler/scheduler = netrun_scheduler_fixture()
 	var/datum/sample = allocate(/datum)
 	TEST_ASSERT(scheduler.enqueue("probe", sample, NETRUN_TASK_BACKGROUND), "First task must enqueue")
 	TEST_ASSERT(!scheduler.enqueue("probe", sample, NETRUN_TASK_BACKGROUND), "Duplicate task must coalesce")
@@ -12,7 +18,7 @@
 	TEST_ASSERT_EQUAL(scheduler.pending(), 0, "No pending task remains")
 	TEST_ASSERT_NULL(scheduler.take(), "Promotion tombstone must not replay")
 /datum/unit_test/netrun_scheduler_cancel_and_fairness/Run()
-	var/datum/netrun_task_scheduler/scheduler = allocate(/datum/netrun_task_scheduler)
+	var/datum/netrun_task_scheduler/scheduler = netrun_scheduler_fixture()
 	var/list/samples = list()
 	for(var/i in 1 to 21)
 		var/datum/sample = allocate(/datum)
@@ -32,7 +38,7 @@
 
 /// Profiling must capture CPU cost and time spent waiting without retaining a target.
 /datum/unit_test/netrun_scheduler_profiles/Run()
-	var/datum/netrun_task_scheduler/scheduler = allocate(/datum/netrun_task_scheduler)
+	var/datum/netrun_task_scheduler/scheduler = netrun_scheduler_fixture()
 	var/datum/subject = allocate(/datum)
 	TEST_ASSERT(scheduler.enqueue("probe", subject, NETRUN_TASK_CRITICAL), "A measured task is queued")
 	var/datum/netrun_task/task = scheduler.take()
@@ -51,7 +57,7 @@
 
 /// Promotion affects the current priority bucket without inflating pending metrics.
 /datum/unit_test/netrun_scheduler_profile_promotion/Run()
-	var/datum/netrun_task_scheduler/scheduler = allocate(/datum/netrun_task_scheduler)
+	var/datum/netrun_task_scheduler/scheduler = netrun_scheduler_fixture()
 	var/datum/subject = allocate(/datum)
 	scheduler.enqueue("probe", subject, NETRUN_TASK_BACKGROUND)
 	scheduler.enqueue("probe", subject, NETRUN_TASK_CRITICAL)
@@ -63,7 +69,7 @@
 
 /// Previously a burst of cancellations hid a live background task behind scan tombstones.
 /datum/unit_test/netrun_scheduler_cancel_burst/Run()
-	var/datum/netrun_task_scheduler/scheduler = allocate(/datum/netrun_task_scheduler)
+	var/datum/netrun_task_scheduler/scheduler = netrun_scheduler_fixture()
 	for(var/i in 1 to 160)
 		var/datum/subject = allocate(/datum)
 		scheduler.enqueue("probe", subject, NETRUN_TASK_BACKGROUND)
@@ -80,7 +86,7 @@
 
 /// Promotion unlinks the old entry and preserves its original age for diagnostics.
 /datum/unit_test/netrun_scheduler_promotion_fifo/Run()
-	var/datum/netrun_task_scheduler/scheduler = allocate(/datum/netrun_task_scheduler)
+	var/datum/netrun_task_scheduler/scheduler = netrun_scheduler_fixture()
 	var/datum/first = allocate(/datum)
 	var/datum/promoted = allocate(/datum)
 	var/datum/last = allocate(/datum)
@@ -124,7 +130,7 @@
 	console.last_netrun_tick = world.time - 10 MINUTES
 	console.activate()
 	TEST_ASSERT_EQUAL(console.last_netrun_tick, world.time, "Waking an idle session must start a new active interval")
-	var/datum/netrun_task_scheduler/scheduler = allocate(/datum/netrun_task_scheduler)
+	var/datum/netrun_task_scheduler/scheduler = netrun_scheduler_fixture()
 	scheduler.enqueue("console", console)
 	var/datum/netrun_task/task = scheduler.take()
 	TEST_ASSERT(istype(task, /datum/netrun_task/console), "The task registry must select polymorphic console processing")
@@ -144,7 +150,7 @@
 	var/datum/netrun_console/netrun_scheduler_probe/console = allocate(/datum/netrun_console/netrun_scheduler_probe, host)
 	var/list/samples = console.test_deltas
 	console.delete_during_tick = TRUE
-	var/datum/netrun_task_scheduler/scheduler = allocate(/datum/netrun_task_scheduler)
+	var/datum/netrun_task_scheduler/scheduler = netrun_scheduler_fixture()
 	scheduler.enqueue("console", console)
 	var/datum/netrun_task/task = scheduler.take()
 	task.execute(SSnetrun)

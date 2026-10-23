@@ -22,6 +22,12 @@
 	temp.allow_breach = allow_breach
 	return temp
 
+/datum/computer_file/program/netrun/ui_interact(mob/user, datum/tgui/ui)
+	. = ..()
+	ui = SStgui.get_open_ui(user, src)
+	if(ui)
+		ui.set_autoupdate(FALSE)
+
 /datum/computer_file/program/netrun/proc/get_console()
 	if(!computer)
 		return
@@ -38,7 +44,6 @@
 	var/list/data = get_header_data()
 	var/datum/netrun_console/active = get_console()
 	if(active)
-		active.operator = user
 		data += active.ui_data(user, src)
 	return data
 

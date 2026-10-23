@@ -40,8 +40,8 @@ const commonPrefix = (items: string[]): string => {
   return prefix;
 };
 
-export const ConsoleLog = (props: { active?: boolean } = {}) => {
-  const { act, data } = useBackend<NetrunData>();
+const ConsoleLogView = (props: { active?: boolean } = {}) => {
+  const { act, data } = useBackend<NetrunData>(['log', 'cli', 'map', 'view', 'networks', 'window', 'selected', 'storage', 'shard']);
   const latestLine = data.log[data.log.length - 1];
   const output = useFollowOutput(`${data.log.length}:${latestLine?.time}:${latestLine?.text}`, props.active);
   const [value, setValue] = useState('');
@@ -186,8 +186,8 @@ export const ConsoleLog = (props: { active?: boolean } = {}) => {
   );
 };
 
-export const StoragePanel = () => {
-  const { act, data } = useBackend<NetrunData>();
+const StoragePanelView = () => {
+  const { act, data } = useBackend<NetrunData>(['storage', 'shard', 'selected', 'host_actions']);
   const { storage, shard, selected } = data;
   const canUpload = !!selected?.files && selected.access >= 2;
   return (
@@ -224,7 +224,7 @@ export const StoragePanel = () => {
 };
 
 const FileList = (props: { files: NetFile[]; canUpload: boolean }) => {
-  const { act } = useBackend<NetrunData>();
+  const { act } = useBackend<NetrunData>([]);
   if (!props.files.length) {
     return <Box color={THEME.muted}>Пусто.</Box>;
   }
@@ -272,8 +272,8 @@ const FileList = (props: { files: NetFile[]; canUpload: boolean }) => {
 };
 
 /** Карточка сущности: целостность и носитель */
-export const EntityPanel = () => {
-  const { data } = useBackend<NetrunData>();
+const EntityPanelView = () => {
+  const { data } = useBackend<NetrunData>(['entity']);
   const { entity } = data;
   if (!entity) {
     return null;
@@ -309,8 +309,8 @@ export const EntityPanel = () => {
 };
 
 /** Канал #noosphere - общий чат сущностей и консолей (NTNRC) */
-export const NetChat = (props: { active?: boolean } = {}) => {
-  const { act, data } = useBackend<NetrunData>();
+const NetChatView = (props: { active?: boolean } = {}) => {
+  const { act, data } = useBackend<NetrunData>(['chat', 'uplink', 'entity']);
   const { chat, uplink, entity } = data;
   const output = useFollowOutput(`${chat.messages.length}:${chat.messages[chat.messages.length - 1]}`, props.active);
   return (
@@ -364,3 +364,11 @@ export const NetChat = (props: { active?: boolean } = {}) => {
     </Box>
   );
 };
+
+export const ConsoleLog = memo(ConsoleLogView);
+
+export const StoragePanel = memo(StoragePanelView);
+
+export const EntityPanel = memo(EntityPanelView);
+
+export const NetChat = memo(NetChatView);

@@ -51,17 +51,19 @@ test('aborting pending async init releases its context and never appends an orph
 });
 
 test('partial initialization failure cleans up renderer and context', async () => {
+  const report = jest.spyOn(console, 'error').mockImplementation(() => {});
   MockApplication.rejectInit = true;
   const host = document.createElement('div');
   expect(await mountNetrunPixi(host, 800, 600)).toBeNull();
   expect(MockApplication.instances[0].destroys).toBe(1); expect(lose).toHaveBeenCalledTimes(1); expect(host.children).toHaveLength(0);
+  expect(report).toHaveBeenCalledWith('NetRun Pixi initialization failed', expect.any(Error));
 });
 
 test('hidden workspaces keep the same context, defer updates, and resume without an idle render loop', async () => {
   const host = document.createElement('div'); document.body.appendChild(host);
   const surface = await mountNetrunPixi(host, 800, 600, undefined, { reducedMotion: true });
   const scene = new GraphScene(); scene.update([node('A')], []); const state = overlay();
-  surface.updateScene(scene, state); surface.updateActors(scene, state, [], scene.adjacency); flush();
+  surface.updateScene(scene, state); surface.updateActors(scene, state); flush();
   const app = MockApplication.instances[0], before = app.renderer.render.mock.calls.length;
   surface.setSuspended(true); surface.updateCamera({ x: 30, y: 40, zoom: 2 });
   expect(frames.size).toBe(0); expect(app.renderer.render).toHaveBeenCalledTimes(before); expect(host.children).toHaveLength(1);
@@ -89,7 +91,7 @@ test('Pixi renders on every requested animation frame without artificial FPS thr
   const scene = new GraphScene();
   scene.update([{ ...node('A'), dynamic: true }], []);
   surface.updateScene(scene, overlay());
-  surface.updateActors(scene, overlay(), [], scene.adjacency);
+  surface.updateActors(scene, overlay());
   const app = MockApplication.instances[0];
   const framesRendered = [];
   for (const timestamp of [8, 16, 24, 32]) {
@@ -111,7 +113,7 @@ test('finite live effects settle; reduced motion and document hiding cancel anim
   const surface = await mountNetrunPixi(host, 800, 600);
   const scene = new GraphScene(); scene.update([{ ...node('A'), dynamic: true }, node('B', 100)], [{ id: 'AB', from: 'A', to: 'B', kind: 'apc' }]);
   const state = { ...overlay(), pingRoute: ['A', 'B'], events: [{ kind: 'trace' as const, from: 'A', to: 'B', age: 0 }] };
-  surface.updateScene(scene, state); surface.updateActors(scene, state, [], scene.adjacency);
+  surface.updateScene(scene, state); surface.updateActors(scene, state);
   const initial = [...frames.values()]; frames.clear(); clock = 100; initial.forEach((callback) => callback(clock));
   expect(frames.size).toBeGreaterThan(0);
   Object.defineProperty(document, 'hidden', { value: true, configurable: true }); document.dispatchEvent(new Event('visibilitychange'));

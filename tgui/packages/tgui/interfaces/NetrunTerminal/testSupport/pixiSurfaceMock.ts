@@ -2,7 +2,6 @@ import type { GraphBase, GraphOverlay } from '../graphPresentation';
 import type { GraphScene } from '../graphScene';
 import type { GraphPoint } from '../mapLayout';
 import type { PixiSurface } from '../pixiSurface';
-import type { NetEdge } from '../types';
 
 export type MockPixiSurface = jest.Mocked<PixiSurface> & {
   element: HTMLCanvasElement;
@@ -21,7 +20,7 @@ export const makePixiSurfaceMock = (host: HTMLElement): MockPixiSurface => {
   return {
     element,
     updateScene: jest.fn((_scene: GraphScene, _base: GraphBase) => true),
-    updateActors: jest.fn((scene: GraphScene, _overlay: GraphOverlay, _edges: NetEdge[], _adjacency: Map<string, Set<string>>) => { live = scene; }),
+    updateActors: jest.fn((scene: GraphScene, _overlay: GraphOverlay) => { live = scene; }),
     updateCamera: jest.fn((_camera: { x: number; y: number; zoom: number }) => {}),
     setInteracting: jest.fn((_interacting: boolean) => {}),
     resize: jest.fn((_width: number, _height: number) => true),

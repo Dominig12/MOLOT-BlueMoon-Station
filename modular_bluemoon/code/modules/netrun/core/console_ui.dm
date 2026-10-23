@@ -3,6 +3,128 @@
 	var/datum/ui_state/state_override
 	var/tgui_title = "Сетевой терминал"
 	var/list/ui_catalog_context
+	/// Lightweight subscriptions survive workspace changes; only the visible map owns a projection.
+	var/ui_observing = FALSE
+	var/ui_source_address
+	var/ui_transit_revision = -1
+	var/list/ui_context_sources = list()
+	var/list/ui_legacy_context
+	var/ui_legacy_status_address
+	var/list/ui_legacy_status
+
+/datum/netrun_console/proc/observe_ui_state()
+	if(!ui_observing)
+		ui_observing = TRUE
+		RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(on_ui_node_changed))
+		RegisterSignal(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, PROC_REF(on_ui_topology_changed))
+		RegisterSignal(SSnetrun, COMSIG_NETRUN_NETWORK_CHANGED, PROC_REF(on_ui_network_changed))
+		RegisterSignal(SSnetrun, COMSIG_NETRUN_CHAT_CHANGED, PROC_REF(on_ui_chat_changed))
+	refresh_ui_context_sources()
+
+/datum/netrun_console/proc/stop_ui_observation()
+	map_view?.suspend()
+	if(ui_observing)
+		UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_NETWORK_CHANGED, COMSIG_NETRUN_CHAT_CHANGED))
+	ui_observing = FALSE
+	for(var/atom/source as anything in ui_context_sources)
+		UnregisterSignal(source, ui_context_sources[source])
+	ui_context_sources.Cut()
+	ui_legacy_context = null
+	ui_legacy_status = null
+	ui_legacy_status_address = null
+
+/// A carried host can change turf when its container moves without receiving MOVED itself.
+/datum/netrun_console/proc/refresh_ui_context_sources()
+	var/list/targets = list()
+	var/atom/movable/carrier = host
+	while(ismovable(carrier))
+		targets |= carrier
+		carrier = carrier.loc
+	if(operator)
+		targets |= operator
+	var/datum/ui_source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
+	var/list/viewers = SStgui.get_all_open_uis(ui_source)
+	for(var/datum/tgui/ui as anything in viewers)
+		if(ui.user)
+			targets |= ui.user
+	for(var/atom/source as anything in ui_context_sources.Copy())
+		if(source in targets)
+			continue
+		UnregisterSignal(source, ui_context_sources[source])
+		ui_context_sources -= source
+	for(var/atom/source as anything in targets)
+		if(ui_context_sources[source] || QDELETED(source))
+			continue
+		var/list/signals = list(COMSIG_MOVABLE_MOVED, COMSIG_ATOM_ENTERED, COMSIG_ATOM_EXITED, COMSIG_PARENT_QDELETING)
+		if(ismob(source))
+			signals |= list(COMSIG_MOB_EQUIPPED_ITEM, COMSIG_MOB_UNEQUIPPED_ITEM)
+		ui_context_sources[source] = signals
+		RegisterSignal(source, signals, PROC_REF(on_ui_context_changed))
+
+/datum/netrun_console/proc/on_ui_context_changed(datum/source)
+	SIGNAL_HANDLER
+	access_cache = null
+	ui_node_levels?.Cut()
+	ui_legit_levels?.Cut()
+	network_level_cache?.Cut()
+	invalidate_projection_caches()
+	map_view.invalidate(FALSE)
+
+/// Native ID access lists and NTnet switches still have legacy direct writes. Compare only
+/// this small context, never the graph/panels; a quiet session does not serialize its UI.
+/datum/netrun_console/proc/reconcile_ui_context()
+	if(!ui_observing)
+		return
+	refresh_ui_context_sources()
+	var/list/credentials = list(list(operator, user_access(TRUE)))
+	var/datum/ui_source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
+	var/list/viewers = SStgui.get_all_open_uis(ui_source)
+	for(var/datum/tgui/ui as anything in viewers)
+		if(ui.user && ui.user != operator)
+			credentials += list(list(ui.user, netrun_mob_access(ui.user)))
+	var/list/current = list(operator, get_turf(host), credentials, SSntnet.is_enabled(), length(SSntnet.catalog), SSnetworks.station_network?.setting_disabled)
+	if(ui_legacy_context && !netrun_snapshot_equal(ui_legacy_context, current))
+		on_ui_context_changed(src)
+	ui_legacy_context = current
+	// APC charge, relay load and other older status readers contain direct native writes.
+	// Sample just the displayed device, and send nothing while its fields are unchanged.
+	var/address = workspace_view == "pinned" ? remote_session.active_window : ((workspace_view in list("map", "files")) ? map_view.selected_address : null)
+	var/datum/component/netrun_node/node = address ? SSnetrun.find_node(address) : null
+	var/atom/target = node?.parent
+	var/list/status = target && !QDELETED(target) ? target.netrun_status() : null
+	if(ui_legacy_status_address == address && ui_legacy_status && !netrun_snapshot_equal(ui_legacy_status, status))
+		invalidate_ui()
+	ui_legacy_status_address = address
+	ui_legacy_status = status
+
+/datum/netrun_console/proc/on_ui_node_changed(datum/source, datum/component/netrun_node/node, flags)
+	SIGNAL_HANDLER
+	if(!node || !is_ui_active())
+		return
+	// Infrastructure affects reachability on every workspace. Ordinary unrelated activity
+	// is handled only by a visible map and must not wake every terminal in the world.
+	var/transit_revision = SSnetrun.topology?.transit_availability_revision || 0
+	var/routes_changed = (flags & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED)) || transit_revision != ui_transit_revision
+	if(routes_changed)
+		ui_transit_revision = transit_revision
+		invalidate_projection_caches()
+	if(routes_changed || node.address == ui_source_address || node.address == map_view.selected_address || node.address == remote_session.active_window || (node.address in remote_session.windows))
+		invalidate_ui()
+
+/datum/netrun_console/proc/on_ui_topology_changed(datum/source)
+	SIGNAL_HANDLER
+	ui_transit_revision = SSnetrun.topology?.transit_availability_revision || 0
+	invalidate_projection_caches()
+	invalidate_ui()
+
+/datum/netrun_console/proc/on_ui_network_changed(datum/source, datum/netrun_network/network)
+	SIGNAL_HANDLER
+	if(network?.id == map_view.selected_network || selected_node()?.network == network)
+		invalidate_ui()
+
+/datum/netrun_console/proc/on_ui_chat_changed(datum/source)
+	SIGNAL_HANDLER
+	invalidate_ui()
 
 /datum/netrun_console/ui_state(mob/user)
 	if(state_override)
@@ -21,11 +143,11 @@
 
 /datum/netrun_console/ui_data(mob/user, datum/ui_source)
 	netrun_ui_source = ui_source || src // scheduler
-	note_ui_activity()
 	if(user)
 		if(operator != user)
 			ui_network_catalog = null
 		operator = user
+	note_ui_activity()
 	// Matrix clicks need no global discovery pass. The live delivery/finish
 	// checks own fresh trees; this snapshot only describes the visible panel.
 	refresh_route_node(selected_node())
@@ -34,6 +156,9 @@
 	else
 		ui_routes = null
 		ui_routes_borrowed = FALSE
+	ui_source_address = ui_routes?.source?.address
+	ui_transit_revision = SSnetrun.topology?.transit_availability_revision || 0
+	reconcile_ui_context()
 	access_cache = user_access()
 	network_level_cache = list()
 	ui_node_levels = list()

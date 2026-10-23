@@ -38,7 +38,8 @@ test('all dynamic links and routes longer than 256 hops survive, including a cro
   expect(MockContainer.instances.find((entry) => entry.label === 'moving-cables').children).toHaveLength(6001);
   layer.setViewport({ left: 1400, right: 1600, top: -10, bottom: 10 }, 1);
   expect(MockGraphics.graphics.find((entry) => entry.label === 'edge:d6000').visible).toBe(true);
-  expect(MockGraphics.graphics.some((entry) => entry.calls.filter((call) => call.op === 'lineTo').length === 300)).toBe(true);
+  // Each hop has a continuous underlay plus its bright dashed stroke.
+  expect(MockGraphics.graphics.some((entry) => entry.calls.filter((call) => call.op === 'lineTo').length >= 600)).toBe(true);
 });
 
 test('traffic follows real adjacency rather than drawing a fictional straight shortcut', () => {
@@ -80,5 +81,5 @@ test('zoomed-out Pixi actors keep device bodies small and enlarge ICE/entity rin
   const radii = MockGraphics.graphics.flatMap((graphic) => graphic.calls
     .filter((call) => call.op === 'circle').map((call) => call.args[2]));
   expect(radii).toContain(8);
-  expect(radii.some((radius) => radius >= 46)).toBe(true);
+  expect(radii.some((radius) => Number(radius) >= 46)).toBe(true);
 });

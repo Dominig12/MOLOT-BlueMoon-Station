@@ -9,7 +9,7 @@ const CELL = 46;
 
 /** Головоломка взлома. Тип выбирает сервер: протокол (matrix) или трассировка (sequence). */
 export const MatrixPanel = (props: { state: MatrixState }) => {
-  const { act } = useBackend<NetrunData>();
+  const { act } = useBackend<NetrunData>([]);
   const signature = JSON.stringify(props.state);
   const state = useMemo(() => props.state, [signature]);
   return <MatrixView state={state} act={act} />;

@@ -95,19 +95,30 @@
 	kind = "console"
 
 /datum/netrun_task/console/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	if(!limits)
+		limits = worker.get_execution_limits()
 	var/datum/netrun_console/console = target()
 	if(QDELETED(console))
 		return FALSE
 	var/delta = isnull(console.last_netrun_tick) ? 0 : max(0, world.time - console.last_netrun_tick) / (1 SECONDS)
 	console.last_netrun_tick = world.time
+	console.ui_processing = TRUE
 	console.access_session.process_events()
 	console.process_tick(delta)
 	// Dive-link processing can end the dive and destroy the originating console.
 	if(QDELETED(console))
 		return TRUE
-	console.flush_ui(interactive)
+	console.flush_ui(interactive || console.ui_event_pending)
+	if(QDELETED(console))
+		return TRUE
+	console.ui_processing = FALSE
+	// A domain signal may arrive while serialization yields. Preserve that next update;
+	// countdown invalidations never requeue themselves within the same server tick.
+	if(console.ui_dirty && console.ui_event_pending && limits.interactive_flush && !console.ui_serializing && !console.ui_flushing && console.is_ui_active())
+		worker.get_task_scheduler().enqueue("console", console, NETRUN_TASK_NORMAL)
 	worker.last_processed_consoles++
 	if(!QDELETED(console) && !console.needs_processing())
+		console.stop_ui_observation()
 		worker.active_consoles -= console
 	return TRUE
 

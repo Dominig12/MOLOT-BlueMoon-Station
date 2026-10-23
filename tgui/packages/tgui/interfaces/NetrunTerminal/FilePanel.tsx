@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 
 import { Box, Button, Input } from '../../components';
 import { NetrunData, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
-export const FilePanel = () => {
-  const { data } = useBackend<NetrunData>();
+const FilePanelView = () => {
+  const { data } = useBackend<NetrunData>(['file']);
   const [creating, setCreating] = useState(false);
   return (
     <Box mt={1}>
@@ -22,16 +22,26 @@ export const FilePanel = () => {
 };
 
 const FileEditor = (props: { onCreated?: () => void }) => {
-  const { act, data } = useBackend<NetrunData>();
+  const { act, data } = useBackend<NetrunData>(['file', 'shard']);
   const file = props.onCreated ? null : data.file;
   const [name, setName] = useState(file?.name ?? 'note.txt');
   const [content, setContent] = useState(file?.content ?? '');
+  const confirmed = useRef({ name: file?.name ?? 'note.txt', content: file?.content ?? '' });
   const [toShard, setToShard] = useState(file?.source === 'shard');
   const [submitted, setSubmitted] = useState<{
     previousUid: string | null;
     name: string;
     content: string;
   } | null>(null);
+  useEffect(() => {
+    if (!file) { return; }
+    const before = confirmed.current, next = { name: file.name, content: file.content ?? '' };
+    // A clean field follows server pushes. A dirty field keeps the draft,
+    // including text entered after saving but before its receipt arrived.
+    setName((draft) => draft === before.name ? next.name : draft);
+    setContent((draft) => draft === before.content ? next.content : draft);
+    confirmed.current = next;
+  }, [file?.uid, file?.name, file?.content]);
   useEffect(() => {
     // A failed request leaves the draft mounted. Only a newly created file
     // with the submitted contents acknowledges creation; polling cannot erase
@@ -121,3 +131,5 @@ const FileEditor = (props: { onCreated?: () => void }) => {
     </Box>
   );
 };
+
+export const FilePanel = memo(FilePanelView);

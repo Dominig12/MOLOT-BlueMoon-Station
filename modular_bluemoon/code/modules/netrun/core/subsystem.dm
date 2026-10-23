@@ -70,6 +70,7 @@ SUBSYSTEM_DEF(netrun)
 /datum/controller/subsystem/netrun/proc/queue_node(datum/component/netrun_node/node)
 	if(!QDELETED(node))
 		dirty_nodes[node] = TRUE
+		get_task_scheduler().enqueue("node", node, NETRUN_TASK_NORMAL)
 
 /// A display snapshot can be requested before the next one-second node pass.
 /// Inspect only queued native changes; command execution still builds fresh routes.
@@ -131,6 +132,7 @@ SUBSYSTEM_DEF(netrun)
 		if(console.intrusion.breach)
 			currentbreaches += console
 		if(!console.needs_processing())
+			console.stop_ui_observation()
 			active_consoles -= console
 			continue
 		reconcile = TRUE

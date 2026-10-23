@@ -110,6 +110,7 @@
 	. = ..()
 	if(src != SSnetrun.net_channel)
 		return
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_CHAT_CHANGED)
 	for(var/mob/camera/netrun_entity/entity as anything in SSnetrun.entities)
 		if(entity.client && entity.console?.has_uplink())
 			to_chat(entity, span_notice("<b>#noosphere</b> [span_name(username)]: [message]"))

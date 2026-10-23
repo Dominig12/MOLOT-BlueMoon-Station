@@ -1,11 +1,13 @@
+import { memo } from 'react';
+
 import { Box, Button } from '../../components';
 import { IncomingAttacks } from './CombatPanel';
 import { NetrunData, THEME } from './types';
 import { useNetrunBackend as useBackend, useNetrunFeedback } from './useNetrunBackend';
 
 /** A reserved row keeps urgent feedback visible without moving tools or taking focus. */
-export const SessionStatus = (props: { onCombat: () => void; onBreach: () => void }) => {
-  const { act, data } = useBackend<NetrunData>();
+const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void }) => {
+  const { act, data } = useBackend<NetrunData>(['combat', 'entity', 'locked', 'breach']);
   const feedback = useNetrunFeedback();
   const incoming = !!data.combat?.incoming?.length;
   const travel = data.entity?.travel;
@@ -34,3 +36,5 @@ export const SessionStatus = (props: { onCombat: () => void; onBreach: () => voi
     </div>
   );
 };
+
+export const SessionStatus = memo(SessionStatusView);

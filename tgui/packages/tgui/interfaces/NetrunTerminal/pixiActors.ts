@@ -21,6 +21,9 @@ const sameOverlayData = (a: GraphOverlay | null, b: GraphOverlay) => a
   && a.pingRoute === b.pingRoute && a.events === b.events;
 const sameLocalState = (a: GraphOverlay, b: GraphOverlay) => a.selected === b.selected
   && a.hovered === b.hovered && a.selectionPending === b.selectionPending;
+const needsActor = (node: PlacedNode, overlay: GraphOverlay) => node.dynamic || node.entities || node.ice || node.active
+  || node.type === 'gateway' || node.type === 'relay' || node.address === overlay.selected
+  || node.address === overlay.hovered || node.address === overlay.entityHost || node.address === overlay.jacked;
 const pointOn = (segments: Segment[], progress: number) => {
   let remaining = segments.reduce((sum, segment) => sum + segment.length, 0) * progress;
   for (const segment of segments) {
@@ -88,9 +91,7 @@ export class PixiActors {
     }
     const alive = new Set<string>();
     for (const node of affected) {
-      if (!node.dynamic && !node.entities && !node.ice && !node.active
-        && node.type !== 'gateway' && node.type !== 'relay' && node.address !== overlay.selected
-        && node.address !== overlay.hovered && node.address !== overlay.entityHost && node.address !== overlay.jacked) {
+      if (!needsActor(node, overlay)) {
         const removed = this.nodes.get(node.address);
         if (removed && localOnly) { destroyDisplay(removed.group); this.nodes.delete(node.address); }
         continue;
