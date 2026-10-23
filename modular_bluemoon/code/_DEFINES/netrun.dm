@@ -43,9 +43,9 @@
 #define NETRUN_LAN_COMMAND "cmd"
 
 /// Geographic physical links: one world tile adds one decisecond of latency.
-#define NETRUN_LINK_TILES_PER_DS 1
+#define NETRUN_LINK_TILES_PER_DS 15
 #define NETRUN_RELAY_LATENCY 3
-#define NETRUN_APC_NEIGHBORS 2
+#define NETRUN_APC_NEIGHBORS 3
 
 // Типы файлов
 #define NETRUN_FILE_TEXT "text"
@@ -73,9 +73,9 @@
 #define NETRUN_ICE_SENTRY "sentry"
 #define NETRUN_ICE_HUNTER "hunter"
 /// Сколько персистентных патрульных процессов поднимается в начале раунда
-#define NETRUN_MAX_PATROLS 5
+#define NETRUN_MAX_PATROLS 400
 /// Сколько лорных документов раскладывается по серверам станции в начале раунда
-#define NETRUN_MAX_LORE_FILES 8
+#define NETRUN_MAX_LORE_FILES 300
 
 /// События расширений: источник сигнала — сущность или её консоль.
 #define COMSIG_NETRUN_ENTITY_NODE_CHANGED "netrun_entity_node_changed"
@@ -84,6 +84,13 @@
 #define COMSIG_NETRUN_CONSOLE_EVENT "netrun_console_event"
 /// Нелегальный сетевой доступ к кибернетическому узлу носителя: (datum/netrun_console, datum/component/netrun_node)
 #define COMSIG_NETRUN_IMPLANT_INTRUSION "netrun_implant_intrusion"
+
+/// SSnetrun lifecycle events; callbacks only invalidate caches or enqueue tasks.
+#define COMSIG_NETRUN_NODE_REGISTERED "netrun_node_registered"
+#define COMSIG_NETRUN_NODE_UNREGISTERED "netrun_node_unregistered"
+#define COMSIG_NETRUN_NODE_MOVED "netrun_node_moved"
+#define COMSIG_NETRUN_TOPOLOGY_DIRTY "netrun_topology_dirty"
+#define COMSIG_NETRUN_EVENT_POSTED "netrun_event_posted"
 
 /// Domain notifications. Handlers invalidate caches; they must not serialize UI.
 /// SSnetrun and node: (node, changed_flags).

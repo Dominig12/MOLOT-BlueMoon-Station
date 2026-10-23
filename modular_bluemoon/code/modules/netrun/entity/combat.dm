@@ -177,7 +177,7 @@
 			contacts -= id
 
 /// Returns the same denial reason used by both the payload and the actual action.
-/datum/netrun_combat_context/proc/target_denial(datum/target, datum/netrun_path_tree/tree)
+/datum/netrun_combat_context/proc/target_denial(datum/target, datum/netrun_path_tree/tree, datum/component/netrun_node/local_node, local_known = FALSE)
 	if(QDELETED(target) || target == console.combat_self())
 		return "Цель недоступна."
 	var/datum/component/netrun_combatant/combatant = target.get_netrun_combatant()
@@ -186,7 +186,8 @@
 		return "Цель покинула узел."
 	if(console.is_locked())
 		return "Точка подключения заблокирована."
-	if(node == console.combat_node(tree))
+	// During one combat payload the local node has already been resolved once.
+	if(node == (local_known ? local_node : console.combat_node(tree)))
 		return null
 	var/datum/netrun_combat_contact/contact = contacts[REF(target)]
 	if(!contact?.valid_for(console))
@@ -197,9 +198,13 @@
 		return "Нет маршрута к противнику."
 	return null
 
-/datum/netrun_combat_context/proc/targets()
+/datum/netrun_combat_context/proc/targets(datum/netrun_path_tree/tree, datum/component/netrun_node/local_node, local_known = FALSE)
 	prune_contacts()
-	var/datum/component/netrun_node/node = console.combat_node()
+	var/owns_tree = !tree
+	if(owns_tree)
+		tree = console.make_path_tree(TRUE)
+		SSnetrun.combat_ui_tree_builds++
+	var/datum/component/netrun_node/node = local_known ? local_node : console.combat_node(tree)
 	var/list/candidates = list()
 	if(node)
 		candidates |= node.entities || list()
@@ -217,8 +222,10 @@
 		if(!combatant)
 			continue
 		var/list/entry = combatant.ui_entry()
-		entry["unavailable_reason"] = target_denial(target)
+		entry["unavailable_reason"] = target_denial(target, tree, node, TRUE)
 		. += list(entry)
+	if(owns_tree)
+		qdel(tree)
 
 /datum/netrun_combat_context/proc/program_entry(datum/netrun_program/program, uid, builtin = FALSE)
 	var/list/entry = program.ui_entry()
@@ -234,7 +241,7 @@
 		var/datum/netrun_program/builtin = SSnetrun.get_program(id)
 		if(builtin)
 			. += list(program_entry(builtin, "builtin:[id]", TRUE))
-	for(var/datum/netrun_file/file as anything in console.all_files())
+	for(var/datum/netrun_file/file as anything in (console.ui_files || console.all_files()))
 		if(file.kind != NETRUN_FILE_PROGRAM)
 			continue
 		var/datum/netrun_program/program = SSnetrun.get_program(file.content)
@@ -257,17 +264,44 @@
 		entry["source_node"] = ice.node?.address
 		. += list(entry)
 
+/// Only the cross-tab warning is needed until the user opens the combat workspace.
+/// Do not compute routes, target permissions or load every program file on a puzzle tick.
+/datum/netrun_combat_context/proc/status_payload()
+	SSnetrun.combat_summary_payloads++
+	var/list/warnings = incoming()
+	if(!length(warnings))
+		return null
+	return list("incoming" = warnings)
+
 /datum/netrun_combat_context/proc/payload()
-	var/list/target_entries = targets()
+	SSnetrun.combat_full_payloads++
+	var/measuring = SSnetrun.profile_armed
+	var/started = measuring ? TICK_USAGE : 0
+	var/datum/netrun_path_tree/tree = console.ui_routes
+	var/owns_tree = !tree
+	if(owns_tree)
+		tree = console.make_path_tree(TRUE)
+		SSnetrun.combat_ui_tree_builds++
+	var/datum/component/netrun_node/node = console.combat_node(tree)
+	var/list/target_entries = targets(tree, node, TRUE)
 	var/list/incoming_entries = incoming()
-	var/datum/component/netrun_node/node = console.combat_node()
 	if(!node && !length(target_entries) && !length(incoming_entries))
+		if(owns_tree)
+			qdel(tree)
 		return null
 	var/datum/self = console.combat_self()
 	var/list/hp = netrun_combatant_integrity(self)
-	return list("node" = node?.address, "node_name" = node?.get_name(),
+	var/list/loot = console.salvage_payload(node, TRUE)
+	var/list/result = list("node" = node?.address, "node_name" = node?.get_name(),
 		"self" = hp ? list("integrity" = hp["cur"], "max_integrity" = hp["max"], "stunned" = hp["stunned"], "shielded" = hp["shielded"]) : null,
-		"targets" = target_entries, "programs" = programs(), "incoming" = incoming_entries, "loot" = console.salvage_payload())
+		"targets" = target_entries, "programs" = programs(), "incoming" = incoming_entries, "loot" = loot)
+	if(owns_tree)
+		qdel(tree)
+	if(measuring)
+		var/cost = max(0, TICK_DELTA_TO_MS(TICK_USAGE - started))
+		SSnetrun.combat_full_payload_ms += cost
+		SSnetrun.combat_full_payload_peak_ms = max(SSnetrun.combat_full_payload_peak_ms, cost)
+	return result
 
 /datum/netrun_combat_context/proc/use_program(uid, target_ref)
 	if(console.is_locked() || world.time < next_program)
@@ -322,9 +356,9 @@
 	changed()
 	return TRUE
 
-/datum/netrun_console/proc/salvage_payload()
+/datum/netrun_console/proc/salvage_payload(datum/component/netrun_node/local_node, local_known = FALSE)
 	. = list()
-	var/datum/component/netrun_node/node = combat_node()
+	var/datum/component/netrun_node/node = local_known ? local_node : combat_node()
 	if(!combat_self() || !node)
 		return
 	for(var/datum/netrun_file/file as anything in node.salvage)

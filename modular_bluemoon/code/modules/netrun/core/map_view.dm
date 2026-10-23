@@ -58,18 +58,19 @@
 	dirty = TRUE
 	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(on_node_changed))
 	RegisterSignal(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, PROC_REF(on_topology_changed))
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_EVENT_POSTED, PROC_REF(on_event_posted))
 
 /// Closed/hidden maps do not receive every process movement elsewhere in the world.
 /datum/netrun_map_view/proc/suspend()
 	if(!subscribed)
 		return
 	subscribed = FALSE
-	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED))
+	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_EVENT_POSTED))
 	dirty_nodes.Cut()
 	dirty = TRUE
 
 /datum/netrun_map_view/Destroy()
-	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED))
+	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_EVENT_POSTED))
 	QDEL_NULL(geometry)
 	snapshot = null
 	structure = null
@@ -102,6 +103,11 @@
 	SIGNAL_HANDLER
 	structure_dirty = TRUE
 	if(owner)
+		owner.invalidate_ui()
+
+/datum/netrun_map_view/proc/on_event_posted(datum/source, kind, from_ref, to_ref)
+	SIGNAL_HANDLER
+	if(subscribed && owner)
 		owner.invalidate_ui()
 
 /datum/netrun_map_view/proc/invalidate(sensitive = TRUE)

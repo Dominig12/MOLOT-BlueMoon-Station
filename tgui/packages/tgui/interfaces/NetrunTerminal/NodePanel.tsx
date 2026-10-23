@@ -1,3 +1,5 @@
+import { useRef } from 'react';
+
 import { useBackend } from '../../backend';
 import { Box, Button, Icon, LabeledList, Section } from '../../components';
 import { AutoBreachButton } from './AutoBreachButton';
@@ -13,7 +15,20 @@ import {
 
 export const NodePanel = () => {
   const { act, data } = useBackend<NetrunData>();
-  const { selected, can_breach, breach, networks, selected_network } = data;
+  // A hidden workspace is serialized without selected-node details. Do not turn
+  // the brief omission into a blank sidebar when the player returns to the map.
+  const confirmed = useRef<Pick<NetrunData,
+    'selected' | 'selected_network' | 'networks' | 'can_breach' | 'breach' | 'entity' | 'waypoint'> | null>(null);
+  if (data.workspace_view === 'map' && data.map) {
+    confirmed.current = {
+      selected: data.selected, selected_network: data.selected_network,
+      networks: data.networks, can_breach: data.can_breach, breach: data.breach,
+      entity: data.entity, waypoint: data.waypoint,
+    };
+  }
+  const pending = !data.map || data.workspace_view !== 'map';
+  const display = pending && confirmed.current ? confirmed.current : data;
+  const { selected, can_breach, breach, networks, selected_network } = display;
   if (!selected && selected_network) {
     const net = selected_network;
     return (
@@ -134,7 +149,7 @@ export const NodePanel = () => {
           <Button
             icon="location-arrow"
             tooltip="Пеленг на узел — показать направление на карте"
-            selected={data.waypoint?.address === selected.address}
+            selected={display.waypoint?.address === selected.address}
             onClick={() => act('set_waypoint', { address: selected.address })}
           />
           <Button
@@ -230,23 +245,24 @@ export const NodePanel = () => {
           onCommand={(id) => act('command', { id })}
         />
       </Box>
-      {data.entity && data.entity.host !== selected.address && (
+      {display.entity && display.entity.host !== selected.address && (
         <Button
           mt={1}
           icon="person-walking-arrow-right"
           color="good"
           content="Перейти в узел"
-          disabled={!(selected.can_hop ?? (selected.access >= 2 && selected.online))}
+          disabled={pending || !(selected.can_hop ?? (selected.access >= 2 && selected.online))}
           tooltip="Нужно разрешение на переход в соседний узел: доступ пользователя или ключ сети."
           onClick={() => act('hop', { address: selected.address })}
         />
       )}
-      {data.entity && data.entity.host !== selected.address && (
+      {display.entity && display.entity.host !== selected.address && (
         <Button
           mt={1}
           ml={1}
           icon="route"
           content="Пройти к узлу"
+          disabled={pending}
           tooltip="Автопроход шаг за шагом по уже открытым узлам (online и с доступом пользователя или ключом) до выбранного."
           onClick={() => act('travel', { address: selected.address })}
         />

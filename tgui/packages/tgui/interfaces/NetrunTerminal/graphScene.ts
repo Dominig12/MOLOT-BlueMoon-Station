@@ -11,6 +11,8 @@ export class GraphScene {
   edges: NetEdge[] = [];
   byAddress = new Map<string, PlacedNode>();
   adjacency = new Map<string, Set<string>>();
+  /** Cached incident edges let fast camera redraw inspect only on-screen connections. */
+  incidentEdges = new Map<string, NetEdge[]>();
   private cells = new Map<string, PlacedNode[]>();
   private stationary: GraphScene | null = null;
   private moving: GraphScene | null = null;
@@ -19,6 +21,7 @@ export class GraphScene {
   static live(base: GraphScene, nodes: PlacedNode[], adjacency: Map<string, Set<string>>) {
     const scene = new GraphScene();
     scene.nodes = nodes; scene.edges = base.edges; scene.adjacency = adjacency;
+    scene.incidentEdges = base.incidentEdges;
     scene.byAddress = new Map(nodes.map((node) => [node.address, node]));
     scene.stationary = base;
     scene.moving = new GraphScene(); scene.moving.update(nodes.filter((node) => node.dynamic), []);
@@ -30,6 +33,14 @@ export class GraphScene {
     this.edges = edges;
     this.byAddress = new Map(nodes.map((node) => [node.address, node]));
     this.adjacency = graphAdjacency(nodes, edges);
+    this.incidentEdges.clear();
+    for (const edge of edges) {
+      for (const address of [edge.from, edge.to]) {
+        const incident = this.incidentEdges.get(address) || [];
+        incident.push(edge);
+        this.incidentEdges.set(address, incident);
+      }
+    }
     this.cells.clear();
     for (const node of nodes) {
       const key = cellKey(Math.floor(node.px / GRAPH_GAP), Math.floor(node.py / GRAPH_GAP));

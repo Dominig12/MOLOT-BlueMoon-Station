@@ -240,3 +240,18 @@
 	console.append_network_catalog(data, session)
 	TEST_ASSERT(!("networks" in data), "A quiet poll must not JSON-encode the same full LAN catalog")
 	TEST_ASSERT_NOTNULL(console.ui_static_data(null)["networks"], "A refreshed browser must restore its network catalog baseline")
+
+
+/// Only live map subscribers need network-event update notifications.
+/datum/unit_test/netrun_map_event_signal_lifecycle/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
+	var/datum/netrun_map_view/view = console.map_view
+	view.subscribe()
+	console.ui_dirty = FALSE
+	SSnetrun.post_event("trace", null, "test-event")
+	TEST_ASSERT(console.ui_dirty, "Subscribed maps receive global network event signals")
+	view.suspend()
+	console.ui_dirty = FALSE
+	SSnetrun.post_event("trace", null, "test-event")
+	TEST_ASSERT(!console.ui_dirty, "Suspended maps do not receive network event signals")

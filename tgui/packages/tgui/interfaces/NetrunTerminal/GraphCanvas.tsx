@@ -24,6 +24,11 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   const [camera, setCamera] = useState({ x: view.x, y: view.y, zoom: view.zoom, width: 720, height: 480 });
   const latest = useRef(props); latest.current = props;
   const frame = useRef<number | null>(null);
+  const paintVersion = useRef(0);
+  const paintJob = useRef<{ version: number; iterator: Generator<void, void, unknown>; surface: HTMLCanvasElement; viewport: GraphViewport } | null>(null);
+  const paintedView = useRef<{ x: number; y: number; zoom: number } | null>(null);
+  const wheelActive = useRef(false);
+  const wheelFinish = useRef<number | null>(null);
   const down = useRef<{ x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
   const [tooltip, setTooltip] = useState<{ address: string; x: number; y: number } | null>(null);
   const base = useMemo(() => {
@@ -40,38 +45,106 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
       && previous.width === dimensions.width && previous.height === dimensions.height ? previous
       : { x: view.x, y: view.y, zoom: view.zoom, ...dimensions });
   }, [view, size]);
+  // Keep the last bitmap in camera coordinates while SVG moves with current camera.
+  const syncBitmapCamera = useCallback(() => {
+    const surface = canvas.current, previous = paintedView.current;
+    if (!surface || !previous) { return; }
+    const scale = view.zoom / previous.zoom;
+    const dx = view.x - previous.x * scale, dy = view.y - previous.y * scale;
+    surface.style.transformOrigin = '0 0';
+    surface.style.transform = 'translate(' + dx + 'px, ' + dy + 'px) scale(' + scale + ')';
+  }, [view]);
   const paintRef = useRef<() => void>(() => {});
-  const queuePaint = useCallback(() => {
-    if (latest.current.suspended) { return; }
-    if (frame.current !== null) { return; }
+  const schedulePaint = useCallback(() => {
+    if (latest.current.suspended || frame.current !== null) { return; }
     if (typeof window.requestAnimationFrame !== 'function') { paintRef.current(); return; }
     frame.current = window.requestAnimationFrame(() => { frame.current = null; paintRef.current(); });
   }, []);
+  const queuePaint = useCallback(() => {
+    paintVersion.current++;
+    paintJob.current = null;
+    schedulePaint();
+  }, [schedulePaint]);
   paintRef.current = () => {
-    if (latest.current.suspended) { return; }
+    if (latest.current.suspended || down.current?.moved) { paintJob.current = null; return; }
     const surface = canvas.current, holder = container.current;
     const ctx = surface?.getContext('2d', { alpha: false });
     if (!surface || !holder || !ctx) { return; }
     const { width, height } = size();
     const ratio = Math.min(2, window.devicePixelRatio || 1, Math.sqrt(5000000 / (width * height)));
-    if (surface.width !== Math.ceil(width * ratio) || surface.height !== Math.ceil(height * ratio)) {
-      surface.width = Math.ceil(width * ratio); surface.height = Math.ceil(height * ratio);
+    const pixelsWide = Math.ceil(width * ratio), pixelsHigh = Math.ceil(height * ratio);
+    // Continuous wheel input replaces stretched bitmaps with sharp, viewport-only drawing
+    // once per animation frame; a complete staged paint follows when scrolling stops.
+    if (wheelActive.current && scenery.current.nodes.length + scenery.current.edges.length >= 384
+      && typeof window.requestAnimationFrame === 'function') {
+      paintJob.current = null;
+      if (surface.width !== pixelsWide || surface.height !== pixelsHigh) {
+        surface.width = pixelsWide; surface.height = pixelsHigh;
+      }
+      renderer.paintPreview(ctx, scenery.current, view, latest.current, width, height, ratio);
+      paintedView.current = { x: view.x, y: view.y, zoom: view.zoom };
+      syncBitmapCamera();
+      return;
     }
-    // The canvas itself is the retained bitmap cache. There is no animation render loop.
-    renderer.paint(ctx, scenery.current, view, latest.current, width, height, ratio);
+    if (scenery.current.nodes.length + scenery.current.edges.length < 384
+      || typeof window.requestAnimationFrame !== 'function') {
+      paintJob.current = null;
+      if (surface.width !== pixelsWide || surface.height !== pixelsHigh) {
+        surface.width = pixelsWide; surface.height = pixelsHigh;
+      }
+      renderer.paint(ctx, scenery.current, view, latest.current, width, height, ratio);
+      paintedView.current = { x: view.x, y: view.y, zoom: view.zoom };
+      syncBitmapCamera();
+      return;
+    }
+    if (!paintJob.current || paintJob.current.version !== paintVersion.current) {
+      const hidden = document.createElement('canvas');
+      hidden.width = pixelsWide; hidden.height = pixelsHigh;
+      const hiddenCtx = hidden.getContext('2d', { alpha: false });
+      if (!hiddenCtx) {
+        if (surface.width !== pixelsWide || surface.height !== pixelsHigh) {
+          surface.width = pixelsWide; surface.height = pixelsHigh;
+        }
+        renderer.paint(ctx, scenery.current, view, latest.current, width, height, ratio);
+        paintedView.current = { x: view.x, y: view.y, zoom: view.zoom };
+        syncBitmapCamera();
+        return;
+      }
+      const viewport = new GraphViewport();
+      viewport.x = view.x; viewport.y = view.y;
+      viewport.zoom = view.zoom; viewport.fitting = view.fitting;
+      paintJob.current = {
+        version: paintVersion.current, surface: hidden, viewport,
+        iterator: renderer.paintChunks(hiddenCtx, scenery.current, viewport, latest.current, width, height, ratio),
+      };
+    }
+    const job = paintJob.current;
+    if (!job.iterator.next().done) { schedulePaint(); return; }
+    paintJob.current = null;
+    // Show only a complete frame; keep the old bitmap visible while building.
+    if (surface.width !== pixelsWide || surface.height !== pixelsHigh) {
+      surface.width = pixelsWide; surface.height = pixelsHigh;
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(job.surface, 0, 0);
+    paintedView.current = { x: job.viewport.x, y: job.viewport.y, zoom: job.viewport.zoom };
+    syncBitmapCamera();
   };
   const fit = useCallback(() => {
-    const { width, height } = size(); view.fit(retained.current.fitPoints(latest.current.apcZones), width, height); syncCamera(); queuePaint();
-  }, [view, queuePaint, size, syncCamera]);
+    const { width, height } = size(); view.fit(retained.current.fitPoints(latest.current.apcZones), width, height); syncCamera(); syncBitmapCamera(); queuePaint();
+  }, [view, queuePaint, size, syncCamera, syncBitmapCamera]);
   const center = useCallback((address: string) => {
     const point = retained.current.byAddress.get(address);
     if (!point) { return; }
-    const { width, height } = size(); view.center(point, width, height); syncCamera(); queuePaint();
-  }, [view, queuePaint, size, syncCamera]);
+    const { width, height } = size(); view.center(point, width, height); syncCamera(); syncBitmapCamera(); queuePaint();
+  }, [view, queuePaint, size, syncCamera, syncBitmapCamera]);
   useImperativeHandle(externalRef, () => ({ center, fit }), [center, fit]);
   useEffect(() => {
     if (props.suspended) {
       if (frame.current !== null) { window.cancelAnimationFrame(frame.current); frame.current = null; }
+      if (wheelFinish.current !== null) { window.clearTimeout(wheelFinish.current); wheelFinish.current = null; }
+      wheelActive.current = false;
+      paintJob.current = null;
       setTooltip(null); return;
     }
     // Activity and movable geometry never invalidate the base or automatically change its camera.
@@ -92,6 +165,9 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     return () => {
       observer?.disconnect(); window.removeEventListener('resize', resized);
       if (frame.current !== null) { window.cancelAnimationFrame(frame.current); frame.current = null; }
+      if (wheelFinish.current !== null) { window.clearTimeout(wheelFinish.current); wheelFinish.current = null; }
+      wheelActive.current = false;
+      paintJob.current = null;
     };
   }, [view, fit, syncCamera, queuePaint]);
   const hit = (clientX: number, clientY: number) => {
@@ -113,7 +189,15 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
         if (press) {
           const dx = event.clientX - press.x, dy = event.clientY - press.y;
           if (dx * dx + dy * dy > 16) { press.moved = true; }
-          if (press.moved) { view.pan(press.panX + dx, press.panY + dy); setTooltip(null); syncCamera(); queuePaint(); }
+          if (press.moved) {
+            // Only the last completed bitmap follows the pointer; redraw once at drag end.
+            if (paintJob.current) { paintVersion.current++; paintJob.current = null; }
+            if (frame.current !== null) {
+              window.cancelAnimationFrame(frame.current); frame.current = null;
+            }
+            view.pan(press.panX + dx, press.panY + dy);
+            setTooltip(null); syncCamera(); syncBitmapCamera();
+          }
           return;
         }
         const node = hit(event.clientX, event.clientY), bounds = event.currentTarget.getBoundingClientRect();
@@ -122,15 +206,27 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
       onPointerLeave={() => setTooltip(null)}
       onPointerUp={(event) => {
         const press = down.current; down.current = null;
-        if (!press || press.moved) { return; }
+        if (!press) { return; }
+        if (press.moved) { queuePaint(); return; }
         const node = hit(event.clientX, event.clientY); if (node) { latest.current.onSelect(node.address); }
       }}
-      onPointerCancel={() => { down.current = null; setTooltip(null); }}
+      onPointerCancel={() => { const moved = down.current?.moved; down.current = null; setTooltip(null); if (moved) { queuePaint(); } }}
       onWheel={(event) => {
         event.preventDefault(); setTooltip(null);
         const bounds = event.currentTarget.getBoundingClientRect(), dimensions = size();
         const fitted = new GraphViewport(); fitted.fit(retained.current.fitPoints(latest.current.apcZones), dimensions.width, dimensions.height);
-        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, fitted.zoom); syncCamera(); queuePaint();
+        view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, fitted.zoom);
+        syncCamera(); syncBitmapCamera();
+        wheelActive.current = true;
+        paintVersion.current++;
+        paintJob.current = null;
+        schedulePaint();
+        if (wheelFinish.current !== null) { window.clearTimeout(wheelFinish.current); }
+        wheelFinish.current = window.setTimeout(() => {
+          wheelFinish.current = null;
+          wheelActive.current = false;
+          queuePaint();
+        }, 110);
       }}>
       <canvas ref={canvas} data-net-canvas aria-hidden="true" style={{ display: 'block', width: '100%', height: '100%' }} />
       {!props.suspended && <ActorLayer {...props} scene={scene} dynamicEdges={props.dynamicEdges || EMPTY_EDGES} camera={camera} />}
