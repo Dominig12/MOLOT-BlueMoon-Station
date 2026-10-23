@@ -71,8 +71,15 @@ export const NetworkViewport = memo(forwardRef<NetworkViewportHandle, NetworkVie
         <p>Выберите другой этаж или измените фильтры карты.</p>
                                    </div>}
       {status.phase === 'ready' && <div className="netrun-viewport__hud" data-net-hud aria-live="off">
-        <span className="netrun-viewport__north">N ↑</span>
-        <span>{hud.nodes} узлов</span><span>{hud.zoom}%</span>
+        <div className="netrun-viewport__compass" aria-label="Север наверху">
+          <span className="netrun-viewport__north">N</span>
+          <span className="netrun-viewport__needle" />
+          <span className="netrun-viewport__south">S</span>
+        </div>
+        <div className="netrun-viewport__telemetry">
+          <strong>СЕТЕВАЯ КАРТА</strong>
+          <div><span>{hud.nodes} узлов</span><span>{hud.zoom}%</span></div>
+        </div>
                                    </div>}
       {status.phase === 'ready' && selectionFeedback && <div data-net-selection-feedback
         className={`netrun-viewport__selection netrun-viewport__selection--${selectionFeedback.phase}`}

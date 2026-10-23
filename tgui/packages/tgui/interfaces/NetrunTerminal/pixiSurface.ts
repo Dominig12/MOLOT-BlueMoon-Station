@@ -66,8 +66,6 @@ class NetrunPixiSurface implements PixiSurface {
   private cameraDirty = true;
   private sizeDirty = true;
   private labelDirty = true;
-  private resolutionQuality = 1;
-  private slowFrames = 0;
   private interacting = false;
   private labelCamera: PixiCamera | null = null;
 
@@ -104,7 +102,16 @@ class NetrunPixiSurface implements PixiSurface {
   }
   updateActors(scene: GraphScene, overlay: GraphOverlay, edges: NetEdge[], adjacency: Map<string, Set<string>>) {
     if (this.disposed || this.failed) { return; }
-    this.live = { scene, overlay, edges, adjacency }; this.actorsDirty = true; this.labelDirty = true; this.requestRender();
+    const prior = this.live;
+    if (prior && prior.scene === scene && prior.edges === edges && prior.adjacency === adjacency) {
+      const a = prior.overlay, b = overlay;
+      if (a.selected === b.selected && a.hovered === b.hovered && a.selectionPending === b.selectionPending
+        && a.entityHost === b.entityHost && a.jacked === b.jacked && a.gateways === b.gateways
+        && a.selectedRoute === b.selectedRoute && a.waypointRoute === b.waypointRoute
+        && a.pingRoute === b.pingRoute && a.events === b.events) { return; }
+    }
+    this.live = { scene, overlay, edges, adjacency };
+    this.actorsDirty = true; this.labelDirty = true; this.requestRender();
   }
   updateCamera(camera: PixiCamera) {
     if (this.disposed || !Number.isFinite(camera.x) || !Number.isFinite(camera.y) || !Number.isFinite(camera.zoom) || camera.zoom <= 0) { return; }
@@ -152,9 +159,8 @@ class NetrunPixiSurface implements PixiSurface {
     // Draw at the browser's native requestAnimationFrame cadence. Input
     // coalesces into one frame; the map has no idle animation loop.
     try {
-      const began = performance.now();
       if (this.sizeDirty) {
-        this.app.renderer.resize(this.width, this.height, framebufferResolution(this.width, this.height, window.devicePixelRatio || 1) * this.resolutionQuality);
+        this.app.renderer.resize(this.width, this.height, framebufferResolution(this.width, this.height, window.devicePixelRatio || 1));
         this.sizeDirty = false;
       }
       // Local feedback first; speculative scenery only gets a small slice below.
@@ -195,10 +201,6 @@ class NetrunPixiSurface implements PixiSurface {
         }
       }
       this.app.renderer.render({ container: this.app.stage });
-      this.slowFrames = performance.now() - began > 55 ? this.slowFrames + 1 : Math.max(0, this.slowFrames - 1);
-      if (this.slowFrames >= 3 && this.resolutionQuality > .85) {
-        this.resolutionQuality = Math.max(.85, this.resolutionQuality * .92); this.sizeDirty = true; this.slowFrames = 0;
-      }
       if (animated || building || this.sizeDirty) { this.requestRender(); }
     } catch { this.reportUnavailable(); }
   };

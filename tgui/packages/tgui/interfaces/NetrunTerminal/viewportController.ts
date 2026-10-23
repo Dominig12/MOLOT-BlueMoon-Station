@@ -97,6 +97,7 @@ export class NetworkViewportController {
     host?.removeEventListener('pointerleave', this.pointerLeave);
     host?.removeEventListener('wheel', this.wheel);
     this.press = null;
+    host?.removeAttribute('data-net-panning');
     this.cancelKinetic();
     if (this.zoomEndTimer !== null) { window.clearTimeout(this.zoomEndTimer); this.zoomEndTimer = null; }
     this.clearSelectionTimers(); this.pendingSelection = null;
@@ -338,6 +339,7 @@ export class NetworkViewportController {
       const dx = event.clientX - press.x, dy = event.clientY - press.y;
       if (dx * dx + dy * dy > 16) { press.moved = true; }
       if (press.moved) {
+        this.host?.setAttribute('data-net-panning', 'true');
         const now = performance.now(), dt = Math.max(8, Math.min(64, now - press.lastAt));
         const vx = (event.clientX - press.lastX) / dt, vy = (event.clientY - press.lastY) / dt;
         press.velocityX = press.velocityX * .55 + vx * .45;
@@ -357,6 +359,7 @@ export class NetworkViewportController {
     const press = this.press;
     if (!press || press.pointer !== event.pointerId) { return; }
     this.press = null;
+    this.host?.removeAttribute('data-net-panning');
     if (!press.moved) {
       const node = this.hit(event.clientX, event.clientY);
       if (node) { this.previewSelection(node.address); this.callbacks.onSelect(node.address); }
@@ -375,6 +378,7 @@ export class NetworkViewportController {
   };
   private cancelGesture = () => {
     const press = this.press; this.press = null;
+    this.host?.removeAttribute('data-net-panning');
     this.cancelKinetic();
     if (press) { try { this.host?.releasePointerCapture?.(press.pointer); } catch { /* The browser may have cancelled capture already. */ } }
     this.surface?.setInteracting(false);

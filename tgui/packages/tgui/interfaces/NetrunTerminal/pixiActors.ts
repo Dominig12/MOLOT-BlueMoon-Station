@@ -88,7 +88,8 @@ export class PixiActors {
     }
     const alive = new Set<string>();
     for (const node of affected) {
-      if (!node.dynamic && !node.entities && !node.ice && !node.active && node.address !== overlay.selected
+      if (!node.dynamic && !node.entities && !node.ice && !node.active
+        && node.type !== 'gateway' && node.type !== 'relay' && node.address !== overlay.selected
         && node.address !== overlay.hovered && node.address !== overlay.entityHost && node.address !== overlay.jacked) {
         const removed = this.nodes.get(node.address);
         if (removed && localOnly) { destroyDisplay(removed.group); this.nodes.delete(node.address); }
@@ -159,7 +160,7 @@ export class PixiActors {
     if (node.dynamic) { markerPath(actor.body, node.type, 0, 0, 1).fill({ color: fill }).stroke({ color: border, width: 1.5 }); }
     const marks = actor.marks, scale = node.ice || node.entities
       || node.type === 'gateway' || node.type === 'relay' ? this.scale : 1;
-    if (node.dynamic && (node.type === 'gateway' || node.type === 'relay')) {
+    if (node.type === 'gateway' || node.type === 'relay') {
       marks.circle(0, 0, 19 * scale)
         .stroke({ color: border, width: Math.min(3, scale * 1.3), alpha: .64 });
     }

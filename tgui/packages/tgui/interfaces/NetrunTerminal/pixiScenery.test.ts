@@ -45,7 +45,38 @@ test('unchanged spatial batches survive updates to another device', () => {
   expect(retained.destroyed).toBe(false); expect(retained.clears).toBe(clears);
 });
 
-test('overview keeps ordinary camera glyphs small while enlarging only LAN outlines', () => {
+test('camera zoom leaves already-uploaded static graphics untouched', () => {
+  const scene = new GraphScene(); scene.update([
+    node('CAM', 0), { ...node('LAN', 200), type: 'gateway' },
+  ], []);
+  const layer = new PixiScenery(mockPixi);
+  layer.queue(scene, { gateways: new Map() }); finish(layer);
+  const clears = MockGraphics.graphics.map((graphic) => graphic.clears);
+  layer.setViewport({ left: -250, right: 450, top: -250, bottom: 250 }, .2);
+  finish(layer);
+  layer.setViewport({ left: -250, right: 450, top: -250, bottom: 250 }, 1.8);
+  finish(layer);
+  expect(MockGraphics.graphics.map((graphic) => graphic.clears)).toEqual(clears);
+});
+
+test('lazy viewport chunks load only when visited and are reused when panning back', () => {
+  const scene = new GraphScene();
+  scene.update([node('A', 0), node('B', 10000)], []);
+  const layer = new PixiScenery(mockPixi);
+  layer.setViewport({ left: -100, right: 100, top: -100, bottom: 100 }, 1);
+  layer.queue(scene, { gateways: new Map() }); finish(layer);
+  const first = MockGraphics.graphics.filter((graphic) => graphic.label.startsWith('3-node:'));
+  expect(first).toHaveLength(1);
+  layer.setViewport({ left: 9900, right: 10100, top: -100, bottom: 100 }, 1); finish(layer);
+  const loaded = MockGraphics.graphics.filter((graphic) => graphic.label.startsWith('3-node:'));
+  expect(loaded).toHaveLength(2);
+  const clears = loaded.map((graphic) => graphic.clears);
+  layer.setViewport({ left: -100, right: 100, top: -100, bottom: 100 }, 1); finish(layer);
+  expect(loaded.map((graphic) => graphic.clears)).toEqual(clears);
+  expect(first[0].visible).toBe(true);
+  expect(loaded[1].visible).toBe(false);
+});
+ while enlarging only LAN outlines', () => {
   const scene = new GraphScene(); scene.update([
     node('CAM', 0), { ...node('LAN', 200), type: 'gateway' },
   ], []);

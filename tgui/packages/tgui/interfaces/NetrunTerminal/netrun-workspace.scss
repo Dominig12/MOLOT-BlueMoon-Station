@@ -9,7 +9,9 @@
   overflow: hidden;
   touch-action: none;
   cursor: grab;
-  background: radial-gradient(ellipse at center, #102c3b 0%, #07121c 80%);
+  background: radial-gradient(ellipse at 50% 45%, #102c3b 0%, #07121c 80%);
+
+  &[data-net-panning] { cursor: grabbing; }
 
   &:focus-visible {
     outline: 2px solid var(--net-accent, #55cbe9);
@@ -62,24 +64,70 @@
 .netrun-viewport__hud {
   position: absolute;
   z-index: 2;
-  left: 12px;
-  bottom: 12px;
+  left: 14px;
+  bottom: 14px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 7px 10px;
-  color: #a9c4d4;
-  background: rgba(8, 19, 29, .9);
-  border: 1px solid rgba(85, 203, 233, .2);
-  border-radius: 7px;
+  min-width: 164px;
+  padding: 10px 13px;
+  color: #c8e5f0;
+  background: linear-gradient(130deg, rgba(12, 30, 44, .95), rgba(7, 19, 30, .93));
+  border: 1px solid rgba(90, 198, 221, .25);
+  border-left: 2px solid rgba(90, 198, 221, .72);
+  border-radius: 8px;
+  box-shadow: 0 7px 24px rgba(0, 0, 0, .25), inset 0 1px rgba(180, 232, 245, .05);
   font-family: Consolas, monospace;
   font-size: 11px;
   pointer-events: none;
+  opacity: .82;
+  transform: translateY(2px);
+  transition: opacity 140ms ease, transform 140ms ease, border-color 140ms ease;
 }
 
-.netrun-viewport__north {
-  color: #71e0ef;
-  font-weight: 700;
+.netrun-viewport[data-net-panning] .netrun-viewport__hud {
+  opacity: 1;
+  transform: translateY(0);
+  border-color: rgba(107, 220, 237, .7);
+}
+
+.netrun-viewport__compass {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 25px;
+  color: #5c8294;
+  font-size: 9px;
+}
+
+.netrun-viewport__north { color: #8eeafd; font-weight: 700; }
+.netrun-viewport__south { color: #658597; }
+
+.netrun-viewport__needle {
+  width: 2px;
+  height: 25px;
+  position: relative;
+  background: linear-gradient(#5fe9e1 0 50%, #41657a 50% 100%);
+  box-shadow: 0 0 8px rgba(95, 233, 225, .26);
+  &:before {
+    content: '';
+    position: absolute;
+    left: -4px;
+    top: -5px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 8px solid #5fe9e1;
+  }
+}
+
+.netrun-viewport__telemetry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  > strong { font-size: 10px; letter-spacing: 1px; color: #70b9d0; font-weight: 600; }
+  > div { display: flex; align-items: baseline; justify-content: space-between; gap: 13px; font-size: 12px; }
+  > div span:last-child { color: #7de3d9; font-variant-numeric: tabular-nums; }
 }
 
 .netrun-viewport__selection {
