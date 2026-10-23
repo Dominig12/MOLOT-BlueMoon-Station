@@ -48,13 +48,33 @@ export class NetrunMapStream {
   private edges = new Map<string, NetEdge>();
   private nodeIndexes = new Map<string, number>();
   private edgeIndexes = new Map<string, number>();
+  // Incident links are indexed once and updated with each accepted delta.
+  // Removing one node must not search every retained edge.
+  private edgesByEndpoint = new Map<string, Set<string>>();
   private lastPacket: NetMapPacket | null = null;
+
+  private trackEdge(edge: NetEdge) {
+    for (const endpoint of [edge.from, edge.to]) {
+      let incident = this.edgesByEndpoint.get(endpoint);
+      if (!incident) { incident = new Set(); this.edgesByEndpoint.set(endpoint, incident); }
+      incident.add(edge.id);
+    }
+  }
+
+  private untrackEdge(edge: NetEdge) {
+    for (const endpoint of [edge.from, edge.to]) {
+      const incident = this.edgesByEndpoint.get(endpoint);
+      incident?.delete(edge.id);
+      if (incident?.size === 0) { this.edgesByEndpoint.delete(endpoint); }
+    }
+  }
   resyncToken = 0;
 
   private resync() {
     if (!this.waiting) { this.waiting = true; this.resyncToken++; }
     this.snapshot = null;
     this.nodes.clear(); this.edges.clear(); this.nodeIndexes.clear(); this.edgeIndexes.clear();
+    this.edgesByEndpoint.clear();
     return null;
   }
 
@@ -90,15 +110,37 @@ export class NetrunMapStream {
         return this.metadata(packet, this.snapshot.nodes, this.snapshot.edges);
       }
       if (packet.base_revision !== this.revision) { return this.resync(); }
+      const nodeUpserts = packet.nodes || [];
+      const nodeRemovals = packet.removed_nodes || [];
+      const edgeUpserts = packet.edges || [];
+      const removedIds = new Set(nodeRemovals);
+      const incomingIds = new Set(nodeUpserts.map((node) => node.address));
+      const hasEndpoint = (id: string) => incomingIds.has(id)
+        || (!removedIds.has(id) && this.nodes.has(id));
+      // Validate against the complete *resulting* node set before mutating any indexes.
+      // Removed nodes may be reintroduced in the same batch; edges may reference them.
+      if (edgeUpserts.some((edge) => !hasEndpoint(edge.from) || !hasEndpoint(edge.to))) {
+        return this.resync();
+      }
+      const removedEdgeIds = new Set(packet.removed_edges || []);
+      for (const address of nodeRemovals) {
+        if (incomingIds.has(address)) { continue; }
+        for (const id of this.edgesByEndpoint.get(address) || []) { removedEdgeIds.add(id); }
+      }
+      // Apply the incident-index transaction before patchEntries updates edge lookup.
+      for (const id of removedEdgeIds) {
+        const previous = this.edges.get(id);
+        if (previous) { this.untrackEdge(previous); }
+      }
+      for (const edge of edgeUpserts) {
+        const previous = this.edges.get(edge.id);
+        if (previous) { this.untrackEdge(previous); }
+        this.trackEdge(edge);
+      }
       const nodes = patchEntries(this.snapshot.nodes, this.nodes, this.nodeIndexes,
-        packet.nodes || [], packet.removed_nodes || [], (node) => node.address);
-      const removedEdges = packet.removed_edges || [];
-      // A malformed/lost update must not manufacture links to undisclosed endpoints.
-      if (packet.edges?.some((edge) => !this.nodes.has(edge.from) || !this.nodes.has(edge.to))) { return this.resync(); }
-      const orphaned = packet.removed_nodes?.length
-        ? this.snapshot.edges.filter((edge) => !this.nodes.has(edge.from) || !this.nodes.has(edge.to)).map((edge) => edge.id) : [];
+        nodeUpserts, nodeRemovals, (node) => node.address);
       const edges = patchEntries(this.snapshot.edges, this.edges, this.edgeIndexes,
-        packet.edges || [], [...removedEdges, ...orphaned], (edge) => edge.id);
+        edgeUpserts, [...removedEdgeIds], (edge) => edge.id);
       this.revision = packet.state_revision;
       return this.metadata(packet, nodes, edges);
     }
@@ -106,8 +148,11 @@ export class NetrunMapStream {
     if (!this.waiting && sameStream && this.snapshot && packet.state_revision <= this.revision) {
       return packet.state_revision < this.revision ? this.snapshot : this.metadata(packet, this.snapshot.nodes, this.snapshot.edges);
     }
+    // A new epoch completely replaces all visibility and incident-edge indexes.
     replaceEntries(packet.nodes, this.nodes, this.nodeIndexes, (node) => node.address);
     replaceEntries(packet.edges, this.edges, this.edgeIndexes, (edge) => edge.id);
+    this.edgesByEndpoint.clear();
+    for (const edge of packet.edges) { this.trackEdge(edge); }
     this.epoch = packet.epoch; this.revision = packet.state_revision; this.waiting = false;
     return this.metadata(packet, packet.nodes, packet.edges, true);
   }
