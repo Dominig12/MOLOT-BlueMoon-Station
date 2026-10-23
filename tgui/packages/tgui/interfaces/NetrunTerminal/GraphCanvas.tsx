@@ -6,6 +6,8 @@ import { GraphOverlay, GraphRenderer } from './graphRenderer';
 import { GraphScene, PlacedNode } from './graphScene';
 import { clamp, GraphViewport } from './graphViewport';
 import { GraphPoint } from './mapLayout';
+import { pixiWithinBudget, zoneRunCount } from './pixiSurface';
+import type { PixiSurface } from './pixiSurface';
 import { NetEdge, NODE_NAMES, THEME } from './types';
 
 export type GraphCanvasHandle = { center: (address: string) => void; fit: () => void };
@@ -21,6 +23,9 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   const container = useRef<HTMLDivElement>(null), canvas = useRef<HTMLCanvasElement>(null);
   const [view] = useState(() => new GraphViewport());
   const [renderer] = useState(() => new GraphRenderer());
+  const gpu = useRef<PixiSurface | null>(null);
+  const gpuRejected = useRef(false);
+  const [gpuActive, setGpuActive] = useState(false);
   const [camera, setCamera] = useState({ x: view.x, y: view.y, zoom: view.zoom, width: 720, height: 480 });
   const latest = useRef(props); latest.current = props;
   const frame = useRef<number | null>(null);
@@ -41,13 +46,16 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   const fitLimit = useRef<{ scene: GraphScene; zones: Props['apcZones']; width: number; height: number; zoom: number } | null>(null);
   const size = useCallback(() => ({ width: container.current?.clientWidth || 720, height: container.current?.clientHeight || 480 }), []);
   const syncCamera = useCallback(() => {
+    // Avoid React reconciliation on every pixel of a GPU drag.
+    if (gpu.current) { return; }
     const dimensions = size();
     setCamera((previous) => previous.x === view.x && previous.y === view.y && previous.zoom === view.zoom
       && previous.width === dimensions.width && previous.height === dimensions.height ? previous
       : { x: view.x, y: view.y, zoom: view.zoom, ...dimensions });
   }, [view, size]);
-  // Keep the last bitmap in camera coordinates while SVG moves with current camera.
+  // Canvas fallback retains its last bitmap; Pixi uses a transformed GPU scene.
   const syncBitmapCamera = useCallback(() => {
+    if (gpu.current) { gpu.current.updateCamera(view); return; }
     const surface = canvas.current, previous = paintedView.current;
     if (!surface || !previous) { return; }
     const scale = view.zoom / previous.zoom;
@@ -66,8 +74,30 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     paintJob.current = null;
     schedulePaint();
   }, [schedulePaint]);
+  const abandonGpu = () => {
+    const previous = gpu.current;
+    gpu.current = null;
+    gpuRejected.current = true;
+    try { previous?.destroy(); } catch { /* Context already lost. */ }
+    setGpuActive(false);
+    syncCamera(); // Restore camera for the Canvas/SVG fallback.
+    paintVersion.current++;
+    paintJob.current = null;
+    schedulePaint();
+  };
   paintRef.current = () => {
     if (latest.current.suspended) { paintJob.current = null; return; }
+    if (gpu.current) {
+      const dimensions = size();
+      if (gpu.current.resize(dimensions.width, dimensions.height)
+        && gpu.current.updateScene(scenery.current, latest.current)) {
+        gpu.current.updateActors(retained.current, latest.current,
+          latest.current.dynamicEdges || EMPTY_EDGES, latest.current.adjacency);
+        gpu.current.updateCamera(view);
+        return; // Pixi draws the whole graph and all moving overlays.
+      }
+      abandonGpu();
+    }
     const surface = canvas.current, holder = container.current;
     const ctx = surface?.getContext('2d', { alpha: false });
     if (!surface || !holder || !ctx) { return; }
@@ -145,6 +175,68 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
   useImperativeHandle(externalRef, () => ({ center, fit }), [center, fit]);
   useEffect(() => {
     if (props.suspended) {
+      // Inactive workspace pages must release their GPU context.
+      gpu.current?.destroy();
+      gpu.current = null;
+      setGpuActive(false);
+      return;
+    }
+    const dimensions = size();
+    if (gpuRejected.current || !scenery.current.nodes.length
+      || !pixiWithinBudget(scenery.current.nodes.length,
+      scenery.current.edges.length, dimensions.width, dimensions.height,
+      zoneRunCount(latest.current))) {
+      setGpuActive(false);
+      return;
+    }
+
+    let cancelled = false;
+    // Import and initialize once per visible workspace activation.
+    // Failed GPU initialization never prevents the existing 2D Canvas from working.
+    const host = container.current;
+    if (!host) { return; }
+    void import('./pixiSurface').then(({ mountNetrunPixi }) =>
+      mountNetrunPixi(host, dimensions.width, dimensions.height, () => {
+        if (!cancelled && gpu.current) { abandonGpu(); }
+      })).then((surface) => {
+      if (!surface) { gpuRejected.current = true; return; }
+      if (cancelled || !container.current || latest.current.suspended) {
+        surface.destroy();
+        return;
+      }
+      const width = size().width, height = size().height;
+      if (!surface.resize(width, height) ||
+        !surface.updateScene(scenery.current, latest.current)) {
+        surface.destroy();
+        gpuRejected.current = true;
+        return;
+      }
+      gpu.current = surface;
+      surface.updateActors(retained.current, latest.current,
+        latest.current.dynamicEdges || EMPTY_EDGES, latest.current.adjacency);
+      surface.updateCamera(view);
+      // Release the old 2D bitmap (up to ~20 MB at high DPI). The dormant
+      // element is only a 1px fallback placeholder, not a second renderer.
+      if (canvas.current) {
+        canvas.current.width = 1;
+        canvas.current.height = 1;
+        canvas.current.style.transform = '';
+      }
+      paintedView.current = null;
+      paintJob.current = null;
+      paintVersion.current++;
+      setGpuActive(true);
+    }).catch(() => { gpuRejected.current = true; });
+
+    return () => {
+      cancelled = true;
+      gpu.current?.destroy();
+      gpu.current = null;
+    };
+  }, [props.suspended, size, view, !!base.nodes.length]);
+
+  useEffect(() => {
+    if (props.suspended) {
       if (frame.current !== null) { window.cancelAnimationFrame(frame.current); frame.current = null; }
       if (wheelFinish.current !== null) { window.clearTimeout(wheelFinish.current); wheelFinish.current = null; }
       wheelActive.current = false;
@@ -155,6 +247,13 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
     // Activity and movable geometry never invalidate the base or automatically change its camera.
     if (view.fitting && retained.current.nodes.length) { fit(); } else { syncCamera(); queuePaint(); }
   }, [base, props.gateways, props.apcZones, props.suspended, view, fit, syncCamera, queuePaint]);
+  // Overlay packets (actors, combat activity, routes, selection) update Pixi
+  // without invalidating the cached stationary geometry or the camera.
+  useEffect(() => {
+    if (!props.suspended && gpu.current) { queuePaint(); }
+  }, [scene, props.selected, props.jacked, props.entityHost, props.events,
+    props.dynamicEdges, props.selectedRoute, props.waypointRoute, props.pingRoute,
+    props.adjacency, props.gateways, props.suspended, queuePaint]);
   useEffect(() => {
     if (tooltip && !scene.byAddress.has(tooltip.address)) { setTooltip(null); }
   }, [scene, tooltip]);
@@ -199,7 +298,8 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
             // newly exposed map area at native resolution in the next frame.
             // schedulePaint coalesces all pointer events to one paint per frame.
             view.pan(press.panX + dx, press.panY + dy);
-            setTooltip(null); syncCamera(); syncBitmapCamera(); queuePaint();
+            setTooltip(null); syncCamera(); syncBitmapCamera();
+            if (!gpu.current) { queuePaint(); }
           }
           return;
         }
@@ -210,11 +310,11 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
       onPointerUp={(event) => {
         const press = down.current; down.current = null;
         if (!press) { return; }
-        if (press.moved) { queuePaint(); return; }
+        if (press.moved) { if (!gpu.current) { queuePaint(); } return; }
         const node = hit(event.clientX, event.clientY); if (node) { latest.current.onSelect(node.address); }
       }}
-      onPointerCancel={() => { const moved = down.current?.moved; down.current = null; setTooltip(null); if (moved) { queuePaint(); } }}
-      onLostPointerCapture={() => { const moved = down.current?.moved; down.current = null; if (moved) { queuePaint(); } }}
+      onPointerCancel={() => { const moved = down.current?.moved; down.current = null; setTooltip(null); if (moved && !gpu.current) { queuePaint(); } }}
+      onLostPointerCapture={() => { const moved = down.current?.moved; down.current = null; if (moved && !gpu.current) { queuePaint(); } }}
       onWheel={(event) => {
         event.preventDefault(); setTooltip(null);
         const bounds = event.currentTarget.getBoundingClientRect(), dimensions = size();
@@ -227,18 +327,22 @@ export const GraphCanvas = memo(forwardRef<GraphCanvasHandle, Props>((props, ext
         view.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, event.deltaY, limit.zoom);
         syncCamera(); syncBitmapCamera();
         wheelActive.current = true;
-        paintVersion.current++;
-        paintJob.current = null;
-        schedulePaint();
+        if (!gpu.current) {
+          paintVersion.current++;
+          paintJob.current = null;
+          schedulePaint();
+        }
         if (wheelFinish.current !== null) { window.clearTimeout(wheelFinish.current); }
         wheelFinish.current = window.setTimeout(() => {
           wheelFinish.current = null;
           wheelActive.current = false;
-          queuePaint();
+          if (!gpu.current) { queuePaint(); }
         }, 110);
       }}>
-      <canvas ref={canvas} data-net-canvas aria-hidden="true" style={{ display: 'block', width: '100%', height: '100%' }} />
-      {!props.suspended && <ActorLayer {...props} scene={scene} dynamicEdges={props.dynamicEdges || EMPTY_EDGES} camera={camera} />}
+      <canvas ref={canvas} data-net-canvas aria-hidden="true"
+        style={{ display: gpuActive ? 'none' : 'block', width: '100%', height: '100%' }} />
+      {!props.suspended && !gpuActive && <ActorLayer {...props}
+        scene={scene} dynamicEdges={props.dynamicEdges || EMPTY_EDGES} camera={camera} />}
       {tooltip && tooltipNode && <div role="tooltip" style={{ position: 'absolute', zIndex: 5, left: clamp(tooltip.x + 14, 8, Math.max(8, size().width - 206)), top: clamp(tooltip.y + 12, 8, Math.max(8, size().height - 82)), width: '194px', padding: '8px 10px', pointerEvents: 'none', background: '#102531', border: '1px solid #316178', borderRadius: '6px', color: THEME.text, fontSize: '11px', boxShadow: '0 10px 25px rgba(0,0,0,.3)' }}>
         <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tooltipNode.name}</div>
         <div style={{ opacity: .7, fontFamily: 'monospace' }}>{tooltipNode.address}</div>
