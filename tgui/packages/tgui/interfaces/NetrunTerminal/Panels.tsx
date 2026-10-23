@@ -16,7 +16,7 @@ const KIND_COLORS: Record<string, string> = {
 
 const LogLines = memo((props: { lines: LogLine[] }) => (<>{props.lines.map((line, index) => (
   <div key={index} style={{ color: KIND_COLORS[line.kind] || THEME.text, whiteSpace: 'pre-wrap' }}>
-    {line.time && <span style={{ color: THEME.muted }}>{line.time} </span>}
+    {!!line.time && <span style={{ color: THEME.muted }}>{line.time} </span>}
     {line.text}
   </div>
 ))}
@@ -159,7 +159,7 @@ export const ConsoleLog = (props: { active?: boolean } = {}) => {
       >
         <LogLines lines={data.log} />
       </div>
-      {output.unread && <Button compact icon="arrow-down" content="К новым сообщениям" onClick={output.handleFollowLatest} />}
+      {!!output.unread && <Button compact icon="arrow-down" content="К новым сообщениям" onClick={output.handleFollowLatest} />}
       <input
         value={value}
         onChange={(e) => {
@@ -197,7 +197,7 @@ export const StoragePanel = () => {
         <div className="netrun-files-catalog">
           <Box bold mb={1} color={THEME.text}>Локальные файлы</Box>
           <FileList files={storage.files} canUpload={canUpload} />
-          {shard && (
+          {!!shard && (
             <Box mt={2}>
               <Box color={THEME.muted} mb={0.5}>
                 <Icon name="sd-card" mr={1} />
@@ -340,7 +340,7 @@ export const NetChat = (props: { active?: boolean } = {}) => {
           </div>
         ))}
       </div>
-      {output.unread && <Button compact icon="arrow-down" content="К новым сообщениям" onClick={output.handleFollowLatest} />}
+      {!!output.unread && <Button compact icon="arrow-down" content="К новым сообщениям" onClick={output.handleFollowLatest} />}
       <Box style={{ display: 'flex' }}>
         {!entity && (
           <Input

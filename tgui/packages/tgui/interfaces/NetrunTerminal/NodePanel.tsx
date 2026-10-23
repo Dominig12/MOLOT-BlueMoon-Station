@@ -45,10 +45,10 @@ export const NodePanel = () => {
             <Box inline color={ACCESS_COLORS[net.access]} bold>
               {ACCESS_NAMES[net.access]}
             </Box>
-            {net.has_key && <Icon name="key" ml={1} color={THEME.good} />}
+            {!!net.has_key && <Icon name="key" ml={1} color={THEME.good} />}
           </LabeledList.Item>
         </LabeledList>
-        {net.can_breach && (
+        {!!net.can_breach && (
           <Button
             mt={1}
             icon="key"
@@ -58,7 +58,7 @@ export const NodePanel = () => {
             onClick={() => act('breach', { kind: 'network', id: net.id })}
           />
         )}
-        {net.can_breach && <AutoBreachButton kind="network" id={net.id} />}
+        {!!net.can_breach && <AutoBreachButton kind="network" id={net.id} />}
         {net.access < 1 && !net.can_breach && (
           <Box mt={1} color={THEME.muted}>
             Нужен ключ сети или легальный доступ отдела.
@@ -106,7 +106,7 @@ export const NodePanel = () => {
                 <Box inline bold style={{ fontFamily: 'monospace', color: net.color }}>
                   {net.code}
                 </Box>
-                {net.has_key && <Icon name="key" ml={1} color={THEME.good} />}
+                {!!net.has_key && <Icon name="key" ml={1} color={THEME.good} />}
                 <Box inline ml={1} color={ACCESS_COLORS[net.access]}>
                   {ACCESS_NAMES[net.access]}
                 </Box>
@@ -122,7 +122,7 @@ export const NodePanel = () => {
                   disabled={!net.reachable}
                   onClick={() => act('select_network', { id: net.id })}
                 />
-                {net.can_breach && (
+                {!!net.can_breach && (
                   <Button
                     compact
                     icon="key"
@@ -132,7 +132,7 @@ export const NodePanel = () => {
                     onClick={() => act('breach', { kind: 'network', id: net.id })}
                   />
                 )}
-                {net.can_breach && <AutoBreachButton kind="network" id={net.id} disabled={!net.reachable} />}
+                {!!net.can_breach && <AutoBreachButton kind="network" id={net.id} disabled={!net.reachable} />}
               </Box>
             </Box>
           ))}
@@ -193,14 +193,14 @@ export const NodePanel = () => {
           Узел закрыт. Подберите доступ к узлу или его сети.
         </Box>
       )}
-      {selected.lan && (
+      {!!selected.lan && (
         <Box mt={1} p={1} style={{ background: THEME.bg, border: `1px solid ${selected.lan.color}` }}>
           <Box>
             <Icon name="network-wired" mr={1} color={selected.lan.color} />
             <Box inline bold style={{ fontFamily: 'monospace', color: selected.lan.color }}>
               {selected.lan.code}
             </Box>
-            {selected.lan.has_key && <Icon name="key" ml={1} color={THEME.good} />}
+            {!!selected.lan.has_key && <Icon name="key" ml={1} color={THEME.good} />}
             <Box inline ml={1} color={ACCESS_COLORS[selected.lan.access]}>
               {ACCESS_NAMES[selected.lan.access]}
             </Box>
@@ -215,7 +215,7 @@ export const NodePanel = () => {
               content="Открыть ЛВС"
               onClick={() => act('select_network', { id: selected.lan!.id })}
             />
-            {selected.lan.can_breach && (
+            {!!selected.lan.can_breach && (
               <Button
                 compact
                 icon="key"
@@ -225,7 +225,7 @@ export const NodePanel = () => {
                 onClick={() => act('breach', { kind: 'network', id: selected.lan!.id })}
               />
             )}
-            {selected.lan.can_breach && <AutoBreachButton kind="network" id={selected.lan.id} />}
+            {!!selected.lan.can_breach && <AutoBreachButton kind="network" id={selected.lan.id} />}
           </Box>
         </Box>
       )}
@@ -246,7 +246,7 @@ export const NodePanel = () => {
           onCommand={(id) => act('command', { id })}
         />
       </Box>
-      {display.entity && display.entity.host !== selected.address && (
+      {!!display.entity && display.entity.host !== selected.address && (
         <Button
           mt={1}
           icon="person-walking-arrow-right"
@@ -257,7 +257,7 @@ export const NodePanel = () => {
           onClick={() => act('hop', { address: selected.address })}
         />
       )}
-      {display.entity && display.entity.host !== selected.address && (
+      {!!display.entity && display.entity.host !== selected.address && (
         <Button
           mt={1}
           ml={1}
@@ -268,7 +268,7 @@ export const NodePanel = () => {
           onClick={() => act('travel', { address: selected.address })}
         />
       )}
-      {can_breach && selected.access < 3 && (
+      {!!can_breach && selected.access < 3 && (
         <Button
           mt={1}
           icon="key"
@@ -278,8 +278,8 @@ export const NodePanel = () => {
           onClick={() => act('breach', { kind: 'node', id: selected.address })}
         />
       )}
-      {can_breach && selected.access >= 1 && selected.access < 2 && <AutoBreachButton kind="node" id={selected.address} disabled={!selected.online} />}
-      {selected.files && (
+      {!!can_breach && selected.access >= 1 && selected.access < 2 && <AutoBreachButton kind="node" id={selected.address} disabled={!selected.online} />}
+      {!!selected.files && (
         <Box mt={2}>
           <Box color={THEME.muted} mb={0.5}>
             Хранилище узла: {selected.storage?.used}/{selected.storage?.capacity}
@@ -321,7 +321,7 @@ const RemoteFile = (props: { file: NetFile; root: boolean }) => {
           <Button compact icon="eye" tooltip="Прочитать" onClick={() => act('read', { uid: file.uid })} />
         )}
         <Button compact icon="download" tooltip="Скачать" onClick={() => act('download', { uid: file.uid })} />
-        {data.shard && (
+        {!!data.shard && (
           <Button
             compact
             icon="sd-card"
@@ -329,7 +329,7 @@ const RemoteFile = (props: { file: NetFile; root: boolean }) => {
             onClick={() => act('download', { uid: file.uid, to_shard: true })}
           />
         )}
-        {root && (
+        {!!root && (
           <Button compact icon="trash" color="bad" tooltip="Удалить" onClick={() => act('delete_remote', { uid: file.uid })} />
         )}
       </Box>

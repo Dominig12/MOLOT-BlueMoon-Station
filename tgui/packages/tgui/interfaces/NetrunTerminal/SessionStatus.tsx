@@ -25,7 +25,7 @@ export const SessionStatus = (props: { onCombat: () => void; onBreach: () => voi
           </>
         )}
       </div>
-      {travel && <Button compact icon="stop" content={incoming ? 'Стоп' : 'Остановить маршрут'}
+      {!!travel && <Button compact icon="stop" content={incoming ? 'Стоп' : 'Остановить маршрут'}
         aria-label="Остановить автопроход" tooltip={`Остановить автопроход к ${travel.target}`}
         onClick={() => act('travel_cancel')} />}
     </div>

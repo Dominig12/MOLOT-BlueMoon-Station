@@ -205,8 +205,8 @@ const Header = () => {
         <span className="netrun-indicator" data-state={uplink ? 'online' : 'offline'}>
           <Icon name="circle" /> Реле NTnet: {uplink ? 'доступно' : 'недоступно'}
         </span>
-        {jack && <span className="netrun-indicator"><Icon name="plug" /> {jack.name}</span>}
-        {entity && <span className="netrun-indicator" data-state={entity.integrity > entity.max_integrity * 0.25 ? 'online' : 'offline'}>
+        {!!jack && <span className="netrun-indicator"><Icon name="plug" /> {jack.name}</span>}
+        {!!entity && <span className="netrun-indicator" data-state={entity.integrity > entity.max_integrity * 0.25 ? 'online' : 'offline'}>
           Целостность {entity.integrity}/{entity.max_integrity}
         </span>}
         <div className="netrun-trace" aria-label={locked > 0 ? `Блокировка: ${locked} с` : `Трассировка: ${Math.round(trace)}%`}>

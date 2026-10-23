@@ -345,6 +345,38 @@ describe('Netrun terminal panels', () => {
     layout.mockRestore();
   });
 
+  test('BYOND numeric false values never appear beside guest access or breach controls', () => {
+    const numericFalse = 0 as unknown as boolean;
+    setup({
+      selected: null, can_breach: numericFalse,
+      selected_network: {
+        id: 'med', code: 'NET-MED', name: 'ЛВС: Медблок',
+        color: '#55cbe9', security: 2, access: 0,
+        has_key: numericFalse, can_breach: numericFalse, log: [],
+      },
+    });
+    const panel = render(<NodePanel />);
+    expect(panel.getByText('ГОСТЬ')).toBeTruthy();
+    expect(panel.queryByText('0')).toBeNull();
+    expect(panel.queryByText('Подобрать доступ к сети')).toBeNull();
+    panel.unmount();
+  });
+
+  test('locked node with BYOND numeric false LAN flags has no ghost zero labels', () => {
+    const numericFalse = 0 as unknown as boolean;
+    setup({
+      can_breach: numericFalse,
+      selected: { ...node, access: 0, legit: 0,
+        lan: { id: 'med', code: 'NET-MED', name: 'ЛВС: Медблок',
+          color: '#55cbe9', security: 2, access: 0, has_key: numericFalse,
+          can_breach: numericFalse } },
+    });
+    const panel = render(<NodePanel />);
+    expect(panel.queryByText('0')).toBeNull();
+    expect(panel.queryByText('Подобрать доступ к ЛВС')).toBeNull();
+    expect(panel.queryByText('Подобрать доступ')).toBeNull();
+  });
+
   test('automatic breach explicitly sends its mode and shows waiting progress instead of cells', () => {
     const topic = setup({ can_autobreach: true, selected: { ...node, access: 1 } });
     const panel = render(<NodePanel />);

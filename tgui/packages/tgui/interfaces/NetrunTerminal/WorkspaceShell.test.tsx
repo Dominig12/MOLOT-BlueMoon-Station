@@ -21,6 +21,11 @@ test('workspace shell keeps navigation and map slots available', () => {
   expect(container.querySelector('.netrun-header')).toBeTruthy();
   expect(container.querySelector('.netrun-navigation')).toBeTruthy();
   expect(container.querySelector('.netrun-navigation__label')).toBeTruthy();
+  // Tabs wrap the icon and text separately; NetRun centers them as one group
+  // instead of inheriting TGUI's flex-grow on the text wrapper.
+  const mapTab = getByRole('tab', { name: 'Карта' });
+  expect(mapTab.querySelector('.Tab__left .Icon')).toBeTruthy();
+  expect(mapTab.querySelector('.Tab__text .netrun-navigation__label')).toBeTruthy();
   expect(container.querySelector('.netrun-files-layout')).toBeTruthy();
   expect(getByRole('tab', { name: 'Карта' })).toBeTruthy();
   expect(container.querySelector('[data-net-layout="workspace"]')).toBeTruthy();

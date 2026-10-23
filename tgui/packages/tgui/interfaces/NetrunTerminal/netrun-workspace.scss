@@ -434,3 +434,58 @@
 @media (max-width: 650px) {
   .netrun-combat-targets { grid-template-columns: 1fr; }
 }
+
+/* TGUI Tabs use a flex-growing text column. In the vertical NetRun rail
+ * it pushes the caption to the bottom and leaves every icon too high.
+ * Center the icon and caption as one group, not as independent flex items. */
+.netrun-navigation__tabs .Tab {
+  position: relative;
+  justify-content: center;
+  gap: 5px;
+}
+.netrun-navigation__tabs .Tab__left {
+  display: flex;
+  flex: 0 0 22px;
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  margin: 0;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.netrun-navigation__tabs .Tab__left .Icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  min-width: 1em;
+  height: 1em;
+}
+.netrun-navigation__tabs .Tab__text {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  text-align: center;
+  line-height: 1.2;
+}
+.netrun-navigation__tabs .Tab__right {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  min-width: 0;
+  margin: 0;
+  font-size: 9px;
+  line-height: 1;
+}
+/* Font Awesome's baseline otherwise makes standalone action icons float
+ * above their adjacent text in the inherited TGUI Button line-height. */
+.netrun-shell .Button > .Icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  line-height: 1;
+  min-height: 1em;
+}

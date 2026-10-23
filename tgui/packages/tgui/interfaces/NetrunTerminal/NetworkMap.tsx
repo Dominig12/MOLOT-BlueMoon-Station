@@ -230,7 +230,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
           content={entry.name} aria-label={`Сектор: ${entry.name}`} onClick={() => { setPendingCenter(null); act('map_sector', { id: entry.id }); }} />))}
         {sector?.levels.map((z) => (<Button key={z} compact selected={z === map.active_z}
           content={`Z${z}`} aria-label={`Этаж Z${z}`} onClick={() => { setPendingCenter(null); act('map_sector', { id: sector.id, z }); }} />))}
-        {map.source_sector && (map.source_sector !== map.active_sector || map.source_z !== map.active_z) && <Button compact
+        {!!map.source_sector && (map.source_sector !== map.active_sector || map.source_z !== map.active_z) && <Button compact
           icon="location-crosshairs" content="Точка подключения" onClick={() => act('map_sector', { id: map.source_sector, z: map.source_z })} />}
                                 </Box>}
       <Box className="netrun-map-tools" p={1} style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', borderBottom: `1px solid ${THEME.line}`, background: THEME.panel }}>
@@ -238,7 +238,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
           onInput={(_event, value) => { setPendingCenter(null); setQuery(value); }}
           onEnter={(_event, value) => act('search', { text: value })} />
         <Button compact icon="magnifying-glass" tooltip="Поиск узлов по всей сети" onClick={() => act('search', { text: query })} />
-        {hasEntity && entityHost && <Button compact icon="location-crosshairs" content="Мой узел"
+        {!!hasEntity && !!entityHost && <Button compact icon="location-crosshairs" content="Мой узел"
           onClick={() => locate(entityHost, true)} />}
         <Button compact icon="bullseye" content="Рядом" selected={focusNearby} disabled={!selectedAddress}
           tooltip="Показать окружение выбранного узла в 2 переходах" onClick={() => { setPendingCenter(null); setFocusNearby(!focusNearby); }} />
@@ -276,7 +276,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
           </div>
         </details>
       </Box>
-      {waypoint && <Box p={0.5} style={{ background: '#12202a', borderBottom: `1px solid ${THEME.line}` }}>
+      {!!waypoint && <Box p={0.5} style={{ background: '#12202a', borderBottom: `1px solid ${THEME.line}` }}>
         <WaypointRoute wp={waypoint} onClear={() => act('clear_waypoint')} onNext={(address) => act('select', { address })} />
                    </Box>}
       {relayDestinations.length > 0 && <Box data-net-relay-destinations p={0.75} style={{ flex: '0 0 auto', maxHeight: '112px', overflowY: 'auto', borderBottom: `1px solid ${THEME.line}` }}>
@@ -334,6 +334,6 @@ const StoredRouteStatus = memo(({ route }: { route: NonNullable<NetMap['route']>
 const WaypointRoute = ({ wp, onClear, onNext }: { wp: Waypoint; onClear: () => void; onNext: (address: string) => void }) => (<Box inline
   color={wp.lost || !wp.reachable ? THEME.bad : THEME.accent} fontSize="10px">
   <Icon name="route" mr={1} />{wp.name} · {wp.lost ? 'цель потеряна' : wp.reachable ? `${wp.hops} переходов` : 'нет маршрута'}
-  {wp.next && <Button compact ml={1} icon="arrow-right" content="Следующий узел" onClick={() => onNext(wp.next)} />}
+  {!!wp.next && <Button compact ml={1} icon="arrow-right" content="Следующий узел" onClick={() => onNext(wp.next)} />}
   <Button compact icon="xmark" ml={1} onClick={onClear} />
                                                                                                                               </Box>);

@@ -106,7 +106,7 @@ const RemoteAction = (props: { address: string; action: Remote['actions'][number
           act('remote_act', { address: props.address, request: action.id, arguments: request.args });
         }}
       />
-      {(!action.allowed && action.reason || request.error) && <Box role="status" color={THEME.warn} fontSize="11px">
+      {!!(!action.allowed && action.reason || request.error) && <Box role="status" color={THEME.warn} fontSize="11px">
         {!action.allowed && action.reason || request.error}
                                                               </Box>}
     </Box>

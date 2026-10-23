@@ -92,16 +92,7 @@ export const CombatPanel = () => {
         <Icon name="crosshairs" mr={1} />
         {combat.node ? <>Узел боя: {combat.node_name} {combat.node}</> : 'Ответный бой'}
       </Box>
-      {!!combat.incoming?.length && (
-        <Box mb={1} p={0.5} style={{ border: `1px solid ${THEME.bad}`, background: THEME.panel }}>
-          {combat.incoming.map((attack, index) => (
-            <Box key={`${attack.source_ref ?? attack.source}-${attack.name}-${index}`} color={THEME.bad}>
-              {attack.source} готовит {attack.name} · через {attack.remaining} с
-            </Box>
-          ))}
-        </Box>
-      )}
-      {combat.self && (
+      {!!combat.self && (
         <Box mb={1} p={1} className="netrun-self-panel" style={{ background: THEME.panel, border: `1px solid ${THEME.line}`, borderRadius: '8px' }}>
           <Box color={THEME.accent}>
             Вы {combat.self.stunned ? ' · ОГЛУШЕНЫ' : ''}{combat.self.shielded ? ' · ЩИТ АКТИВЕН' : ''}
@@ -139,13 +130,13 @@ export const CombatPanel = () => {
               {t.shielded ? <Box inline ml={1} color={THEME.accent}>щит</Box> : null}
               {target === t.ref ? <Box inline ml={1} color={THEME.accent}>● цель</Box> : null}
             </Box>
-            {t.node && <Box color={THEME.muted} fontSize="10px">{t.node_name} {t.node}</Box>}
-            {t.unavailable_reason && <Box color={THEME.warn} fontSize="11px">{t.unavailable_reason}</Box>}
+            {!!t.node && <Box color={THEME.muted} fontSize="10px">{t.node_name} {t.node}</Box>}
+            {!!t.unavailable_reason && <Box color={THEME.warn} fontSize="11px">{t.unavailable_reason}</Box>}
             <IntegrityBar cur={t.integrity} max={t.max_integrity} />
             <Box fontSize="10px" color={THEME.muted}>
               {t.integrity}/{t.max_integrity}
             </Box>
-            {t.casting && <Box bold color={THEME.bad}>Готовит {t.casting.name}: {t.casting.remaining} с</Box>}
+            {!!t.casting && <Box bold color={THEME.bad}>Готовит {t.casting.name}: {t.casting.remaining} с</Box>}
             {t.programs?.map((p) => (
               <Box key={p.name} fontSize="11px" color={p.ready_in ? THEME.muted : THEME.warn}
                 title={`${p.desc} · сила ${p.power} · подготовка ${p.windup} с · кулдаун ${p.cooldown} с`}>
