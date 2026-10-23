@@ -174,10 +174,10 @@ class NetrunPixiSurface implements PixiSurface {
       const bounds = viewBox(this.camera, this.width, this.height, 32);
       this.actors.setViewport(bounds, this.camera.zoom);
       const animated = this.actors.animate(now);
+      // Visibility must be updated before advancing so newly revealed chunks
+      // upload in this very frame, not after the last scheduled render.
       this.scenery.setViewport(bounds, this.camera.zoom);
       const building = this.scenery.advance(this.interacting ? 1 : 4);
-      // New batches may have been created by advance(); reapply culling
-      // once without repeating the per-actor viewport work on every drag frame.
       this.scenery.setViewport(bounds, this.camera.zoom);
       if (this.cameraDirty) { this.paintGrid(); this.cameraDirty = false; }
       // Captions are in screen coordinates. During gestures transform the
