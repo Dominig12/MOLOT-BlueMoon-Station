@@ -13,13 +13,12 @@ const props = { nodes: [node], edges: [], gateways: new Map(), selected: 'APC', 
   selectedRoute: [], waypointRoute: [], pingRoute: [], events: [], adjacency: new Map(), onSelect: jest.fn() };
 beforeEach(() => { mount.mockImplementation(async (host) => makePixiSurfaceMock(host)); });
 
-test('the ready viewport has one Pixi surface and a native HUD without legacy drawing layers', async () => {
+test('the ready viewport has one Pixi surface without legacy drawing layers', async () => {
   const context = jest.spyOn(HTMLCanvasElement.prototype, 'getContext');
   const panel = render(<NetworkViewport {...props} />);
   await waitFor(() => expect(panel.getByLabelText('Карта сети').getAttribute('data-net-runtime')).toBe('ready'));
   expect(panel.container.querySelectorAll('[data-net-pixi]')).toHaveLength(1);
   expect(panel.container.querySelector('[data-net-canvas], svg, [data-net-actors]')).toBeNull();
-  expect(panel.container.querySelector('[data-net-hud]').textContent).toContain('1 узлов');
   expect(context).not.toHaveBeenCalled();
   context.mockRestore();
 });

@@ -6,7 +6,7 @@
 /datum/netrun_machine_service/camera
 	service_id = "camera.stream"
 
-/datum/netrun_machine_service/camera/tag()
+/datum/netrun_machine_service/camera/service_tag()
 	var/obj/machinery/camera/camera = host
 	return camera.c_tag
 
@@ -18,7 +18,7 @@
 
 /datum/netrun_machine_service/camera/accepts(datum/netrun_machine_message/message)
 	var/obj/machinery/camera/camera = host
-	return istype(message, /datum/netrun_machine_message/camera_request) && matches(message.source, tag()) && camera.can_use()
+	return ..() && istype(message, /datum/netrun_machine_message/camera_request) && matches(message.source, service_tag()) && camera.can_use()
 
 /datum/netrun_machine_service/camera/receive(datum/netrun_machine_message/message)
 	var/datum/netrun_machine_message/camera_feed/response = new(list("sequence" = message.payload["sequence"]))
@@ -29,34 +29,62 @@
 	var/request_sequence = 0
 	var/pending_tag
 	var/datum/weakref/pending_user
+	var/turf/pending_location
 	var/datum/netrun_machine_service/camera/active_feed
+	/// Previously discovered peers remain usable while their DNS entry is renewed.
+	var/list/known_cameras = list()
 
 /datum/netrun_machine_service/camera_viewer/proc/allows_camera(obj/machinery/camera/camera)
 	return FALSE
 
-/datum/netrun_machine_service/camera_viewer/proc/request_feed(camera_tag, mob/user)
+/datum/netrun_machine_service/camera_viewer/proc/request_feed(camera_tag, mob/user, turf/location)
 	request_sequence++
 	pending_tag = camera_tag
 	pending_user = user ? WEAKREF(user) : null
-	active_feed = null
-	clear_feed()
+	pending_location = location
+	prepare_feed_request()
 	var/datum/netrun_machine_message/camera_request/request = new(list("sequence" = request_sequence))
 	return send("camera.stream", request, camera_tag)
 
+/datum/netrun_machine_service/camera_viewer/proc/prepare_feed_request()
+	active_feed = null
+	clear_feed()
+
 /datum/netrun_machine_service/camera_viewer/proc/clear_feed()
 	return
+
+/datum/netrun_machine_service/camera_viewer/proc/cancel_feed()
+	request_sequence++
+	pending_tag = null
+	pending_user = null
+	pending_location = null
+	active_feed = null
+	clear_feed()
 
 /datum/netrun_machine_service/camera_viewer/proc/show_feed(obj/machinery/camera/camera)
 	return FALSE
 
 /datum/netrun_machine_service/camera_viewer/proc/feed_available()
-	if(QDELETED(active_feed) || !allows_camera(active_feed.host) || !can_reach(active_feed))
+	if(QDELETED(active_feed) || !allows_camera(active_feed.host) || !can_reach(active_feed, FALSE))
 		return FALSE
 	var/obj/machinery/camera/camera = active_feed.host
 	return camera.can_use()
 
+/datum/netrun_machine_service/camera_viewer/proc/camera_catalog(replace = FALSE)
+	var/list/resolved = resolve("camera.stream")
+	if(replace || length(resolved))
+		known_cameras.Cut()
+		for(var/datum/netrun_machine_service/camera/endpoint as anything in resolved)
+			known_cameras += WEAKREF(endpoint)
+	var/list/result = list()
+	for(var/datum/weakref/camera_ref as anything in known_cameras)
+		var/datum/netrun_machine_service/camera/endpoint = camera_ref.resolve()
+		if(!QDELETED(endpoint) && allows_camera(endpoint.host) && can_reach(endpoint, FALSE))
+			result += endpoint
+	return result
+
 /datum/netrun_machine_service/camera_viewer/accepts(datum/netrun_machine_message/message)
-	return istype(message, /datum/netrun_machine_message/camera_feed) && istype(message.source, /datum/netrun_machine_service/camera) && message.payload["sequence"] == request_sequence && pending_tag == message.source.tag() && allows_camera(message.source.host)
+	return ..() && istype(message, /datum/netrun_machine_message/camera_feed) && istype(message.source, /datum/netrun_machine_service/camera) && message.payload["sequence"] == request_sequence && pending_tag == message.source.service_tag() && allows_camera(message.source.host)
 
 /datum/netrun_machine_service/camera_viewer/receive(datum/netrun_machine_message/message)
 	active_feed = message.source
@@ -64,7 +92,9 @@
 
 /datum/netrun_machine_service/camera_viewer/directory_ready(destination_id, recipient_tag)
 	if(destination_id == "camera.stream")
-		SStgui.update_static_data(host)
+		if(isnull(recipient_tag))
+			camera_catalog(TRUE)
+		host.update_static_data_for_all_viewers()
 		SStgui.update_uis(host)
 	return ..()
 
@@ -90,6 +120,11 @@
 
 /datum/netrun_machine_service/camera_viewer/advanced
 
+/datum/netrun_machine_service/camera_viewer/advanced/prepare_feed_request()
+	var/obj/machinery/computer/camera_advanced/console = host
+	if(!console.current_user)
+		active_feed = null
+
 /datum/netrun_machine_service/camera_viewer/advanced/allows_camera(obj/machinery/camera/camera)
 	var/obj/machinery/computer/camera_advanced/console = host
 	return !QDELETED(camera) && length(console.networks & camera.network) && (!length(console.z_lock) || (camera.z in console.z_lock))
@@ -97,24 +132,27 @@
 /datum/netrun_machine_service/camera_viewer/advanced/show_feed(obj/machinery/camera/camera)
 	var/obj/machinery/computer/camera_advanced/console = host
 	var/mob/living/user = pending_user?.resolve()
-	if(!user || !console.can_interact(user) || !console.can_use(user) || (console.current_user && console.current_user != user))
+	if(!user || user.machine != console || !console.can_interact(user) || !console.can_use(user) || (console.current_user && console.current_user != user))
 		return FALSE
 	if(!console.eyeobj)
 		console.CreateEye()
 	console.eyeobj.eye_initialized = TRUE
 	console.give_eye_control(user)
-	console.eyeobj.setLoc(get_turf(camera))
+	var/turf/destination = get_turf(camera)
+	if(pending_location && (pending_location in camera.get_visible_turfs()))
+		destination = pending_location
+	console.eyeobj.setLoc(destination)
 	playsound(console, 'sound/machines/terminal_prompt_confirm.ogg', 25, FALSE)
 	return TRUE
 
 /obj/machinery/camera/netrun_machine_service_types()
-	return list(/datum/netrun_machine_service/camera)
+	return ..() + list(/datum/netrun_machine_service/camera)
 
 /obj/machinery/computer/security/netrun_machine_service_types()
-	return list(/datum/netrun_machine_service/camera_viewer/security)
+	return ..() + list(/datum/netrun_machine_service/camera_viewer/security)
 
 /obj/machinery/computer/camera_advanced/netrun_machine_service_types()
-	return list(/datum/netrun_machine_service/camera_viewer/advanced)
+	return ..() + list(/datum/netrun_machine_service/camera_viewer/advanced)
 
 /obj/machinery/computer/security/Initialize(mapload)
 	. = ..()
@@ -130,8 +168,8 @@
 	var/datum/netrun_machine_service/camera_viewer/service = get_netrun_machine_service("camera.viewer")
 	if(!service)
 		return cameras
-	for(var/datum/netrun_machine_service/camera/endpoint as anything in service.resolve("camera.stream"))
-		if(!service.allows_camera(endpoint.host) || !service.can_reach(endpoint))
+	for(var/datum/netrun_machine_service/camera/endpoint as anything in service.camera_catalog())
+		if(!service.allows_camera(endpoint.host))
 			continue
 		var/obj/machinery/camera/camera = endpoint.host
 		if(camera.c_tag)
@@ -150,15 +188,28 @@
 	if(eyeobj.use_static == USE_STATIC_NONE)
 		eyeobj.eye_initialized = TRUE
 		give_eye_control(user)
-		eyeobj.setLoc(get_turf(src))
+		var/turf/eye_turf = get_turf(src)
+		if(length(z_lock) && !(eye_turf.z in z_lock))
+			eye_turf = locate(round(world.maxx / 2), round(world.maxy / 2), z_lock[1])
+		eyeobj.setLoc(eye_turf)
 		return
 	var/list/cameras = netrun_available_cameras()
+	var/turf/preferred_turf = eyeobj.eye_initialized ? get_turf(eyeobj) : get_turf(src)
+	var/obj/machinery/camera/fallback_camera
 	for(var/camera_tag in cameras)
 		var/obj/machinery/camera/camera = cameras[camera_tag]
 		if(!camera.can_use())
 			continue
+		if(!fallback_camera)
+			fallback_camera = camera
+		if(!(preferred_turf in camera.get_visible_turfs()))
+			continue
 		var/datum/netrun_machine_service/camera_viewer/service = get_netrun_machine_service("camera.viewer")
-		service.request_feed(camera_tag, user)
+		service.request_feed(camera_tag, user, preferred_turf)
+		return
+	if(fallback_camera)
+		var/datum/netrun_machine_service/camera_viewer/service = get_netrun_machine_service("camera.viewer")
+		service.request_feed(fallback_camera.c_tag, user)
 		return
 	to_chat(user, span_notice("Поиск доступных сетевых камер..."))
 	var/datum/netrun_machine_service/camera_viewer/service = get_netrun_machine_service("camera.viewer")
@@ -168,12 +219,13 @@
 	. = ..()
 	var/obj/machinery/computer/camera_advanced/console = host
 	var/mob/living/user = pending_user?.resolve()
-	if(destination_id == "camera.stream" && !recipient_tag && user && !console.current_user && console.can_interact(user))
+	if(destination_id == "camera.stream" && !recipient_tag && user && user.machine == console && !console.current_user && console.can_interact(user))
 		INVOKE_ASYNC(console, TYPE_PROC_REF(/obj/machinery/computer/camera_advanced, netrun_connect_camera), user)
 
 /mob/camera/aiEye/remote
 	/// Extra denial masks keep the global camera chunk cache from leaking other networks.
 	var/list/netrun_camera_masks = list()
+	var/list/netrun_camera_masks_by_turf = list()
 	var/client/netrun_mask_client
 
 /mob/camera/aiEye/remote/proc/clear_netrun_camera_masks()
@@ -181,12 +233,13 @@
 		netrun_mask_client.images -= netrun_camera_masks
 	netrun_mask_client = null
 	netrun_camera_masks.Cut()
+	netrun_camera_masks_by_turf.Cut()
 
 /mob/camera/aiEye/remote/proc/update_netrun_camera_masks()
-	clear_netrun_camera_masks()
 	var/obj/machinery/computer/camera_advanced/console = origin
 	var/client/viewer = GetViewerClient()
 	if(!istype(console) || !viewer || use_static == USE_STATIC_NONE || !loc)
+		clear_netrun_camera_masks()
 		return
 	var/list/visible = list()
 	var/list/cameras = console.netrun_available_cameras()
@@ -196,8 +249,22 @@
 			continue
 		for(var/turf/visible_turf as anything in camera.get_visible_turfs())
 			visible[visible_turf] = TRUE
+	var/list/new_masks = list()
+	var/list/new_masks_by_turf = list()
 	for(var/turf/hidden_turf in range(static_visibility_range, src))
 		if(!visible[hidden_turf])
-			netrun_camera_masks += GLOB.cameranet.make_static_image(hidden_turf, use_static)
+			var/image/mask = netrun_camera_masks_by_turf[hidden_turf]
+			if(!mask)
+				mask = GLOB.cameranet.make_static_image(hidden_turf, use_static)
+			new_masks += mask
+			new_masks_by_turf[hidden_turf] = mask
+	if(netrun_mask_client != viewer)
+		if(netrun_mask_client)
+			netrun_mask_client.images -= netrun_camera_masks
+		viewer.images += new_masks
+	else
+		viewer.images -= netrun_camera_masks - new_masks
+		viewer.images += new_masks - netrun_camera_masks
+	netrun_camera_masks = new_masks
+	netrun_camera_masks_by_turf = new_masks_by_turf
 	netrun_mask_client = viewer
-	viewer.images += netrun_camera_masks

@@ -26,13 +26,15 @@ GLOBAL_VAR_INIT(message_delay, 0) // To make sure restarting the recentmessages 
 	// Don't broadcast rejected signals
 	if(!istype(signal))
 		return
+	if(istype(signal, /datum/signal/subspace/vocal) && (signal.data["done"] || signal.original?.data["done"]))
+		return
 	if(signal.data["reject"])
 		return
 	if(!signal.data["message"] && !signal.data["photo"])
 		return
 
 	// Prevents massive radio spam
-	var/is_tablet_message = istype(signal, /datum/signal/subspace/messaging/tablet_message)
+	var/is_tablet_message = istype(signal, /datum/signal/subspace/messaging/tablet_message) || istype(signal, /datum/signal/subspace/pda)
 	if(!is_tablet_message)
 		signal.mark_done()
 	var/datum/signal/subspace/original = signal.original

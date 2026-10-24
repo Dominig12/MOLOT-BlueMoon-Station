@@ -258,10 +258,11 @@ export type Waypoint = {
 };
 
 export type NetEvent = {
-  kind: 'command' | 'intrusion' | 'breach' | 'trace';
+  kind: 'command' | 'intrusion' | 'breach' | 'trace' | 'machine' | 'dns';
   from: string | null;
   to: string | null;
   age: number;
+  route?: string[] | null;
 };
 
 export type Gateway = {

@@ -84,6 +84,8 @@
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
 	console.note_ui_activity()
 	console.map_view.selected_address = node.address
+	// The fixture changes selection directly instead of going through a user action.
+	SSnetrun.collect_console_node_interest(console)
 	console.workspace_view = "files"
 	console.map_view.subscribe()
 	console.process_tick(0)

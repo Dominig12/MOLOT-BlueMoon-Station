@@ -92,6 +92,7 @@
 	SIGNAL_HANDLER
 
 	stored_research = new_web
+	refresh_research_service()
 
 /// BLUEMOON ADD: сеть ближайшего РНД-сервера на том же Z-уровне, что и источник, либо null.
 /proc/find_nearest_rnd_techweb(atom/source)

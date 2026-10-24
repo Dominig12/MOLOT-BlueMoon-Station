@@ -40,12 +40,10 @@
 	. = ..()
 	create_reagents(0, OPENCONTAINER | NO_REACT)
 	gen_access()
-	stored_research = new
+	stored_research = new /datum/techweb/netrun_snapshot
 	INVOKE_ASYNC(src, PROC_REF(update_research))
 	materials = AddComponent(/datum/component/remote_materials, "lathe", mapload, _after_insert=CALLBACK(src, PROC_REF(AfterMaterialInsert)))
 	RefreshParts()
-	RegisterSignal(SSdcs, COMSIG_GLOB_RESEARCH_NODE_UNLOCKED, PROC_REF(on_node_unlocked))
-	RegisterSignal(SSdcs, COMSIG_GLOB_RESEARCH_BATCH_COMPLETE, PROC_REF(on_research_batch_complete))
 
 /obj/machinery/rnd/production/LateInitialize()
 	. = ..()
@@ -58,7 +56,6 @@
 	if(deferred_sync_timer)
 		deltimer(deferred_sync_timer)
 		deferred_sync_timer = null
-	UnregisterSignal(SSdcs, list(COMSIG_GLOB_RESEARCH_NODE_UNLOCKED, COMSIG_GLOB_RESEARCH_BATCH_COMPLETE))
 	materials = null
 	cached_designs = null
 	QDEL_NULL(stored_research)
@@ -69,7 +66,8 @@
 	SIGNAL_HANDLER
 
 	host_research = new_web
-	stored_research = new
+	QDEL_NULL(stored_research)
+	stored_research = new /datum/techweb/netrun_snapshot
 	cached_designs.Cut()
 	_ui_cached_designs.Cut()
 	designs_cache_built = FALSE
@@ -123,20 +121,11 @@
 		obj_flags |= EMAGGED
 
 /obj/machinery/rnd/production/proc/update_research()
-	// Снапшот "что уже знали" ДО синка: после него доклеиваем только новые дизайны.
-	// Полный пересбор (весь researched_designs через techweb_design_by_id) гонялся
-	// каждой машиной раз в 1.5с на волне исследований - 75k вызовов за 18с на проде.
-	// Судить о "первом ли это синке" по снапшоту нельзя: свежий /datum/techweb
-	// исследует стартовые ноды прямо в New(), так что researched_designs непуст уже
-	// до первого пересбора - и инкрементальный путь навсегда терял базовые рецепты.
-	var/list/previously_known = designs_cache_built ? stored_research.researched_designs.Copy() : null
-	host_research?.copy_research_to(stored_research, TRUE)
-	if(previously_known)
-		update_designs_incremental(previously_known)
-	else
+	if(!designs_cache_built)
 		update_designs()
-	if(last_design_count == 0)
 		last_design_count = length(cached_designs)
+	var/datum/netrun_machine_service/research_client/client = get_netrun_machine_service("research.client")
+	return client?.request()
 
 /obj/machinery/rnd/production/proc/update_designs()
 	cached_designs.Cut()
@@ -257,7 +246,7 @@
 /obj/machinery/rnd/production/ui_interact(mob/user, datum/tgui/ui)
 	ui = SStgui.try_update_ui(user, src, ui)
 	if(!ui)
-		ui = new(user, src, "Fabricator", "[host_research?.organization] [department_tag] [name]")
+		ui = new(user, src, "Fabricator", "[stored_research?.organization] [department_tag] [name]")
 		ui.open()
 
 /obj/machinery/rnd/production/ui_assets(mob/user)
@@ -402,7 +391,7 @@
 			COOLDOWN_START(src, cooldown_say, cooldown_say_time)
 			say("Warning: Printing failed: The request is too big!")
 		return FALSE
-	var/datum/design/D = (linked_console || requires_console)? (linked_console && linked_console.stored_research && linked_console.stored_research.researched_designs[id]? SSresearch.techweb_design_by_id(id) : null) : SSresearch.techweb_design_by_id(id)	//BLUEMOON ADD: проверка на подключённую сеть консоли
+	var/datum/design/D = stored_research?.researched_designs[id] ? SSresearch.techweb_design_by_id(id) : null
 	if(!istype(D))
 		return FALSE
 	if(!(isnull(allowed_department_flags) || (D.departmental_flags & allowed_department_flags)))

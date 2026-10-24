@@ -336,7 +336,7 @@
 	data["window"] = workspace_view == "pinned" && remote_session.active_window ? window_payload() : null
 	data["ping_route"] = map_view.has_ping() ? map_view.ping_route : null
 	data["ping"] = map_view.ping_metadata()
-	data["events"] = SSnetrun.recent_events()
+	data["events"] = SSnetrun.recent_events(src)
 	data["search"] = workspace_view == "map" ? search_payload() : null
 	return data
 

@@ -95,11 +95,12 @@
 			if(!recipient)
 				continue
 			var/datum/netrun_machine_message/telecomms/packet = new(src)
+			packet.source = sender
 			if(!recipient.accepts(packet))
 				packet.failed("Приёмник не принимает этот канал.")
 				qdel(packet)
 				continue
-			if(sender.send(recipient.service_id, packet, recipient.tag()))
+			if(sender.send(recipient.service_id, packet, recipient.service_tag()))
 				admitted++
 	if(!admitted)
 		transmission.failure_reason = "Нет доступного приёмника telecomms."
@@ -151,6 +152,11 @@
 // This is the meat function for making radios hear vocal transmissions.
 /datum/signal/subspace/vocal/broadcast()
 	set waitfor = FALSE
+	if(QDELETED(virt))
+		return
+	// Hear() may yield after the transport has released its owned signal snapshot.
+	var/atom/movable/virtualspeaker/speaker = virt
+	var/lang_name = data["language"]
 
 	// Perform final composition steps on the message.
 	var/message = copytext_char(data["message"], 1, MAX_BROADCAST_LEN)
@@ -227,9 +233,9 @@
 	// Render the message and have everybody hear it.
 	// Always call this on the virtualspeaker to avoid issues.
 	var/spans = data["spans"]
-	var/rendered = virt.compose_message(virt, language, message, frequency, spans)
+	var/rendered = speaker.compose_message(speaker, language, message, frequency, spans)
 	for(var/atom/movable/hearer in receive)
-		hearer.Hear(rendered, virt, language, message, frequency, spans)
+		hearer.Hear(rendered, speaker, language, message, frequency, spans)
 
 	// This following recording is intended for research and feedback in the use of department radio channels
 	if(length(receive))
@@ -242,13 +248,12 @@
 			spans_part = "[spans_part] [S]"
 		spans_part = "[spans_part] ) "
 
-	var/lang_name = data["language"]
 	var/log_text = "\[[get_radio_name(frequency)]\] [spans_part]\"[message]\" (language: [lang_name])"
 
-	var/mob/source_mob = virt.source
+	var/mob/source_mob = speaker.source
 	if(istype(source_mob))
 		source_mob.log_message(log_text, LOG_TELECOMMS)
 	else
-		log_telecomms("[virt.source] [log_text] [loc_name(get_turf(virt.source))]")
+		log_telecomms("[speaker.source] [log_text] [loc_name(get_turf(speaker.source))]")
 
-	QDEL_IN(virt, 50)  // Make extra sure the virtualspeaker gets qdeleted
+	QDEL_IN(speaker, 50)  // Make extra sure the virtualspeaker gets qdeleted

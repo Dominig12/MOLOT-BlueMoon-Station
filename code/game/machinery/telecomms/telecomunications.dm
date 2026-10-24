@@ -36,7 +36,7 @@ GLOBAL_LIST_EMPTY(telecomms_list)
 	var/hide = FALSE  // Is it a hidden machine?
 
 
-/obj/machinery/telecomms/proc/relay_information(datum/signal/subspace/signal, filter, copysig, amount = 20)
+/obj/machinery/telecomms/proc/relay_information(datum/signal/subspace/signal, filter, copysig, amount = 20, datum/netrun_telecomms_relay_group/relay_group)
 	// relay signal to all linked machinery that are of type [filter]. If signal has been sent [amount] times, stop sending
 
 	if(!on)
@@ -71,8 +71,12 @@ GLOBAL_LIST_EMPTY(telecomms_list)
 		if(!recipient)
 			continue
 		// All asynchronous branches own a snapshot, including formerly shared signals.
-		var/datum/netrun_machine_message/telecomms/packet = new(signal, src)
-		if(!sender.send(recipient.service_id, packet, recipient.tag()))
+		var/datum/netrun_machine_message/telecomms/packet
+		if(relay_group)
+			packet = new /datum/netrun_machine_message/telecomms/relay_probe(signal, src, relay_group)
+		else
+			packet = new(signal, src)
+		if(!sender.send(recipient.service_id, packet, recipient.service_tag()))
 			continue
 		send_count++
 		if(machine.is_freq_listening(signal))
@@ -91,7 +95,7 @@ GLOBAL_LIST_EMPTY(telecomms_list)
 	var/datum/netrun_machine_service/recipient = machine.get_netrun_machine_service("telecomms.relay")
 	if(!sender || !recipient)
 		return FALSE
-	return sender.send(recipient.service_id, new /datum/netrun_machine_message/telecomms(signal, src), recipient.tag())
+	return sender.send(recipient.service_id, new /datum/netrun_machine_message/telecomms(signal, src), recipient.service_tag())
 
 /obj/machinery/telecomms/proc/receive_information(datum/signal/signal, obj/machinery/telecomms/machine_from)
 	// receive information from linked machinery

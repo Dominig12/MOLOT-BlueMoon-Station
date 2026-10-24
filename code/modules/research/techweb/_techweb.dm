@@ -187,6 +187,8 @@
 		for(var/i in pointlist)
 			if(SSresearch.point_types[i] && pointlist[i] > 0)
 				research_points[i] += pointlist[i]
+	if(!income)
+		netrun_research_changed()
 
 /datum/techweb/proc/add_points_all(amount)
 	var/list/l = SSresearch.point_types.Copy()
@@ -204,6 +206,7 @@
 	for(var/i in pointlist)
 		if(SSresearch.point_types[i] && pointlist[i] > 0)
 			research_points[i] = max(0, research_points[i] - pointlist[i])
+	netrun_research_changed()
 
 /datum/techweb/proc/remove_points_all(amount)
 	var/list/l = SSresearch.point_types.Copy()
@@ -215,6 +218,7 @@
 	for(var/i in pointlist)
 		if(SSresearch.point_types[i] && pointlist[i] != 0)
 			research_points[i] = max(0, research_points[i] + pointlist[i])
+	netrun_research_changed()
 
 /datum/techweb/proc/modify_points_all(amount)
 	var/list/l = SSresearch.point_types.Copy()
@@ -268,6 +272,8 @@
 		next_income[type] += amount
 	else
 		research_points[type] += amount
+	if(!income)
+		netrun_research_changed()
 	return TRUE
 
 /// Засчитывает первый за раунд синтез газа и разово начисляет за него очки.
@@ -322,12 +328,14 @@
 		next_income[type] += amount
 	else
 		research_points[type] = max(0, research_points[type] + amount)
+		netrun_research_changed()
 	return TRUE
 
 /datum/techweb/proc/remove_point_type(type, amount)
 	if(!SSresearch.point_types[type] || (amount <= 0))
 		return FALSE
 	research_points[type] = max(0, research_points[type] - amount)
+	netrun_research_changed()
 	return TRUE
 
 /datum/techweb/proc/add_design_by_id(id, custom = FALSE)
@@ -339,6 +347,7 @@
 	researched_designs[design.id] = TRUE
 	if(custom)
 		custom_designs[design.id] = TRUE
+	netrun_research_changed()
 	return TRUE
 
 /datum/techweb/proc/remove_design_by_id(id, custom = FALSE)
@@ -351,6 +360,7 @@
 		return FALSE
 	custom_designs -= design.id
 	researched_designs -= design.id
+	netrun_research_changed()
 	return TRUE
 
 /datum/techweb/proc/get_point_total(list/pointlist)
@@ -391,6 +401,7 @@
 		var/datum/bank_account/D = SSeconomy.get_dep_account(ACCOUNT_SCI)
 		if(D)
 			D.adjust_money(SSeconomy.techweb_bounty)
+	netrun_research_changed()
 	return TRUE
 
 /datum/techweb/proc/unresearch_node_id(id)
@@ -401,6 +412,7 @@
 		return FALSE
 	researched_nodes -= node.id
 	recalculate_nodes(TRUE)				//Fully rebuild the tree.
+	netrun_research_changed()
 
 /datum/techweb/proc/boost_with_path(datum/techweb_node/N, itempath)
 	if(!istype(N) || !ispath(itempath))
@@ -411,6 +423,7 @@
 	if(N.autounlock_by_boost)
 		hidden_nodes -= N.id
 	update_node_status(N)
+	netrun_research_changed()
 	return TRUE
 
 /datum/techweb/proc/update_tiers(datum/techweb_node/base)

@@ -26,6 +26,9 @@ export const NtosMessenger = (props) => {
     open_chat,
     messengers,
     sending_virus,
+    delivery_pending,
+    delivery_status,
+    delivery_error,
   } = data;
 
   let content;
@@ -58,6 +61,13 @@ export const NtosMessenger = (props) => {
   return (
     <NtosWindow width={600} height={850}>
       <NtosWindow.Content>
+        {!!delivery_status && (
+          <NoticeBox
+            danger={delivery_error}
+            info={delivery_pending}>
+            {delivery_status}
+          </NoticeBox>
+        )}
         {content}
       </NtosWindow.Content>
     </NtosWindow>

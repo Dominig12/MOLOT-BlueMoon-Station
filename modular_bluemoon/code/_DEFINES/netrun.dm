@@ -140,6 +140,7 @@
 #define COMSIG_NETRUN_EVENT_POSTED "netrun_event_posted"
 /// Device atom: a provider's externally visible native state changed (no arguments).
 #define COMSIG_NETRUN_SERVICE_STATE_CHANGED "netrun_service_state_changed"
+#define COMSIG_NETRUN_RESEARCH_CHANGED "netrun_research_changed"
 
 /// Domain notifications. Handlers invalidate caches; they must not serialize UI.
 /// SSnetrun and node: (node, changed_flags).

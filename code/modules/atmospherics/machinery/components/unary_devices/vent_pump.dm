@@ -196,6 +196,7 @@
 
 	netrun_atmos_send("atmos.device", "atmos.controller", signal.data)
 	netrun_atmos_send("atmos.device", "atmos.monitor", signal.data)
+	netrun_atmos_send("atmos.device", "atmos.vent_controller", signal.data)
 	qdel(signal)
 
 /// Прописывает вент в реестре имён базовой области и выдаёт ему автоимя, если своего нет.

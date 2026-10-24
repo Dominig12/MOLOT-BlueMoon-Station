@@ -12,7 +12,7 @@ type Actor = { group: Container; body: Graphics; marks: Graphics; labels: Text[]
 type Link = { graphic: Graphics; signature: string; bounds: GraphBox };
 type Segment = { from: GraphPoint; to: GraphPoint; length: number };
 type Route = { graphic: Graphics; signature: string; segments: Segment[]; until: number; began: number; tint: number };
-type Traffic = { born: number; point: GraphPoint; trace: boolean; segments: Segment[] };
+type Traffic = { born: number; point: GraphPoint; tint: number; segments: Segment[] };
 type Pulse = { born: number; point: GraphPoint; tint: number };
 const NO_BOX: GraphBox = { left: -Infinity, right: Infinity, top: -Infinity, bottom: Infinity };
 const sameOverlayData = (a: GraphOverlay | null, b: GraphOverlay) => a
@@ -146,7 +146,9 @@ export class PixiActors {
     this.paintPing(now);
     if (!localOnly) { this.traffic = overlay.events.filter((event) => event.age < 4).flatMap((event) => {
       const point = scene.byAddress.get(event.to) || scene.byAddress.get(event.from);
-      return point ? [{ born: now - Math.max(0, event.age) * 1000, point, trace: event.kind === 'trace', segments: this.eventPath(event.from, event.to) }] : [];
+      const tint = event.kind === 'trace' ? 0xf56670 : event.kind === 'machine' ? 0x50e8c0 : event.kind === 'dns' ? 0x79adff : 0xffc26b;
+      return point ? [{ born: now - Math.max(0, event.age) * 1000, point, tint,
+        segments: event.route ? this.segments(event.route) : this.eventPath(event.from, event.to) }] : [];
     }); }
     if (this.pulses.length > 24) { this.pulses.splice(0, this.pulses.length - 24); }
     this.setViewport(this.bounds, this.zoom); return true;
@@ -324,7 +326,7 @@ export class PixiActors {
     }
     for (const event of this.traffic) {
       const age = Math.max(0, (now - event.born) / 1000); if (age >= 4) { continue; }
-      const tint = event.trace ? 0xf56670 : 0xffc26b;
+      const tint = event.tint;
       if (this.reducedMotion) { this.effects.circle(event.point.px, event.point.py, 24).stroke({ color: tint, width: 1.5, alpha: .65 }); continue; }
       const phase = (age % 1.2) / 1.2;
       this.effects.circle(event.point.px, event.point.py, (20 + phase * 15)).stroke({ color: tint, width: 1.5, alpha: (1 - phase) * (1 - age / 4) });

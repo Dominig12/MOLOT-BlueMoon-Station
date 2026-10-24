@@ -445,6 +445,9 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 	data["alert_silenced"] = alert_silenced
 	data["sending_and_receiving"] = sending_and_receiving
 	data["open_chat"] = viewing_messages_of
+	data["delivery_pending"] = !!netrun_pending_messages
+	data["delivery_status"] = netrun_delivery_status
+	data["delivery_error"] = netrun_delivery_error
 
 	data["stored_photos"] = list()
 	data["selected_photo_path"] = null
@@ -529,11 +532,7 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 		var/datum/pda_chat/new_chat = create_chat(missing_messenger)
 		chats += new_chat
 
-	if(send_message(user, message, chats, everyone = TRUE))
-		COOLDOWN_START(src, last_text_everyone, 2 MINUTES)
-
-	if(send_message(user, message, chats, everyone = TRUE))
-		COOLDOWN_START(src, last_text_everyone, 2 MINUTES)
+	return send_message(user, message, chats, everyone = TRUE)
 
 // BLUEMOON ADD: перевод денег собеседнику из чата
 /datum/computer_file/program/messenger/proc/transfer_money_to_chat(mob/living/user, target_ref, amount, currency = "credits")
@@ -927,7 +926,7 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 			continue
 		if(!(get_chat_toggles(listener.client) & CHAT_GHOSTPDA))
 			continue
-		to_chat(listener, "[FOLLOW_LINK(listener, source)] [ghost_message]")
+		to_chat(listener, "[FOLLOW_LINK(listener, source || computer)] [ghost_message]")
 
 	if(sender)
 		to_chat(sender, span_info("PDA message sent to [signal.format_target()]: \"[message]\""))
@@ -936,6 +935,8 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 		computer.send_sound()
 
 	COOLDOWN_START(src, last_text, 1 SECONDS)
+	if(everyone)
+		COOLDOWN_START(src, last_text_everyone, 2 MINUTES)
 
 	SEND_SIGNAL(computer, COMSIG_MODULAR_PDA_MESSAGE_SENT, source, signal)
 

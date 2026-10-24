@@ -307,7 +307,7 @@ GLOBAL_LIST_EMPTY(atmos_air_controllers)
 	service.reconnect_user = null
 	var/list/IO = list()
 	for(var/datum/netrun_machine_service/atmos/device/device as anything in devices)
-		var/device_tag = device.tag()
+		var/device_tag = device.service_tag()
 		if(!istext(device_tag) || !length(device_tag))
 			continue
 		var/list/text = splittext(device_tag, "_")

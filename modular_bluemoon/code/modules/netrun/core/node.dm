@@ -70,12 +70,14 @@
 
 /datum/component/netrun_node/RegisterWithParent()
 	RegisterSignal(parent, COMSIG_ATOM_EMP_ACT, PROC_REF(on_emp))
-	subscribed_state_signals = list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED, COMSIG_OBJ_SETANCHORED) | SSnetrun.get_provider_state_signals(parent)
+	subscribed_state_signals = list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED, COMSIG_OBJ_SETANCHORED, COMSIG_NETRUN_SERVICE_STATE_CHANGED) | SSnetrun.get_provider_state_signals(parent)
 	var/list/availability_signals = list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED)
 	RegisterSignal(parent, availability_signals, PROC_REF(on_availability_changed))
 	RegisterSignal(parent, subscribed_state_signals - availability_signals, PROC_REF(on_state_changed))
 	if(ismovable(parent))
 		RegisterSignal(parent, COMSIG_MOVABLE_MOVED, PROC_REF(on_moved))
+	var/atom/host = parent
+	host.ensure_netrun_machine_services(src)
 
 /datum/component/netrun_node/UnregisterFromParent()
 	UnregisterSignal(parent, list(COMSIG_ATOM_EMP_ACT, COMSIG_MOVABLE_MOVED))
@@ -83,6 +85,11 @@
 	subscribed_state_signals = null
 
 /datum/component/netrun_node/Destroy()
+	var/atom/host = parent
+	for(var/id in host.netrun_machine_services?.Copy())
+		var/datum/netrun_machine_service/service = host.netrun_machine_services[id]
+		if(service.node == src)
+			qdel(service)
 	SSnetrun.untrack_node(src)
 	SSnetrun.nodes_by_address -= address
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_UNREGISTERED, src)

@@ -844,7 +844,6 @@ GLOBAL_LIST_INIT(air_alarm_modes, init_air_alarm_modes())
 /obj/machinery/airalarm/proc/set_all_filters(device_id, enable, mob/user)
 	if(!device_id)
 		return FALSE
-	var/area/our_area = get_base_area(src)
 	var/list/info = netrun_scrub_info[device_id]
 	if(!info)
 		return FALSE
@@ -1201,6 +1200,7 @@ GLOBAL_LIST_INIT(air_alarm_modes, init_air_alarm_modes())
 		alert_signal.data["alert"] = "clear"
 
 	netrun_atmos_send("atmos.alarm", "atmos.alert", alert_signal.data)
+	netrun_atmos_send("atmos.alarm", "atmos.alarmdoor", alert_signal.data)
 	qdel(alert_signal)
 
 /obj/machinery/airalarm/proc/apply_danger_level()

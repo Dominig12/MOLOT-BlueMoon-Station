@@ -105,13 +105,15 @@
 		ui.open()
 
 /obj/machinery/computer/security/ui_data()
+	update_active_camera_screen()
+	var/datum/netrun_machine_service/camera_viewer/service = get_netrun_machine_service("camera.viewer")
 	var/list/data = list()
 	data["network"] = network
 	data["activeCamera"] = null
 	if(active_camera)
 		data["activeCamera"] = list(
 			name = active_camera.c_tag,
-			status = active_camera.status,
+			status = active_camera.status && service?.feed_available(),
 		)
 	return data
 
@@ -135,28 +137,16 @@
 
 	if(action == "switch_camera")
 		var/c_tag = params["name"]
-		//точечный поиск по кэшу сетей вместо пересборки всего списка на каждый клик
-		var/obj/machinery/camera/selected_camera
-		for(var/network_name in network)
-			var/list/network_cameras = GLOB.cameranet.get_cameras_by_network(network_name)
-			selected_camera = network_cameras?[c_tag]
-			if(selected_camera)
-				break
-		if(selected_camera && selected_camera.z != z && (is_away_level(z) || is_away_level(selected_camera.z)))
-			selected_camera = null //фильтр away-уровней, как в get_available_cameras
-		active_camera = selected_camera
+		var/datum/netrun_machine_service/camera_viewer/service = get_netrun_machine_service("camera.viewer")
+		if(istext(c_tag) && length(c_tag))
+			service?.request_feed(c_tag, usr)
 		playsound(src, get_sfx("terminal_type"), 25, FALSE)
-
-		if(!selected_camera)
-			return TRUE
-
-		update_active_camera_screen()
-
 		return TRUE
 
 /obj/machinery/computer/security/proc/update_active_camera_screen()
 	// Show static if can't use the camera
-	if(QDELETED(active_camera) || !active_camera?.can_use())
+	var/datum/netrun_machine_service/camera_viewer/service = get_netrun_machine_service("camera.viewer")
+	if(QDELETED(active_camera) || !active_camera?.can_use() || !service?.feed_available())
 		show_camera_static()
 		return
 
@@ -211,6 +201,8 @@
 	// Turn off the console
 	if(length(concurrent_users) == 0 && is_living)
 		active_camera = null
+		var/datum/netrun_machine_service/camera_viewer/service = get_netrun_machine_service("camera.viewer")
+		service?.cancel_feed()
 		playsound(src, 'sound/machines/terminal_off.ogg', 25, FALSE)
 		use_power(0)
 
@@ -221,16 +213,7 @@
 
 // Returns the list of cameras accessible from this computer
 /obj/machinery/computer/security/proc/get_available_cameras()
-	var/list/D = list()
-	var/console_away = is_away_level(z)
-	for(var/network_name in network)
-		var/list/network_cameras = GLOB.cameranet.get_cameras_by_network(network_name)
-		for(var/tag in network_cameras)
-			var/obj/machinery/camera/C = network_cameras[tag]
-			if(C.z != z && (console_away || is_away_level(C.z)))//if on away mission, can only receive feed from same z_level cameras
-				continue
-			D[tag] = C
-	return D
+	return netrun_available_cameras()
 
 // SECURITY MONITORS
 

@@ -256,6 +256,8 @@ SUBSYSTEM_DEF(netrun)
 			pending_requests -= request
 		else
 			collect_request_node_interest(request)
+	for(var/datum/netrun_machine_packet/packet as anything in machine_transport?.interactive_packets)
+		retain_route_interest(packet.interest_route, world.time + NETRUN_NODE_INTEREST_LEASE)
 	populate_node_tasks()
 	scheduler.enqueue("housekeeping", null, NETRUN_TASK_BACKGROUND)
 	if(get_topology().dirty)
@@ -387,20 +389,26 @@ SUBSYSTEM_DEF(netrun)
 	return network
 
 /// Зарегистрировать событие сети: его отрисуют карты всех активных раннеров.
-/datum/controller/subsystem/netrun/proc/post_event(kind, from_ref, to_ref)
-	events += list(list("kind" = kind, "from" = from_ref, "to" = to_ref, "t" = world.time))
+/datum/controller/subsystem/netrun/proc/post_event(kind, from_ref, to_ref, list/route)
+	events += list(list("kind" = kind, "from" = from_ref, "to" = to_ref, "t" = world.time, "route" = route?.Copy()))
 	if(length(events) > 40)
 		events.Cut(1, length(events) - 40 + 1)
 	SEND_SIGNAL(src, COMSIG_NETRUN_EVENT_POSTED, kind, from_ref, to_ref)
 
 /// Недавние события (последние секунды) для интерфейса
-/datum/controller/subsystem/netrun/proc/recent_events()
+/datum/controller/subsystem/netrun/proc/recent_events(datum/netrun_console/viewer)
 	. = list()
 	for(var/list/event as anything in events)
 		var/age = world.time - event["t"]
 		if(age > 4 SECONDS)
 			continue
-		. += list(list("kind" = event["kind"], "from" = event["from"], "to" = event["to"], "age" = round(age / (1 SECONDS), 0.1)))
+		var/list/path = event["route"]
+		if(path && viewer)
+			path = path.Copy()
+			for(var/i in 1 to length(path))
+				if(!viewer.map_view.shown_addresses[path[i]])
+					path[i] = ""
+		. += list(list("kind" = event["kind"], "from" = event["from"], "to" = event["to"], "age" = round(age / (1 SECONDS), 0.1), "route" = path))
 
 /datum/controller/subsystem/netrun/proc/get_command(id)
 	if(!commands)

@@ -264,7 +264,7 @@
 	SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/eng_node = eng.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/med_node = med.GetComponent(/datum/component/netrun_node)
-	var/datum/controller/subsystem/netrun/worker = allocate(/datum/controller/subsystem/netrun)
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
 	worker.topology = allocate(/datum/netrun_topology)
 	worker.networks = list()
 	worker.networks[eng_node.network.id] = eng_node.network
@@ -308,7 +308,7 @@
 	allocate(/datum/netrun_ice, eng_node, NETRUN_ICE_HUNTER)
 	var/datum/netrun_ice/foreign = allocate(/datum/netrun_ice, med_node, NETRUN_ICE_HUNTER)
 	foreign.hop_cooldown = world.time + 50 SECONDS
-	var/datum/controller/subsystem/netrun/worker = allocate(/datum/controller/subsystem/netrun)
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
 	worker.nodes_by_address = SSnetrun.nodes_by_address
 	worker.hunters_by_network = SSnetrun.hunters_by_network
 	worker.defense_nests[eng_node.address] = 5

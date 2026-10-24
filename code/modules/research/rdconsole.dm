@@ -117,6 +117,7 @@ Nothing else in the console has ID requirements.
 		stored_research.consoles_accessing[src] = TRUE
 
 /obj/machinery/computer/rdconsole/Destroy()
+	QDEL_NULL(netrun_research_cache)
 	if(stored_research)
 		stored_research.consoles_accessing -= src
 	//BLUEMOON ADD: снимаем обратную ссылку у экспериментаторов, привязанных к консоли; очистку linked_console при Destroy самих устройств сохраняет /obj/machinery/rnd/Destroy()
@@ -168,6 +169,10 @@ Nothing else in the console has ID requirements.
 		. = ..()
 
 /obj/machinery/computer/rdconsole/proc/research_node(id, mob/user)
+	return request_research_action("research", user, list("node_id" = id))
+
+/// Executed by the research server after the request has crossed the network.
+/obj/machinery/computer/rdconsole/proc/perform_research_node(id, mob/user)
 	if(!stored_research)	//BLUEMOON ADD: консоль без подключённой сети
 		say("База данных исследований не подключена!")
 		return FALSE
@@ -240,7 +245,10 @@ Nothing else in the console has ID requirements.
 	if(stored_research)
 		stored_research.consoles_accessing -= src
 	stored_research = new_web
-	stored_research.consoles_accessing[src] = TRUE
+	if(stored_research)
+		stored_research.consoles_accessing[src] = TRUE
+	QDEL_NULL(netrun_research_cache)
+	INVOKE_ASYNC(src, PROC_REF(request_research_snapshot))
 
 	if(linked_lathe)
 		SEND_SIGNAL(linked_lathe, COMSIG_ATOM_SET_TECHWEB, stored_research)
@@ -253,6 +261,7 @@ Nothing else in the console has ID requirements.
 	return TRUE
 
 /obj/machinery/computer/rdconsole/ui_interact(mob/user, datum/tgui/ui = null)
+	request_research_snapshot()
 	ui = SStgui.try_update_ui(user, src, ui)
 	if (!ui)
 		ui = new(user, src, "Techweb", name)
@@ -285,11 +294,11 @@ Nothing else in the console has ID requirements.
 		"compact" = compact
 	)
 	//BLUEMOON CHANGE: вместо раннего возврата — сериализация без сети идёт с полями по умолчанию
-	if(stored_research)	//консоль без подключённой сети исследований
-		.["researched_designs"] = stored_research.researched_designs
-		.["points"] = stored_research.research_points
-		.["points_last_tick"] = stored_research.last_bitcoins
-		.["web_org"] = stored_research.organization
+	if(netrun_research_cache)
+		.["researched_designs"] = netrun_research_cache.researched_designs
+		.["points"] = netrun_research_cache.research_points
+		.["points_last_tick"] = netrun_research_cache.last_bitcoins
+		.["web_org"] = netrun_research_cache.organization
 
 	if (t_disk)
 		.["t_disk"] = list (
@@ -341,21 +350,21 @@ Nothing else in the console has ID requirements.
 
 	// Serialize all nodes to display
 	//BLUEMOON CHANGE: узлы показываются только при подключённой базе исследований
-	if(stored_research)
-		for(var/v in stored_research.tiers)
+	if(netrun_research_cache)
+		for(var/v in netrun_research_cache.tiers)
 			var/datum/techweb_node/n = SSresearch.techweb_node_by_id(v)
 
 			// Ensure node is supposed to be visible
-			if (stored_research.hidden_nodes[v])
+			if (netrun_research_cache.hidden_nodes[v])
 				continue
 
-			var/costs = n.get_price(stored_research)
+			var/costs = n.get_price(netrun_research_cache)
 
 			.["nodes"] += list(list(
 				"id" = n.id,
-				"can_unlock" = stored_research.can_afford(costs),
+				"can_unlock" = netrun_research_cache.can_afford(costs),
 				"costs" = costs,
-				"tier" = stored_research.tiers[n.id]
+				"tier" = netrun_research_cache.tiers[n.id]
 			))
 	//BLUEMOON CHANGE END
 
@@ -457,7 +466,7 @@ Nothing else in the console has ID requirements.
 		if ("researchNode")
 			if(!research_control)
 				return TRUE
-			if(!stored_research.available_nodes[params["node_id"]])
+			if(!netrun_research_cache?.available_nodes[params["node_id"]])
 				return TRUE
 			research_node(params["node_id"], usr)
 			return TRUE
@@ -470,7 +479,7 @@ Nothing else in the console has ID requirements.
 				return TRUE
 			var/slot = text2num(params["slot"])
 			var/datum/design/design = SSresearch.techweb_design_by_id(params["selectedDesign"])
-			if(design)
+			if(design && netrun_research_cache?.researched_designs[design.id] && slot >= 1 && slot <= d_disk.max_blueprints)
 				var/autolathe_friendly = design.is_autolathe_compatible()
 				if(!autolathe_friendly)
 					design.category -= "Imported"
@@ -485,7 +494,11 @@ Nothing else in the console has ID requirements.
 				say("No design disk found.")
 				return TRUE
 			var/n = text2num(params["slot"])
-			stored_research.add_design(d_disk.blueprints[n], TRUE)
+			if(n < 1 || n > length(d_disk.blueprints))
+				return TRUE
+			var/datum/design/design = d_disk.blueprints[n]
+			if(istype(design))
+				request_research_action("upload_designs", usr, list("designs" = list(design.id)))
 			return TRUE
 		if ("clearDesignSlot")
 			if(QDELETED(d_disk))
@@ -517,22 +530,24 @@ Nothing else in the console has ID requirements.
 				if(QDELETED(d_disk))
 					say("No design disk inserted!")
 					return TRUE
-				for(var/D in d_disk.blueprints)
-					if(D)
-						stored_research.add_design(D, TRUE)
+				var/list/design_ids = list()
+				for(var/datum/design/design as anything in d_disk.blueprints)
+					if(istype(design))
+						design_ids += design.id
+				request_research_action("upload_designs", usr, list("designs" = design_ids))
 			if (params["type"] == RND_TECH_DISK)
 				if (QDELETED(t_disk))
 					say("No tech disk inserted!")
 					return TRUE
 				say("Uploading technology disk.")
-				t_disk.stored_research.copy_research_to(stored_research)
+				request_research_action("upload_nodes", usr, list("nodes" = t_disk.stored_research.researched_nodes.Copy(), "designs" = t_disk.stored_research.researched_designs.Copy()))
 			return TRUE
 		if ("loadTech")
 			if(QDELETED(t_disk))
 				say("No tech disk inserted!")
 				return
-			stored_research.copy_research_to(t_disk.stored_research)
-			say("Downloading to technology disk.")
+			request_research_action("download_disk", usr, list("disk" = REF(t_disk)))
+			say("Запрошена загрузка техвеба по сети.")
 			return TRUE
 
 		if ("destroyfortech")
