@@ -8,6 +8,9 @@
 	var/search_query
 	var/list/ping_route
 	var/ping_at = 0
+	var/ping_id = 0
+	var/ping_until = 0
+	var/ping_timer
 	var/structure_revision = 0
 	var/state_revision = 0
 	/// Only stationary geometry and paint data invalidate the cached canvas.
@@ -70,6 +73,9 @@
 	dirty = TRUE
 
 /datum/netrun_map_view/Destroy()
+	if(ping_timer)
+		deltimer(ping_timer)
+	ping_timer = null
 	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_EVENT_POSTED))
 	QDEL_NULL(geometry)
 	snapshot = null
@@ -87,6 +93,46 @@
 	security_context = null
 	owner = null
 	return ..()
+
+/// A ping is one finite event. Repeating the same path must still have a new identity.
+/datum/netrun_map_view/proc/start_ping(list/hops, duration = 6 SECONDS)
+	if(ping_timer)
+		deltimer(ping_timer)
+	ping_route = hops.Copy()
+	ping_at = world.time
+	ping_until = world.time + duration
+	ping_id++
+	ping_timer = addtimer(CALLBACK(src, PROC_REF(on_ping_expired), ping_id), duration, TIMER_STOPPABLE)
+	SSnetrun.retain_route_interest(ping_route, ping_until)
+	owner?.invalidate_ui()
+
+/datum/netrun_map_view/proc/ping_deadline()
+	return ping_until || ping_at + 6 SECONDS
+
+/datum/netrun_map_view/proc/has_ping()
+	return ping_route && world.time < ping_deadline()
+
+/datum/netrun_map_view/proc/ping_metadata()
+	if(!has_ping())
+		return null
+	return list("id" = ping_id, "remaining_ms" = max(0, (ping_deadline() - world.time) * 100))
+
+/datum/netrun_map_view/proc/on_ping_expired(sequence)
+	if(sequence != ping_id)
+		return
+	ping_timer = null
+	expire_ping(sequence)
+
+/// The scheduler also closes an overdue ping if its timer has not run yet.
+/datum/netrun_map_view/proc/expire_ping(sequence)
+	if((!isnull(sequence) && sequence != ping_id) || !ping_route || world.time < ping_deadline())
+		return FALSE
+	if(ping_timer)
+		deltimer(ping_timer)
+	ping_timer = null
+	ping_route = null
+	owner?.invalidate_ui()
+	return TRUE
 
 /// A single node's status change updates just that node in place; binding and removal are
 /// structural (they move edges and membership) and need a full projection rebuild.

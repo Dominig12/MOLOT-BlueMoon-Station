@@ -42,7 +42,7 @@
 		return
 	var/mob/camera/netrun_entity/prey = owner.find_intruder(owner.node)
 	var/tracing = FALSE
-	if(!prey && owner.kind == NETRUN_ICE_SENTRY)
+	if(!prey)
 		for(var/datum/netrun_console/console as anything in SSnetrun.currentbreaches)
 			if(owner.valid_trace_target(console))
 				tracing = TRUE
@@ -69,4 +69,20 @@
 /datum/component/netrun_node/proc/wake_defenses()
 	for(var/datum/netrun_ice/ice as anything in netrun_ice)
 		if(!QDELETED(ice))
+			ice.reaction.wake()
+	if(!network)
+		return
+	var/has_threat = length(entities)
+	if(!has_threat)
+		for(var/datum/netrun_console/console as anything in SSnetrun.currentbreaches)
+			var/datum/netrun_breach/breach = console.intrusion.breach
+			if(breach && ((breach.target_kind == "network" && breach.target_id == network.id) || breach.target_id == address))
+				has_threat = TRUE
+				break
+	if(!has_threat)
+		return
+	// A local arrival/breach wakes this LAN's hunters, never remote departments.
+	for(var/datum/netrun_ice/ice as anything in SSnetrun.hunters_by_network[network.id])
+		if(!QDELETED(ice) && ice.node != src)
+			ice.hop_cooldown = min(ice.hop_cooldown, world.time + 1.5 SECONDS)
 			ice.reaction.wake()

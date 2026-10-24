@@ -180,11 +180,12 @@
 		owner.log_line("Действие окна не разрешено.", "bad")
 		return
 	var/lat = owner.latency_to(node, tree)
+	var/list/poll_route = tree.addresses_to(node.address)
 	qdel(tree)
 	owner.next_command = world.time + max(0.5 SECONDS, lat)
 	owner.log_line("[node.address]: запрос «[entry["name"]]» отправлен, ~[lat * 100] мс.")
 	var/datum/netrun_request/window/packet = new(owner, node, action, params, node.network, owner.operator)
-	return packet.send(max(1, lat))
+	return packet.send(max(1, lat), poll_route)
 
 /datum/netrun_console/proc/window_action(datum/component/netrun_node/node, action)
 	return remote_session.window_action(node, action)

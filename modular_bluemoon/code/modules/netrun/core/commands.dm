@@ -126,10 +126,9 @@
 	var/datum/netrun_route/route = console.route_to(node)
 	var/lat = route.latency
 	var/route_name = route.name
-	console.map_view.ping_route = route.hops.Copy()
+	console.map_view.start_ping(route.hops)
 	var/hops = max(0, length(route.hops) - 1)
 	qdel(route)
-	console.map_view.ping_at = world.time
 	if(lat <= 0)
 		return "[node.address]: 0мс ([route_name])"
 	// Ответ приходит после того, как пакет дойдёт и вернётся

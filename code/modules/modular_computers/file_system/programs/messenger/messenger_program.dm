@@ -842,22 +842,8 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 		target_chats += target_chat
 		target_messengers += target_messenger
 
-	if(!send_message_signal(source, message, target_messengers, photo_path, everyone))
-		return FALSE
-
-	// Log in our chat
-	var/datum/pda_message/message_datum = new(message, TRUE, STATION_TIME_TIMESTAMP(PDA_MESSAGE_TIMESTAMP_FORMAT, world.time), photo_asset, everyone)
-	for(var/datum/pda_chat/target_chat as anything in target_chats)
-		if(!target_chat)
-			continue
-		target_chat.add_message(message_datum, show_in_recents = !everyone)
-		target_chat.unread_messages = 0
-
-	// Switch chat screen after sending
-	if(!everyone)
-		viewing_messages_of = REF(target_chats[1])
-
-	return TRUE
+	// Accepted packets remain pending; only a real recipient commits an outgoing chat row.
+	return send_message_signal(source, message, target_messengers, photo_path, everyone, target_chats = target_chats, photo_asset = photo_asset)
 
 /// Sends a rigged message that explodes when the recipient tries to reply
 /datum/computer_file/program/messenger/proc/send_rigged_message(mob/sender, message, list/datum/computer_file/program/messenger/targets, fake_name, fake_job)
@@ -866,14 +852,14 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 		return FALSE
 	return send_message_signal(sender, message, targets, null, FALSE, TRUE, fake_name, fake_job)
 
-/datum/computer_file/program/messenger/proc/send_message_signal(atom/source, message, list/datum/computer_file/program/messenger/targets, photo_path = null, everyone = FALSE, rigged = FALSE, fake_name = null, fake_job = null)
+/datum/computer_file/program/messenger/proc/send_message_signal(atom/source, message, list/datum/computer_file/program/messenger/targets, photo_path = null, everyone = FALSE, rigged = FALSE, fake_name = null, fake_job = null, list/target_chats, photo_asset)
 	var/mob/sender
 	if(ismob(source))
 		sender = source
 		if(!sender.canUseTopic(computer, BE_CLOSE, check_resting = FALSE))
 			return FALSE
 
-	if(!COOLDOWN_FINISHED(src, last_text))
+	if(netrun_pending_messages || !COOLDOWN_FINISHED(src, last_text))
 		return FALSE
 
 	if(!length(targets))
@@ -907,27 +893,29 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 		signal.server_type = /obj/machinery/telecomms/hub
 		signal.data["reject"] = FALSE
 
-	signal.send_to_receivers()
+	var/datum/netrun_telecomms_transmission/pda/transmission = new(signal, src, source, target_chats, photo_asset)
+	transmission.target_names = stringified_targets
+	netrun_pending_messages++
+	netrun_delivery_error = FALSE
+	netrun_delivery_status = "Сообщение ожидает сетевой доставки."
+	SStgui.update_uis(computer)
+	return signal.send_to_receivers() > 0
 
-	// If it didn't reach
-	if(!signal.data["done"])
-		if(SSnetworks.ntnet_debug_global_signal || issilicon(sender))
-			// Bypass telecomms and deliver directly via NTNet
-			signal.broadcast()
-			signal.mark_done()
-		else
-			if(sender)
-				to_chat(sender, span_notice("ERROR: Server is not responding."))
-			if(alert_able && !alert_silenced)
-				playsound(computer, 'sound/machines/terminal_error.ogg', 15, TRUE)
-			return FALSE
+/// Success effects run once after transport has delivered to at least one recipient.
+/datum/computer_file/program/messenger/proc/complete_netrun_message(atom/source, datum/signal/subspace/messaging/tablet_message/signal, list/stringified_targets)
+	var/mob/sender = ismob(source) ? source : null
+	var/message = signal.data["message"]
+	var/rigged = signal.data["rigged"]
+	var/everyone = signal.data["everyone"]
+	var/fake_name = signal.data["fakename"]
+	var/fake_job = signal.data["fakejob"]
 
 	var/shell_addendum = ""
 
 	// Log in the talk log
-	source.log_talk(message, LOG_PDA, tag="[shell_addendum][rigged ? "Rigged" : ""] PDA: [computer.saved_identification || "Unknown"] to [signal.format_target()]")
+	source?.log_talk(message, LOG_PDA, tag="[shell_addendum][rigged ? "Rigged" : ""] PDA: [computer.saved_identification || "Unknown"] to [signal.format_target()]")
 	if(rigged)
-		var/log_text = "[key_name(sender)] sent a rigged PDA message (Name: [fake_name]. Job: [fake_job]) to [english_list(stringified_targets)] [sender.mind?.special_role ? "" : "(SENT BY NON-ANTAG)"]"
+		var/log_text = "[key_name(sender)] sent a rigged PDA message (Name: [fake_name]. Job: [fake_job]) to [english_list(stringified_targets)] [sender?.mind?.special_role ? "" : "(SENT BY NON-ANTAG)"]"
 		log_game(log_text)
 		message_admins(log_text)
 
@@ -956,7 +944,7 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 
 /datum/computer_file/program/messenger/proc/receive_message(datum/signal/subspace/messaging/tablet_message/signal)
 	if(QDELETED(computer))
-		return
+		return FALSE
 	var/datum/pda_chat/chat = null
 
 	var/is_rigged = signal.data["rigged"]
@@ -973,7 +961,7 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 		if(!istype(chat))
 			chat = create_chat(!is_fake_user ? sender_ref : null, fake_name, fake_job)
 		if(!chat)
-			return
+			return FALSE
 		if(chat.blocked)
 			if(!is_fake_user)
 				var/datum/computer_file/program/messenger/sender_messenger = GLOB.pda_messengers[sender_ref]
@@ -981,7 +969,7 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 					var/obj/item/modular_computer/sender_computer = sender_messenger.computer
 					if(istype(sender_computer) && isliving(sender_computer.loc))
 						to_chat(sender_computer.loc, span_warning("Пользователь вас заблокировал."))
-			return
+			return FALSE
 		var/datum/pda_message/message = new(signal.data["message"], FALSE, STATION_TIME_TIMESTAMP(PDA_MESSAGE_TIMESTAMP_FORMAT, world.time), signal.data["photo"], signal.data["everyone"])
 		chat.add_message(message)
 		chat.unread_messages++
@@ -1043,6 +1031,7 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 		pda.receive_message(signal)
 
 	SStgui.update_uis(computer)
+	return TRUE
 
 
 /// Topic handler for reply links in chat

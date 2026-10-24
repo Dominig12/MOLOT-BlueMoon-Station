@@ -37,6 +37,10 @@
 	var/persistent = FALSE
 	var/patrol_network_id
 	var/hop_cooldown = 0
+	/// Idle patrols visit adjacent devices without a station-wide target search.
+	var/list/patrol_visits = list()
+	var/patrol_visit = 0
+	var/idle_expires_at = 0
 	// Боевые состояния (как у сущностей)
 	var/combat_stun_until = 0
 	var/combat_shield_until = 0
@@ -52,6 +56,7 @@
 		integrity = 90
 		max_integrity = 90
 		program_ids = list("assault", "strike", "blackout", "trace")
+		idle_expires_at = world.time + patrol_life * (1 SECONDS)
 	else
 		name = "ICE-SENTRY"
 	SSnetrun.ice_processes += src
@@ -60,6 +65,7 @@
 		anchor_ref = WEAKREF(start)
 
 /datum/netrun_ice/Destroy()
+	SSnetrun.unregister_hunter(src)
 	QDEL_NULL(reaction)
 	cancel_program()
 	SSnetrun.ice_processes -= src
@@ -76,6 +82,11 @@
 		return FALSE
 	leave_node()
 	node = new_node
+	if(kind == NETRUN_ICE_HUNTER)
+		if(!patrol_network_id)
+			patrol_network_id = new_node.network?.id
+		SSnetrun.register_hunter(src)
+		patrol_visits[new_node.address] = ++patrol_visit
 	LAZYADD(new_node.netrun_ice, src)
 	new_node.notify_changed(NETRUN_CHANGED_OCCUPANTS)
 	SEND_SIGNAL(src, COMSIG_NETRUN_ICE_NODE_CHANGED, null, new_node)
@@ -95,7 +106,7 @@
 
 /// Узел уничтожен: сторож гибнет вместе с ним, охотник пробует перепрыгнуть.
 /datum/netrun_ice/proc/host_lost()
-	var/datum/netrun_network/network = node?.network
+	var/datum/netrun_network/network = defense_network()
 	leave_node()
 	if(kind == NETRUN_ICE_SENTRY)
 		qdel(src)
@@ -235,9 +246,39 @@
 
 // MARK: Поведение (AI)
 
+/// A hunter belongs to one LAN even when another LAN is physically adjacent.
+/datum/netrun_ice/proc/defense_network()
+	if(kind == NETRUN_ICE_HUNTER && patrol_network_id)
+		return SSnetrun.networks[patrol_network_id]
+	return node?.network
+
+/// Population inspects cheap deadlines; only due patrols and active combat queue AI work.
+/datum/netrun_ice/proc/needs_netrun_tick()
+	if(QDELETED(node) || QDELETED(node.parent) || pending_program)
+		return TRUE
+	if(kind == NETRUN_ICE_HUNTER && !persistent && world.time >= idle_expires_at)
+		return TRUE
+	if(is_stunned() || !node.is_online())
+		return FALSE
+	if(length(node.entities))
+		return TRUE
+	if(kind == NETRUN_ICE_HUNTER)
+		return world.time >= hop_cooldown
+	for(var/datum/netrun_console/console as anything in SSnetrun.currentbreaches)
+		if(valid_trace_target(console))
+			return TRUE
+	return FALSE
+
 /datum/netrun_ice/proc/process_ai(delta)
 	if(QDELETED(node) || QDELETED(node.parent))
 		host_lost()
+		return
+	if(kind == NETRUN_ICE_HUNTER && node.network != defense_network())
+		host_lost()
+		return
+	if(kind == NETRUN_ICE_HUNTER && !persistent && !pending_program && world.time >= idle_expires_at)
+		node?.network?.add_log("Охотничий процесс свёрнут: цель не найдена.")
+		qdel(src)
 		return
 	if(is_stunned() || !node.is_online())
 		cancel_program()
@@ -247,21 +288,17 @@
 		return
 	var/mob/camera/netrun_entity/prey = find_intruder(node)
 	if(prey)
+		idle_expires_at = world.time + patrol_life * (1 SECONDS)
 		try_attack(prey)
 		return
-	if(kind == NETRUN_ICE_SENTRY)
-		harass_intruders()
+	if(harass_intruders())
 		return
-	// Охотник: ищем нарушителя по сети и идём к нему.
-	if(!persistent)
-		patrol_life -= delta
-		if(patrol_life <= 0)
-			node?.network?.add_log("Охотничий процесс свёрнут: цель не найдена.")
-			qdel(src)
-			return
-	// Нет ни одной сетевой сущности - преследовать некого, дорогой BFS не нужен.
-	if(length(SSnetrun.entities))
-		hunt()
+	if(kind == NETRUN_ICE_SENTRY)
+		return
+	if(world.time < hop_cooldown)
+		return
+	if(!hunt())
+		patrol()
 
 /// Нарушитель в узле: сущность без легального доступа ПОЛЬЗОВАТЕЛЯ к узлу.
 /datum/netrun_ice/proc/find_intruder(datum/component/netrun_node/where)
@@ -363,40 +400,51 @@
 /datum/netrun_ice/proc/harass_intruders()
 	var/datum/netrun_program/program = SSnetrun.get_program("trace")
 	if(world.time < next_attack || world.time < (program_cd[program.id] || 0))
-		return
+		return FALSE
 	// During the subsystem pass this is one shared, bounded breach snapshot.
 	// Standalone callers still inspect live consoles; execution checks every candidate.
 	var/list/candidates = SSnetrun.breach_snapshot_active ? SSnetrun.currentbreaches : SSnetrun.consoles
 	for(var/datum/netrun_console/console as anything in candidates)
 		if(valid_trace_target(console) && begin_program(program, console))
-			return
+			idle_expires_at = world.time + patrol_life * (1 SECONDS)
+			return TRUE
+	return FALSE
 
 /datum/netrun_ice/proc/hunt()
 	if(world.time < hop_cooldown)
-		return
+		return FALSE
+	var/datum/netrun_network/network = defense_network()
+	var/list/targets = list()
+	for(var/mob/camera/netrun_entity/entity as anything in SSnetrun.entities)
+		if(!QDELETED(entity) && entity.host_node?.network == network && find_intruder(entity.host_node))
+			targets[entity.host_node.address] = TRUE
+	if(!length(targets))
+		return FALSE
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	// BFS от текущего узла до ближайшего узла с нарушителем.
+	// Search only this LAN, and only when a real intruder is present there.
 	var/list/queue = list(node.address)
 	var/list/came_from = list()
 	came_from[node.address] = null
 	var/target_address
-	for(var/i = 1, i <= length(queue) && i <= 60, i++)
+	for(var/i = 1, i <= length(queue), i++)
 		var/address = queue[i]
 		var/datum/component/netrun_node/current = graph.nodes[address]
-		if(QDELETED(current) || !current.is_online())
+		if(QDELETED(current) || current.network != network || !current.is_online())
 			continue
-		if(address != node.address && find_intruder(current))
+		if(address != node.address && targets[address])
 			target_address = address
 			break
-		for(var/neighbor in graph.neighbors(address))
+		for(var/neighbor in graph.neighbors(address, FALSE))
 			if(!isnull(came_from[neighbor]) || neighbor == node.address)
 				continue
-			if(!netrun_link_available(current, graph.nodes[neighbor]))
+			var/datum/component/netrun_node/next = graph.nodes[neighbor]
+			if(next?.network != network || !netrun_link_available(current, next))
 				continue
 			came_from[neighbor] = address
 			queue += neighbor
 	if(!target_address)
-		return
+		return FALSE
+	idle_expires_at = world.time + patrol_life * (1 SECONDS)
 	// Восстанавливаем первый шаг пути.
 	var/step = target_address
 	while(came_from[step] && came_from[step] != node.address)
@@ -405,7 +453,27 @@
 	if(next_node && next_node != node)
 		enter_node(next_node)
 		hop_cooldown = world.time + 1.5 SECONDS
-		SSnetrun.post_event("trace", null, next_node.address)
+		return TRUE
+	return FALSE
+
+/// Walk real online links, preferring devices visited least recently over APC ping-pong.
+/datum/netrun_ice/proc/patrol()
+	hop_cooldown = world.time + 4 SECONDS
+	var/datum/netrun_network/network = defense_network()
+	if(!network)
+		return FALSE
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/destination
+	var/oldest = INFINITY
+	for(var/address in graph.neighbors(node.address, FALSE))
+		var/datum/component/netrun_node/candidate = graph.nodes[address]
+		if(candidate?.network != network || !netrun_link_available(node, candidate))
+			continue
+		var/visited = patrol_visits[address] || 0
+		if(visited < oldest)
+			destination = candidate
+			oldest = visited
+	return destination && enter_node(destination)
 
 // MARK: Подсистема
 
@@ -414,10 +482,31 @@
 	var/list/currentice = list()
 	/// Патрульные процессы поднимаются один раз за раунд при первом игровом тике.
 	var/patrol_initialized = FALSE
+	var/patrol_topology_revision = -1
+	/// Destroying a persistent patrol clears the LAN permanently; topology edits do not respawn it.
+	var/list/patrol_seeded_networks = list()
+	var/list/hunters_by_network = list()
 	/// Лорные документы раскладываются по серверам один раз за раунд.
 	var/lore_initialized = FALSE
 	/// Узлы защиты со спящими ячейками льда: address -> сколько ячеек ещё можно пробудить.
 	var/list/defense_nests = list()
+
+/datum/controller/subsystem/netrun/proc/register_hunter(datum/netrun_ice/ice)
+	if(ice.kind != NETRUN_ICE_HUNTER || !ice.patrol_network_id)
+		return
+	var/list/hunters = hunters_by_network[ice.patrol_network_id]
+	if(!hunters)
+		hunters = list()
+		hunters_by_network[ice.patrol_network_id] = hunters
+	hunters |= ice
+
+/datum/controller/subsystem/netrun/proc/unregister_hunter(datum/netrun_ice/ice)
+	var/list/hunters = hunters_by_network[ice.patrol_network_id]
+	if(!hunters)
+		return
+	hunters -= ice
+	if(!length(hunters))
+		hunters_by_network -= ice.patrol_network_id
 
 /// Создать ICE в узле. Возвращает процесс.
 /datum/controller/subsystem/netrun/proc/spawn_ice(datum/component/netrun_node/where, ice_kind = NETRUN_ICE_SENTRY)
@@ -443,13 +532,17 @@
 /// Пассивный патруль с начала раунда: по одному персистентному охотнику на крупные
 /// отдельские ЛВС. Патруль не сворачивается без цели и роняет ключ своей ЛВС при гибели.
 /datum/controller/subsystem/netrun/proc/initialize_patrol()
+	var/datum/netrun_topology/graph = get_topology()
+	if(graph.dirty)
+		return
 	patrol_initialized = TRUE
-	var/count = 0
+	patrol_topology_revision = graph.revision
+	var/count = length(patrol_seeded_networks)
 	for(var/net_id in networks)
 		if(count >= NETRUN_MAX_PATROLS)
 			break
 		var/datum/netrun_network/net = networks[net_id]
-		if(net.security < 2 || net.isolated)
+		if(net.security < 2 || net.isolated || patrol_seeded_networks[net.id])
 			continue
 		var/list/candidates = list()
 		for(var/datum/component/netrun_node/node as anything in net.nodes)
@@ -462,6 +555,7 @@
 		if(patrol)
 			patrol.persistent = TRUE
 			patrol.patrol_network_id = net.id
+			patrol_seeded_networks[net.id] = TRUE
 			net.add_log("В сети активен патрульный процесс защиты.")
 			count++
 		// В хорошо защищённых отделах один узел становится гнездом спящих ячеек льда.
@@ -478,35 +572,45 @@
 
 /// Трассировка вскрыта: патрули устремляются к нарушителю, а гнёзда пробуждают спящие ячейки.
 /datum/controller/subsystem/netrun/proc/alert_defenses(datum/component/netrun_node/target, datum/netrun_console/intruder)
-	if(QDELETED(target))
+	if(QDELETED(target) || !target.network)
 		return
-	for(var/datum/netrun_ice/ice as anything in ice_processes)
-		if(ice.kind == NETRUN_ICE_HUNTER)
-			ice.hop_cooldown = 0
-			if(!ice.persistent)
-				ice.patrol_life = max(ice.patrol_life, 40)
+	var/datum/netrun_network/network = target.network
+	var/active_responses = 0
+	for(var/datum/netrun_ice/ice as anything in hunters_by_network[network.id])
+		if(QDELETED(ice))
+			continue
+		if(!ice.persistent)
+			active_responses++
+			ice.idle_expires_at = world.time + ice.patrol_life * (1 SECONDS)
+		ice.hop_cooldown = min(ice.hop_cooldown, world.time + 1.5 SECONDS)
+		ice.reaction.wake()
 	for(var/nest_address in defense_nests)
+		if(active_responses >= 3)
+			break
 		if(defense_nests[nest_address] <= 0)
 			continue
 		var/datum/component/netrun_node/nest = nodes_by_address[nest_address]
-		if(QDELETED(nest) || QDELETED(nest.parent) || !nest.is_online())
+		if(QDELETED(nest) || QDELETED(nest.parent) || nest.network != network || !nest.is_online())
 			continue
-		defense_nests[nest_address]--
 		var/datum/netrun_ice/awoken = spawn_ice(nest, NETRUN_ICE_HUNTER)
 		if(awoken)
+			defense_nests[nest_address]--
+			active_responses++
 			awoken.hop_cooldown = 0
+			awoken.reaction.wake()
 			nest.network?.add_log("Пробуждена ячейка защиты: процесс направлен к нарушителю.")
 
 /// Выслать охотника за нарушителем-сущностью (если он есть и до него есть сеть).
 /datum/controller/subsystem/netrun/proc/dispatch_hunter(datum/component/netrun_node/near)
-	if(QDELETED(near) || QDELETED(near.parent))
+	if(QDELETED(near) || QDELETED(near.parent) || !near.network)
 		return
-	// Не плодим охотников: не больше трёх одновременно.
+	// Temporary responses have a separate per-LAN quota; passive patrols do not consume it.
 	var/hunters = 0
-	for(var/datum/netrun_ice/ice as anything in ice_processes)
-		if(ice.kind == NETRUN_ICE_HUNTER)
+	for(var/datum/netrun_ice/ice as anything in hunters_by_network[near.network?.id])
+		if(!QDELETED(ice) && !ice.persistent)
 			hunters++
 	if(hunters >= 3)
 		return
-	spawn_ice(near, NETRUN_ICE_HUNTER)
+	var/datum/netrun_ice/hunter = spawn_ice(near, NETRUN_ICE_HUNTER)
+	hunter?.reaction.wake()
 

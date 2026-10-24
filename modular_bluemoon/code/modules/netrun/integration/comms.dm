@@ -84,7 +84,7 @@
 /// Сущность не живая - штатный мессенджер её не уведомляет, делаем это сами
 /datum/computer_file/program/messenger/receive_message(datum/signal/subspace/messaging/tablet_message/signal)
 	. = ..()
-	if(!istype(computer, /obj/item/modular_computer/pda/netrun))
+	if(!. || !istype(computer, /obj/item/modular_computer/pda/netrun))
 		return
 	var/mob/camera/netrun_entity/entity = computer.loc
 	if(!istype(entity) || signal.data["rigged"])

@@ -142,7 +142,8 @@
 			network_codes += network.code
 		// Keep the original CLI disclosure policy. Mapper alone does not reveal
 		// locked endpoint addresses through these shared completion lists.
-		if(network_level(network) >= NETRUN_ACCESS_GUEST || node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY))
+		// DM evaluates `in` after `||`: keep membership separate from authorization.
+		if(network_level(network) >= NETRUN_ACCESS_GUEST || (node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)))
 			node_addresses += node.address
 	if(owns_routes)
 		QDEL_NULL(ui_routes)
@@ -171,7 +172,7 @@
 			var/datum/component/netrun_node/node = console.selected_node()
 			var/full_id = lowertext(words[2])
 			var/datum/netrun_command/request = SSnetrun.get_command(full_id)
-			if(node && request && full_id in node.all_command_ids())
+			if(node && request && (full_id in node.all_command_ids()))
 				console.log_line("run [full_id] — [request.display_name(node, netrun_command_arg(full_id))]", "label")
 				for(var/line in splittext(request.help_text(node, console, full_id), "\n"))
 					console.log_line(line)

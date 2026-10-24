@@ -72,11 +72,12 @@
 		log_line("Некорректные параметры запроса [action].", "bad")
 		return FALSE
 	var/lat = latency_to(node, tree)
+	var/list/poll_route = tree.addresses_to(node.address)
 	qdel(tree)
 	next_command = world.time + max(lat, 0.5 SECONDS)
 	log_line("[address]: [entry["name"]] — доставка ~[lat * 100] мс.")
 	var/datum/netrun_request/remote/request = new(src, node, api, action, clean, node.network, operator)
-	return request.send(lat)
+	return request.send(lat, poll_route)
 
 /datum/netrun_console/proc/do_remote_request(datum/component/netrun_node/node, datum/netrun_provider/api, action, list/params, datum/netrun_network/sent_network, mob/sender)
 	var/datum/netrun_request/remote/request = new(src, node, api, action, params, sent_network, sender)

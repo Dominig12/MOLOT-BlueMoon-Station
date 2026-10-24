@@ -82,12 +82,27 @@
 	var/datum/component/netrun_node/node = target()
 	if(QDELETED(node))
 		return FALSE
+	if(!limits)
+		limits = worker.get_execution_limits()
+	if(!node.urgent_update && worker.node_interest_until[node] <= world.time && world.time < node.last_processed_at + limits.node_update_interval)
+		if(node.pending_state_notification || node.pending_changed_flags || !isnull(worker.dirty_nodes[node]))
+			worker.dirty_nodes -= node
+			worker.queue_node(node)
+		if(!isnull(worker.poll_nodes[node]))
+			worker.poll_nodes[node] = max(worker.poll_nodes[node], node.last_processed_at + limits.node_idle_poll_interval)
+		return FALSE
 	worker.dirty_nodes -= node
+	node.processing_update = TRUE
 	var/datum/netrun_topology/graph = worker.get_topology()
 	if(node.is_dynamic() || !node.binding_checked || node.binding_infra_revision != graph.infrastructure_revision)
 		node.join_network()
 	node.reconcile_state()
+	node.processing_update = FALSE
+	node.urgent_update = FALSE
+	node.last_processed_at = world.time
+	node.publish_changes()
 	worker.track_node(node)
+	worker.finish_node_poll(node)
 	worker.last_processed_nodes++
 	return TRUE
 
@@ -148,7 +163,7 @@
 	if(graph.dirty)
 		worker.get_task_scheduler().enqueue("apc_prebuild", graph, NETRUN_TASK_BACKGROUND)
 	graph.refresh_route_tables(limits.route_refresh_interval, limits.route_expiry_interval)
-	if(!worker.patrol_initialized && length(worker.networks))
+	if(!graph.dirty && graph.revision != worker.patrol_topology_revision && length(worker.networks))
 		worker.initialize_patrol()
 	if(!worker.lore_initialized && length(worker.nodes_by_address))
 		worker.initialize_lore()

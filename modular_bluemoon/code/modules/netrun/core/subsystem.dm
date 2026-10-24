@@ -24,8 +24,11 @@ SUBSYSTEM_DEF(netrun)
 	var/combat_full_payload_peak_ms = 0
 	/// Only sessions with timers, a live UI or an entity are processed.
 	var/list/active_consoles = list()
-	/// Moving devices and native states that genuinely lack notifications.
+	/// Moving/legacy endpoints -> next fallback deadline; native signals bypass this schedule.
 	var/list/poll_nodes = list()
+	/// Short, renewable player/request interest. NPC activity does not renew these leases.
+	var/list/node_interest_until = list()
+	var/list/pending_requests = list()
 	var/list/dirty_nodes = list()
 	/// node -> next transient expiry (activity, reboot, firewall).
 	var/list/timed_nodes = list()
@@ -66,11 +69,16 @@ SUBSYSTEM_DEF(netrun)
 		msg += " Cam ms total/max F:[round(camera_feed_scan_ms, 0.1)]/[round(camera_feed_scan_max_ms, 0.1)] R:[round(camera_route_check_ms, 0.1)]/[round(camera_route_check_max_ms, 0.1)]"
 	return ..()
 
-/// Coalescing worksets keep quiet machines and terminals out of the one-second pass.
-/datum/controller/subsystem/netrun/proc/queue_node(datum/component/netrun_node/node)
+/// Repeated cold inputs share one fixed trailing deadline measured from completed processing.
+/datum/controller/subsystem/netrun/proc/queue_node(datum/component/netrun_node/node, urgent = FALSE)
 	if(!QDELETED(node))
-		dirty_nodes[node] = TRUE
-		get_task_scheduler().enqueue("node", node, NETRUN_TASK_NORMAL)
+		node.urgent_update ||= urgent
+		var/due = (urgent || node_interest_until[node] > world.time) ? world.time : max(world.time, node.last_processed_at + get_execution_limits().node_update_interval)
+		if(!isnull(dirty_nodes[node]))
+			due = min(due, dirty_nodes[node])
+		dirty_nodes[node] = due
+		if(due <= world.time)
+			get_task_scheduler().enqueue("node", node, NETRUN_TASK_NORMAL)
 
 /// A display snapshot can be requested before the next one-second node pass.
 /// Inspect only queued native changes; command execution still builds fresh routes.
@@ -88,7 +96,8 @@ SUBSYSTEM_DEF(netrun)
 		return
 	var/atom/endpoint = node.parent
 	if(node.is_dynamic() || endpoint.netrun_needs_poll())
-		poll_nodes[node] = TRUE
+		if(isnull(poll_nodes[node]))
+			poll_nodes[node] = world.time + get_execution_limits().node_idle_poll_interval
 	else
 		poll_nodes -= node
 	var/next_expiry = INFINITY
@@ -108,7 +117,107 @@ SUBSYSTEM_DEF(netrun)
 	poll_nodes -= node
 	dirty_nodes -= node
 	timed_nodes -= node
+	node_interest_until -= node
 	task_scheduler?.cancel("node", node)
+
+/// Legacy fallback cadence is independent of the cold dirty/publication throttle.
+/datum/controller/subsystem/netrun/proc/finish_node_poll(datum/component/netrun_node/node)
+	if(isnull(poll_nodes[node]))
+		return
+	var/datum/netrun_execution_limits/limits = get_execution_limits()
+	poll_nodes[node] = world.time + (node_interest_until[node] > world.time ? limits.node_poll_interval : limits.node_idle_poll_interval)
+
+/// Absolute deadlines let packets/pings reuse their already calculated route without a new tree.
+/datum/controller/subsystem/netrun/proc/retain_node_interest(datum/component/netrun_node/node, until)
+	if(QDELETED(node) || !IS_FINITE(until) || until <= world.time)
+		return FALSE
+	until = min(until, world.time + NETRUN_NODE_INTEREST_LEASE)
+	var/was_interested = node_interest_until[node] > world.time
+	node_interest_until[node] = max(node_interest_until[node] || 0, until)
+	if(!was_interested && !isnull(poll_nodes[node]))
+		poll_nodes[node] = min(poll_nodes[node], world.time)
+	if(!was_interested && !isnull(dirty_nodes[node]))
+		queue_node(node)
+	return TRUE
+
+/// Accept either node addresses or the existing ping/packet hop representation.
+/datum/controller/subsystem/netrun/proc/retain_route_interest(list/hops, until)
+	for(var/hop as anything in hops)
+		var/address = hop
+		if(islist(hop))
+			var/list/entry = hop
+			if(entry["kind"] && entry["kind"] != "node")
+				continue
+			address = entry["ref"]
+		retain_node_interest(nodes_by_address[address], until)
+
+/// Read only retained topology/path data. Interest must not perform global discovery or routing.
+/datum/controller/subsystem/netrun/proc/collect_console_node_interest(datum/netrun_console/console)
+	if(QDELETED(console))
+		return
+	var/mob/camera/netrun_entity/entity = istype(console.host, /mob/camera/netrun_entity) ? console.host : null
+	if(entity && !entity.client && !entity.dive_link?.body?.client)
+		var/datum/ui_source = QDELETED(console.netrun_ui_source) ? console : console.netrun_ui_source
+		if(!length(SStgui.get_all_open_uis(ui_source)))
+			return
+	if(!console.is_ui_active() && !entity?.client && !entity?.dive_link?.body?.client)
+		return
+	var/until = world.time + NETRUN_NODE_INTEREST_LEASE
+	var/datum/component/netrun_node/source = console.connection.jack || entity?.host_node || netrun_find_node(console.host) || nodes_by_address[console.ui_source_address]
+	retain_node_interest(source, until)
+	var/list/targets = list(console.map_view.selected_address, console.remote_session.active_window, console.remote_session.watch_node?.address)
+	if(console.map_view.waypoint_address)
+		targets |= console.map_view.waypoint_address
+	if(console.intrusion.breach && console.intrusion.breach.target_kind != "network")
+		targets |= console.intrusion.breach.target_id
+	var/datum/netrun_path_tree/table = (source && topology) ? topology.route_tables[source.address] : null
+	for(var/address as anything in targets)
+		retain_node_interest(nodes_by_address[address], until)
+		if(table && address)
+			retain_route_interest(table.addresses_to(address), until)
+	if(entity)
+		retain_route_interest(entity.navigation?.queue, until)
+		retain_route_interest(entity.dive_link?.route_chain, until)
+	// Neighbor lookup is confined to this attachment, then filtered by physical distance.
+	// Being on an APC must not turn its whole department into a fast poll set.
+	var/datum/component/netrun_node/apc = source?.node_type == NETRUN_NODE_APC ? source : source?.bound_apc
+	retain_node_interest(apc, until)
+	var/turf/here = get_turf(source?.parent)
+	if(here && apc)
+		var/list/neighbors = topology ? topology.adjacency[apc.address] : null
+		for(var/address in neighbors)
+			var/datum/component/netrun_node/neighbor = nodes_by_address[address]
+			var/turf/there = get_turf(neighbor?.parent)
+			if(there && here.z == there.z && get_dist(here, there) <= NETRUN_NODE_INTEREST_RADIUS)
+				retain_node_interest(neighbor, until)
+
+/datum/controller/subsystem/netrun/proc/collect_request_node_interest(datum/netrun_request/delivery/request)
+	if(QDELETED(request) || QDELETED(request.console))
+		return
+	var/until = world.time + NETRUN_NODE_INTEREST_LEASE
+	retain_route_interest(request.poll_route, until)
+	retain_node_interest(request.node, until)
+	var/datum/netrun_console/console = request.console
+	var/mob/camera/netrun_entity/entity = istype(console.host, /mob/camera/netrun_entity) ? console.host : null
+	retain_node_interest(console.connection.jack || entity?.host_node || netrun_find_node(console.host) || nodes_by_address[console.ui_source_address], until)
+
+/datum/controller/subsystem/netrun/proc/populate_node_tasks()
+	var/datum/netrun_task_scheduler/scheduler = get_task_scheduler()
+	for(var/datum/component/netrun_node/node as anything in node_interest_until)
+		if(QDELETED(node) || node_interest_until[node] <= world.time)
+			node_interest_until -= node
+	for(var/datum/component/netrun_node/node as anything in dirty_nodes)
+		if(!QDELETED(node) && dirty_nodes[node] <= world.time)
+			scheduler.enqueue("node", node, NETRUN_TASK_NORMAL)
+	for(var/datum/component/netrun_node/node as anything in poll_nodes)
+		if(QDELETED(node))
+			poll_nodes -= node
+			continue
+		if(poll_nodes[node] <= world.time)
+			scheduler.enqueue("node", node, NETRUN_TASK_BACKGROUND)
+	for(var/datum/component/netrun_node/node as anything in timed_nodes)
+		if(timed_nodes[node] <= world.time && !QDELETED(node))
+			queue_node(node, TRUE)
 
 /datum/controller/subsystem/netrun/proc/get_task_scheduler()
 	if(!task_scheduler)
@@ -124,7 +233,6 @@ SUBSYSTEM_DEF(netrun)
 	task_populations++
 	var/datum/netrun_task_scheduler/scheduler = get_task_scheduler()
 	currentbreaches.Cut()
-	var/reconcile = length(entities) || !patrol_initialized || !lore_initialized
 	for(var/datum/netrun_console/console as anything in active_consoles)
 		if(QDELETED(console))
 			active_consoles -= console
@@ -135,23 +243,20 @@ SUBSYSTEM_DEF(netrun)
 			console.stop_ui_observation()
 			active_consoles -= console
 			continue
-		reconcile = TRUE
+		collect_console_node_interest(console)
 		var/priority = console.intrusion.breach || console.is_locked() ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL
 		scheduler.enqueue("console", console, priority)
 	for(var/datum/netrun_ice/ice as anything in ice_processes)
 		if(QDELETED(ice))
 			continue
-		scheduler.enqueue("ice", ice, ice.pending_program ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL)
-	for(var/datum/component/netrun_node/node as anything in dirty_nodes)
-		if(!QDELETED(node))
-			scheduler.enqueue("node", node, NETRUN_TASK_NORMAL)
-	if(reconcile)
-		for(var/datum/component/netrun_node/node as anything in poll_nodes)
-			if(!QDELETED(node))
-				scheduler.enqueue("node", node, NETRUN_TASK_BACKGROUND)
-	for(var/datum/component/netrun_node/node as anything in timed_nodes)
-		if(timed_nodes[node] <= world.time && !QDELETED(node))
-			scheduler.enqueue("node", node, NETRUN_TASK_NORMAL)
+		if(ice.needs_netrun_tick())
+			scheduler.enqueue("ice", ice, ice.pending_program ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL)
+	for(var/datum/netrun_request/delivery/request as anything in pending_requests)
+		if(QDELETED(request))
+			pending_requests -= request
+		else
+			collect_request_node_interest(request)
+	populate_node_tasks()
 	scheduler.enqueue("housekeeping", null, NETRUN_TASK_BACKGROUND)
 	if(get_topology().dirty)
 		scheduler.enqueue("apc_prebuild", get_topology(), NETRUN_TASK_BACKGROUND)

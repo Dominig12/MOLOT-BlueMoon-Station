@@ -41,6 +41,11 @@
 	var/last_active
 	var/last_dynamic
 	var/pending_state_notification = FALSE
+	/// Cold display notifications are coalesced from the last completed processing, not input.
+	var/last_processed_at = -INFINITY
+	var/pending_changed_flags = 0
+	var/urgent_update = FALSE
+	var/processing_update = FALSE
 	/// Owned subscription list, including every statically matching provider's signals.
 	var/list/subscribed_state_signals
 
@@ -66,7 +71,9 @@
 /datum/component/netrun_node/RegisterWithParent()
 	RegisterSignal(parent, COMSIG_ATOM_EMP_ACT, PROC_REF(on_emp))
 	subscribed_state_signals = list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED, COMSIG_OBJ_SETANCHORED) | SSnetrun.get_provider_state_signals(parent)
-	RegisterSignal(parent, subscribed_state_signals, PROC_REF(on_state_changed))
+	var/list/availability_signals = list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED)
+	RegisterSignal(parent, availability_signals, PROC_REF(on_availability_changed))
+	RegisterSignal(parent, subscribed_state_signals - availability_signals, PROC_REF(on_state_changed))
 	if(ismovable(parent))
 		RegisterSignal(parent, COMSIG_MOVABLE_MOVED, PROC_REF(on_moved))
 
@@ -137,6 +144,11 @@
 	pending_state_notification = TRUE
 	SSnetrun.queue_node(src)
 
+/datum/component/netrun_node/proc/on_availability_changed(datum/source)
+	SIGNAL_HANDLER
+	pending_state_notification = TRUE
+	SSnetrun.queue_node(src, TRUE)
+
 /datum/component/netrun_node/proc/on_storage_changed(datum/source)
 	SIGNAL_HANDLER
 	notify_changed()
@@ -172,10 +184,25 @@
 	// Availability is a separate routing generation: occupant/activity changes do not
 	// rebuild shortest paths, while power/EMP changes invalidate retained display paths.
 	var/online = is_online()
+	var/availability_changed = online != last_online
 	if(online != last_online)
 		last_online = online
 		SSnetrun.get_topology().availability_changed(src)
 	SEND_SIGNAL(src, COMSIG_NETRUN_NODE_CHANGED, src, flags)
+	pending_changed_flags |= flags
+	if(processing_update)
+		return
+	if((flags & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED)) || urgent_update || availability_changed || SSnetrun.node_interest_until[src] > world.time)
+		publish_changes()
+	else
+		SSnetrun.queue_node(src)
+
+/// Only the global presentation stream is batched; gameplay fields and local signals are live.
+/datum/component/netrun_node/proc/publish_changes()
+	var/flags = pending_changed_flags
+	if(!flags)
+		return
+	pending_changed_flags = 0
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, src, flags)
 
 /datum/component/netrun_node/proc/on_emp(datum/source, severity)

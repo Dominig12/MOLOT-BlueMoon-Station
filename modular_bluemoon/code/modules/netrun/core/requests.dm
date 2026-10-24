@@ -11,6 +11,8 @@
 	var/cancelled = FALSE
 	/// A packet may be dispatched once, whether immediately or through its owned timer.
 	var/sent = FALSE
+	/// Owned copy of the dispatch snapshot's path; interest never builds a second route tree.
+	var/list/poll_route = list()
 
 /datum/netrun_request/delivery/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/netrun_network/sent_network, mob/sender, file_uid)
 	..(file_uid)
@@ -25,6 +27,8 @@
 		RegisterSignal(dependency, COMSIG_PARENT_QDELETING, PROC_REF(on_dependency_deleted))
 
 /datum/netrun_request/delivery/Destroy()
+	SSnetrun.pending_requests -= src
+	poll_route.Cut()
 	if(timer_id)
 		deltimer(timer_id)
 		timer_id = null
@@ -43,13 +47,16 @@
 	if(!delivering)
 		qdel(src)
 
-/datum/netrun_request/delivery/proc/send(delay = 0)
+/datum/netrun_request/delivery/proc/send(delay = 0, list/route_hops)
 	if(sent || delivering || QDELETED(src))
 		return FALSE
 	if(cancelled || QDELETED(console) || QDELETED(node))
 		qdel(src)
 		return FALSE
 	sent = TRUE
+	poll_route = route_hops ? route_hops.Copy() : list()
+	SSnetrun.pending_requests[src] = TRUE
+	SSnetrun.collect_request_node_interest(src)
 	// Circuits are autonomous; explicit player packets enter the interactive lane.
 	if(console.origin != NETRUN_ORIGIN_CIRCUIT)
 		console.note_user_action()

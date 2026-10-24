@@ -1,7 +1,7 @@
 import { GraphOverlay } from './graphPresentation';
 import { GraphScene, PlacedNode } from './graphScene';
 import { framebufferResolution, mountNetrunPixi } from './pixiSurface';
-import { MockApplication, resetPixiMock } from './testSupport/pixiLibraryMock';
+import { MockApplication, MockGraphics, resetPixiMock } from './testSupport/pixiLibraryMock';
 
 jest.mock('pixi.js', () => jest.requireActual('./testSupport/pixiLibraryMock').mockPixi);
 
@@ -120,4 +120,30 @@ test('finite live effects settle; reduced motion and document hiding cancel anim
   expect(frames.size).toBe(0);
   Object.defineProperty(document, 'hidden', { value: false, configurable: true }); document.dispatchEvent(new Event('visibilitychange'));
   flush(); surface.destroy();
+});
+
+test('a static ping schedules one expiry frame and a repeated path with a new id renders again', async () => {
+  jest.useFakeTimers({ doNotFake: ['performance', 'requestAnimationFrame', 'cancelAnimationFrame'] });
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const surface = await mountNetrunPixi(host, 800, 600, undefined, { reducedMotion: true });
+  try {
+    const scene = new GraphScene(); scene.update([node('A'), node('B', 100)], [{ id: 'AB', from: 'A', to: 'B', kind: 'apc' }]);
+    const state = { ...overlay(), pingRoute: ['A', 'B'], pingId: 1, pingExpiresAt: 6000 };
+    surface.updateScene(scene, state); surface.updateActors(scene, state); flush();
+    const ping = MockGraphics.graphics.find((entry) => entry.label === 'ping-route');
+    expect(ping.calls.some((call) => call.op === 'lineTo')).toBe(true);
+    expect(frames.size).toBe(0);
+    expect(jest.getTimerCount()).toBe(1);
+    clock = 6000; jest.advanceTimersByTime(6000); flush();
+    expect(ping.calls).toEqual([]);
+    expect(jest.getTimerCount()).toBe(0);
+    surface.updateActors(scene, { ...state, pingId: 2, pingExpiresAt: 12000 }); flush();
+    expect(ping.calls.some((call) => call.op === 'lineTo')).toBe(true);
+    expect(jest.getTimerCount()).toBe(1);
+    surface.setSuspended(true);
+    expect(jest.getTimerCount()).toBe(0);
+    clock = 13000; surface.setSuspended(false); flush();
+    expect(ping.calls).toEqual([]);
+    expect(jest.getTimerCount()).toBe(0);
+  } finally { surface.destroy(); jest.useRealTimers(); }
 });

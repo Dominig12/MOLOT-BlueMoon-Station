@@ -21,6 +21,8 @@ type MapInput = {
   entityHost: string | null;
   hasEntity: boolean;
   pingRoute: PingHop[];
+  pingId?: number;
+  pingExpiresAt?: number;
   events: NetEvent[];
   waypoint: Waypoint | null;
   search: SearchResult[];
@@ -43,13 +45,19 @@ const useSemanticValue = <T, >(value: T, signature: string | undefined): T => {
   return previous.current.value;
 };
 export const StationMap = memo((props: { suspended?: boolean } = {}) => {
-  const { act, data } = useBackend<NetrunData>(['map', 'selected', 'selected_network', 'jack', 'entity', 'ping_route', 'events', 'waypoint', 'search']);
+  const { act, data } = useBackend<NetrunData>(['map', 'selected', 'selected_network', 'jack', 'entity', 'ping_route', 'ping', 'events', 'waypoint', 'search']);
   const [stream] = useState(() => new NetrunMapStream());
   const [, refreshRecovery] = useState(0);
   const resyncSent = useRef(0);
   const lastAcknowledged = useRef('');
   const acknowledgementGeneration = useRef(0);
+  const pingClock = useRef<{ id: number; expires: number } | null>(null);
   const latest = useRef<MapInput | null>(null);
+  // Timestamp receipt even while the map is hidden. Opening it later must not
+  // turn an old remaining_ms snapshot into a fresh full display lifetime.
+  if (data.ping && pingClock.current?.id !== data.ping.id) {
+    pingClock.current = { id: data.ping.id, expires: performance.now() + Math.max(0, data.ping.remaining_ms) };
+  }
   if (!props.suspended && data.map) {
     const resolved = stream.apply(data.map);
     // The server omits map and selection while another workspace is active.
@@ -59,6 +67,7 @@ export const StationMap = memo((props: { suspended?: boolean } = {}) => {
       selectedNetwork: data.selected_network?.id ?? null, jackAddress: data.jack?.address ?? null,
       entityHost: data.entity?.host ?? null, hasEntity: !!data.entity,
       pingRoute: data.ping_route ?? EMPTY_HOPS, events: data.events ?? EMPTY_EVENTS,
+      pingId: data.ping?.id, pingExpiresAt: data.ping ? pingClock.current?.expires : undefined,
       waypoint: data.waypoint ?? null, search: data.search ?? EMPTY_SEARCH,
     } : null;
   }
@@ -144,7 +153,7 @@ const MapSnapshot = memo(({ input, act, suspended }: { input: MapInput; act: Act
 
 const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
   const { act, selectedAddress, selectedNetwork, jackAddress, entityHost, hasEntity,
-    map, topologyKey, pingRoute, events, waypoint, search, suspended } = props;
+    map, topologyKey, pingRoute, pingId, pingExpiresAt, events, waypoint, search, suspended } = props;
   const viewport = useRef<NetworkViewportHandle>(null);
   const feedback = useNetrunFeedback();
   const latestFeedback = useRef(feedback); latestFeedback.current = feedback;
@@ -353,7 +362,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
         gateways={gateways} selected={selectedAddress} jacked={jackAddress}
         apcZones={map.apc_zones}
         entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || EMPTY_ADDRESSES}
-        pingRoute={pingAddresses} events={events} onSelect={onSelect} />
+        pingRoute={pingAddresses} pingId={pingId} pingExpiresAt={pingExpiresAt} events={events} onSelect={onSelect} />
       <Box p={0.5} color={THEME.muted} fontSize="10px" style={{ flexShrink: 0, borderTop: `1px solid ${THEME.line}`, background: '#0d222d' }}>
         □ APC · ⬡ реле · ◇ сервер/терминал · ○ устройство · подсветка — зона выбранного APC<br />
         ЛКМ — выбрать · потянуть — переместить · колесо — масштаб · WASD — выбор{hasEntity ? ' · Shift+WASD — переход' : ''}

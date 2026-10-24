@@ -32,7 +32,9 @@ GLOBAL_VAR_INIT(message_delay, 0) // To make sure restarting the recentmessages 
 		return
 
 	// Prevents massive radio spam
-	signal.mark_done()
+	var/is_tablet_message = istype(signal, /datum/signal/subspace/messaging/tablet_message)
+	if(!is_tablet_message)
+		signal.mark_done()
 	var/datum/signal/subspace/original = signal.original
 	if(original && ("compression" in signal.data))
 		original.data["compression"] = signal.data["compression"]
@@ -42,10 +44,12 @@ GLOBAL_VAR_INIT(message_delay, 0) // To make sure restarting the recentmessages 
 		signal.levels |= SSmapping.get_connected_levels(T)
 
 	var/signal_message = "[signal.frequency]:[signal.data["message"]]:[signal.data["name"]]"
-	if(signal_message in GLOB.recentmessages)
+	if(!is_tablet_message && (signal_message in GLOB.recentmessages))
 		return
-	GLOB.recentmessages.Add(signal_message)
+	if(!is_tablet_message)
+		GLOB.recentmessages.Add(signal_message)
 
+	signal.netrun_transmitter = WEAKREF(src)
 	signal.broadcast()
 
 	if(!GLOB.message_delay)

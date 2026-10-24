@@ -50,6 +50,7 @@ class NetrunPixiSurface implements PixiSurface {
   private readonly view = new GraphViewport();
   private readonly motionQuery: MediaQueryList | null;
   private frame: number | null = null;
+  private wakeTimer: number | null = null;
   private restoreTimer: number | null = null;
   private disposed = false;
   private suspended = false;
@@ -108,7 +109,8 @@ class NetrunPixiSurface implements PixiSurface {
       if (a.selected === b.selected && a.hovered === b.hovered && a.selectionPending === b.selectionPending
         && a.entityHost === b.entityHost && a.jacked === b.jacked && a.gateways === b.gateways
         && a.selectedRoute === b.selectedRoute && a.waypointRoute === b.waypointRoute
-        && a.pingRoute === b.pingRoute && a.events === b.events) { return; }
+        && a.pingRoute === b.pingRoute && a.pingId === b.pingId && a.pingExpiresAt === b.pingExpiresAt
+        && a.events === b.events) { return; }
     }
     // The UI provides one complete graph. Render-layer membership stays an
     // internal cache detail, never a second transport/layout contract.
@@ -149,13 +151,15 @@ class NetrunPixiSurface implements PixiSurface {
   setSuspended(suspended: boolean) {
     if (this.disposed || this.suspended === suspended) { return; }
     this.suspended = suspended;
-    if (suspended) { this.cancelFrame(); this.interacting = false; }
+    if (suspended) { this.cancelFrame(); this.cancelWake(); this.interacting = false; }
     else { this.cameraDirty = true; this.labelDirty = true; this.requestRender(); }
   }
   private cancelFrame() { if (this.frame !== null) { window.cancelAnimationFrame(this.frame); this.frame = null; } }
+  private cancelWake() { if (this.wakeTimer !== null) { window.clearTimeout(this.wakeTimer); this.wakeTimer = null; } }
   private requestRender = () => {
     if (this.disposed || this.suspended || this.failed || this.lost || document.hidden || this.frame !== null) { return; }
     this.frame = window.requestAnimationFrame(this.render);
+    this.cancelWake();
   };
   private render = (now: number) => {
     this.frame = null;
@@ -207,6 +211,9 @@ class NetrunPixiSurface implements PixiSurface {
       }
       this.app.renderer.render({ container: this.app.stage });
       if (animated || building || this.sizeDirty) { this.requestRender(); }
+      else if (this.actors.nextWake !== null) {
+        this.wakeTimer = window.setTimeout(() => { this.wakeTimer = null; this.requestRender(); }, Math.max(1, this.actors.nextWake - now));
+      }
     } catch { this.reportUnavailable(); }
   };
   private paintGrid() {
@@ -223,13 +230,13 @@ class NetrunPixiSurface implements PixiSurface {
     for (let py = ((y % major) + major) % major; py < this.height; py += major) { this.grid.moveTo(0, py).lineTo(this.width, py); }
     this.grid.stroke({ color: 0x548b9f, alpha: .15, width: 1.15 });
   }
-  private onVisible = () => { if (document.hidden) { this.cancelFrame(); } else { this.requestRender(); } };
+  private onVisible = () => { if (document.hidden) { this.cancelFrame(); this.cancelWake(); } else { this.requestRender(); } };
   private onMotion = () => {
     this.actors.setReducedMotion(this.options.reducedMotion ?? this.motionQuery?.matches ?? false); this.requestRender();
   };
   private onLost = (event: Event) => {
     event.preventDefault(); if (this.disposed) { return; }
-    this.lost = true; this.cancelFrame(); this.canvas.dataset.pixiState = 'lost'; this.options.onStatus?.('lost');
+    this.lost = true; this.cancelFrame(); this.cancelWake(); this.canvas.dataset.pixiState = 'lost'; this.options.onStatus?.('lost');
     if (this.restoreTimer !== null) { window.clearTimeout(this.restoreTimer); }
     this.restoreTimer = window.setTimeout(() => this.reportUnavailable(), 10000);
   };
@@ -241,11 +248,11 @@ class NetrunPixiSurface implements PixiSurface {
   };
   private reportUnavailable() {
     if (this.disposed || this.failed) { return; }
-    this.failed = true; this.cancelFrame(); this.canvas.dataset.pixiState = 'failed'; this.onUnavailable?.();
+    this.failed = true; this.cancelFrame(); this.cancelWake(); this.canvas.dataset.pixiState = 'failed'; this.onUnavailable?.();
   }
   destroy = () => {
     if (this.disposed) { return; }
-    this.disposed = true; this.cancelFrame();
+    this.disposed = true; this.cancelFrame(); this.cancelWake();
     if (this.restoreTimer !== null) { window.clearTimeout(this.restoreTimer); this.restoreTimer = null; }
     this.canvas.removeEventListener('webglcontextlost', this.onLost); this.canvas.removeEventListener('webglcontextrestored', this.onRestored);
     document.removeEventListener('visibilitychange', this.onVisible); this.motionQuery?.removeEventListener?.('change', this.onMotion);

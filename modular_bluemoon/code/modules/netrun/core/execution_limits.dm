@@ -19,6 +19,9 @@
 	var/ui_refresh_interval = NETRUN_DEFAULT_UI_REFRESH_INTERVAL
 	var/ui_activity_lease = NETRUN_DEFAULT_UI_ACTIVITY_LEASE
 	var/node_activity_duration = NETRUN_DEFAULT_NODE_ACTIVITY_DURATION
+	var/node_poll_interval = NETRUN_DEFAULT_NODE_POLL_INTERVAL
+	var/node_idle_poll_interval = NETRUN_DEFAULT_NODE_IDLE_POLL_INTERVAL
+	var/node_update_interval = NETRUN_DEFAULT_NODE_UPDATE_INTERVAL
 	var/task_critical_late_after = NETRUN_DEFAULT_TASK_CRITICAL_LATE_AFTER
 	var/task_normal_late_after = NETRUN_DEFAULT_TASK_NORMAL_LATE_AFTER
 	var/task_background_late_after = NETRUN_DEFAULT_TASK_BACKGROUND_LATE_AFTER
@@ -55,6 +58,9 @@
 	var/ui_refresh_interval = NETRUN_DEFAULT_UI_REFRESH_INTERVAL
 	var/ui_activity_lease = NETRUN_DEFAULT_UI_ACTIVITY_LEASE
 	var/node_activity_duration = NETRUN_DEFAULT_NODE_ACTIVITY_DURATION
+	var/node_poll_interval = NETRUN_DEFAULT_NODE_POLL_INTERVAL
+	var/node_idle_poll_interval = NETRUN_DEFAULT_NODE_IDLE_POLL_INTERVAL
+	var/node_update_interval = NETRUN_DEFAULT_NODE_UPDATE_INTERVAL
 	var/list/priority_rotation = NETRUN_DEFAULT_TASK_PRIORITY_ROTATION
 	var/list/late_after = list(NETRUN_DEFAULT_TASK_CRITICAL_LATE_AFTER, NETRUN_DEFAULT_TASK_NORMAL_LATE_AFTER, NETRUN_DEFAULT_TASK_BACKGROUND_LATE_AFTER)
 
@@ -86,6 +92,9 @@
 	ui_refresh_interval = interval(worker.ui_refresh_interval, NETRUN_DEFAULT_UI_REFRESH_INTERVAL)
 	ui_activity_lease = max(ui_refresh_interval, interval(worker.ui_activity_lease, NETRUN_DEFAULT_UI_ACTIVITY_LEASE))
 	node_activity_duration = interval(worker.node_activity_duration, NETRUN_DEFAULT_NODE_ACTIVITY_DURATION)
+	node_poll_interval = interval(worker.node_poll_interval, NETRUN_DEFAULT_NODE_POLL_INTERVAL)
+	node_update_interval = interval(worker.node_update_interval, NETRUN_DEFAULT_NODE_UPDATE_INTERVAL)
+	node_idle_poll_interval = max(node_poll_interval, node_update_interval, interval(worker.node_idle_poll_interval, NETRUN_DEFAULT_NODE_IDLE_POLL_INTERVAL))
 	late_after[NETRUN_TASK_CRITICAL] = interval(worker.task_critical_late_after, NETRUN_DEFAULT_TASK_CRITICAL_LATE_AFTER)
 	late_after[NETRUN_TASK_NORMAL] = interval(worker.task_normal_late_after, NETRUN_DEFAULT_TASK_NORMAL_LATE_AFTER)
 	late_after[NETRUN_TASK_BACKGROUND] = interval(worker.task_background_late_after, NETRUN_DEFAULT_TASK_BACKGROUND_LATE_AFTER)

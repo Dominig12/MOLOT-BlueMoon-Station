@@ -14,6 +14,7 @@
 	if(QDELETED(owner))
 		return
 	owner.note_ui_activity()
+	SSnetrun.collect_console_node_interest(owner)
 	owner.invalidate_ui()
 	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
 	SSnetrun.get_task_scheduler().enqueue("console", owner, limits.interactive_priority, TRUE)
