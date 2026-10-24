@@ -154,7 +154,7 @@
 		return FALSE
 	var/datum/netrun_machine_directory/entry = cached_directory(destination_id, recipient_tag)
 	if(entry)
-		var/list/targets = resolve(destination_id, recipient_tag)
+		var/list/targets = resolve(destination_id, recipient_tag, entry)
 		var/admitted = FALSE
 		for(var/datum/netrun_machine_service/target as anything in targets)
 			admitted = send_to(target, message.copy()) || admitted
@@ -173,8 +173,8 @@
 /datum/netrun_machine_service/proc/send_to(datum/netrun_machine_service/target, datum/netrun_machine_message/message)
 	return SSnetrun.get_machine_transport().dispatch(src, target, message)
 
-/datum/netrun_machine_service/proc/resolve(destination_id, recipient_tag)
-	var/datum/netrun_machine_directory/entry = cached_directory(destination_id, recipient_tag)
+/datum/netrun_machine_service/proc/resolve(destination_id, recipient_tag, datum/netrun_machine_directory/entry)
+	entry = entry || cached_directory(destination_id, recipient_tag)
 	var/list/result = list()
 	if(entry)
 		for(var/datum/weakref/ref as anything in entry.records)
@@ -251,7 +251,13 @@
 	var/revision = 0
 	var/list/route_trees = list()
 	var/list/route_used = list()
-	var/last_availability_check = -INFINITY
+	var/list/pair_routes = list()
+	var/list/pair_used = list()
+	var/route_cache_limit = 1024
+	var/pair_serial = 0
+	var/path_builds = 0
+	var/path_cache_hits = 0
+	var/tree_builds = 0
 
 /datum/netrun_machine_transport/New()
 	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_UNREGISTERED, PROC_REF(node_deleted))
@@ -312,6 +318,7 @@
 		qdel(route_trees[address])
 	route_trees.Cut()
 	route_used.Cut()
+	clear_pair_routes()
 	return ..()
 
 /datum/netrun_machine_transport/proc/register(datum/netrun_machine_service/service)
@@ -380,18 +387,48 @@
 			. += target
 
 /datum/netrun_machine_transport/proc/reachable(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient)
-	var/datum/netrun_route/path = route(source, recipient)
-	. = !!path
-	qdel(path)
+	return !!borrowed_path(source, recipient)
+
+/// This cache owns its paths; only route() exposes mutable request-owned copies.
+/datum/netrun_machine_path
+	parent_type = /datum/netrun_route
+	var/datum/weakref/graph_ref
+	var/geometry_revision
+	var/transit_revision
+	var/from_anchor
+	var/to_anchor
+	var/prefix_cost
+	var/suffix_cost
+
+/datum/netrun_machine_transport/proc/clear_pair_routes()
+	for(var/key in pair_routes)
+		qdel(pair_routes[key])
+	pair_routes.Cut()
+	pair_used.Cut()
+
+/datum/netrun_machine_transport/proc/store_pair_route(key, datum/netrun_machine_path/path)
+	qdel(pair_routes[key])
+	pair_routes -= key
+	pair_used -= key
+	while(length(pair_routes) >= max(1, route_cache_limit))
+		var/oldest
+		for(var/candidate in pair_used)
+			if(!oldest || pair_used[candidate] < pair_used[oldest])
+				oldest = candidate
+		qdel(pair_routes[oldest])
+		pair_routes -= oldest
+		pair_used -= oldest
+	pair_routes[key] = path
+	pair_used[key] = ++pair_serial
 
 /// Most endpoints have one APC cable. Share one tree at that attachment instead of
 /// keeping a station-sized table for each vent, camera and carried computer.
-/datum/netrun_machine_transport/proc/path_tree(datum/netrun_topology/graph, datum/component/netrun_node/root)
-	if(last_availability_check != world.time)
-		last_availability_check = world.time
+/datum/netrun_machine_transport/proc/path_tree(datum/netrun_topology/graph, datum/component/netrun_node/root, availability_reconciled = FALSE)
+	if(!availability_reconciled)
 		graph.reconcile_availability()
 	var/datum/netrun_path_tree/tree = route_trees[root.address]
-	if(!tree || tree.source != root || tree.geometry_revision != graph.weight_revision || tree.availability_revision != graph.availability_revision)
+	if(!tree || tree.graph_ref?.resolve() != graph || tree.source != root || tree.geometry_revision != graph.infrastructure_revision || tree.transit_availability_revision != graph.transit_availability_revision)
+		graph.reconcile_availability(TRUE)
 		qdel(tree)
 		if(!tree && length(route_trees) >= 64)
 			var/oldest
@@ -401,13 +438,25 @@
 			qdel(route_trees[oldest])
 			route_trees -= oldest
 			route_used -= oldest
-		tree = new(graph, root)
+		tree = new(graph, root, TRUE)
 		route_trees[root.address] = tree
+		tree_builds++
 	route_used[root.address] = world.time
 	return tree
 
-/// Cached geometry is bounded; every selected physical edge is still checked live.
+/// Return a mutable request-owned route; boolean checks borrow cached paths directly.
 /datum/netrun_machine_transport/proc/route(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient)
+	var/datum/netrun_machine_path/path = borrowed_path(source, recipient)
+	if(!path)
+		return null
+	var/datum/netrun_route/result = new
+	result.hops = path.hops.Copy()
+	result.latency = path.latency
+	return result
+
+/// Only infrastructure participates in shortest-path solving. Endpoint attachment and
+/// cable costs are checked separately, so unrelated leaf movement/power cannot flush it.
+/datum/netrun_machine_transport/proc/borrowed_path(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient)
 	if(QDELETED(source) || QDELETED(recipient) || QDELETED(source.host) || QDELETED(recipient.host))
 		return null
 	var/datum/component/netrun_node/start = source.resolve_node()
@@ -422,31 +471,80 @@
 	var/datum/netrun_topology/graph = SSnetrun.get_topology()
 	if(graph.nodes[start.address] != start || graph.nodes[finish.address] != finish)
 		return null
-	if(start == finish)
-		var/datum/netrun_route/local = new
-		local.hops = list(start.address)
-		return local
+	graph.reconcile_availability()
 	var/datum/component/netrun_node/root = start
+	var/datum/component/netrun_node/destination = finish
 	var/prefix_cost = 0
+	var/suffix_cost = 0
 	var/list/neighbors = graph.adjacency[start.address]
-	if(!graph.is_infrastructure(start) && length(neighbors) == 1)
+	if(start != finish && !graph.is_infrastructure(start) && length(neighbors) == 1)
 		root = graph.nodes[neighbors[1]]
 		if(!netrun_link_available(start, root))
 			return null
 		prefix_cost = graph.cached_edge_cost(start.address, root.address)
-	var/datum/netrun_path_tree/tree = path_tree(graph, root)
-	var/list/path = tree?.addresses_to(finish.address)
-	if(!length(path))
-		return null
-	if(root != start)
-		path.Insert(1, start.address)
+	neighbors = graph.adjacency[finish.address]
+	if(start != finish && !graph.is_infrastructure(finish) && length(neighbors) == 1)
+		destination = graph.nodes[neighbors[1]]
+		if(!netrun_link_available(destination, finish))
+			return null
+		suffix_cost = graph.cached_edge_cost(destination.address, finish.address)
+	var/key = "[start.address]>[finish.address]"
+	var/datum/netrun_machine_path/cached = pair_routes[key]
+	if(cached && cached.graph_ref?.resolve() == graph && cached.geometry_revision == graph.infrastructure_revision && cached.transit_revision == graph.transit_availability_revision && cached.from_anchor == root.address && cached.to_anchor == destination.address && cached.prefix_cost == prefix_cost && cached.suffix_cost == suffix_cost)
+		if(!length(cached.hops) || path_available(graph, cached.hops))
+			pair_used[key] = ++pair_serial
+			path_cache_hits++
+			return length(cached.hops) ? cached : null
+		// Legacy native writes can change a forwarding node without its usual signal.
+		// Reconcile only this failed path, then allow an alternate route immediately.
+		reconcile_path(graph, cached.hops)
+	var/datum/netrun_machine_path/result = new
+	result.graph_ref = WEAKREF(graph)
+	result.from_anchor = root.address
+	result.to_anchor = destination.address
+	result.prefix_cost = prefix_cost
+	result.suffix_cost = suffix_cost
+	path_builds++
+	if(start == finish)
+		result.hops = list(start.address)
+	else
+		var/datum/netrun_path_tree/tree
+		if(root == destination)
+			result.hops = list(root.address)
+		else
+			tree = path_tree(graph, root, TRUE)
+			result.hops = tree.addresses_to(destination.address)
+		if(length(result.hops))
+			if(root != start)
+				result.hops.Insert(1, start.address)
+			if(destination != finish)
+				result.hops += finish.address
+			result.latency = prefix_cost + (tree ? tree.cost_to(destination.address) : 0) + suffix_cost
+			if(!path_available(graph, result.hops))
+				// Never cache a stale usable route. The next lookup rebuilds after the
+				// discovered native availability change instead of extending its lifetime.
+				reconcile_path(graph, result.hops)
+				qdel(result)
+				return null
+	result.geometry_revision = graph.infrastructure_revision
+	result.transit_revision = graph.transit_availability_revision
+	store_pair_route(key, result)
+	return length(result.hops) ? result : null
+
+/datum/netrun_machine_transport/proc/path_available(datum/netrun_topology/graph, list/path)
 	for(var/i in 2 to length(path))
 		if(!netrun_link_available(graph.nodes[path[i - 1]], graph.nodes[path[i]]))
-			return null
-	var/datum/netrun_route/result = new
-	result.hops = path
-	result.latency = prefix_cost + tree.cost_to(finish.address)
-	return result
+			return FALSE
+	return TRUE
+
+/datum/netrun_machine_transport/proc/reconcile_path(datum/netrun_topology/graph, list/path)
+	for(var/address in path)
+		var/datum/component/netrun_node/node = graph.nodes[address]
+		if(QDELETED(node))
+			continue
+		var/online = node.is_online()
+		if(node.last_online != online)
+			node.notify_changed(NETRUN_CHANGED_STATE)
 
 /datum/netrun_machine_transport/proc/dispatch(datum/netrun_machine_service/source, datum/netrun_machine_service/target, datum/netrun_machine_message/message)
 	if(QDELETED(message))

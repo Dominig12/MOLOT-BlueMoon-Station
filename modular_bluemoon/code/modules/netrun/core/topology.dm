@@ -64,6 +64,8 @@
 /datum/netrun_topology
 	var/list/nodes = list()
 	var/list/adjacency = list()
+	/// Forwarding-only neighbor lists avoid scanning every machine cable per APC solve.
+	var/list/forwarding_adjacency = list()
 	var/list/edges = list()
 	var/list/edge_lookup = list()
 	var/dirty = TRUE
@@ -109,6 +111,10 @@
 		return
 	nodes -= node.address
 	adjacency -= node.address
+	forwarding_adjacency -= node.address
+	for(var/address in forwarding_adjacency)
+		var/list/connected = forwarding_adjacency[address]
+		connected -= node.address
 	for(var/address in adjacency)
 		var/list/connected = adjacency[address]
 		connected -= node.address
@@ -274,6 +280,9 @@
 		if(relay_address != address && nodes[relay_address])
 			. += relay_address
 
+/datum/netrun_topology/proc/forwarding_neighbors(address)
+	return forwarding_adjacency[address] || adjacency[address] || list()
+
 /datum/netrun_topology/proc/edge_between(first, second)
 	var/list/edge = edge_lookup["[first]>[second]"]
 	if(edge)
@@ -431,6 +440,7 @@
 	clear_route_tables()
 	nodes = list()
 	adjacency = list()
+	forwarding_adjacency = list()
 	edges = list()
 	edge_lookup = list()
 	var/list/addresses = sort_list(SSnetrun.nodes_by_address.Copy())
@@ -476,6 +486,13 @@
 	// Relay-to-relay transitions are an implicit uniform-cost bucket.
 	for(var/address in adjacency)
 		adjacency[address] = sort_list(adjacency[address])
+		if(!is_infrastructure(nodes[address]) && length(adjacency[address]) <= 1)
+			continue
+		var/list/forwarders = list()
+		for(var/neighbor in adjacency[address])
+			if(is_infrastructure(nodes[neighbor]) || length(adjacency[neighbor]) > 1)
+				forwarders += neighbor
+		forwarding_adjacency[address] = forwarders
 	dirty = FALSE
 	revision++
 	weight_revision++
@@ -490,6 +507,7 @@
 	clear_route_tables(TRUE)
 	nodes.Cut()
 	adjacency.Cut()
+	forwarding_adjacency.Cut()
 	edges.Cut()
 	edge_lookup.Cut()
 	apcs_by_sector.Cut()

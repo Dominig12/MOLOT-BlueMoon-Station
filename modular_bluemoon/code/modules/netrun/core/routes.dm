@@ -31,6 +31,10 @@
 	var/list/remote = list()
 	var/geometry_revision = 0
 	var/availability_revision = 0
+	var/transit_availability_revision = 0
+	var/source_online = FALSE
+	var/infrastructure_only = FALSE
+	var/datum/weakref/graph_ref
 	/// Changing a source leaf cable shifts every non-self path equally. Keep that
 	/// shared prefix separate until a request-owned copy materializes its costs.
 	var/source_cost_offset = 0
@@ -40,11 +44,17 @@
 	var/popped_cost = 0
 	/// Number of heap candidates; terminal destinations must not add heap work.
 	var/frontier_insertions = 0
+	var/neighbor_visits = 0
 
-/datum/netrun_path_tree/New(datum/netrun_topology/graph, datum/component/netrun_node/start)
+/datum/netrun_path_tree/New(datum/netrun_topology/graph, datum/component/netrun_node/start, infrastructure_only = FALSE)
 	source = start
-	geometry_revision = graph?.weight_revision || 0
+	if(graph)
+		graph_ref = WEAKREF(graph)
+	src.infrastructure_only = infrastructure_only
+	geometry_revision = (infrastructure_only ? graph?.infrastructure_revision : graph?.weight_revision) || 0
 	availability_revision = graph?.availability_revision || 0
+	transit_availability_revision = graph?.transit_availability_revision || 0
+	source_online = !QDELETED(start) && start.is_online()
 	if(QDELETED(start) || !graph.nodes[start.address])
 		return
 	var/list/settled = list()
@@ -63,13 +73,17 @@
 		// Offline destinations are leaves: they cannot forward traffic.
 		if(QDELETED(current) || !current.is_online())
 			continue
-		for(var/neighbor in graph.neighbors(address, FALSE))
+		var/list/neighbors = infrastructure_only ? graph.forwarding_neighbors(address) : graph.neighbors(address, FALSE)
+		for(var/neighbor in neighbors)
+			neighbor_visits++
 			var/datum/component/netrun_node/next = graph.nodes[neighbor]
 			if(settled[neighbor] || QDELETED(next) || !netrun_link_available(current, next, TRUE))
 				continue
 			// Ordinary endpoints have exactly one cable and cannot be transit. Their
 			// shortest path is final when this sole parent settles: skip a heap visit.
 			var/transit = graph.is_infrastructure(next) || length(graph.adjacency[neighbor]) > 1
+			if(infrastructure_only && !transit)
+				continue
 			relax(neighbor, address, costs[address] + graph.cached_edge_cost(address, neighbor), remote[address], transit)
 			if(!transit && next.network)
 				reached_networks[next.network.id] = TRUE
@@ -144,8 +158,9 @@
 	if(!reached[address])
 		return path
 	while(address)
-		path.Insert(1, address)
+		path += address
 		address = previous[address]
+	reverseRange(path)
 	return path
 
 /// Costs in retained tables may carry a constant source-leaf prefix adjustment.
@@ -172,7 +187,12 @@
 	snapshot.remote = remote.Copy()
 	snapshot.geometry_revision = geometry_revision
 	snapshot.availability_revision = availability_revision
+	snapshot.transit_availability_revision = transit_availability_revision
+	snapshot.source_online = source_online
+	snapshot.infrastructure_only = infrastructure_only
+	snapshot.graph_ref = graph_ref
 	snapshot.frontier_insertions = frontier_insertions
+	snapshot.neighbor_visits = neighbor_visits
 	return snapshot
 
 /// Only physical paths are retained. Permissions and command authorization
@@ -182,6 +202,7 @@
 	var/list/route_used = list()
 	var/route_revision = 0
 	var/route_refresh_at = -INFINITY
+	var/forwarding_checked_at = -INFINITY
 
 /datum/netrun_topology/proc/clear_route_tables(release_sources = FALSE)
 	for(var/address in route_tables)
@@ -192,6 +213,7 @@
 	route_refresh_at = -INFINITY
 
 /datum/netrun_topology/proc/store_route_table(datum/component/netrun_node/start)
+	reconcile_availability(TRUE)
 	var/datum/netrun_path_tree/table = new(src, start)
 	table.revision = ++route_revision
 	table.updated_at = world.time
@@ -201,7 +223,7 @@
 
 /// Unsigned native relay toggles and backbone settings have no common change signal.
 /// Their small infrastructure index is reconciled without walking the full graph.
-/datum/netrun_topology/proc/reconcile_availability()
+/datum/netrun_topology/proc/reconcile_availability(force_forwarding = FALSE)
 	SSnetrun.reconcile_dirty_availability()
 	var/disabled = !!SSnetworks.station_network?.setting_disabled
 	if(disabled != backbone_disabled)
@@ -215,6 +237,32 @@
 		var/online = node.is_online()
 		if(online != node.last_online)
 			node.notify_changed(NETRUN_CHANGED_STATE)
+	// APC countdown recovery has no reliable native node signal. Its small index
+	// is the fallback, once per tick; a new solve samples it before saving negatives.
+	if(force_forwarding || forwarding_checked_at != world.time)
+		forwarding_checked_at = world.time
+		for(var/address in registered_apcs)
+			var/datum/component/netrun_node/node = nodes[address]
+			if(QDELETED(node))
+				continue
+			var/online = node.is_online()
+			if(online != node.last_online)
+				node.notify_changed(NETRUN_CHANGED_STATE)
+
+/// Requests validate the selected predecessor chain without allocating a hop list.
+/// Offline terminal destinations remain discoverable; intermediate nodes must forward.
+/datum/netrun_path_tree/proc/path_available(datum/netrun_topology/graph, address)
+	if(!reached[address] || QDELETED(source) || graph.nodes[source.address] != source)
+		return FALSE
+	var/destination = address
+	while(previous[address])
+		var/parent_address = previous[address]
+		var/datum/component/netrun_node/from_node = graph.nodes[parent_address]
+		var/datum/component/netrun_node/to_node = graph.nodes[address]
+		if(!(graph.edge_lookup["[parent_address]>[address]"] || netrun_quantum_link(from_node, to_node)) || !netrun_link_available(from_node, to_node, address == destination))
+			return FALSE
+		address = parent_address
+	return address == source.address
 
 /// Geometry is already maintained by structural/movement signals. Reuse its cached
 /// edge weights while solving a tree instead of measuring every cable again.
@@ -245,7 +293,7 @@
 	var/cost = cached_edge_cost(address, parent_address)
 	for(var/source_address in route_tables)
 		var/datum/netrun_path_tree/table = route_tables[source_address]
-		if(table.geometry_revision != previous_geometry || table.availability_revision != availability_revision)
+		if(table.geometry_revision != previous_geometry || table.transit_availability_revision != transit_availability_revision)
 			continue
 		if(table.source?.address == address)
 			table.source_cost_offset += delta
@@ -266,7 +314,7 @@
 	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
 	refresh_route_tables(limits.route_refresh_interval, limits.route_expiry_interval)
 	var/datum/netrun_path_tree/table = route_tables[start.address]
-	if(!table || table.geometry_revision != weight_revision || table.availability_revision != availability_revision)
+	if(!table || table.geometry_revision != weight_revision || table.transit_availability_revision != transit_availability_revision || table.source_online != start.is_online())
 		table = store_route_table(start)
 	return borrow ? table : table.copy()
 
@@ -319,10 +367,10 @@
 
 /// Explicit request trees are local variables, so concurrent yielding device
 /// operations cannot borrow another request's path or an old UI snapshot.
-/datum/netrun_console/proc/make_path_tree(use_stored_routes = FALSE)
+/datum/netrun_console/proc/make_path_tree(use_stored_routes = TRUE)
 	return connection.make_path_tree(use_stored_routes)
 
-/datum/netrun_connection/proc/make_path_tree(use_stored_routes = FALSE)
+/datum/netrun_connection/proc/make_path_tree(use_stored_routes = TRUE)
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/start = owner.physical_route_source()
 	// A source can move its nested node while being resolved.

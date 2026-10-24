@@ -458,6 +458,8 @@
 	if(owns_tree)
 		tree = owner.path_tree()
 	. = !!tree.reached[node.address]
+	if(. && tree != owner.ui_routes)
+		. = tree.path_available(SSnetrun.ensure_topology(), node.address)
 	if(owns_tree)
 		owner.release_path_tree(tree)
 

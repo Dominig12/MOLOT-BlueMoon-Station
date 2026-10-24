@@ -30,6 +30,13 @@ SUBSYSTEM_DEF(netrun)
 	var/list/node_interest_until = list()
 	var/list/pending_requests = list()
 	var/list/dirty_nodes = list()
+	/// Routing drains native availability changes separately from presentation work.
+	var/list/availability_nodes = list()
+	/// Only temporary outages need an availability deadline; activity/firewall timers do not.
+	var/list/offline_nodes = list()
+	var/next_offline_expiry = INFINITY
+	var/availability_checks = 0
+	var/availability_expiry_visits = 0
 	/// node -> next transient expiry (activity, reboot, firewall).
 	var/list/timed_nodes = list()
 	var/last_processed_nodes = 0
@@ -80,12 +87,35 @@ SUBSYSTEM_DEF(netrun)
 		if(due <= world.time)
 			get_task_scheduler().enqueue("node", node, NETRUN_TASK_NORMAL)
 
-/// A display snapshot can be requested before the next one-second node pass.
-/// Inspect only queued native changes; command execution still builds fresh routes.
+/// A route can be requested before the next node pass, including twice in one tick.
+/datum/controller/subsystem/netrun/proc/queue_availability(datum/component/netrun_node/node)
+	if(!QDELETED(node))
+		availability_nodes[node] = TRUE
+
+/// Packet journals and other display changes never require native power checks.
+/// The earliest outage deadline gates the small expiry index until recovery is due.
 /datum/controller/subsystem/netrun/proc/reconcile_dirty_availability()
-	for(var/datum/component/netrun_node/node as anything in dirty_nodes)
+	if(world.time >= next_offline_expiry)
+		next_offline_expiry = INFINITY
+		for(var/datum/component/netrun_node/node as anything in offline_nodes)
+			availability_expiry_visits++
+			if(QDELETED(node))
+				offline_nodes -= node
+				continue
+			if(node.offline_until <= world.time)
+				offline_nodes -= node
+				queue_availability(node)
+			else
+				offline_nodes[node] = node.offline_until
+				next_offline_expiry = min(next_offline_expiry, node.offline_until)
+	if(!length(availability_nodes))
+		return
+	var/list/pending = availability_nodes
+	availability_nodes = list()
+	for(var/datum/component/netrun_node/node as anything in pending)
 		if(QDELETED(node))
 			continue
+		availability_checks++
 		var/online = node.is_online()
 		if(online != node.last_online)
 			node.last_online = online
@@ -104,6 +134,10 @@ SUBSYSTEM_DEF(netrun)
 	var/datum/netrun_execution_limits/limits = get_execution_limits()
 	if(node.offline_until > world.time)
 		next_expiry = min(next_expiry, node.offline_until)
+		offline_nodes[node] = node.offline_until
+		next_offline_expiry = min(next_offline_expiry, node.offline_until)
+	else
+		offline_nodes -= node
 	if(node.firewall_until > world.time)
 		next_expiry = min(next_expiry, node.firewall_until)
 	if(node.last_activity + limits.node_activity_duration > world.time)
@@ -116,6 +150,8 @@ SUBSYSTEM_DEF(netrun)
 /datum/controller/subsystem/netrun/proc/untrack_node(datum/component/netrun_node/node)
 	poll_nodes -= node
 	dirty_nodes -= node
+	availability_nodes -= node
+	offline_nodes -= node
 	timed_nodes -= node
 	node_interest_until -= node
 	task_scheduler?.cancel("node", node)

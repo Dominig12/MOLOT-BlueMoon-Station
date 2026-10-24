@@ -151,11 +151,17 @@
 /datum/component/netrun_node/proc/on_state_changed(datum/source)
 	SIGNAL_HANDLER
 	pending_state_notification = TRUE
+	// Native forwarding state (for example APC failure_timer) can use provider
+	// icon/UI signals instead of machine_stat. Leaves cannot change other routes.
+	var/datum/netrun_topology/graph = SSnetrun.get_topology()
+	if(graph.is_infrastructure(src) || length(graph.adjacency[address]) > 1)
+		SSnetrun.queue_availability(src)
 	SSnetrun.queue_node(src)
 
 /datum/component/netrun_node/proc/on_availability_changed(datum/source)
 	SIGNAL_HANDLER
 	pending_state_notification = TRUE
+	SSnetrun.queue_availability(src)
 	SSnetrun.queue_node(src, TRUE)
 
 /datum/component/netrun_node/proc/on_storage_changed(datum/source)

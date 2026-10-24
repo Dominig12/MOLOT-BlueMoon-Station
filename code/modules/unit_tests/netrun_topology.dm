@@ -332,13 +332,15 @@
 	apc.set_machine_stat(BROKEN)
 	TEST_ASSERT(stored.reached[target_node.address], "The previous display snapshot must remain stable until its scheduled refresh")
 	TEST_ASSERT(!source.console.can_route(target_node), "A real request must immediately detect a broken APC without trusting the retained display path")
+	var/request_revision = graph.route_revision
+	TEST_ASSERT(request_revision > previous_revision, "The first real request must lazily refresh the invalidated shared routing table")
 	graph.route_refresh_at = world.time
 	graph.refresh_route_tables()
-	TEST_ASSERT_EQUAL(graph.route_revision, previous_revision, "Subsystem housekeeping must not rebuild even an invalidated display table")
+	TEST_ASSERT_EQUAL(graph.route_revision, request_revision, "Subsystem housekeeping must not rebuild the table refreshed by the real request")
 	var/datum/netrun_path_tree/refreshed = source.console.make_path_tree(TRUE)
 	allocated += refreshed
 	stored = graph.route_tables[source_node.address]
-	TEST_ASSERT(stored.revision > previous_revision, "The next requesting UI must lazily advance the invalidated route revision")
+	TEST_ASSERT_EQUAL(stored.revision, request_revision, "The next UI must reuse the table already refreshed by the real request")
 	TEST_ASSERT(!stored.reached[target_node.address], "A requested server table must remove a path through broken infrastructure")
 	source.console.map_view.selected_address = target_node.address
 	source.console.workspace_view = "map"

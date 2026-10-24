@@ -348,6 +348,8 @@
 #include "netrun_refresh.dm"
 #include "netrun_routes.dm"
 #include "netrun_transport.dm"
+#include "netrun_availability_queue.dm"
+#include "netrun_routing_cache.dm"
 #include "netrun_scheduler.dm"
 #include "netrun_execution.dm"
 #include "netrun_interaction.dm"
