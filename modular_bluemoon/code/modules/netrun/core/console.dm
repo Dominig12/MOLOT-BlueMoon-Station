@@ -129,9 +129,12 @@
 	SSnetrun.active_consoles[src] = TRUE
 
 /datum/netrun_console/proc/note_ui_activity()
+	var/new_observation = !ui_observing
 	last_ui_at = world.time
 	observe_ui_state()
 	activate()
+	if(new_observation)
+		SSnetrun.collect_console_node_interest(src)
 
 /datum/netrun_console/proc/needs_processing()
 	return origin == NETRUN_ORIGIN_ENTITY || is_ui_active() || intrusion.breach || intrusion.trace > 0 || is_locked() || connection.jack || remote_session.watch_node
@@ -392,16 +395,17 @@
 	node.touch()
 	// Задержка маршрута: прямое/близкое подключение - почти мгновенно, дальнее через реле - с лагом.
 	var/lat = command.ignores_latency ? 0 : latency_to(node, tree)
+	var/list/poll_route = tree.addresses_to(node.address)
 	qdel(tree)
 	if(lat <= 0)
 		log_line("> [command_id] @ [node.address]")
 		var/datum/netrun_request/command/packet = new(src, node, command, command_id, node.network, operator, inventory.selected_file_uid || "none")
-		return packet.send(0)
+		return packet.send(0, poll_route)
 	else
 		log_line("> [command_id] @ [node.address] (отправка, ~[lat * 100]мс)")
 		next_command = world.time + max(0.5 SECONDS, lat)
 		var/datum/netrun_request/command/packet = new(src, node, command, command_id, node.network, operator, inventory.selected_file_uid || "none")
-		return packet.send(lat)
+		return packet.send(lat, poll_route)
 
 /// Собственно выполнение команды - может вызываться с задержкой маршрута
 /datum/netrun_console/proc/do_command(datum/component/netrun_node/node, datum/netrun_command/command, command_id, illegal, datum/netrun_network/sent_network, mob/sender, file_uid)
@@ -546,7 +550,7 @@
 		return TRUE
 	if(workspace_view != "map")
 		return FALSE
-	if(map_view.ping_route && world.time - map_view.ping_at < 6 SECONDS)
+	if(map_view.has_ping())
 		return TRUE
 	// The shared recent-events ribbon fades over four seconds on every live map.
 	var/events_len = length(SSnetrun.events)
@@ -557,6 +561,9 @@
 	return FALSE
 
 /datum/netrun_console/proc/process_tick(delta)
+	map_view.expire_ping()
+	if(map_view.has_ping())
+		SSnetrun.retain_route_interest(map_view.ping_route, map_view.ping_until)
 	if(!is_ui_active())
 		stop_ui_observation()
 	else

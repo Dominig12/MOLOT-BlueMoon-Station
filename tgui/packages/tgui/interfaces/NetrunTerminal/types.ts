@@ -231,6 +231,7 @@ export type NetrunData = {
   map: NetMapPacket | null;
   selected_network: SelectedNetwork | null;
   ping_route: PingHop[] | null;
+  ping?: { id: number; remaining_ms: number } | null;
   events?: NetEvent[] | null;
   waypoint?: Waypoint | null;
   search?: SearchResult[] | null;

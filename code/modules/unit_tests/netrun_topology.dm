@@ -279,26 +279,23 @@
 	pools = cli["completions"]
 	node_addresses = pools["nodes"]
 	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
-	var/datum/netrun_path_tree/display_routes = SSnetrun.topology.route_tables[source_node.address]
-	var/list/diagnostic = list(
-		"target" = target_node.address,
-		"include" = source.console.cli_cached_context?[1],
-		"projected_nodes" = source.console.cli_projection_values?["nodes"],
-		"route_count" = length(display_routes?.reached),
-		"target_reached" = display_routes?.reached[target_node.address],
-		"nodes" = node_addresses,
-		"networks" = pools["networks"],
-		"has_key" = source.console.has_key(target_node.network),
-		"network_level" = source.console.network_level(target_node.network),
-	)
-	diagnostic["standalone_nodes"] = source.console.cli_completion_values("nodes")
-	TEST_ASSERT(target_node.address in node_addresses, "The next UI update must include an endpoint revealed by its legitimate key: [json_encode(diagnostic)]")
+	TEST_ASSERT(target_node.address in node_addresses, "The next UI update must include an endpoint revealed by its legitimate key")
+	TEST_ASSERT(source_node.address in node_addresses, "Guest access to the local LAN must disclose its endpoints")
+	TEST_ASSERT(apc_node.address in node_addresses, "Granting access must not remove a structural APC from completion")
 	source.console.delete_local_file(key)
 	payload = source.console.ui_data(null)
 	cli = payload["cli"]
 	pools = cli["completions"]
 	node_addresses = pools["nodes"]
 	TEST_ASSERT(!(target_node.address in node_addresses), "A shared completion cache must expire with the request and honor key revocation on the next update")
+	TEST_ASSERT(apc_node.address in node_addresses, "Revoking a key must preserve public structural APC discovery")
+
+/datum/unit_test/netrun_cli_help_without_selection/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
+	console.cli("help issue_key")
+	var/list/line = console.log[length(console.log)]
+	TEST_ASSERT(findtext(line["text"], "Нет такой команды"), "Machine-command help without a selected node must return a readable refusal")
 
 /// Display paths are retained on the server, copied for clients, and refreshed
 /// periodically; a stale display path must never authorize a real request.

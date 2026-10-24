@@ -177,7 +177,8 @@
 		radio_connection = SSradio.add_object(src, frequency,radio_filter_in)
 
 /obj/machinery/atmospherics/components/unary/vent_pump/proc/broadcast_status()
-	if(!radio_connection)
+	register_in_area()
+	if(!frequency)
 		return
 
 	var/datum/signal/signal = new(list(
@@ -193,11 +194,9 @@
 		"sigtype" = "status"
 	))
 
-	var/area/A = register_in_area()
-	if(A)
-		A.air_vent_info[id_tag] = signal.data
-
-	radio_connection.post_signal(src, signal, radio_filter_out)
+	netrun_atmos_send("atmos.device", "atmos.controller", signal.data)
+	netrun_atmos_send("atmos.device", "atmos.monitor", signal.data)
+	qdel(signal)
 
 /// Прописывает вент в реестре имён базовой области и выдаёт ему автоимя, если своего нет.
 /// Вынесено из broadcast_status(): реестр области обновлять надо и без радиоканала,

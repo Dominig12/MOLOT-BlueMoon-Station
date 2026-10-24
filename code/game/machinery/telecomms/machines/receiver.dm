@@ -25,7 +25,7 @@
 		return
 	if(!is_freq_listening(signal))
 		return
-	if(signal.data["done"]) // already broadcast by another receiver network or all-in-one mainframe
+	if(signal.data["done"] || signal.original?.data["done"]) // already delivered by another receiver network
 		return
 
 	signal.levels = list()

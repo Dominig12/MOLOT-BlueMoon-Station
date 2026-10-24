@@ -81,10 +81,31 @@
 		current = current.original
 
 /datum/signal/subspace/proc/send_to_receivers()
-	for(var/obj/machinery/telecomms/receiver/R in GLOB.telecomms_list)
-		R.receive_signal(src)
-	for(var/obj/machinery/telecomms/allinone/R in GLOB.telecomms_list)
-		R.receive_signal(src)
+	var/datum/netrun_machine_service/sender = netrun_telecomms_origin(source)
+	if(!netrun_transmission)
+		netrun_transmission = new(src)
+	var/datum/netrun_telecomms_transmission/transmission = netrun_transmission
+	transmission.dispatching++
+	var/admitted = 0
+	if(sender)
+		for(var/obj/machinery/telecomms/machine as anything in GLOB.telecomms_list)
+			if(!istype(machine, /obj/machinery/telecomms/receiver) && !istype(machine, /obj/machinery/telecomms/allinone))
+				continue
+			var/datum/netrun_machine_service/recipient = machine.get_netrun_machine_service("telecomms.receiver")
+			if(!recipient)
+				continue
+			var/datum/netrun_machine_message/telecomms/packet = new(src)
+			if(!recipient.accepts(packet))
+				packet.failed("Приёмник не принимает этот канал.")
+				qdel(packet)
+				continue
+			if(sender.send(recipient.service_id, packet, recipient.tag()))
+				admitted++
+	if(!admitted)
+		transmission.failure_reason = "Нет доступного приёмника telecomms."
+	transmission.dispatching--
+	transmission.check_finished()
+	return admitted
 
 /datum/signal/subspace/proc/broadcast()
 	set waitfor = FALSE

@@ -197,3 +197,141 @@
 	TEST_ASSERT_EQUAL(length(console.combat_targets()), 0, "A moved attacker must not retain its original remote contact")
 	console.intrusion.lockout_until = world.time + 10 SECONDS
 	TEST_ASSERT(!console.program_use(strike.uid, REF(ice)), "Trace lockout must still reject every combat action")
+/// A quiet LAN still has a visible patrol walking real cables, without a global intruder.
+/datum/unit_test/netrun_ice_patrol_walks_local_links/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/engineering/netrun_route_test)
+	var/turf/apc_spot = scene.take(origin, room)
+	var/turf/first_spot = scene.take(get_step(origin, EAST), room)
+	var/turf/second_spot = scene.take(get_step(origin, NORTH), room)
+	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, apc_spot)
+	var/obj/machinery/computer/netrun_terminal/first = scene.machine(/obj/machinery/computer/netrun_terminal, first_spot)
+	var/obj/machinery/computer/netrun_terminal/second = scene.machine(/obj/machinery/computer/netrun_terminal, second_spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/apc_node = apc.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/first_node = first.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/second_node = second.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_ice/ice = allocate(/datum/netrun_ice, first_node, NETRUN_ICE_HUNTER)
+	ice.persistent = TRUE
+	ice.process_ai(0)
+	TEST_ASSERT_EQUAL(ice.node, apc_node, "An idle hunter must leave its leaf through the real APC cable")
+	TEST_ASSERT_NOTNULL(graph.edge_between(first_node.address, ice.node.address), "A patrol step must have a real physical edge")
+	TEST_ASSERT(!ice.needs_netrun_tick(), "A quiet patrol must sleep between its movement deadlines")
+	ice.process_ai(0)
+	TEST_ASSERT_EQUAL(ice.node, apc_node, "An extra same-tick wake must not bypass the patrol cooldown")
+	ice.hop_cooldown = world.time
+	ice.process_ai(0)
+	TEST_ASSERT_EQUAL(ice.node, second_node, "The patrol must inspect an unvisited endpoint instead of bouncing straight back")
+
+/// Physically connected departments are separate defense domains.
+/datum/unit_test/netrun_ice_hunt_stays_in_lan/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/engineering = scene.room(/area/engineering/netrun_route_test)
+	var/area/medical = scene.room(/area/medical/netrun_route_test)
+	var/turf/eng_spot = scene.take(origin, engineering)
+	var/turf/eng_leaf_spot = scene.take(get_step(origin, EAST), engineering)
+	var/turf/med_spot = scene.take(locate(origin.x + 4, origin.y, origin.z), medical)
+	var/turf/med_leaf_spot = scene.take(get_step(med_spot, NORTH), medical)
+	var/obj/machinery/power/apc/eng = scene.machine(/obj/machinery/power/apc, eng_spot)
+	scene.machine(/obj/machinery/power/apc, med_spot)
+	var/obj/machinery/computer/netrun_terminal/eng_leaf = scene.machine(/obj/machinery/computer/netrun_terminal, eng_leaf_spot)
+	var/obj/machinery/computer/netrun_terminal/med_leaf = scene.machine(/obj/machinery/computer/netrun_terminal, med_leaf_spot)
+	SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/eng_node = eng.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/eng_target = eng_leaf.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/med_target = med_leaf.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_ice/ice = allocate(/datum/netrun_ice, eng_node, NETRUN_ICE_HUNTER)
+	ice.persistent = TRUE
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
+	entity.enter_node(med_target)
+	TEST_ASSERT_NOTNULL(ice.find_intruder(med_target), "The remote fixture must actually be an unauthorized entity")
+	TEST_ASSERT(!ice.hunt(), "A hunter must not search or leave its LAN for another department's intruder")
+	TEST_ASSERT_EQUAL(ice.node, eng_node, "An unrelated remote intruder must not move this LAN's hunter")
+	entity.enter_node(eng_target)
+	TEST_ASSERT(ice.hunt(), "An intruder arriving in the hunter's own LAN must be pursued")
+	TEST_ASSERT_EQUAL(ice.node, eng_target, "The pursuit must take the actual adjacent cable to its target")
+
+/// Initialization waits for a committed graph and also covers departments introduced later.
+/datum/unit_test/netrun_ice_patrol_topology_lifecycle/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/engineering = scene.room(/area/engineering/netrun_route_test)
+	var/area/medical = scene.room(/area/medical/netrun_route_test)
+	var/obj/machinery/power/apc/eng = scene.machine(/obj/machinery/power/apc, scene.take(origin, engineering))
+	var/obj/machinery/power/apc/med = scene.machine(/obj/machinery/power/apc, scene.take(get_step(origin, EAST), medical))
+	SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/eng_node = eng.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/med_node = med.GetComponent(/datum/component/netrun_node)
+	var/datum/controller/subsystem/netrun/worker = allocate(/datum/controller/subsystem/netrun)
+	worker.topology = allocate(/datum/netrun_topology)
+	worker.networks = list()
+	worker.networks[eng_node.network.id] = eng_node.network
+	worker.initialize_patrol()
+	TEST_ASSERT(!worker.patrol_initialized && !length(worker.patrol_seeded_networks), "An incomplete graph must not consume the one-time patrol initialization")
+	worker.topology.dirty = FALSE
+	worker.topology.revision = 1
+	var/list/before = SSnetrun.ice_processes.Copy()
+	worker.initialize_patrol()
+	var/list/created = SSnetrun.ice_processes - before
+	allocated |= created
+	TEST_ASSERT_EQUAL(length(created), 1, "The first committed protected LAN must receive one persistent hunter")
+	var/datum/netrun_ice/patrol = created[1]
+	TEST_ASSERT(patrol.persistent && patrol.patrol_network_id == eng_node.network.id, "A spawned patrol must retain its own LAN identity")
+	worker.initialize_patrol()
+	TEST_ASSERT_EQUAL(length(SSnetrun.ice_processes - before), 1, "Reconciliation must not duplicate an existing patrol")
+	worker.networks[med_node.network.id] = med_node.network
+	worker.topology.revision++
+	worker.initialize_patrol()
+	created = SSnetrun.ice_processes - before
+	allocated |= created
+	TEST_ASSERT_EQUAL(length(created), 2, "A protected LAN added after startup must also receive its patrol")
+	qdel(patrol)
+	worker.initialize_patrol()
+	TEST_ASSERT_EQUAL(length(SSnetrun.ice_processes - before), 1, "Defeating a patrol must not respawn it on an unrelated topology update")
+
+/// Alerts wake only their LAN and temporary response limits do not count persistent patrols.
+/datum/unit_test/netrun_ice_defense_scope_and_quota/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/engineering = scene.room(/area/engineering/netrun_route_test)
+	var/area/medical = scene.room(/area/medical/netrun_route_test)
+	var/obj/machinery/power/apc/eng = scene.machine(/obj/machinery/power/apc, scene.take(origin, engineering))
+	var/obj/machinery/power/apc/med = scene.machine(/obj/machinery/power/apc, scene.take(get_step(origin, EAST), medical))
+	SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/eng_node = eng.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/med_node = med.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_ice/patrol = allocate(/datum/netrun_ice, eng_node, NETRUN_ICE_HUNTER)
+	patrol.persistent = TRUE
+	allocate(/datum/netrun_ice, eng_node, NETRUN_ICE_HUNTER)
+	allocate(/datum/netrun_ice, eng_node, NETRUN_ICE_HUNTER)
+	var/datum/netrun_ice/foreign = allocate(/datum/netrun_ice, med_node, NETRUN_ICE_HUNTER)
+	foreign.hop_cooldown = world.time + 50 SECONDS
+	var/datum/controller/subsystem/netrun/worker = allocate(/datum/controller/subsystem/netrun)
+	worker.nodes_by_address = SSnetrun.nodes_by_address
+	worker.hunters_by_network = SSnetrun.hunters_by_network
+	worker.defense_nests[eng_node.address] = 5
+	worker.defense_nests[med_node.address] = 2
+	var/list/before = SSnetrun.ice_processes.Copy()
+	worker.alert_defenses(eng_node, null)
+	var/list/responses = SSnetrun.ice_processes - before
+	allocated |= responses
+	TEST_ASSERT_EQUAL(length(responses), 1, "A LAN with two temporary hunters may wake only one additional response")
+	TEST_ASSERT_EQUAL(worker.defense_nests[eng_node.address], 4, "Only successfully spawned responses must consume the local reserve")
+	TEST_ASSERT_EQUAL(worker.defense_nests[med_node.address], 2, "An alert must not consume another LAN's reserve")
+	TEST_ASSERT_EQUAL(foreign.hop_cooldown, world.time + 50 SECONDS, "An unrelated department's hunter must remain asleep")
+	worker.dispatch_hunter(eng_node)
+	TEST_ASSERT_EQUAL(length(SSnetrun.ice_processes - before), 1, "A full local temporary quota must prevent another response")
+	for(var/datum/netrun_ice/hunter as anything in SSnetrun.hunters_by_network[eng_node.network.id].Copy())
+		if(!hunter.persistent)
+			qdel(hunter)
+	before = SSnetrun.ice_processes.Copy()
+	worker.dispatch_hunter(eng_node)
+	responses = SSnetrun.ice_processes - before
+	allocated |= responses
+	TEST_ASSERT_EQUAL(length(responses), 1, "A persistent patrol and foreign hunters must not consume the local temporary response quota")
+	var/datum/netrun_ice/temporary = responses[1]
+	temporary.idle_expires_at = world.time
+	temporary.process_ai(0)
+	TEST_ASSERT(QDELETED(temporary), "An unused temporary response must expire by deadline even without regular AI ticks")

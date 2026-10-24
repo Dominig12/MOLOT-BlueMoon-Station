@@ -83,3 +83,51 @@ test('zoomed-out Pixi actors keep device bodies small and enlarge ICE/entity rin
   expect(radii).toContain(8);
   expect(radii.some((radius) => Number(radius) >= 46)).toBe(true);
 });
+
+test('a ping clears its route geometry at expiry without clearing stored or waypoint routes', () => {
+  const scene = new GraphScene(); scene.update([node('A'), node('B', 100)], [{ id: 'AB', from: 'A', to: 'B', kind: 'apc' }]);
+  const layer = new PixiActors(mockPixi), edges = [];
+  const state = overlay({ pingRoute: ['A', 'B'], pingId: 1, pingExpiresAt: 6000,
+    selectedRoute: ['A', 'B'], waypointRoute: ['A', 'B'] });
+  layer.update(scene, state, edges, scene.adjacency, 0);
+  const ping = MockGraphics.graphics.find((entry) => entry.label === 'ping-route');
+  expect(ping.calls.some((call) => call.op === 'lineTo')).toBe(true);
+  expect(layer.animate(1800)).toBe(false); // A static tail needs a timer, no idle RAF loop.
+  expect(layer.nextWake).toBe(6000);
+  expect(layer.animate(6000)).toBe(false);
+  expect(ping.calls).toEqual([]);
+  expect(layer.nextWake).toBeNull();
+  for (const label of ['selected-route', 'waypoint-route']) {
+    expect(MockGraphics.graphics.find((entry) => entry.label === label).calls.some((call) => call.op === 'lineTo')).toBe(true);
+  }
+  layer.update(scene, { ...state, hovered: 'B' }, edges, scene.adjacency, 7000);
+  expect(ping.calls).toEqual([]); // Other changes must not resurrect an expired event.
+});
+
+test('a repeated ping over the same route starts a new finite event and server clear removes it immediately', () => {
+  const scene = new GraphScene(); scene.update([node('A'), node('B', 100)], [{ id: 'AB', from: 'A', to: 'B', kind: 'apc' }]);
+  const layer = new PixiActors(mockPixi), edges = [], route = ['A', 'B'];
+  const state = overlay({ pingRoute: route, pingId: 1, pingExpiresAt: 1800 });
+  layer.update(scene, state, edges, scene.adjacency, 0);
+  layer.animate(1800);
+  const ping = MockGraphics.graphics.find((entry) => entry.label === 'ping-route');
+  expect(ping.calls).toEqual([]);
+  layer.update(scene, { ...state, pingId: 2, pingExpiresAt: 4000 }, edges, scene.adjacency, 2000);
+  expect(ping.calls.some((call) => call.op === 'lineTo')).toBe(true);
+  expect(layer.animate(2100)).toBe(true);
+  layer.update(scene, { ...state, pingId: undefined, pingExpiresAt: undefined, pingRoute: [] }, edges, scene.adjacency, 2200);
+  expect(ping.calls).toEqual([]);
+  expect(layer.animate(4000)).toBe(false);
+});
+
+test('reduced motion keeps a finite static ping and expires its graphics without packet animation', () => {
+  const scene = new GraphScene(); scene.update([node('A'), node('B', 100)], [{ id: 'AB', from: 'A', to: 'B', kind: 'apc' }]);
+  const layer = new PixiActors(mockPixi); layer.setReducedMotion(true);
+  layer.update(scene, overlay({ pingRoute: ['A', 'B'], pingId: 1, pingExpiresAt: 6000 }), [], scene.adjacency, 0);
+  expect(layer.animate(0)).toBe(false);
+  const ping = MockGraphics.graphics.find((entry) => entry.label === 'ping-route');
+  expect(ping.calls.some((call) => call.op === 'lineTo')).toBe(true);
+  expect(layer.nextWake).toBe(6000);
+  expect(layer.animate(6000)).toBe(false);
+  expect(ping.calls).toEqual([]);
+});

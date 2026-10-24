@@ -34,6 +34,48 @@
 	console.workspace_view = "map"
 	TEST_ASSERT(console.needs_live_refresh(), "A visible ping must keep animating and expire")
 
+/// Every ping has a finite lifetime and repeated identical routes remain separate events.
+/datum/unit_test/netrun_refresh_ping_lifecycle/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
+	var/datum/netrun_map_view/view = console.map_view
+	var/list/hops = list(list("kind" = "node", "ref" = "PING-A"), list("kind" = "node", "ref" = "PING-B"))
+	view.start_ping(hops)
+	var/first_id = view.ping_id
+	var/list/first = view.ping_metadata()
+	TEST_ASSERT(view.has_ping(), "Starting a ping must publish its route")
+	TEST_ASSERT_EQUAL(first["id"], first_id, "The metadata must identify the active ping instance")
+	TEST_ASSERT(first["remaining_ms"] > 0 && first["remaining_ms"] <= 6000, "A ping must publish its remaining bounded lifetime in milliseconds")
+	TEST_ASSERT(view.ping_route != hops, "The map must own its own hop list")
+	view.start_ping(hops)
+	TEST_ASSERT(view.ping_id > first_id, "Repeating the same path must still produce a new event id")
+	TEST_ASSERT(!view.expire_ping(first_id), "A stale timer must not expire a newer ping over the same route")
+	TEST_ASSERT(view.has_ping(), "A superseded ping's timer cannot clear the current route")
+	view.ping_until = world.time - 1
+	console.ui_dirty = FALSE
+	TEST_ASSERT(view.expire_ping(view.ping_id), "The active ping must expire at its deadline")
+	TEST_ASSERT_NULL(view.ping_route, "Expiry must release the retained route")
+	TEST_ASSERT_NULL(view.ping_metadata(), "An expired ping cannot remain in UI metadata")
+	TEST_ASSERT_NULL(view.ping_timer, "Expiry must release its scheduled timer")
+	TEST_ASSERT(console.ui_dirty, "Expiry must push a closing frame even when the map is otherwise quiet")
+	console.ui_dirty = FALSE
+	TEST_ASSERT(!view.expire_ping(view.ping_id), "Expiry must be idempotent")
+	TEST_ASSERT(!console.ui_dirty, "An already expired ping must not repeatedly wake the UI")
+	var/list/payload = console.ui_data(null)
+	TEST_ASSERT_NULL(payload["ping_route"], "The legacy ping_route field must clear with the new metadata")
+	TEST_ASSERT_NULL(payload["ping"], "The next backend payload must clear the ping instance")
+
+/// The processing path closes overdue pings even if timer delivery was delayed.
+/datum/unit_test/netrun_refresh_ping_overdue/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
+	console.workspace_view = "map"
+	console.map_view.start_ping(list(list("kind" = "node", "ref" = "PING")))
+	console.map_view.ping_until = world.time - 1
+	console.process_tick(0)
+	TEST_ASSERT_NULL(console.map_view.ping_route, "Processing must close an overdue ping before deciding whether the UI is live")
+	TEST_ASSERT_NULL(console.map_view.ping_timer, "The processing fallback must also release the timer")
+
 /// Files and pinned tabs must receive external changes while their expensive map is asleep.
 /datum/unit_test/netrun_refresh_hidden_map_observer/Run()
 	var/obj/item/host = allocate(/obj/item)
@@ -237,3 +279,113 @@
 	TEST_ASSERT(still_active, "An older viewer must keep a shared console active after the last operator leaves")
 	TEST_ASSERT(remaining_observed, "The remaining viewer must retain its context subscription")
 	TEST_ASSERT(remaining_invalidated, "The remaining viewer's equipment must still invalidate the shared console")
+
+/// This observer counts global publication only, independently of immediate local gameplay signals.
+/datum/netrun_node_publication_probe
+	var/datum/component/netrun_node/target
+	var/count = 0
+	var/flags = 0
+
+/datum/netrun_node_publication_probe/proc/on_changed(datum/source, datum/component/netrun_node/node, changes)
+	SIGNAL_HANDLER
+	if(node == target)
+		count++
+		flags |= changes
+
+/// A continuous cold signal stream has one trailing deadline, measured from completed work.
+/datum/unit_test/netrun_refresh_cold_node_coalescing/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_node_publication_probe/probe = allocate(/datum/netrun_node_publication_probe)
+	probe.target = node
+	probe.RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, TYPE_PROC_REF(/datum/netrun_node_publication_probe, on_changed))
+	SSnetrun.node_interest_until -= node
+	SSnetrun.dirty_nodes -= node
+	SSnetrun.get_task_scheduler().cancel("node", node)
+	node.urgent_update = FALSE
+	node.last_processed_at = world.time
+	var/processed_at = node.last_processed_at
+	for(var/i in 1 to 40)
+		node.notify_changed(i % 2 ? NETRUN_CHANGED_OCCUPANTS : NETRUN_CHANGED_STATE)
+	var/due = processed_at + SSnetrun.get_execution_limits().node_update_interval
+	TEST_ASSERT_EQUAL(SSnetrun.dirty_nodes[node], due, "Repeated input must not move the first trailing deadline")
+	TEST_ASSERT_EQUAL(node.last_processed_at, processed_at, "An incoming signal must not pretend processing finished")
+	TEST_ASSERT_EQUAL(probe.count, 0, "A cold node must not publish every occupancy/native change globally")
+	TEST_ASSERT_NULL(SSnetrun.get_task_scheduler().by_key["node:[REF(node)]"], "Cold signal waves must not enqueue work before the deadline")
+
+	// Advance the fixture's completed-work anchor rather than sleeping a real ten seconds.
+	node.last_processed_at = world.time - SSnetrun.get_execution_limits().node_update_interval
+	SSnetrun.queue_node(node)
+	var/datum/netrun_task/node/task = SSnetrun.get_task_scheduler().by_key["node:[REF(node)]"]
+	TEST_ASSERT_NOTNULL(task, "The first due update must become schedulable")
+	// An owned direct task avoids disturbing unrelated live scheduler queues.
+	SSnetrun.get_task_scheduler().cancel("node", node)
+	task = allocate(/datum/netrun_task/node, "node", "cold-probe", NETRUN_TASK_NORMAL, node)
+	task.execute(SSnetrun, SSnetrun.get_execution_limits())
+	TEST_ASSERT_EQUAL(probe.count, 1, "Processing must publish one merged global update")
+	TEST_ASSERT(probe.flags & NETRUN_CHANGED_OCCUPANTS, "The batch must retain occupancy flags")
+	TEST_ASSERT(probe.flags & NETRUN_CHANGED_STATE, "The batch must retain native state flags")
+	TEST_ASSERT_EQUAL(node.last_processed_at, world.time, "The next cooldown must start from actual completed processing")
+	probe.UnregisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED)
+
+/// Player interest releases deferred work; urgent availability and timer work never waits.
+/datum/unit_test/netrun_refresh_node_interest_and_timers/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
+	worker.track_node(node)
+	node.last_processed_at = world.time
+	node.urgent_update = FALSE
+	worker.queue_node(node)
+	TEST_ASSERT_NULL(worker.get_task_scheduler().by_key["node:[REF(node)]"], "An idle dirty node must wait for its cold deadline")
+	worker.retain_node_interest(node, world.time + 1 MINUTES)
+	TEST_ASSERT_EQUAL(worker.node_interest_until[node], world.time + NETRUN_NODE_INTEREST_LEASE, "Interest must have a bounded lease")
+	TEST_ASSERT_NOTNULL(worker.get_task_scheduler().by_key["node:[REF(node)]"], "Interaction must release a deferred node immediately")
+	worker.finish_node_poll(node)
+	TEST_ASSERT_EQUAL(worker.poll_nodes[node], world.time + worker.get_execution_limits().node_poll_interval, "Interesting legacy nodes need the fast cadence")
+	worker.node_interest_until -= node
+	worker.finish_node_poll(node)
+	TEST_ASSERT_EQUAL(worker.poll_nodes[node], world.time + worker.get_execution_limits().node_idle_poll_interval, "An expired lease must restore sparse fallback polling")
+	worker.get_task_scheduler().cancel("node", node)
+	worker.dirty_nodes -= node
+	worker.timed_nodes[node] = world.time
+	worker.populate_node_tasks()
+	var/datum/netrun_task/task = worker.get_task_scheduler().by_key["node:[REF(node)]"]
+	TEST_ASSERT(task && task.priority == NETRUN_TASK_NORMAL && node.urgent_update, "A due native timer must bypass cold throttling")
+
+/// Merely populating the world with autonomous entities must not make every node interesting.
+/datum/unit_test/netrun_refresh_interest_ignores_idle_entities/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
+	entity.enter_node(node)
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
+	worker.nodes_by_address[node.address] = node
+	entity.console.last_ui_at = -INFINITY
+	worker.collect_console_node_interest(entity.console)
+	TEST_ASSERT(!length(worker.node_interest_until), "A clientless idle entity must not renew player-interest leases")
+	entity.console.note_ui_activity()
+	worker.collect_console_node_interest(entity.console)
+	TEST_ASSERT(!length(worker.node_interest_until), "An autonomous entity's simulated interaction must not impersonate a player viewer")
+	var/datum/netrun_console/viewed = allocate(/datum/netrun_console, host)
+	viewed.note_ui_activity()
+	worker.collect_console_node_interest(viewed)
+	TEST_ASSERT(worker.node_interest_until[node] > world.time, "An actually viewed physical console must retain its own host")
+
+/// Route/ping interests use only the supplied path, never the full reachable graph.
+/datum/unit_test/netrun_refresh_path_interest_scope/Run()
+	var/obj/item/first_host = allocate(/obj/item)
+	var/obj/item/second_host = allocate(/obj/item)
+	var/obj/item/unrelated_host = allocate(/obj/item)
+	var/datum/component/netrun_node/first = first_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/component/netrun_node/second = second_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/component/netrun_node/unrelated = unrelated_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
+	worker.nodes_by_address[first.address] = first
+	worker.nodes_by_address[second.address] = second
+	worker.nodes_by_address[unrelated.address] = unrelated
+	worker.retain_route_interest(list(first.address, list("kind" = "node", "ref" = second.address), list("kind" = "network", "ref" = unrelated.address)), world.time + 6 SECONDS)
+	TEST_ASSERT(worker.node_interest_until[first] > world.time && worker.node_interest_until[second] > world.time, "Address and node-hop path formats must retain exactly their endpoints")
+	TEST_ASSERT(isnull(worker.node_interest_until[unrelated]), "A network hop or unrelated registered device must not become hot")
+	worker.untrack_node(second)
+	TEST_ASSERT(isnull(worker.node_interest_until[second]), "Node teardown must release its interest lease")

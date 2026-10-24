@@ -8,6 +8,7 @@ export type GraphOverlay = {
   hovered?: string | null;
   selectionPending?: boolean;
   gateways: Map<string, Gateway>; selectedRoute: string[]; waypointRoute: string[]; pingRoute: string[];
+  pingId?: number; pingExpiresAt?: number;
   events: NetEvent[]; apcZones?: ApcZone[];
 };
 export type GraphBase = Pick<GraphOverlay, 'gateways' | 'apcZones'>;

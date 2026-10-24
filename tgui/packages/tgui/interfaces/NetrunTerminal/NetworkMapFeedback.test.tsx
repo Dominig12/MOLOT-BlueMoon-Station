@@ -13,7 +13,7 @@ const mount = jest.mocked(mountNetrunPixi);
 const source = { address: 'SOURCE', name: 'APC', type: 'apc', x: 0, y: 0, online: true,
   security: 1, access: 2, legit: 2, entities: 0, active: false, uplink: null, commands: [], status: [] };
 const peer = { ...source, address: 'PEER', name: 'Сервер', type: 'server', x: 20, access: 0, legit: 0 };
-const View = () => <NetrunFeedbackProvider><StationMap /></NetrunFeedbackProvider>;
+const View = (props: { suspended?: boolean } = {}) => <NetrunFeedbackProvider><StationMap suspended={props.suspended} /></NetrunFeedbackProvider>;
 
 const setup = () => {
   const topic = jest.fn();
@@ -88,4 +88,47 @@ test('a dropped selection delta retains the GPU map, requests resync, and acknow
   expect(panel.getByLabelText('Карта сети')).toBeTruthy();
   await waitFor(() => expect((global as any).Byond.topic.mock.calls.filter(
     (call) => call[0]?.type === 'act/map_sync_ack').length).toBeGreaterThanOrEqual(2));
+});
+
+test('ping metadata reaches Pixi without extending the same event or suppressing a repeat on the same path', async () => {
+  let now = 1000;
+  const time = jest.spyOn(performance, 'now').mockImplementation(() => now);
+  try {
+    const { panel, update } = setup();
+    await waitFor(() => expect(panel.getByLabelText('Карта сети').getAttribute('data-net-runtime')).toBe('ready'));
+    const surface = await mount.mock.results[0].value;
+    const hops = [{ kind: 'node', ref: source.address }, { kind: 'node', ref: peer.address }];
+    update({ ping_route: hops, ping: { id: 1, remaining_ms: 6000 } });
+    expect(surface.updateActors).toHaveBeenLastCalledWith(expect.anything(),
+      expect.objectContaining({ pingRoute: [source.address, peer.address], pingId: 1, pingExpiresAt: 7000 }));
+    now = 3000;
+    update({ ping_route: hops, ping: { id: 1, remaining_ms: 6000 } });
+    expect(surface.updateActors).toHaveBeenLastCalledWith(expect.anything(),
+      expect.objectContaining({ pingId: 1, pingExpiresAt: 7000 }));
+    now = 4000;
+    update({ ping_route: hops, ping: { id: 2, remaining_ms: 6000 } });
+    expect(surface.updateActors).toHaveBeenLastCalledWith(expect.anything(),
+      expect.objectContaining({ pingId: 2, pingExpiresAt: 10000 }));
+    update({ ping_route: null, ping: null });
+    expect(surface.updateActors).toHaveBeenLastCalledWith(expect.anything(),
+      expect.objectContaining({ pingRoute: [], pingId: undefined, pingExpiresAt: undefined }));
+  } finally { time.mockRestore(); }
+});
+
+test('a ping received while hidden keeps its original deadline when the map resumes', async () => {
+  let now = 1000;
+  const time = jest.spyOn(performance, 'now').mockImplementation(() => now);
+  try {
+    const { panel, store } = setup();
+    await waitFor(() => expect(panel.getByLabelText('Карта сети').getAttribute('data-net-runtime')).toBe('ready'));
+    const surface = await mount.mock.results[0].value, map = store.getState().backend.data.map;
+    panel.rerender(<View suspended />);
+    act(() => store.dispatch(backendUpdate({ data: { map: null, ping: { id: 1, remaining_ms: 6000 },
+      ping_route: [{ kind: 'node', ref: source.address }, { kind: 'node', ref: peer.address }] } })));
+    now = 9000;
+    act(() => store.dispatch(backendUpdate({ data: { map } })));
+    panel.rerender(<View />);
+    expect(surface.updateActors).toHaveBeenLastCalledWith(expect.anything(),
+      expect.objectContaining({ pingId: 1, pingExpiresAt: 7000 }));
+  } finally { time.mockRestore(); }
 });

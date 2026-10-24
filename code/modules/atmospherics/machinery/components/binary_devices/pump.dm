@@ -116,7 +116,7 @@
 		radio_connection = SSradio.add_object(src, frequency, filter = RADIO_ATMOSIA)
 
 /obj/machinery/atmospherics/components/binary/pump/proc/broadcast_status()
-	if(!radio_connection)
+	if(!frequency)
 		return
 
 	var/datum/signal/signal = new(list(
@@ -126,7 +126,8 @@
 		"target_output" = target_pressure,
 		"sigtype" = "status"
 	))
-	radio_connection.post_signal(src, signal, filter = RADIO_ATMOSIA)
+	netrun_atmos_send("atmos.device", "atmos.monitor", signal.data)
+	qdel(signal)
 
 /obj/machinery/atmospherics/components/binary/pump/ui_interact(mob/user, datum/tgui/ui)
 	ui = SStgui.try_update_ui(user, src, ui)

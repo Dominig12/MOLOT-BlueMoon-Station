@@ -18,7 +18,7 @@ const NO_BOX: GraphBox = { left: -Infinity, right: Infinity, top: -Infinity, bot
 const sameOverlayData = (a: GraphOverlay | null, b: GraphOverlay) => a
   && a.gateways === b.gateways && a.entityHost === b.entityHost && a.jacked === b.jacked
   && a.selectedRoute === b.selectedRoute && a.waypointRoute === b.waypointRoute
-  && a.pingRoute === b.pingRoute && a.events === b.events;
+  && a.pingRoute === b.pingRoute && a.pingId === b.pingId && a.pingExpiresAt === b.pingExpiresAt && a.events === b.events;
 const sameLocalState = (a: GraphOverlay, b: GraphOverlay) => a.selected === b.selected
   && a.hovered === b.hovered && a.selectionPending === b.selectionPending;
 const needsActor = (node: PlacedNode, overlay: GraphOverlay) => node.dynamic || node.entities || node.ice || node.active
@@ -61,6 +61,7 @@ export class PixiActors {
   private reducedMotion = false;
   private moving: PlacedNode[] = [];
   private blocked = new Set<string>();
+  private pingToken: number | string[] | null = null;
 
   constructor(private readonly pixi: PixiLibrary) {
     this.world = new pixi.Container(); this.world.label = 'netrun-live';
@@ -68,7 +69,10 @@ export class PixiActors {
     this.nodeLayer = new pixi.Container(); this.nodeLayer.label = 'processes-and-devices';
     this.selectedLinks = new pixi.Graphics();
     this.effects = new pixi.Graphics(); this.effects.label = 'traffic-and-ping';
-    this.routes = [0x50e8c0, 0xe879b8, 0xffc56b].map((tint) => ({ graphic: new pixi.Graphics(), signature: '', segments: [], began: 0, until: 0, tint }));
+    this.routes = [0x50e8c0, 0xe879b8, 0xffc56b].map((tint, index) => {
+      const graphic = new pixi.Graphics(); graphic.label = ['selected-route', 'waypoint-route', 'ping-route'][index];
+      return { graphic, signature: '', segments: [], began: 0, until: 0, tint };
+    });
     this.world.addChild(this.linkLayer, this.selectedLinks, ...this.routes.map((route) => route.graphic), this.nodeLayer, this.effects);
   }
 
@@ -138,8 +142,8 @@ export class PixiActors {
     }
     for (const [id, link] of this.links) { if (!linkKeys.has(id)) { destroyDisplay(link.graphic); this.links.delete(id); } }
     this.paintPaths();
-    this.paintRoute(overlay.selectedRoute, this.routes[0], now); this.paintRoute(overlay.waypointRoute, this.routes[1], now);
-    this.paintRoute(overlay.pingRoute, this.routes[2], now, true);
+    this.paintRoute(overlay.selectedRoute, this.routes[0]); this.paintRoute(overlay.waypointRoute, this.routes[1]);
+    this.paintPing(now);
     if (!localOnly) { this.traffic = overlay.events.filter((event) => event.age < 4).flatMap((event) => {
       const point = scene.byAddress.get(event.to) || scene.byAddress.get(event.from);
       return point ? [{ born: now - Math.max(0, event.age) * 1000, point, trace: event.kind === 'trace', segments: this.eventPath(event.from, event.to) }] : [];
@@ -219,11 +223,10 @@ export class PixiActors {
     if (anchors.length) { this.selectedLinks.stroke({ color: 0x75a3b4, width: 1.2, alpha: .5 }); }
   }
 
-  private paintRoute(addresses: string[], route: Route, now: number, ping = false) {
+  private paintRoute(addresses: string[], route: Route, ping = false) {
     const segments = this.segments(addresses), path = segments.map(({ from, to }) => `${from.px},${from.py}:${to.px},${to.py}`).join('|');
     const signature = path;
     if (route.signature === signature) { return; }
-    const changedPath = route.signature !== path;
     route.signature = signature; route.segments = segments; route.graphic.clear();
     // Muted continuous path beneath bright dashes improves route legibility
     // at fractional zoom without shaders or multiple display objects.
@@ -231,7 +234,23 @@ export class PixiActors {
     if (segments.length) { route.graphic.stroke({ color: route.tint, width: 4, alpha: .18 }); }
     for (const segment of segments) { segmentPath(route.graphic, segment.from, segment.to, ping ? 5 : 10, 6); }
     if (segments.length) { route.graphic.stroke({ color: route.tint, width: 2.5, alpha: .85 }); }
-    if (ping && changedPath && segments.length) { route.began = now; route.until = now + 1800; }
+  }
+
+  private clearPing() {
+    const route = this.routes[2];
+    if (route.signature || route.segments.length) { route.graphic.clear(); }
+    route.signature = ''; route.segments = [];
+  }
+
+  private paintPing(now: number) {
+    const overlay = this.overlay!, route = this.routes[2];
+    const token = overlay.pingId ?? overlay.pingRoute;
+    if (this.pingToken !== token) {
+      this.pingToken = token; route.began = now;
+      route.until = overlay.pingExpiresAt ?? now + 1800;
+    }
+    if (!overlay.pingRoute.length || now >= route.until) { this.clearPing(); return; }
+    this.paintRoute(overlay.pingRoute, route, true);
   }
 
   private eventPath(from: string, to: string): Segment[] {
@@ -260,12 +279,15 @@ export class PixiActors {
     }
     for (const link of this.links.values()) { link.graphic.visible = boxesIntersect(link.bounds, bounds); }
     if (geometryChanged && this.overlay) {
-      this.paintPaths(); this.paintRoute(this.overlay.selectedRoute, this.routes[0], performance.now());
-      this.paintRoute(this.overlay.waypointRoute, this.routes[1], performance.now()); this.paintRoute(this.overlay.pingRoute, this.routes[2], performance.now(), true);
+      this.paintPaths(); this.paintRoute(this.overlay.selectedRoute, this.routes[0]);
+      this.paintRoute(this.overlay.waypointRoute, this.routes[1]); this.paintPing(performance.now());
     }
   }
 
   setReducedMotion(reduced: boolean) { this.reducedMotion = reduced; }
+
+  /** A static ping still needs one closing frame, without a reduced-motion RAF loop. */
+  get nextWake() { return this.routes[2].segments.length ? this.routes[2].until : null; }
 
   /** Only a finite effect/transition can request the next frame. Quiet maps do not tick. */
   animate(now: number) {
@@ -310,9 +332,15 @@ export class PixiActors {
       animating = true;
     }
     const ping = this.routes[2];
-    if (!this.reducedMotion && now < ping.until && ping.segments.length) {
-      const point = pointOn(ping.segments, ((now - ping.began) % 900) / 900);
-      if (point) { this.effects.circle(point.px, point.py, 5).fill({ color: ping.tint, alpha: .95 }); } animating = true;
+    if (ping.segments.length) {
+      if (now >= ping.until) { this.clearPing(); }
+      else {
+        if (!this.reducedMotion && now - ping.began < 1800) {
+          const point = pointOn(ping.segments, ((now - ping.began) % 900) / 900);
+          if (point) { this.effects.circle(point.px, point.py, 5).fill({ color: ping.tint, alpha: .95 }); }
+          animating = true;
+        }
+      }
     }
     return animating;
   }

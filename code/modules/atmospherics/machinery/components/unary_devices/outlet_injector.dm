@@ -108,7 +108,7 @@
 
 /obj/machinery/atmospherics/components/unary/outlet_injector/proc/broadcast_status()
 
-	if(!radio_connection)
+	if(!frequency)
 		return
 
 	var/datum/signal/signal = new(list(
@@ -119,7 +119,8 @@
 		//"timestamp" = world.time,
 		"sigtype" = "status"
 	))
-	radio_connection.post_signal(src, signal)
+	netrun_atmos_send("atmos.device", "atmos.monitor", signal.data)
+	qdel(signal)
 
 /obj/machinery/atmospherics/components/unary/outlet_injector/atmosinit()
 	set_frequency(frequency)

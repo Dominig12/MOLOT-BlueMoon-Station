@@ -232,6 +232,7 @@
 		data["selected"] = null
 		data["selected_network"] = null
 		data["ping_route"] = null
+		data["ping"] = null
 		data["events"] = null
 		data["waypoint"] = null
 		data["storage"] = storage_payload()
@@ -263,6 +264,7 @@
 		data["map"] = null
 		data["selected_network"] = null
 		data["ping_route"] = null
+		data["ping"] = null
 		data["events"] = null
 		data["waypoint"] = null
 		return data
@@ -332,7 +334,8 @@
 	append_cli_payload(data, workspace_view == "terminal", session)
 	data["windows"] = windows_payload()
 	data["window"] = workspace_view == "pinned" && remote_session.active_window ? window_payload() : null
-	data["ping_route"] = (map_view.ping_route && world.time - map_view.ping_at < 6 SECONDS) ? map_view.ping_route : null
+	data["ping_route"] = map_view.has_ping() ? map_view.ping_route : null
+	data["ping"] = map_view.ping_metadata()
 	data["events"] = SSnetrun.recent_events()
 	data["search"] = workspace_view == "map" ? search_payload() : null
 	return data
@@ -772,14 +775,18 @@
 /// Один путь доставки файлов для кнопок, CLI и будущих клиентов.
 /datum/netrun_console/proc/queue_file_request(action, datum/component/netrun_node/node, uid, to_shard = FALSE)
 	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
-	if(!node?.file_store?.files || !can_route(node) || node_level(node) < required || !node.is_online(node != connection.jack) || is_locked() || world.time < next_command)
+	var/datum/netrun_path_tree/tree = make_path_tree()
+	if(!node?.file_store?.files || !can_route(node, tree) || node_level(node, tree) < required || !node.is_online(node != connection.jack) || is_locked() || world.time < next_command)
+		qdel(tree)
 		return FALSE
-	var/lat = latency_to(node)
+	var/lat = latency_to(node, tree)
+	var/list/poll_route = tree.addresses_to(node.address)
+	qdel(tree)
 	next_command = world.time + max(lat, 0.5 SECONDS)
 	if(lat)
 		log_line("[node.address]: файловый запрос отправлен, ~[lat * 100] мс.")
 	var/datum/netrun_request/file/packet = new(src, node, action, uid, to_shard, node.network, operator)
-	return packet.send(lat)
+	return packet.send(lat, poll_route)
 
 /datum/netrun_console/proc/deliver_file_request(action, datum/component/netrun_node/node, uid, to_shard, datum/netrun_network/sent_network, mob/sender)
 	if(QDELETED(node))
