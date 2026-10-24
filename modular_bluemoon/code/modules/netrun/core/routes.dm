@@ -271,9 +271,11 @@
 	return borrow ? table : table.copy()
 
 /datum/netrun_console/proc/route_source()
+	RETURN_TYPE(/datum/component/netrun_node)
 	return connection.route_source()
 
 /datum/netrun_connection/proc/route_source()
+	RETURN_TYPE(/datum/component/netrun_node)
 	if(owner.ui_routes)
 		return owner.ui_routes.source
 	return owner.physical_route_source()

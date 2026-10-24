@@ -36,7 +36,8 @@
 /datum/controller/subsystem/netrun
 	var/datum/netrun_machine_transport/machine_transport
 
-/datum/controller/subsystem/netrun/proc/get_machine_transport()
+/datum/controller/subsystem/netrun/proc/get_machine_transport() as /datum/netrun_machine_transport
+	RETURN_TYPE(/datum/netrun_machine_transport)
 	if(!machine_transport)
 		machine_transport = new
 	return machine_transport
@@ -117,6 +118,7 @@
 	return "[REF(host)]:[service_id]"
 
 /datum/netrun_machine_service/proc/resolve_node()
+	RETURN_TYPE(/datum/component/netrun_node)
 	return node
 
 /datum/netrun_machine_service/proc/service_tag()

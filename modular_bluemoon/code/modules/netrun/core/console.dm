@@ -347,6 +347,7 @@
 // MARK: Действия
 
 /datum/netrun_console/proc/selected_node()
+	RETURN_TYPE(/datum/component/netrun_node)
 	// selected_address is fixed during one ui_data pass, and this is resolved many times per poll
 	// (string build + hash lookup each time); resolve it once per serialization pass.
 	if(ui_serializing && ui_selected_resolved)

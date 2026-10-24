@@ -103,6 +103,7 @@
 		. += shard.file_store.files
 
 /datum/netrun_inventory/proc/store_for(datum/netrun_file/file)
+	RETURN_TYPE(/datum/netrun_file_store)
 	if(file in local_store.files)
 		return local_store
 	if(!QDELETED(shard) && (file in shard.file_store.files))

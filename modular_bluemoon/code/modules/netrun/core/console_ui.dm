@@ -118,6 +118,7 @@
 	invalidate_ui()
 
 /datum/netrun_console/proc/on_ui_network_changed(datum/source, datum/netrun_network/network)
+	RETURN_TYPE(/datum/component/netrun_node)
 	SIGNAL_HANDLER
 	if(network?.id == map_view.selected_network || selected_node()?.network == network)
 		invalidate_ui()

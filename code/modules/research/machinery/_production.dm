@@ -40,8 +40,6 @@
 	. = ..()
 	create_reagents(0, OPENCONTAINER | NO_REACT)
 	gen_access()
-	stored_research = new /datum/techweb/netrun_snapshot
-	INVOKE_ASYNC(src, PROC_REF(update_research))
 	materials = AddComponent(/datum/component/remote_materials, "lathe", mapload, _after_insert=CALLBACK(src, PROC_REF(AfterMaterialInsert)))
 	RefreshParts()
 
@@ -50,6 +48,8 @@
 	AddComponent(/datum/component/techweb_holder)
 	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
 	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, SSresearch.get_rnd_network_for(src, network_id, techweb_type))
+	stored_research = new /datum/techweb/netrun_snapshot
+	INVOKE_ASYNC(src, PROC_REF(update_research))
 
 
 /obj/machinery/rnd/production/Destroy()

@@ -30,6 +30,7 @@
 	var/datum/netrun_execution_limits/execution_limits
 
 /datum/controller/subsystem/netrun/proc/get_execution_limits(refresh = FALSE)
+	RETURN_TYPE(/datum/netrun_execution_limits)
 	if(!execution_limits)
 		execution_limits = new
 		refresh = TRUE

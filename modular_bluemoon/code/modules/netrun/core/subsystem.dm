@@ -220,6 +220,7 @@ SUBSYSTEM_DEF(netrun)
 			queue_node(node, TRUE)
 
 /datum/controller/subsystem/netrun/proc/get_task_scheduler()
+	RETURN_TYPE(/datum/netrun_task_scheduler)
 	if(!task_scheduler)
 		task_scheduler = new(get_execution_limits())
 		RegisterSignal(src, COMSIG_NETRUN_TOPOLOGY_DIRTY, PROC_REF(on_topology_dirty))
@@ -328,6 +329,7 @@ SUBSYSTEM_DEF(netrun)
 
 /// Allocation only: node lifecycle and bindings must never recursively build the graph.
 /datum/controller/subsystem/netrun/proc/get_topology()
+	RETURN_TYPE(/datum/netrun_topology)
 	if(!topology)
 		topology = new
 	return topology
@@ -454,6 +456,7 @@ SUBSYSTEM_DEF(netrun)
 			return net
 
 /datum/controller/subsystem/netrun/proc/find_node(address)
+	RETURN_TYPE(/datum/component/netrun_node)
 	return nodes_by_address[uppertext(trim("[address]"))]
 
 /// Работает ли магистраль NTnet для указанного Z-уровня
