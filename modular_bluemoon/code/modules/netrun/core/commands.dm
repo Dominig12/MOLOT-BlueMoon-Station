@@ -72,6 +72,19 @@
 /datum/netrun_command/node_log/execute(datum/component/netrun_node/node, datum/netrun_console/console)
 	return length(node.logs) ? jointext(node.logs, "\n") : "Журнал пуст."
 
+/datum/netrun_command/packet_log
+	id = "packet_log"
+	name = "Журнал пакетов"
+	desc = "Отправка, пересылка, получение и отказы сетевых пакетов этого узла."
+	help = "Последние 100 записей: время, ID пакета, этап, тип, адреса и служба. SEND — отправка, FORWARD — пересылка, RECEIVE — получение, ACCEPT — принятие, REJECT/DROP/DNS_FAIL — отказ с причиной. Содержимое сообщений не сохраняется."
+	access = NETRUN_ACCESS_USER
+	trace = 0
+	icon = "list"
+	works_offline = TRUE
+
+/datum/netrun_command/packet_log/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	return node.packet_log_text()
+
 /datum/netrun_command/firmware
 	id = "firmware"
 	name = "Обход ограничений"

@@ -89,9 +89,19 @@
 
 /datum/computer_file/program/messenger/on_install()
 	. = ..()
+	if(QDELETED(computer))
+		return
+	// Rebinding a preloaded drive must not register the same listener twice.
+	UnregisterSignal(computer, list(COMSIG_MODULAR_PDA_IMPRINT_UPDATED, COMSIG_MODULAR_PDA_IMPRINT_RESET))
 	RegisterSignal(computer, COMSIG_MODULAR_PDA_IMPRINT_UPDATED, PROC_REF(on_imprint_added))
 	RegisterSignal(computer, COMSIG_MODULAR_PDA_IMPRINT_RESET, PROC_REF(on_imprint_reset))
 	add_messenger(src)
+
+/datum/computer_file/program/messenger/on_uninstall()
+	. = ..()
+	if(!QDELETED(computer))
+		UnregisterSignal(computer, list(COMSIG_MODULAR_PDA_IMPRINT_UPDATED, COMSIG_MODULAR_PDA_IMPRINT_RESET))
+	remove_messenger(src)
 
 /datum/computer_file/program/messenger/run_program(mob/living/user)
 	. = ..()

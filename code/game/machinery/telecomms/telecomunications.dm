@@ -76,7 +76,9 @@ GLOBAL_LIST_EMPTY(telecomms_list)
 			packet = new /datum/netrun_machine_message/telecomms/relay_probe(signal, src, relay_group)
 		else
 			packet = new(signal, src)
-		if(!sender.send(recipient.service_id, packet, recipient.service_tag()))
+		// Configured links already identify a physical peer. Route the packet to
+		// that peer directly instead of repeating DNS at every telecomms stage.
+		if(!sender.send_to(recipient, packet))
 			continue
 		send_count++
 		if(machine.is_freq_listening(signal))
@@ -95,7 +97,7 @@ GLOBAL_LIST_EMPTY(telecomms_list)
 	var/datum/netrun_machine_service/recipient = machine.get_netrun_machine_service("telecomms.relay")
 	if(!sender || !recipient)
 		return FALSE
-	return sender.send(recipient.service_id, new /datum/netrun_machine_message/telecomms(signal, src), recipient.service_tag())
+	return sender.send_to(recipient, new /datum/netrun_machine_message/telecomms(signal, src))
 
 /obj/machinery/telecomms/proc/receive_information(datum/signal/signal, obj/machinery/telecomms/machine_from)
 	// receive information from linked machinery

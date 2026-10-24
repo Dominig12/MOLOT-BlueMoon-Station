@@ -24,6 +24,7 @@
 		else
 			// HIGHLANDER replaces a component after registering the new one.
 			service.node = node
+			SSnetrun.get_machine_transport().index_service(service)
 
 /atom/proc/get_netrun_machine_service(service_id)
 	var/datum/component/netrun_node/node = netrun_machine_service_node()
@@ -31,6 +32,7 @@
 	var/datum/netrun_machine_service/service = netrun_machine_services?[service_id]
 	if(!QDELETED(service))
 		service.node = node
+		SSnetrun.get_machine_transport().index_service(service)
 		return service
 
 /datum/controller/subsystem/netrun
@@ -86,18 +88,20 @@
 	var/datum/component/netrun_node/node
 	var/list/directory = list()
 	var/list/resolutions = list()
+	var/indexed_tag
 
 /datum/netrun_machine_service/New(datum/component/netrun_node/node, atom/host_override)
 	src.node = node
 	host = host_override || node?.parent
 	if(host)
 		RegisterSignal(host, COMSIG_PARENT_QDELETING, PROC_REF(host_deleted))
+		RegisterSignal(host, list(COMSIG_ATOM_AFTER_SUCCESSFUL_INITIALIZE, COMSIG_ATOM_UPDATE_NAME, COMSIG_NETRUN_SERVICE_STATE_CHANGED, COMSIG_MODULAR_COMPUTER_FILE_STORE, COMSIG_MODULAR_COMPUTER_FILE_DELETE), PROC_REF(host_initialized))
 	SSnetrun.get_machine_transport().register(src)
 
 /datum/netrun_machine_service/Destroy()
 	SSnetrun.get_machine_transport().unregister(src)
 	if(host)
-		UnregisterSignal(host, COMSIG_PARENT_QDELETING)
+		UnregisterSignal(host, list(COMSIG_PARENT_QDELETING, COMSIG_ATOM_AFTER_SUCCESSFUL_INITIALIZE, COMSIG_ATOM_UPDATE_NAME, COMSIG_NETRUN_SERVICE_STATE_CHANGED, COMSIG_MODULAR_COMPUTER_FILE_STORE, COMSIG_MODULAR_COMPUTER_FILE_DELETE))
 		if(host.netrun_machine_services?[service_id] == src)
 			host.netrun_machine_services -= service_id
 	for(var/key in resolutions.Copy())
@@ -113,6 +117,10 @@
 /datum/netrun_machine_service/proc/host_deleted()
 	SIGNAL_HANDLER
 	qdel(src)
+
+/datum/netrun_machine_service/proc/host_initialized()
+	SIGNAL_HANDLER
+	SSnetrun.get_machine_transport().index_service(src)
 
 /datum/netrun_machine_service/proc/service_key()
 	return "[REF(host)]:[service_id]"
@@ -132,6 +140,9 @@
 
 /datum/netrun_machine_service/proc/receive(datum/netrun_machine_message/message)
 	return FALSE
+
+/datum/netrun_machine_service/proc/rejection_reason(datum/netrun_machine_message/message)
+	return "получатель отклонил пакет"
 
 /datum/netrun_machine_service/proc/directory_ready(destination_id, recipient_tag)
 	if(!QDELETED(host))
@@ -175,6 +186,8 @@
 	return result
 
 /datum/netrun_machine_service/proc/cached_directory(destination_id, recipient_tag)
+	if(!SSnetrun.get_machine_transport().is_ready())
+		return null
 	var/query_key = "[destination_id]|[recipient_tag]"
 	var/datum/netrun_machine_directory/entry = directory[query_key]
 	if(entry && entry.expires > world.time && entry.revision == SSnetrun.get_machine_transport().service_revisions[destination_id] && can_reach(entry.resolver_ref?.resolve(), FALSE))
@@ -182,7 +195,10 @@
 	return null
 
 /datum/netrun_machine_service/proc/get_resolution(destination_id, recipient_tag)
-	if(QDELETED(host) || !resolve_node()?.is_online())
+	if(QDELETED(host) || QDELETED(resolve_node()))
+		return null
+	// Native power/area bindings are not authoritative until map initialization ends.
+	if(SSnetrun.get_machine_transport().is_ready() && !resolve_node().is_online())
 		return null
 	var/query_key = "[destination_id]|[recipient_tag]"
 	var/datum/netrun_machine_resolution/query = resolutions[query_key]
@@ -219,6 +235,12 @@
 /datum/netrun_machine_transport
 	var/list/services = list()
 	var/list/by_id = list()
+	var/list/by_tag = list()
+	var/list/waiting_resolutions = list()
+	var/wake_timer
+	var/preparing = FALSE
+	var/bootstrap_complete = FALSE
+	var/packet_serial = 0
 	var/list/service_revisions = list()
 	var/list/packets = list()
 	var/list/interactive_packets = list()
@@ -233,6 +255,46 @@
 
 /datum/netrun_machine_transport/New()
 	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_UNREGISTERED, PROC_REF(node_deleted))
+	RegisterSignal(SSatoms, COMSIG_SUBSYSTEM_POST_INITIALIZE, PROC_REF(atoms_initialized))
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(network_changed))
+
+/datum/netrun_machine_transport/proc/atoms_initialized()
+	SIGNAL_HANDLER
+	prepare_network()
+
+/datum/netrun_machine_transport/proc/is_ready()
+	return bootstrap_complete && !preparing && SSnetrun.initialized && SSatoms.initialized == INITIALIZATION_INNEW_REGULAR
+
+/// Finalize map bindings and names after native Initialize/LateInitialize, before clients run.
+/datum/netrun_machine_transport/proc/prepare_network()
+	if(preparing || !SSnetrun.initialized || SSatoms.initialized != INITIALIZATION_INNEW_REGULAR)
+		return
+	preparing = TRUE
+	SSnetrun.ensure_station_dns()
+	SSnetrun.ensure_topology()
+	for(var/key in services.Copy())
+		var/datum/netrun_machine_service/service = services[key]
+		if(!QDELETED(service))
+			index_service(service)
+	bootstrap_complete = TRUE
+	preparing = FALSE
+	wake_resolutions()
+
+/datum/netrun_machine_transport/proc/network_changed(datum/source, datum/component/netrun_node/node, flags)
+	SIGNAL_HANDLER
+	if(length(waiting_resolutions) && (node.node_type == NETRUN_NODE_APC || istype(node.parent, /obj/machinery/ntnet_relay) || istype(node.parent, /obj/machinery/netrun_server/dns)))
+		wake_resolutions()
+
+/// Registration/power restoration wakes pending discovery once, after construction unwinds.
+/datum/netrun_machine_transport/proc/wake_resolutions()
+	if(length(waiting_resolutions) && !wake_timer)
+		wake_timer = addtimer(CALLBACK(src, PROC_REF(resume_resolutions)), world.tick_lag, TIMER_STOPPABLE | TIMER_DELETE_ME)
+
+/datum/netrun_machine_transport/proc/resume_resolutions()
+	wake_timer = null
+	for(var/datum/netrun_machine_resolution/query as anything in waiting_resolutions.Copy())
+		if(!QDELETED(query))
+			query.begin()
 
 /datum/netrun_machine_transport/proc/node_deleted(datum/source, datum/component/netrun_node/node)
 	SIGNAL_HANDLER
@@ -241,7 +303,10 @@
 	route_used -= node.address
 
 /datum/netrun_machine_transport/Destroy()
-	UnregisterSignal(SSnetrun, COMSIG_NETRUN_NODE_UNREGISTERED)
+	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_UNREGISTERED, COMSIG_NETRUN_NODE_CHANGED))
+	UnregisterSignal(SSatoms, COMSIG_SUBSYSTEM_POST_INITIALIZE)
+	if(wake_timer)
+		deltimer(wake_timer)
 	QDEL_LIST(packets)
 	for(var/address in route_trees)
 		qdel(route_trees[address])
@@ -258,11 +323,41 @@
 	bucket |= service
 	revision++
 	service_revisions[service.service_id] = (service_revisions[service.service_id] || 0) + 1
+	index_service(service)
+	if(service.service_id == "dns" || service.node?.node_type == NETRUN_NODE_APC || istype(service.host, /obj/machinery/ntnet_relay))
+		wake_resolutions()
+
+/datum/netrun_machine_transport/proc/index_service(datum/netrun_machine_service/service)
+	var/tag = service.service_tag()
+	if(service.indexed_tag == tag)
+		return
+	var/previous_key = "[service.service_id]|[service.indexed_tag]"
+	var/list/previous = by_tag[previous_key]
+	if(previous)
+		previous -= service
+	if(!length(previous))
+		by_tag -= previous_key
+	service.indexed_tag = tag
+	if(!isnull(tag))
+		var/key = "[service.service_id]|[tag]"
+		var/list/bucket = by_tag[key]
+		if(!bucket)
+			bucket = list()
+			by_tag[key] = bucket
+		bucket |= service
+	service_revisions[service.service_id] = (service_revisions[service.service_id] || 0) + 1
 
 /datum/netrun_machine_transport/proc/unregister(datum/netrun_machine_service/service)
 	services -= service.service_key()
 	var/list/bucket = by_id[service.service_id]
-	bucket -= service
+	if(bucket)
+		bucket -= service
+	var/tag_key = "[service.service_id]|[service.indexed_tag]"
+	var/list/tag_bucket = by_tag[tag_key]
+	if(tag_bucket)
+		tag_bucket -= service
+	if(!length(tag_bucket))
+		by_tag -= tag_key
 	revision++
 	service_revisions[service.service_id] = (service_revisions[service.service_id] || 0) + 1
 	for(var/datum/netrun_machine_packet/packet as anything in packets.Copy())
@@ -271,7 +366,15 @@
 
 /datum/netrun_machine_transport/proc/lookup(datum/netrun_machine_service/source, destination_id, recipient_tag)
 	. = list()
-	var/list/bucket = by_id[destination_id]
+	var/list/bucket = isnull(recipient_tag) ? by_id[destination_id] : by_tag["[destination_id]|[recipient_tag]"]
+	// A few native tag setters still write fields directly. Repair a stale/missing
+	// index once on cache miss; ordinary exact-address traffic stays indexed.
+	if(!isnull(recipient_tag) && !length(bucket))
+		bucket = list()
+		for(var/datum/netrun_machine_service/candidate as anything in by_id[destination_id])
+			if(!QDELETED(candidate) && candidate.service_tag() == recipient_tag)
+				index_service(candidate)
+				bucket |= candidate
 	for(var/datum/netrun_machine_service/target as anything in bucket)
 		if(!QDELETED(target) && target.matches(source, recipient_tag) && reachable(source, target))
 			. += target
@@ -379,10 +482,16 @@
 	var/finishing = FALSE
 	var/kind = "machine"
 	var/list/interest_route
+	var/packet_id
+	var/source_address
+	var/destination_address
 
 /datum/netrun_machine_packet/New(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient)
 	src.source = source
 	src.recipient = recipient
+	packet_id = ++SSnetrun.get_machine_transport().packet_serial
+	source_address = source?.resolve_node()?.address
+	destination_address = recipient?.resolve_node()?.address
 
 /datum/netrun_machine_packet/Destroy()
 	if(timer_id)
@@ -402,13 +511,14 @@
 		fail("нет сетевого маршрута")
 		return FALSE
 	transport.packets |= src
+	journal(source_address, "SEND")
 	var/mob/user = interest_user()
 	var/mob/camera/netrun_entity/entity = user
 	if(user?.client || (istype(entity) && entity.dive_link?.body?.client))
 		interest_route = route.hops.Copy()
 		transport.interactive_packets |= src
 		SSnetrun.retain_route_interest(interest_route, world.time + NETRUN_NODE_INTEREST_LEASE)
-	var/delay = clamp(route.latency, 1, 10 SECONDS)
+	var/delay = clamp(route.latency * NETRUN_MACHINE_LATENCY_SCALE, world.tick_lag, NETRUN_MACHINE_MAX_LATENCY)
 	qdel(route)
 	timer_id = addtimer(CALLBACK(src, PROC_REF(deliver)), delay, TIMER_STOPPABLE | TIMER_DELETE_ME)
 	return TRUE
@@ -422,6 +532,10 @@
 		fail("маршрут разорван")
 		return
 	finishing = TRUE
+	destination_address = route.hops[length(route.hops)]
+	for(var/i in 2 to length(route.hops) - 1)
+		journal(route.hops[i], "FORWARD")
+	journal(destination_address, "RECEIVE")
 	SSnetrun.get_machine_transport().record_flow(source, recipient, kind, route.hops)
 	qdel(route)
 	execute()
@@ -433,10 +547,16 @@
 /datum/netrun_machine_packet/proc/interest_user()
 	return null
 
+/datum/netrun_machine_packet/proc/journal(address, phase, reason)
+	var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
+	if(!QDELETED(node))
+		node.add_packet_log(packet_id, phase, kind, source_address, destination_address, recipient?.service_id, reason)
+
 /datum/netrun_machine_packet/proc/fail(reason)
 	if(finishing)
 		return
 	finishing = TRUE
+	journal(source_address, "DROP", reason)
 	qdel(src)
 
 /datum/netrun_machine_packet/data
@@ -459,9 +579,12 @@
 
 /datum/netrun_machine_packet/data/execute()
 	if(recipient.matches(source, recipient_tag) && recipient.accepts(message) && recipient.receive(message))
+		journal(destination_address, "ACCEPT")
 		message.delivered(recipient)
 	else
-		message.failed("получатель отклонил пакет")
+		var/reason = recipient.rejection_reason(message)
+		journal(destination_address, "REJECT", reason)
+		message.failed(reason)
 
 /datum/netrun_machine_packet/data/fail(reason)
 	if(!finishing)
@@ -480,24 +603,33 @@
 	var/datum/netrun_machine_service/resolver
 	var/timer_id
 	var/attempts = 0
+	var/next_attempt_at = 0
 	var/completed = FALSE
+	var/failure_reason = "DNS: запрос отменён"
+	var/query_id
 
 /datum/netrun_machine_resolution/New(datum/netrun_machine_service/source, destination_id, recipient_tag)
 	src.source = source
 	src.destination_id = destination_id
 	src.recipient_tag = recipient_tag
 	query_key = "[destination_id]|[recipient_tag]"
+	query_id = ++SSnetrun.get_machine_transport().packet_serial
 
 /datum/netrun_machine_resolution/Destroy()
+	SSnetrun.get_machine_transport().waiting_resolutions -= src
 	if(timer_id)
 		deltimer(timer_id)
 	if(source?.resolutions[query_key] == src)
 		source.resolutions -= query_key
 	var/list/abandoned = queued.Copy()
+	if(length(abandoned) && !QDELETED(source))
+		var/datum/component/netrun_node/node = source.resolve_node()
+		if(!QDELETED(node))
+			node.add_packet_log(query_id, "DNS_FAIL", "dns", node.address, resolver?.resolve_node()?.address, destination_id, failure_reason)
 	SSnetrun.get_machine_transport().queued_messages -= length(queued)
 	queued.Cut()
 	for(var/datum/netrun_machine_message/message as anything in abandoned)
-		message.failed("DNS не ответил")
+		message.failed(failure_reason)
 		qdel(message)
 	records.Cut()
 	source = null
@@ -523,14 +655,28 @@
 	return TRUE
 
 /datum/netrun_machine_resolution/proc/begin()
+	if(timer_id)
+		deltimer(timer_id)
 	timer_id = null
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	if(!transport.is_ready())
+		transport.waiting_resolutions |= src
+		timer_id = addtimer(CALLBACK(src, PROC_REF(begin)), 1 SECONDS, TIMER_STOPPABLE | TIMER_DELETE_ME)
+		return
 	var/list/servers = SSnetrun.get_machine_transport().lookup(source, "dns", null)
 	if(!length(servers))
-		if(++attempts >= 5)
-			qdel(src)
-			return
-		timer_id = addtimer(CALLBACK(src, PROC_REF(begin)), 2 SECONDS, TIMER_STOPPABLE | TIMER_DELETE_ME)
+		failure_reason = length(transport.by_id["dns"]) ? "DNS: сервер выключен или нет физического маршрута" : "DNS: сервер не зарегистрирован в сети"
+		// Readiness events can probe immediately, but cannot spend the timed retry
+		// budget repeatedly while unrelated initialization/power signals arrive.
+		if(world.time >= next_attempt_at)
+			next_attempt_at = world.time + 2 SECONDS
+			if(++attempts >= 5)
+				qdel(src)
+				return
+		transport.waiting_resolutions |= src
+		timer_id = addtimer(CALLBACK(src, PROC_REF(begin)), max(world.tick_lag, next_attempt_at - world.time), TIMER_STOPPABLE | TIMER_DELETE_ME)
 		return
+	transport.waiting_resolutions -= src
 	resolver = servers[1]
 	var/datum/netrun_machine_packet/dns_query/packet = new(source, resolver, src)
 	packet.send()
@@ -600,7 +746,17 @@
 		query.answer()
 
 /datum/netrun_machine_packet/dns_query/fail(reason)
-	qdel(query)
+	if(finishing)
+		return
+	// Deleting the query emits the cancellation signal synchronously. Detach first
+	// so packet failure cannot recursively delete the same query during its Destroy.
+	var/datum/netrun_machine_resolution/pending = query
+	if(pending)
+		UnregisterSignal(pending, COMSIG_PARENT_QDELETING)
+		query = null
+	if(!QDELETED(pending))
+		pending.failure_reason = "DNS: [reason]"
+		qdel(pending)
 	return ..()
 
 /datum/netrun_machine_packet/dns_reply

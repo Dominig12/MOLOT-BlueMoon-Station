@@ -64,6 +64,26 @@
 		pda_delivery.recipient_delivered(app)
 	return TRUE
 
+/datum/netrun_machine_service/pda_messenger/rejection_reason(datum/netrun_machine_message/message)
+	var/obj/item/modular_computer/computer = host
+	var/datum/computer_file/program/messenger/app = messenger()
+	if(!app)
+		return "PDA: программа сообщений удалена"
+	if(!computer.enabled)
+		return "PDA: устройство выключено"
+	if(!app.sending_and_receiving)
+		return "PDA: приём сообщений отключён"
+	if(istype(computer, /obj/item/modular_computer/pda))
+		var/obj/item/modular_computer/pda/pda = computer
+		if(pda.toff)
+			return "PDA: модуль связи отключён"
+	var/datum/netrun_machine_message/telecomms/pda/packet = message
+	if(!istype(packet) || packet.target_program?.resolve() != app)
+		return "PDA: адрес программы изменился"
+	if(!packet.transmission || packet.transmission.finished)
+		return "PDA: передача уже завершена"
+	return "PDA: программа не приняла сообщение"
+
 /datum/netrun_machine_message/telecomms/pda
 	var/datum/weakref/target_program
 

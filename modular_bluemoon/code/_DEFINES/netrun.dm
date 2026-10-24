@@ -92,6 +92,10 @@
 /// Geographic physical links: each started block of tiles adds one decisecond.
 #define NETRUN_LINK_TILES_PER_DS 15
 #define NETRUN_RELAY_LATENCY 3
+/// Machine I/O uses network time; runner actions retain their gameplay latency.
+#define NETRUN_MACHINE_LATENCY_SCALE 0.02
+#define NETRUN_MACHINE_MAX_LATENCY (0.25 SECONDS)
+#define NETRUN_MAX_PACKET_LOG 100
 #define NETRUN_APC_NEIGHBORS 3
 
 // Типы файлов

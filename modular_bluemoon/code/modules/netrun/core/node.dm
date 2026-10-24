@@ -23,6 +23,8 @@
 	var/firewall_until = 0
 	/// Ограниченный журнал самого узла, сохраняется при переходе между ЛВС.
 	var/list/logs = list()
+	/// Packet metadata has its own bounded journal; payloads and datum refs are never retained.
+	var/list/packet_logs = list()
 	/// One structural APC attachment, independent of power and temporary online state.
 	var/datum/component/netrun_node/bound_apc
 	var/area/binding_area
@@ -53,7 +55,7 @@
 	if(!isatom(parent))
 		return COMPONENT_INCOMPATIBLE
 	src.node_type = node_type
-	src.command_ids = list("scan", "ping", "node_log", "extract", "traceroute", "siphon", "spoof_log") | (command_ids || list())
+	src.command_ids = list("scan", "ping", "node_log", "packet_log", "extract", "traceroute", "siphon", "spoof_log") | (command_ids || list())
 	base_security = security
 	src.required_access = required_access
 	if(storage_capacity)
@@ -255,6 +257,21 @@
 	if(length(logs) > NETRUN_MAX_LOG)
 		logs.Cut(1, length(logs) - NETRUN_MAX_LOG + 1)
 	notify_changed()
+
+/datum/component/netrun_node/proc/add_packet_log(packet_id, phase, kind, from_address, to_address, service_id, reason)
+	packet_logs += list(list("id" = packet_id, "time" = world.time, "phase" = phase, "kind" = kind,
+		"from" = from_address, "to" = to_address, "service" = service_id, "reason" = reason))
+	if(length(packet_logs) > NETRUN_MAX_PACKET_LOG)
+		packet_logs.Cut(1, length(packet_logs) - NETRUN_MAX_PACKET_LOG + 1)
+	// Logging does not broadcast per packet or keep unrelated nodes in the hot lane.
+	pending_changed_flags |= NETRUN_CHANGED_STATE
+	SSnetrun.queue_node(src)
+
+/datum/component/netrun_node/proc/packet_log_text()
+	var/list/lines = list()
+	for(var/list/entry as anything in packet_logs)
+		lines += "[round(entry["time"] / (1 SECONDS), 0.1)]s #[entry["id"]] [entry["phase"]] [entry["kind"]] [entry["from"]] -> [entry["to"]] ([entry["service"]])[entry["reason"] ? ": [entry["reason"]]" : ""]"
+	return length(lines) ? jointext(lines, "\n") : "Журнал пакетов пуст."
 
 /// Все команды узла: базовые плюс зависящие от компонентов атома
 /datum/component/netrun_node/proc/all_command_ids()
