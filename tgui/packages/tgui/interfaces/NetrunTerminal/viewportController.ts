@@ -65,10 +65,8 @@ export class NetworkViewportController {
     this.host = host;
     host.addEventListener('pointerdown', this.pointerDown);
     host.addEventListener('pointermove', this.pointerMove);
-    host.addEventListener('pointerup', this.pointerUp);
-    host.addEventListener('pointercancel', this.cancelGesture);
-    host.addEventListener('lostpointercapture', this.captureLost);
     host.addEventListener('pointerleave', this.pointerLeave);
+    host.addEventListener('dragstart', this.preventDrag);
     host.addEventListener('wheel', this.wheel, { passive: false });
     window.addEventListener('resize', this.resize);
     window.addEventListener('blur', this.cancelGesture);
@@ -80,6 +78,7 @@ export class NetworkViewportController {
 
   detach() {
     const host = this.host;
+    this.cancelGesture();
     this.host = null;
     this.stopSurface();
     this.observer?.disconnect(); this.observer = null;
@@ -87,14 +86,9 @@ export class NetworkViewportController {
     window.removeEventListener('blur', this.cancelGesture);
     host?.removeEventListener('pointerdown', this.pointerDown);
     host?.removeEventListener('pointermove', this.pointerMove);
-    host?.removeEventListener('pointerup', this.pointerUp);
-    host?.removeEventListener('pointercancel', this.cancelGesture);
-    host?.removeEventListener('lostpointercapture', this.captureLost);
     host?.removeEventListener('pointerleave', this.pointerLeave);
+    host?.removeEventListener('dragstart', this.preventDrag);
     host?.removeEventListener('wheel', this.wheel);
-    this.press = null;
-    host?.removeAttribute('data-net-panning');
-    this.cancelKinetic();
     if (this.zoomEndTimer !== null) { window.clearTimeout(this.zoomEndTimer); this.zoomEndTimer = null; }
     this.clearSelectionTimers(); this.pendingSelection = null;
   }
@@ -313,9 +307,11 @@ export class NetworkViewportController {
   }
 
   private pointerDown = (event: PointerEvent) => {
-    if (this.press || event.button !== 0 || this.snapshot.suspended || this.status.phase !== 'ready'
+    if ((this.press && this.press.pointer !== event.pointerId) || event.button !== 0 || this.snapshot.suspended || this.status.phase !== 'ready'
       || (event.target instanceof Element && event.target.closest('[data-net-overlay]'))) { return; }
-    this.cancelKinetic();
+    // A selected text range can otherwise start an HTML drag and cancel the pointer.
+    event.preventDefault();
+    this.cancelGesture();
     if (this.zoomEndTimer !== null) {
       window.clearTimeout(this.zoomEndTimer); this.zoomEndTimer = null;
     }
@@ -323,39 +319,48 @@ export class NetworkViewportController {
     this.press = { pointer: event.pointerId, x: event.clientX, y: event.clientY,
       panX: this.camera.x, panY: this.camera.y, moved: false,
       lastX: event.clientX, lastY: event.clientY, lastAt: now, velocityX: 0, velocityY: 0 };
-    this.host?.focus();
+    this.host?.focus({ preventScroll: true });
+    // Keep following the gesture even if WebView releases capture or capture is
+    // unavailable. Only pointer-up/cancel, blur or an inactive workspace ends it.
+    window.addEventListener('pointermove', this.dragMove, true);
+    window.addEventListener('pointerup', this.pointerUp, true);
+    window.addEventListener('pointercancel', this.pointerCancel, true);
     try { this.host?.setPointerCapture?.(event.pointerId); } catch { /* Pointer may already have been released. */ }
   };
 
   private pointerMove = (event: PointerEvent) => {
-    if (this.status.phase !== 'ready' || this.snapshot.suspended) { return; }
-    const press = this.press;
-    if (press) {
-      if (press.pointer !== event.pointerId) { return; }
-      const dx = event.clientX - press.x, dy = event.clientY - press.y;
-      if (dx * dx + dy * dy > 16) { press.moved = true; }
-      if (press.moved) {
-        this.host?.setAttribute('data-net-panning', 'true');
-        const now = performance.now(), dt = Math.max(8, Math.min(64, now - press.lastAt));
-        const vx = (event.clientX - press.lastX) / dt, vy = (event.clientY - press.lastY) / dt;
-        press.velocityX = press.velocityX * .55 + vx * .45;
-        press.velocityY = press.velocityY * .55 + vy * .45;
-        press.lastX = event.clientX; press.lastY = event.clientY; press.lastAt = now;
-        this.surface?.setInteracting(true);
-        this.camera.pan(press.panX + dx, press.panY + dy);
-        this.setHover(null); this.publishCamera();
-      }
-      return;
-    }
+    if (this.press || this.status.phase !== 'ready' || this.snapshot.suspended) { return; }
     const node = this.hit(event.clientX, event.clientY), bounds = this.host?.getBoundingClientRect();
     this.setHover(node && bounds ? { address: node.address, x: event.clientX - bounds.left, y: event.clientY - bounds.top } : null);
+  };
+
+  private dragMove = (event: PointerEvent) => {
+    const press = this.press;
+    if (!press || press.pointer !== event.pointerId) { return; }
+    // A release outside the WebView can arrive without pointer-up. Do not leave
+    // a stale press that blocks the next drag or turns a later move into a click.
+    if (!(event.buttons & 1)) { this.cancelGesture(); return; }
+    if (this.status.phase !== 'ready' || this.snapshot.suspended) { return; }
+    event.preventDefault();
+    const dx = event.clientX - press.x, dy = event.clientY - press.y;
+    if (dx * dx + dy * dy > 16) { press.moved = true; }
+    if (press.moved) {
+      this.host?.setAttribute('data-net-panning', 'true');
+      const now = performance.now(), dt = Math.max(8, Math.min(64, now - press.lastAt));
+      const vx = (event.clientX - press.lastX) / dt, vy = (event.clientY - press.lastY) / dt;
+      press.velocityX = press.velocityX * .55 + vx * .45;
+      press.velocityY = press.velocityY * .55 + vy * .45;
+      press.lastX = event.clientX; press.lastY = event.clientY; press.lastAt = now;
+      this.surface?.setInteracting(true);
+      this.camera.pan(press.panX + dx, press.panY + dy);
+      this.setHover(null); this.publishCamera();
+    }
   };
 
   private pointerUp = (event: PointerEvent) => {
     const press = this.press;
     if (!press || press.pointer !== event.pointerId) { return; }
-    this.press = null;
-    this.host?.removeAttribute('data-net-panning');
+    this.releasePress();
     if (!press.moved) {
       const node = this.hit(event.clientX, event.clientY);
       if (node) { this.previewSelection(node.address); this.callbacks.onSelect(node.address); }
@@ -367,16 +372,24 @@ export class NetworkViewportController {
     }
   };
 
-  private captureLost = () => {
-    // Browsers emit lostpointercapture after pointerup; do not cancel momentum
-    // that was started by releasing the pointer intentionally.
-    if (this.press) { this.cancelGesture(); }
+  private pointerCancel = (event: PointerEvent) => {
+    if (this.press?.pointer === event.pointerId) { this.cancelGesture(); }
   };
-  private cancelGesture = () => {
+
+  private preventDrag = (event: DragEvent) => { event.preventDefault(); };
+
+  private releasePress() {
     const press = this.press; this.press = null;
+    window.removeEventListener('pointermove', this.dragMove, true);
+    window.removeEventListener('pointerup', this.pointerUp, true);
+    window.removeEventListener('pointercancel', this.pointerCancel, true);
     this.host?.removeAttribute('data-net-panning');
-    this.cancelKinetic();
     if (press) { try { this.host?.releasePointerCapture?.(press.pointer); } catch { /* The browser may have cancelled capture already. */ } }
+  }
+
+  private cancelGesture = () => {
+    this.releasePress();
+    this.cancelKinetic();
     this.surface?.setInteracting(false);
   };
 

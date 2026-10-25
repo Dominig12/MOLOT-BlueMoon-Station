@@ -19,10 +19,12 @@ const hostElement = () => {
   document.body.appendChild(host);
   return host;
 };
-const pointer = (host: HTMLElement, type: string, x: number, y: number, pointerId = 1) => {
-  const event = new MouseEvent(type, { clientX: x, clientY: y, button: 0, bubbles: true });
+const pointer = (target: EventTarget, type: string, x: number, y: number, pointerId = 1,
+  buttons = type === 'pointerdown' || type === 'pointermove' ? 1 : 0) => {
+  const event = new MouseEvent(type, { clientX: x, clientY: y, button: 0, buttons, bubbles: true, cancelable: true });
   Object.defineProperty(event, 'pointerId', { value: pointerId });
-  host.dispatchEvent(event);
+  target.dispatchEvent(event);
+  return event;
 };
 
 test('hiding a ready workspace preserves its context and camera but pauses all GPU work', async () => {
@@ -144,6 +146,76 @@ test('drag uses a retained Pixi scene and enables gesture mode without rebuildin
     expect(surface.updateScene).toHaveBeenCalledTimes(uploads);
     pointer(host, 'pointerup', 440, 240);
     expect(factory).toHaveBeenCalledTimes(1);
+  } finally { controller.detach(); host.remove(); }
+});
+
+test('map gestures suppress native text selection and HTML dragging', async () => {
+  const host = hostElement(), data = snapshot();
+  const factory = jest.fn(async (element: HTMLElement) => makePixiSurfaceMock(element));
+  const controller = new NetworkViewportController(data, callbacks(), factory);
+  try {
+    controller.attach(host); await factory.mock.results[0].value; await Promise.resolve();
+    expect(pointer(host, 'pointerdown', 360, 240).defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(host);
+    const drag = new Event('dragstart', { bubbles: true, cancelable: true });
+    host.dispatchEvent(drag);
+    expect(drag.defaultPrevented).toBe(true);
+  } finally { controller.detach(); host.remove(); }
+});
+
+test.each(['lost', 'unavailable'])('drag survives %s pointer capture and reactive updates until release outside the map', async (capture) => {
+  const host = hostElement(), data = snapshot(), handlers = callbacks();
+  host.setPointerCapture = jest.fn(() => { if (capture === 'unavailable') { throw new Error('Capture unavailable'); } });
+  host.releasePointerCapture = jest.fn();
+  const factory = jest.fn(async (element: HTMLElement) => makePixiSurfaceMock(element));
+  const controller = new NetworkViewportController(data, handlers, factory);
+  const outside = document.createElement('button'); document.body.appendChild(outside);
+  outside.addEventListener('pointermove', (event) => event.stopPropagation());
+  try {
+    controller.attach(host); const surface = await factory.mock.results[0].value; await Promise.resolve();
+    const initial = { x: controller.camera.x, y: controller.camera.y };
+    const uploads = surface.updateScene.mock.calls.length;
+    pointer(host, 'pointerdown', 360, 240);
+    pointer(host, 'pointermove', 400, 250);
+    pointer(host, 'lostpointercapture', 400, 250);
+    pointer(document, 'pointercancel', 400, 250, 2);
+    controller.update({ ...data, overlay: { ...data.overlay, selected: null } });
+    pointer(outside, 'pointermove', 800, 290);
+    expect(controller.camera).toMatchObject({ x: initial.x + 440, y: initial.y + 50 });
+    expect(host.hasAttribute('data-net-panning')).toBe(true);
+    expect(surface.updateScene).toHaveBeenCalledTimes(uploads);
+    pointer(outside, 'pointerup', 800, 290);
+    expect(host.hasAttribute('data-net-panning')).toBe(false);
+    expect(host.releasePointerCapture).toHaveBeenCalledWith(1);
+    expect(handlers.onSelect).not.toHaveBeenCalled();
+    const afterRelease = { x: controller.camera.x, y: controller.camera.y };
+    pointer(host, 'pointerdown', 400, 240);
+    pointer(document, 'pointermove', 420, 270);
+    expect(controller.camera).toMatchObject({ x: afterRelease.x + 20, y: afterRelease.y + 30 });
+  } finally { controller.detach(); host.remove(); outside.remove(); }
+});
+
+test('a missed release, cancellation, blur and detach end the gesture without selecting or keeping global listeners', async () => {
+  const host = hostElement(), data = snapshot(), handlers = callbacks();
+  const factory = jest.fn(async (element: HTMLElement) => makePixiSurfaceMock(element));
+  const controller = new NetworkViewportController(data, handlers, factory);
+  try {
+    controller.attach(host); const surface = await factory.mock.results[0].value; await Promise.resolve();
+    for (const stop of ['release', 'cancel', 'blur', 'detach']) {
+      pointer(host, 'pointerdown', 360, 240);
+      pointer(document, 'pointermove', 400, 260);
+      const placed = { x: controller.camera.x, y: controller.camera.y };
+      if (stop === 'release') { pointer(document, 'pointermove', 450, 280, 1, 0); }
+      if (stop === 'cancel') { pointer(document, 'pointercancel', 400, 260); }
+      if (stop === 'blur') { window.dispatchEvent(new Event('blur')); }
+      if (stop === 'detach') { controller.detach(); }
+      pointer(document, 'pointermove', 500, 300);
+      pointer(document, 'pointerup', 500, 300);
+      expect(controller.camera).toMatchObject(placed);
+      expect(host.hasAttribute('data-net-panning')).toBe(false);
+      expect(surface.setInteracting).toHaveBeenLastCalledWith(false);
+    }
+    expect(handlers.onSelect).not.toHaveBeenCalled();
   } finally { controller.detach(); host.remove(); }
 });
 

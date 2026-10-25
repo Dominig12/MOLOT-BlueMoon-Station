@@ -8,6 +8,7 @@
   min-height: 190px;
   overflow: hidden;
   touch-action: none;
+  user-select: none;
   cursor: grab;
   background: radial-gradient(ellipse at 50% 45%, #102c3b 0%, #07121c 80%);
 

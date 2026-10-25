@@ -300,9 +300,9 @@ describe('Netrun terminal panels', () => {
       const initial = { ...surface.updateCamera.mock.calls.slice(-1)[0][0] };
       const viewport = panel.getByLabelText('Карта сети');
       fireEvent.pointerDown(viewport, { clientX: 100, clientY: 100, button: 0 });
-      fireEvent.pointerMove(viewport, { clientX: 220, clientY: 170 });
+      fireEvent.pointerMove(viewport, { clientX: 220, clientY: 170, buttons: 1 });
       expect(surface.updateCamera.mock.calls.slice(-1)[0][0]).toEqual(expect.objectContaining({ x: initial.x + 120, y: initial.y + 70 }));
-      fireEvent.pointerMove(viewport, { clientX: 260, clientY: 180 });
+      fireEvent.pointerMove(viewport, { clientX: 260, clientY: 180, buttons: 1 });
       expect(surface.updateCamera.mock.calls.slice(-1)[0][0]).toEqual(expect.objectContaining({ x: initial.x + 160, y: initial.y + 80 }));
       expect(surface.updateScene.mock.calls.slice(-1)[0][0]).toBe(geometry);
       fireEvent.pointerUp(viewport, { clientX: 260, clientY: 180 });
@@ -323,7 +323,7 @@ describe('Netrun terminal panels', () => {
     const viewport = getByLabelText('Карта сети');
     await surfaceReady();
     fireEvent.pointerDown(viewport, { clientX: 100, clientY: 100, button: 0 });
-    fireEvent.pointerMove(viewport, { clientX: 150, clientY: 150 });
+    fireEvent.pointerMove(viewport, { clientX: 150, clientY: 150, buttons: 1 });
     fireEvent.pointerUp(viewport, { clientX: 150, clientY: 150 });
     const before = fit.mock.calls.length;
     const map = topic.store.getState().backend.data.map;
