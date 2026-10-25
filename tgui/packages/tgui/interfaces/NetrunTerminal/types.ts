@@ -249,9 +249,10 @@ export type NetOperation = {
   route: string[];
 };
 
-/** BYOND serializes an assoc list as an object, so coerce either shape to a plain array. */
+/** BYOND serializes an assoc list as an object and may leave null holes, so coerce to a clean array. */
 export const normalizeOperations = (operations?: NetOperation[] | Record<string, NetOperation>): NetOperation[] =>
-  Array.isArray(operations) ? operations : Object.values(operations ?? {});
+  (Array.isArray(operations) ? operations : Object.values(operations ?? {}))
+    .filter((entry): entry is NetOperation => !!entry && typeof entry === 'object');
 
 export type NetrunData = {
   /** BYOND serializes an assoc list as an object, so tolerate both shapes; normalize with normalizeOperations. */
