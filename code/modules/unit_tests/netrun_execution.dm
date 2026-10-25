@@ -32,6 +32,34 @@
 	worker.probe_calls++
 	return TRUE
 
+/// A previous expensive task must not turn a cheap packet burst into two tasks per pass.
+/datum/unit_test/netrun_execution_mixed_cost_drain/Run()
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
+	worker.task_adaptive_budget = FALSE
+	worker.task_budget_ms = NETRUN_EXECUTION_MAX_BUDGET_MS
+	worker.task_max_per_pass = 32
+	worker.next_task_population = INFINITY
+	var/datum/netrun_task_scheduler/scheduler = worker.get_task_scheduler()
+	var/datum/netrun_task/prior = allocate(/datum/netrun_task/execution_probe, "execution_probe", "prior-expensive", NETRUN_TASK_NORMAL)
+	scheduler.note_execution(prior, NETRUN_EXECUTION_MAX_BUDGET_MS)
+	for(var/i in 1 to 96)
+		scheduler.enqueue("execution_probe", allocate(/datum), NETRUN_TASK_NORMAL)
+	for(var/pass in 1 to 3)
+		worker.run_pass()
+		TEST_ASSERT_EQUAL(worker.probe_calls, pass * 32, "Cheap work must use the actual remaining CPU budget, independently of an old expensive task sample")
+	TEST_ASSERT_EQUAL(scheduler.pending(), 0, "A finite burst must leave no pending task after its bounded worker passes")
+	TEST_ASSERT_EQUAL(scheduler.counts[NETRUN_TASK_NORMAL], 0, "Draining must reconcile the per-priority counters")
+
+/// Every kind of admitted backlog needs fast follow-up, including prewarm and node work.
+/datum/unit_test/netrun_execution_backlog_cadence/Run()
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
+	worker.get_task_scheduler().enqueue("execution_probe", allocate(/datum), NETRUN_TASK_BACKGROUND)
+	worker.refresh_delivery_interval()
+	TEST_ASSERT_EQUAL(worker.wait, world.tick_lag, "A pending non-delivery task must not wait for the idle subsystem interval")
+	qdel(worker.task_scheduler.take())
+	worker.refresh_delivery_interval()
+	TEST_ASSERT_EQUAL(worker.wait, NETRUN_DEFAULT_FIRE_INTERVAL, "A drained queue must return to its idle cadence")
+
 /datum/unit_test/netrun_execution_live_limits/Run()
 	var/datum/controller/subsystem/netrun/original = SSnetrun
 	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)

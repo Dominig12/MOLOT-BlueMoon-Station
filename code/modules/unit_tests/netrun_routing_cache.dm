@@ -76,7 +76,14 @@
 	var/datum/netrun_topology/graph = SSnetrun.get_topology()
 	var/weights = graph.weight_revision
 	unrelated.forceMove(far_spot)
-	TEST_ASSERT(graph.weight_revision > weights, "The real move must change a cable's routing cost")
+	TEST_ASSERT_EQUAL(graph.weight_revision, weights, "The movement signal must defer unrelated cable-weight work")
+	var/datum/component/netrun_node/moved_node = unrelated.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_task_scheduler/scheduler = SSnetrun.get_task_scheduler()
+	var/datum/netrun_task/node/movement_task = scheduler.by_key["node:[REF(moved_node)]"]
+	TEST_ASSERT_NOTNULL(movement_task, "The real move must enqueue its existing node worker")
+	movement_task.execute(SSnetrun)
+	scheduler.cancel("node", moved_node)
+	TEST_ASSERT(graph.weight_revision > weights, "The deferred node worker must update the moved cable's routing cost")
 	TEST_ASSERT(transport.borrowed_path(scene.source, scene.target), "The original pair must remain reachable after unrelated cable movement")
 	TEST_ASSERT_EQUAL(transport.tree_builds, trees, "An unrelated cable cost must not rerun infrastructure Dijkstra")
 	TEST_ASSERT_EQUAL(transport.path_builds, paths, "An unchanged source/destination pair must retain its materialized path")

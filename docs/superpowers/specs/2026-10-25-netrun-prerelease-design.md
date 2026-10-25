@@ -32,6 +32,10 @@ Use one authoritative research datum per research server. Clients retain only di
 - Load tests must report workload size, measurements and assertions. Automated synthetic clients are evidence about server work, not proof of live multiplayer latency.
 - Record which interfaces and real-client scenarios were actually verified, plus remaining limits. Do not call this release-ready if a required check cannot run or a material failure remains.
 
+## 26 October continuation
+
+The user explicitly authorized larger routing caches and more MC time for the task worker, and reported machine tasks accumulating without draining. Raise the default CPU budget from2to6ms (pressure minimum0.30to1ms), the per-pass ceiling from48to192, and retain UI route trees for30seconds instead of2. Keep hard limits, live route invalidation and fair service. Diagnose and remove traffic feedback loops, coalesce replaceable queued snapshots without merging real commands/outcomes, and verify a sustained burst fully drains after producers stop.
+
 ## Builder decisions
 
 Brain damage uses existing native helpers and a bounded nonfatal default; exact severity is an implementation choice to document. Research power loss retains data; physical server destruction is the data-loss event. Telecommunications forwarding is restricted to communication service identifiers. Target load sizes should be chosen from existing stress fixtures and reported explicitly.

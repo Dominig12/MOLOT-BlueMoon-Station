@@ -43,7 +43,7 @@ export function machinePresentation(remote: Remote): MachinePresentation | null 
       title = 'Контроллер турели';
       add('Питание', yes(data.on)); add('Панель', data.locked ? 'Заблокирована' : 'Разблокирована');
       for (const [key, label] of [['check_weapons', 'Проверка оружия'], ['neutralize_criminals', 'Розыск'], ['neutralize_all', 'Огонь по всем'],
-        ['neutralize_unidentified', 'Неопознанные'], ['neutralize_nonmindshielded', 'Без защиты разума'], ['neutralize_cyborgs', 'Киборги'], ['neutralize_heads', 'Главы']]) {
+        ['neutralize_unidentified', 'Неопознанные'], ['neutralize_nonmindshielded', 'Без защиты разума'], ['neutralize_cyborgs', 'Киборги'], ['ignore_heads', 'Исключение глав']]) {
         add(label, yes(data[key]));
       }
       break;
@@ -78,7 +78,7 @@ export function machinePresentation(remote: Remote): MachinePresentation | null 
       add('Организация', text(data.web_org)); add('Очки', cost(data.points) || '0');
       add('Доступно исследований', String(choices.length));
       if (data.locked) { unavailable = 'Научная консоль заблокирована.'; }
-      else if (data.researchable === false || !choices.length) { unavailable = 'Нет доступных исследований. Проверьте связь с сервером, зависимости и очки.'; }
+      else if (data.researchable === false || data.researchable === 0 || !choices.length) { unavailable = 'Нет доступных исследований. Проверьте связь с сервером, зависимости и очки.'; }
       break;
     }
     case 'Fabricator':

@@ -200,6 +200,8 @@
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
 	var/datum/netrun_task_scheduler/scheduler = SSnetrun.get_task_scheduler()
 	console.note_ui_activity()
+	// Establish the initial turf/credential observation before isolating the countdown.
+	console.reconcile_ui_context()
 	scheduler.cancel("console", console)
 	console.intrusion.trace = 5
 	console.intrusion.last_illegal = world.time

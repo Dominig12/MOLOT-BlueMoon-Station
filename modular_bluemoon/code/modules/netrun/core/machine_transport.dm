@@ -260,7 +260,12 @@
 	var/list/route_used = list()
 	var/list/pair_routes = list()
 	var/list/pair_used = list()
-	var/route_cache_limit = 1024
+	var/list/pair_previous = list()
+	var/list/pair_next = list()
+	var/pair_oldest
+	var/pair_newest
+	var/route_cache_limit = 8192
+	var/root_cache_limit = 512
 	var/pair_serial = 0
 	var/path_builds = 0
 	var/path_cache_hits = 0
@@ -269,8 +274,23 @@
 	var/prewarm_revision = -1
 	var/prewarm_infrastructure = -1
 	var/prewarm_steps = 0
-	var/prewarm_limit = 64
+	var/prewarm_limit = 512
 	var/bootstrap_at
+	/// Source/recipient/contract key -> one replaceable, not-yet-executing packet.
+	var/list/replaceable_packets = list()
+	var/coalesced_packets = 0
+	/// Opt-in diagnostics: value snapshots only, bounded independently of packet lifetime.
+	var/list/delivery_trace
+
+/datum/netrun_machine_transport/proc/trace_delivery(datum/netrun_machine_packet/packet)
+	if(!islist(delivery_trace))
+		return
+	delivery_trace += list(list("id" = packet.packet_id, "kind" = packet.kind,
+		"source" = "[packet.source?.host?.type]", "destination" = "[packet.recipient?.host?.type]",
+		"sent" = packet.sent_at, "due" = packet.due_at, "ready" = packet.ready_at, "run" = world.time,
+		"timer_late" = max(0, packet.ready_at - packet.due_at), "queue_wait" = max(0, world.time - packet.ready_at)))
+	if(length(delivery_trace) > 256)
+		delivery_trace.Cut(1, length(delivery_trace) - 255)
 
 /datum/netrun_machine_transport/New()
 	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_UNREGISTERED, PROC_REF(node_deleted))
@@ -376,11 +396,13 @@
 	route_used -= node.address
 
 /datum/netrun_machine_transport/Destroy()
+	SSnetrun.task_scheduler?.cancel("network_bootstrap", src)
 	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_UNREGISTERED, COMSIG_NETRUN_NODE_CHANGED))
 	UnregisterSignal(SSatoms, COMSIG_SUBSYSTEM_POST_INITIALIZE)
 	if(wake_timer)
 		deltimer(wake_timer)
 	QDEL_LIST(packets)
+	replaceable_packets.Cut()
 	for(var/address in route_trees)
 		qdel(route_trees[address])
 	route_trees.Cut()
@@ -474,21 +496,51 @@
 		qdel(pair_routes[key])
 	pair_routes.Cut()
 	pair_used.Cut()
+	pair_previous.Cut()
+	pair_next.Cut()
+	pair_oldest = null
+	pair_newest = null
 
-/datum/netrun_machine_transport/proc/store_pair_route(key, datum/netrun_machine_path/path)
+/// Pair capacity is large enough for a station poll, so eviction must not scan it.
+/datum/netrun_machine_transport/proc/unlink_pair_route(key)
+	var/previous = pair_previous[key]
+	var/next = pair_next[key]
+	if(previous)
+		pair_next[previous] = next
+	else if(pair_oldest == key)
+		pair_oldest = next
+	if(next)
+		pair_previous[next] = previous
+	else if(pair_newest == key)
+		pair_newest = previous
+	pair_previous -= key
+	pair_next -= key
+
+/datum/netrun_machine_transport/proc/touch_pair_route(key)
+	pair_used[key] = ++pair_serial
+	if(pair_newest == key)
+		return
+	unlink_pair_route(key)
+	pair_previous[key] = pair_newest
+	pair_next[key] = null
+	if(pair_newest)
+		pair_next[pair_newest] = key
+	else
+		pair_oldest = key
+	pair_newest = key
+
+/datum/netrun_machine_transport/proc/forget_pair_route(key)
+	unlink_pair_route(key)
 	qdel(pair_routes[key])
 	pair_routes -= key
 	pair_used -= key
+
+/datum/netrun_machine_transport/proc/store_pair_route(key, datum/netrun_machine_path/path)
+	forget_pair_route(key)
 	while(length(pair_routes) >= max(1, route_cache_limit))
-		var/oldest
-		for(var/candidate in pair_used)
-			if(!oldest || pair_used[candidate] < pair_used[oldest])
-				oldest = candidate
-		qdel(pair_routes[oldest])
-		pair_routes -= oldest
-		pair_used -= oldest
+		forget_pair_route(pair_oldest)
 	pair_routes[key] = path
-	pair_used[key] = ++pair_serial
+	touch_pair_route(key)
 
 /// Most endpoints have one APC cable. Share one tree at that attachment instead of
 /// keeping a station-sized table for each vent, camera and carried computer.
@@ -499,7 +551,7 @@
 	if(!tree || tree.graph_ref?.resolve() != graph || tree.source != root || tree.geometry_revision != graph.infrastructure_revision || tree.transit_availability_revision != graph.transit_availability_revision)
 		graph.reconcile_availability(TRUE)
 		qdel(tree)
-		if(!tree && length(route_trees) >= 64)
+		if(!tree && length(route_trees) >= max(1, root_cache_limit))
 			var/oldest
 			for(var/address in route_used)
 				if(!oldest || route_used[address] < route_used[oldest])
@@ -565,7 +617,7 @@
 	var/datum/netrun_machine_path/cached = pair_routes[key]
 	if(cached && cached.graph_ref?.resolve() == graph && cached.geometry_revision == graph.infrastructure_revision && cached.transit_revision == graph.transit_availability_revision && cached.from_anchor == root.address && cached.to_anchor == destination.address && cached.prefix_cost == prefix_cost && cached.suffix_cost == suffix_cost)
 		if(!length(cached.hops) || path_available(graph, cached.hops))
-			pair_used[key] = ++pair_serial
+			touch_pair_route(key)
 			path_cache_hits++
 			return length(cached.hops) ? cached : null
 		// Legacy native writes can change a forwarding node without its usual signal.
@@ -622,7 +674,25 @@
 /datum/netrun_machine_transport/proc/dispatch(datum/netrun_machine_service/source, datum/netrun_machine_service/target, datum/netrun_machine_message/message)
 	if(QDELETED(message))
 		return FALSE
+	var/contract_key = message.coalescing_key()
+	var/key
+	if(!isnull(contract_key) && !QDELETED(source) && !QDELETED(target))
+		// A replaced component/tag creates a distinct delivery context. Never place
+		// a new binding's state into a packet admitted for an old recipient tag.
+		key = "[source.service_key()]|[source.resolve_node()?.address]|[target.service_key()]|[target.service_tag()]|[contract_key]"
+		var/datum/netrun_machine_packet/data/previous = replaceable_packets[key]
+		if(!QDELETED(previous) && !previous.finishing)
+			message.source = source
+			message.recipient = target
+			message.correlation_id = previous.operation.operation_id
+			qdel(previous.message)
+			previous.message = message
+			coalesced_packets++
+			return TRUE
 	var/datum/netrun_machine_packet/data/packet = new(source, target, message)
+	if(key)
+		packet.replacement_key = key
+		replaceable_packets[key] = packet
 	return packet.send()
 
 /datum/netrun_machine_transport/proc/record_flow(datum/netrun_machine_service/source, datum/netrun_machine_service/target, kind, list/path)
@@ -658,6 +728,9 @@
 	var/destination_address
 	var/datum/netrun_packet_context/operation
 	var/delivery_queued = FALSE
+	var/sent_at
+	var/due_at
+	var/ready_at
 
 /datum/netrun_machine_packet/New(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient, operation_id)
 	src.source = source
@@ -701,6 +774,8 @@
 		transport.interactive_packets |= src
 		SSnetrun.retain_route_interest(interest_route, world.time + NETRUN_NODE_INTEREST_LEASE)
 	var/delay = clamp(route.latency * NETRUN_MACHINE_LATENCY_SCALE, world.tick_lag, NETRUN_MACHINE_MAX_LATENCY)
+	sent_at = world.time
+	due_at = world.time + delay
 	qdel(route)
 	timer_id = addtimer(CALLBACK(src, PROC_REF(queue_delivery)), delay, TIMER_STOPPABLE | TIMER_DELETE_ME)
 	return TRUE
@@ -720,6 +795,7 @@
 	if(delivery_queued || finishing || QDELETED(src))
 		return FALSE
 	delivery_queued = TRUE
+	ready_at = world.time
 	SSnetrun.get_task_scheduler().enqueue("machine_delivery", src, delivery_priority())
 	SSnetrun.wake_ready_delivery()
 	return TRUE
@@ -738,6 +814,7 @@
 		fail("маршрут разорван")
 		return
 	finishing = TRUE
+	SSnetrun.get_machine_transport().trace_delivery(src)
 	destination_address = route.hops[length(route.hops)]
 	operation.running()
 	operation.receive(route.hops)
@@ -767,6 +844,7 @@
 /datum/netrun_machine_packet/data
 	var/datum/netrun_machine_message/message
 	var/recipient_tag
+	var/replacement_key
 
 /datum/netrun_machine_packet/data/New(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient, datum/netrun_machine_message/message)
 	..(source, recipient, message.correlation_id)
@@ -777,6 +855,10 @@
 	recipient_tag = recipient?.service_tag()
 
 /datum/netrun_machine_packet/data/Destroy()
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	if(replacement_key && transport.replaceable_packets[replacement_key] == src)
+		transport.replaceable_packets -= replacement_key
+	replacement_key = null
 	QDEL_NULL(message)
 	return ..()
 

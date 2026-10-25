@@ -253,13 +253,16 @@
 	var/turf/remote_apc_spot = scene.take(get_step(scene.far_spot, NORTH), destination)
 	var/obj/machinery/power/apc/remote_apc = scene.machine(/obj/machinery/power/apc, remote_apc_spot)
 	SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/previous_apc = node.bound_apc
 	scene.user.forceMove(scene.far_spot)
 	TEST_ASSERT_EQUAL(node.physical_turf(), scene.far_spot, "The implant must follow its wearer without moving the native organ")
-	TEST_ASSERT_EQUAL(node.bound_apc, remote_apc.GetComponent(/datum/component/netrun_node), "The wearer's movement signal must rebind the endpoint before another UI poll")
+	TEST_ASSERT_EQUAL(node.bound_apc, previous_apc, "The wearer's movement signal must defer expensive binding work")
+	TEST_ASSERT(SSnetrun.get_task_scheduler().by_key["node:[REF(node)]"], "Wearer movement must queue its endpoint update")
 	var/datum/netrun_console/implant/console = scene.implant.console
 	console.workspace_view = "map"
 	console.map_view.selected_address = node.address
 	var/list/data = console.ui_data(scene.user)
+	TEST_ASSERT_EQUAL(node.bound_apc, remote_apc.GetComponent(/datum/component/netrun_node), "The UI route consumer must reconcile the wearer's new APC before publishing access")
 	var/list/selected = data["selected"]
 	TEST_ASSERT_EQUAL(selected?["x"], scene.far_spot.x, "The selected card must publish actual wearer coordinates")
 	TEST_ASSERT_EQUAL(selected?["y"], scene.far_spot.y, "The reactive map must not place internal organs at coordinate zero")

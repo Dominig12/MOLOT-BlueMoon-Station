@@ -50,6 +50,27 @@
 /obj/machinery/telecomms/receiver/prerelease_fixture/receive_signal(datum/signal/subspace/signal)
 	received_packets++
 
+/obj/machinery/atmospherics/components/unary/vent_pump/prerelease_poll_fixture
+	var/status_polls = 0
+
+/obj/machinery/atmospherics/components/unary/vent_pump/prerelease_poll_fixture/receive_signal(datum/signal/signal)
+	if("status" in signal.data)
+		status_polls++
+	return ..()
+
+/// Discovery completion replays its queued poll; it must not generate another one.
+/datum/unit_test/netrun_transport_atmos_poll_no_echo/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/airalarm/alarm = scene.machine(/obj/machinery/airalarm, scene.source_spot)
+	var/obj/machinery/atmospherics/components/unary/vent_pump/prerelease_poll_fixture/vent = scene.machine(/obj/machinery/atmospherics/components/unary/vent_pump/prerelease_poll_fixture, scene.target_spot)
+	TEST_ASSERT(alarm.send_signal(vent.id_tag, list("status" = TRUE)), "A cold native status poll must be admitted")
+	var/deadline = world.time + 4 SECONDS
+	while(!alarm.netrun_vent_info[vent.id_tag] && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(alarm.netrun_vent_info[vent.id_tag], "The native poll must return real vent telemetry")
+	sleep(1 SECONDS)
+	TEST_ASSERT_EQUAL(vent.status_polls, 1, "A cold DNS completion must not echo the already replayed native poll")
+
 /// Two real sectors, joined only by the native telecommunications relay/hub link.
 /datum/netrun_communication_scene
 	parent_type = /datum/netrun_transport_scene
@@ -169,13 +190,102 @@
 	var/datum/netrun_machine_service/transport_fixture/source
 	var/datum/netrun_machine_service/transport_fixture/target
 	var/answer_count = 0
+	var/list/previous_delivery_trace
 
 /datum/netrun_transport_scene/proc/answered()
 	answer_count++
 
+/// Count only this producer's packets; unrelated station automation may remain active.
+/datum/netrun_transport_scene/proc/pending_packets()
+	var/count = 0
+	for(var/datum/netrun_machine_packet/packet as anything in SSnetrun.get_machine_transport().packets)
+		if(packet.source == source && packet.recipient == target)
+			count++
+	return count
+
+/// Warm DNS must not bypass backpressure for replaceable telemetry.
+/datum/unit_test/netrun_transport_replaceable_burst/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/list/outcomes = list()
+	for(var/i in 1 to 256)
+		TEST_ASSERT(scene.source.send_to(scene.target, new /datum/netrun_machine_message/transport_fixture/queue_snapshot(list("value" = i), outcomes)), "A replaceable snapshot burst must remain admissible")
+	TEST_ASSERT_EQUAL(scene.pending_packets(), 1, "256 superseded snapshots must own one transport packet and one delivery task")
+	var/datum/netrun_machine_packet/data/latest
+	for(var/datum/netrun_machine_packet/data/packet as anything in SSnetrun.get_machine_transport().packets)
+		if(packet.source == scene.source && packet.recipient == scene.target)
+			latest = packet
+	TEST_ASSERT_EQUAL(latest.message.payload["value"], 256, "The retained packet must carry the producer's latest snapshot")
+	var/replacement_key = latest.replacement_key
+	TEST_ASSERT(replacement_key, "A replaceable delivery must own its bounded coalescing index")
+	if(latest.timer_id)
+		deltimer(latest.timer_id)
+	latest.queue_delivery()
+	for(var/i in 257 to 512)
+		scene.source.send_to(scene.target, new /datum/netrun_machine_message/transport_fixture/queue_snapshot(list("value" = i), outcomes))
+	TEST_ASSERT_EQUAL(scene.pending_packets(), 1, "A ready delivery must also absorb superseded state without adding scheduler tasks")
+	TEST_ASSERT_EQUAL(latest.message.payload["value"], 512, "Ready-but-unexecuted state must remain replaceable")
+	TEST_ASSERT(netrun_wait_delivery(outcomes), "The retained latest snapshot must actually be delivered")
+	TEST_ASSERT_EQUAL(scene.target.received, 1, "Superseded states must not execute the recipient repeatedly")
+	TEST_ASSERT_EQUAL(scene.pending_packets(), 0, "Delivered snapshots must release packet capacity")
+	TEST_ASSERT_NULL(SSnetrun.get_machine_transport().replaceable_packets[replacement_key], "Completion must release the coalescing index as well as packet capacity")
+
+/// Sustained producers stop, their finite commands complete, and the delivery queue drains.
+/datum/unit_test/netrun_transport_sustained_burst_drain/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/list/commands = list()
+	var/list/snapshots = list()
+	var/peak = 0
+	var/started = world.time
+	for(var/wave in 1 to 8)
+		for(var/i in 1 to 128)
+			TEST_ASSERT(scene.source.send_to(scene.target, new /datum/netrun_machine_message/transport_fixture/queue_snapshot(list("value" = wave * 128 + i), snapshots)), "Sustained replaceable state must remain admitted")
+		for(var/i in 1 to 4)
+			TEST_ASSERT(scene.source.send_to(scene.target, new /datum/netrun_machine_message/transport_fixture(list("command" = wave * 4 + i), commands)), "Finite commands must remain separate from replaceable state")
+		peak = max(peak, scene.pending_packets())
+		sleep(world.tick_lag)
+	var/deadline = world.time + 6 SECONDS
+	while(scene.pending_packets() && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(peak <= 33, "1024 replaceable states plus 32 commands must never retain more than one snapshot and all commands")
+	TEST_ASSERT_EQUAL(commands["delivered"], 32, "Every nonreplaceable command must execute exactly once")
+	TEST_ASSERT_EQUAL(scene.pending_packets(), 0, "Stopping the producer must drain all owned packet and delivery capacity")
+	var/settled = scene.target.received
+	sleep(1 SECONDS)
+	TEST_ASSERT_EQUAL(scene.target.received, settled, "A quiescent transport must not generate further deliveries")
+	log_world("NETRUN LOAD transport: snapshots=1024 commands=32 waves=8 pending_peak=[peak] snapshot_deliveries=[snapshots["delivered"]] drained_ds=[world.time - started] retained_pairs=[length(SSnetrun.get_machine_transport().pair_routes)] roots=[length(SSnetrun.get_machine_transport().route_trees)]")
+
+/// A station-sized working set must survive a complete second pass without rebuilding.
+/datum/unit_test/netrun_transport_station_route_working_set/Run()
+	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene, run_loc_floor_bottom_left)
+	var/list/sources = list()
+	var/list/targets = list()
+	for(var/i in 1 to 64)
+		var/obj/machinery/netrun_server/transport_fixture/sender = scene.machine(/obj/machinery/netrun_server/transport_fixture, scene.source_spot)
+		var/obj/machinery/netrun_server/transport_fixture/receiver = scene.machine(/obj/machinery/netrun_server/transport_fixture, scene.remote_spot)
+		sources += sender.get_netrun_machine_service("transport.fixture")
+		targets += receiver.get_netrun_machine_service("transport.fixture")
+	SSnetrun.ensure_topology()
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/list/retained = list()
+	var/started = REALTIMEOFDAY
+	for(var/datum/netrun_machine_service/source as anything in sources)
+		for(var/datum/netrun_machine_service/target as anything in targets)
+			var/datum/netrun_machine_path/path = transport.borrowed_path(source, target)
+			TEST_ASSERT(path, "Every source/target pair must have a physical path")
+			retained += WEAKREF(path)
+		CHECK_TICK
+	var/index = 0
+	for(var/datum/netrun_machine_service/source as anything in sources)
+		for(var/datum/netrun_machine_service/target as anything in targets)
+			var/datum/weakref/previous = retained[++index]
+			TEST_ASSERT_EQUAL(transport.borrowed_path(source, target), previous.resolve(), "4096 active machine pairs must retain their cached paths across a full station poll")
+		CHECK_TICK
+	log_world("NETRUN LOAD routing: sources=64 targets=64 pairs=4096 polls=2 elapsed_ms=[(REALTIMEOFDAY - started) * 100] retained_pairs=[length(transport.pair_routes)] roots=[length(transport.route_trees)]")
+
 /datum/netrun_transport_scene/New(turf/origin, with_dns = TRUE, with_apc = TRUE)
 	..(origin.z)
 	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	previous_delivery_trace = transport.delivery_trace
 	saved_dns = transport.by_id["dns"]
 	transport.by_id["dns"] = list()
 	var/area/room = room(/area/netrun_route_test)
@@ -198,6 +308,7 @@
 /datum/netrun_transport_scene/Destroy()
 	. = ..()
 	SSnetrun.get_machine_transport().by_id["dns"] = saved_dns
+	SSnetrun.get_machine_transport().delivery_trace = previous_delivery_trace
 	saved_dns = null
 	source = null
 	target = null
@@ -384,11 +495,13 @@
 	server.links = list(hub)
 	hub.links = list(relay, broadcaster)
 	relay.links = list(hub)
+	SSnetrun.get_machine_transport().delivery_trace = list()
 	var/start = world.time
 	TEST_ASSERT(sending.send_message(sender, "Real routed message", list(receiving)), "The native PDA must admit a routed transmission")
 	var/deadline = world.time + 5 SECONDS
 	while(sending.netrun_pending_messages && world.time < deadline)
 		sleep(world.tick_lag)
+	log_world("NETRUN LOAD PDA: elapsed_ds=[world.time - start] hops=[json_encode(SSnetrun.get_machine_transport().delivery_trace)]")
 	var/list/rejections = list()
 	for(var/atom/device as anything in scene.owned + list(sender, recipient))
 		var/datum/component/netrun_node/node = device.GetComponent(/datum/component/netrun_node)

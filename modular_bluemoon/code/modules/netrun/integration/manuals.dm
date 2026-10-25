@@ -44,7 +44,7 @@
 	cached_access = node.required_access?.Copy()
 	cached_services = host.netrun_machine_services?.Copy()
 	cached_notes = notes
-	content = host.netrun_manual_text(node, commands, provider)
+	content = host.netrun_machine_manual_text(node, commands, provider)
 
 /datum/netrun_file/manual/copy()
 	refresh_text()
@@ -140,7 +140,7 @@
 			lines += "  Параметр [parameter["id"]]: [parameter["name"] || parameter["id"]] ([parameter["type"] || "text"])."
 	return lines
 
-/atom/proc/netrun_manual_text(datum/component/netrun_node/node, list/commands, datum/netrun_provider/provider)
+/atom/proc/netrun_machine_manual_text(datum/component/netrun_node/node, list/commands, datum/netrun_provider/provider)
 	var/list/lines = list("README — [name]", "", netrun_manual_role(node), "", "ПОДКЛЮЧЕНИЕ И ДОСТУП", \
 		"Машина подключается к APC своей области. Путь к удалённому сектору должен проходить через работающую инфраструктуру; состояние связи видно на карте и в журнале запросов.", \
 		"ID с подходящим доступом даёт легальные права машины. ПОЛЬЗОВАТЕЛЬ читает файлы и выполняет разрешённые действия; ROOT нужен для административных операций. Ключ ЛВС открывает обнаружение сети, но не подменяет доступ к машине.", \

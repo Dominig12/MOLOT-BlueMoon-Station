@@ -82,8 +82,11 @@
 	return result
 
 /datum/netrun_machine_message/research/coalescing_key()
+	var/requested = payload["requested_operation"]
+	if(requested && !(requested in list("snapshot", "watch")))
+		return null
 	if(payload["operation"] in list("snapshot", "watch"))
-		return "research.snapshot|[payload["binding"]]|[payload["generation"]]"
+		return "research.[payload["operation"]]|[payload["binding"]]|[payload["generation"]]"
 	return null
 
 /datum/netrun_machine_service/research_server
@@ -155,7 +158,8 @@
 			subscribers -= address
 			continue
 		data["generation"] = subscription["generation"]
-		send_to(client, new /datum/netrun_machine_message/research(deepCopyList(data)))
+		// Message construction already owns a deep copy of its payload.
+		send_to(client, new /datum/netrun_machine_message/research(data))
 
 /datum/netrun_machine_service/research_server/proc/research_peer(datum/netrun_machine_service/peer)
 	return peer?.service_id == "research.client" && !QDELETED(web) && web.research_owner_ref?.resolve() == host && netrun_atom_techweb(peer.host) == web
@@ -168,8 +172,9 @@
 /datum/netrun_machine_service/research_server/receive(datum/netrun_machine_message/message)
 	if(!accepts(message))
 		return FALSE
-	subscribers[message.source.node.address] = list("client" = WEAKREF(message.source), "generation" = message.payload["generation"])
 	var/operation = message.payload["operation"]
+	if(operation in list("snapshot", "watch"))
+		subscribers[message.source.node.address] = list("client" = WEAKREF(message.source), "generation" = message.payload["generation"])
 	var/success = TRUE
 	if(operation == "watch")
 		if(message.payload["revision"] == web.netrun_research_revision)
@@ -182,7 +187,8 @@
 		return TRUE
 	if(operation == "credit")
 		web.add_point_list(message.payload["points"])
-		operation = "snapshot"
+		// Delivery already has an outcome; credit-only telemetry needs no database reply.
+		return TRUE
 	if(operation == "explosion")
 		var/obj/machinery/doppler_array/research/sensor = message.source.host
 		var/value = message.payload["value"]
@@ -271,6 +277,7 @@
 
 /datum/netrun_machine_service/research_client
 	service_id = "research.client"
+	var/wants_snapshots = FALSE
 	var/binding_generation = 0
 	var/datum/techweb/snapshot_cache
 	var/list/pending_designs = list()
@@ -305,7 +312,8 @@
 	snapshot_binding = null
 	snapshot_revision = -1
 	subscription_ref = null
-	INVOKE_ASYNC(src, PROC_REF(request))
+	if(wants_snapshots)
+		INVOKE_ASYNC(src, PROC_REF(request))
 
 /datum/netrun_machine_service/research_client/proc/resolve_binding()
 	var/datum/techweb/binding = netrun_atom_techweb(host)
@@ -356,8 +364,8 @@
 /// Full snapshots are returned only when the local revision differs.
 /datum/netrun_machine_service/research_client/proc/check_subscription()
 	resync_timer = null
-	var/datum/techweb/binding = resolve_binding()
-	if(!binding && istype(host, /obj/machinery/mecha_part_fabricator))
+	var/datum/techweb/binding = wants_snapshots ? resolve_binding() : null
+	if(wants_snapshots && !binding && istype(host, /obj/machinery/mecha_part_fabricator))
 		var/obj/machinery/mecha_part_fabricator/fabricator = host
 		fabricator.sync(TRUE, TRUE)
 	if(binding)
@@ -367,6 +375,8 @@
 /datum/netrun_machine_service/research_client/proc/request(operation = "snapshot", mob/user, list/extra)
 	if(QDELETED(host))
 		return FALSE
+	if(operation in list("snapshot", "watch"))
+		wants_snapshots = TRUE
 	var/datum/techweb/binding = resolve_binding()
 	if(!binding)
 		return FALSE
