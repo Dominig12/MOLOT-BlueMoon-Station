@@ -338,7 +338,7 @@
 	if(source)
 		return source
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	return graph.nearest_apc(get_turf(owner.host))
+	return graph.nearest_apc(owner.physical_turf())
 
 /datum/netrun_console/entity/physical_route_source()
 	var/mob/camera/netrun_entity/entity = host
@@ -376,7 +376,7 @@
 	// A source can move its nested node while being resolved.
 	graph = SSnetrun.ensure_topology()
 	var/datum/netrun_path_tree/tree = use_stored_routes ? graph.route_snapshot(start) : new(graph, start)
-	var/turf/here = get_turf(owner.host)
+	var/turf/here = owner.physical_turf()
 	if(wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z))))
 		tree.reached.Cut()
 		tree.reached_networks.Cut()
@@ -393,7 +393,7 @@
 	return connection.acquire_ui_routes()
 
 /datum/netrun_connection/proc/acquire_ui_routes()
-	var/turf/here = get_turf(owner.host)
+	var/turf/here = owner.physical_turf()
 	// Same predicate as make_path_tree/watch_target: only this case rewrites the tree in place.
 	if(wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z))))
 		owner.ui_routes_borrowed = FALSE

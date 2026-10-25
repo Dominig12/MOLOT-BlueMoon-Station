@@ -169,7 +169,7 @@
 	subscribe()
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/focus = owner.map_focus_node()
-	var/turf/current = get_turf(owner.route_source()?.parent) || get_turf(owner.host)
+	var/turf/current = owner.route_source()?.physical_turf() || owner.physical_turf()
 	var/current_sector = netrun_sector_for(current)
 	if(source_sector != current_sector || source_z != current?.z)
 		active_sector = current_sector
@@ -370,7 +370,7 @@
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(QDELETED(node))
 			continue
-		var/turf/position = get_turf(node.parent)
+		var/turf/position = node.physical_turf()
 		var/now_shown = node.binding_sector == active_sector && position?.z == active_z && owner.can_route(node) && (owner.daemon_bonus("mapper") || (address in revealed_addresses) || owner.node_visible(node))
 		// Floor changes and a personal endpoint changing owner can change visibility
 		// without changing its APC attachment. Ordinary same-floor motion stays local.
@@ -453,7 +453,7 @@
 		if(address == selected.address || !permitted[address])
 			continue
 		var/datum/component/netrun_node/target = graph.nodes[address]
-		var/turf/position = get_turf(target.parent)
+		var/turf/position = target.physical_turf()
 		var/online = netrun_link_available(selected, target)
 		var/can_hop = entity && entity.host_node == selected && world.time >= entity.next_hop && !entity.is_stunned() && entity.can_enter(target, owner.ui_routes)
 		var/reason

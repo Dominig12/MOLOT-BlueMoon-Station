@@ -5,6 +5,8 @@
 	var/entry_address
 	var/list/route_chain = list()
 	var/severed_at = 0
+	var/datum/weakref/entry_client_ref
+	var/datum/weakref/entry_jack_ref
 
 /datum/netrun_dive_link/New(mob/camera/netrun_entity/owner)
 	src.owner = owner
@@ -35,6 +37,8 @@
 	entry_address = null
 	route_chain.Cut()
 	severed_at = 0
+	entry_client_ref = null
+	entry_jack_ref = null
 
 /datum/netrun_dive_link/proc/on_node_changed(datum/source, datum/component/netrun_node/old_node, datum/component/netrun_node/new_node)
 	SIGNAL_HANDLER
@@ -73,10 +77,17 @@
 
 /// Preserve the physical return-path rules, including relay availability.
 /datum/netrun_dive_link/proc/link_intact()
+	if(entry_client_ref)
+		var/datum/netrun_console/implant/client = entry_client_ref.resolve()
+		var/obj/item/organ/cyberimp/brain/netlink/implant = client?.host
+		if(!client || !istype(implant) || implant.owner != body || !implant.netrun_online() || client.is_locked())
+			return FALSE
+		if(entry_jack_ref && (!entry_jack_ref.resolve() || client.connection.jack != entry_jack_ref.resolve() || !client.jack_valid()))
+			return FALSE
 	if(!entry_address)
 		return TRUE
 	var/datum/component/netrun_node/entry = SSnetrun.find_node(entry_address)
-	if(QDELETED(entry) || QDELETED(entry.parent))
+	if(QDELETED(entry) || QDELETED(entry.parent) || !entry.is_online())
 		return FALSE
 	if(!owner.host_node)
 		return FALSE

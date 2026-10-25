@@ -235,7 +235,7 @@
 		killer?.log_line("Нет места в памяти. [loot.name] можно забрать из обломков в узле [node.address].", "average")
 		return
 	// Нет места нигде в сети - роняем физический шард рядом с убившим (у кого есть тело/машина).
-	var/turf/drop_turf = (!QDELETED(killer) && isatom(killer.host)) ? get_turf(killer.host) : get_turf(node?.parent)
+	var/turf/drop_turf = (!QDELETED(killer) && isatom(killer.host)) ? killer.physical_turf() : node?.physical_turf()
 	if(drop_turf)
 		var/obj/item/netrun_shard/shard = new(drop_turf)
 		shard.name = "data shard ([loot.name])"

@@ -36,7 +36,7 @@
 /// A carried host can change turf when its container moves without receiving MOVED itself.
 /datum/netrun_console/proc/refresh_ui_context_sources()
 	var/list/targets = list()
-	var/atom/movable/carrier = host
+	var/atom/movable/carrier = physical_host()
 	while(ismovable(carrier))
 		targets |= carrier
 		carrier = carrier.loc
@@ -82,7 +82,7 @@
 	for(var/datum/tgui/ui as anything in viewers)
 		if(ui.user && ui.user != operator)
 			credentials += list(list(ui.user, netrun_mob_access(ui.user)))
-	var/list/current = list(operator, get_turf(host), credentials, SSntnet.is_enabled(), length(SSntnet.catalog), SSnetworks.station_network?.setting_disabled)
+	var/list/current = list(operator, physical_turf(), credentials, SSntnet.is_enabled(), length(SSntnet.catalog), SSnetworks.station_network?.setting_disabled)
 	if(ui_legacy_context && !netrun_snapshot_equal(ui_legacy_context, current))
 		on_ui_context_changed(src)
 	ui_legacy_context = current
@@ -283,6 +283,8 @@
 		selected["network"] = node.network?.short_name
 		selected["legit"] = legit_node_level(node)
 		selected["commands"] = node.command_entries(src)
+		selected["interactions"] = node_interactions(node)
+		selected["contacts"] = entity_contacts(node)
 		// APC/шлюз - это точка входа в ЛВС: отдаём доступ и взлом сети прямо на узле, без верхней панели.
 		if((node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)) && node.network)
 			var/datum/netrun_network/lan = node.network
@@ -372,6 +374,8 @@
 /// Дополнительные кнопки носителя (выдернуть провод, вынуть шард, вернуться в тело...)
 /datum/netrun_console/proc/host_actions()
 	. = list()
+	if(has_service_lead())
+		. += list(list("id" = "choose_connection", "name" = "Подключиться к порту рядом", "icon" = "plug"))
 	if(connection.jack)
 		. += list(list("id" = "unjack", "name" = "Выдернуть провод", "icon" = "plug-circle-xmark"))
 	if(inventory.shard)
@@ -591,7 +595,7 @@
 			if(node && node_visible(node))
 				map_view.selected_address = node.address
 				map_view.selected_network = null
-				var/turf/position = get_turf(node.parent)
+				var/turf/position = node.physical_turf()
 				if(node.binding_sector != map_view.active_sector || position?.z != map_view.active_z)
 					map_view.select_sector(node.binding_sector, position?.z)
 			return TRUE
@@ -617,6 +621,14 @@
 		if("command")
 			run_command(selected_node(), params["id"])
 			return TRUE
+		if("node_interact")
+			return node_interact(selected_node(), params["id"], ui.user)
+		if("entity_signal")
+			return signal_entity(selected_node(), params["ref"])
+		if("entity_message")
+			if(!istext(params["text"]))
+				return FALSE
+			return signal_entity(selected_node(), params["ref"], params["text"])
 		if("breach")
 			start_breach(params["kind"] == "network" ? "network" : "node", params["id"], !!params["automatic"])
 			return TRUE
@@ -681,6 +693,10 @@
 /// Кнопки носителя
 /datum/netrun_console/proc/host_act(action, list/params, mob/user)
 	switch(action)
+		if("choose_connection")
+			if(has_service_lead() && user == operator)
+				INVOKE_ASYNC(src, PROC_REF(choose_connection), user)
+			return TRUE
 		if("unjack")
 			set_jack(null)
 			log_line("Провод отключён.")
@@ -704,7 +720,7 @@
 		return
 	var/obj/item/netrun_shard/old = inventory.shard
 	inventory.set_shard(null)
-	old.forceMove(get_turf(host))
+	old.forceMove(physical_turf())
 	if(user && isliving(user))
 		user.put_in_hands(old)
 	log_line("Шард извлечён.")

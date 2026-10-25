@@ -208,6 +208,9 @@
 	. = ..()
 	if(!. || !owner)
 		return
+	console.operator = owner
+	var/datum/component/netrun_node/node = GetComponent(/datum/component/netrun_node)
+	node?.refresh_physical_host()
 	attach_interface()
 
 /obj/item/organ/cyberimp/brain/netlink/Remove(special = FALSE)

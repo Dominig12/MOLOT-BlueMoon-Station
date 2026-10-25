@@ -23,9 +23,13 @@ const LABELS: Record<string, string> = {
   set_waypoint: 'Построение маршрута', clear_waypoint: 'Сброс маршрута',
   program_use: 'Запуск программы', recover_salvage: 'Подбор данных', chat_send: 'Отправка сообщения',
   cli: 'Команда терминала', web_site: 'Открытие сайта', web_page: 'Открытие страницы', web_back: 'Навигация WEB',
+  entity_signal: 'Сигнал сущности', entity_message: 'Личное сообщение сущности',
 };
 
 const actionLabel = (action: string, params: Record<string, unknown>, data: NetrunData) => {
+  if (action === 'node_interact') {
+    return data.selected?.interactions?.find((entry) => entry.id === params.id)?.name || 'Взаимодействие с узлом';
+  }
   if (action === 'command' || action === 'window_act') {
     const id = action === 'command' ? params.id : params.waction;
     const commands = action === 'command' ? data.selected?.commands : data.window?.commands;

@@ -218,12 +218,12 @@ SUBSYSTEM_DEF(netrun)
 	// Being on an APC must not turn its whole department into a fast poll set.
 	var/datum/component/netrun_node/apc = source?.node_type == NETRUN_NODE_APC ? source : source?.bound_apc
 	retain_node_interest(apc, until)
-	var/turf/here = get_turf(source?.parent)
+	var/turf/here = source?.physical_turf()
 	if(here && apc)
 		var/list/neighbors = topology ? topology.adjacency[apc.address] : null
 		for(var/address in neighbors)
 			var/datum/component/netrun_node/neighbor = nodes_by_address[address]
-			var/turf/there = get_turf(neighbor?.parent)
+			var/turf/there = neighbor?.physical_turf()
 			if(there && here.z == there.z && get_dist(here, there) <= NETRUN_NODE_INTEREST_RADIUS)
 				retain_node_interest(neighbor, until)
 
@@ -390,7 +390,7 @@ SUBSYSTEM_DEF(netrun)
 /datum/controller/subsystem/netrun/proc/get_apc_network(datum/component/netrun_node/apc_node)
 	if(QDELETED(apc_node) || apc_node.node_type != NETRUN_NODE_APC)
 		return null
-	var/turf/here = get_turf(apc_node.parent)
+	var/turf/here = apc_node.physical_turf()
 	// The department lookup (sector + area type + string id) only changes when the APC moves,
 	// so cache the resolved LAN per turf instead of recomputing it for every tick.
 	if(apc_node.network && apc_node.apc_network_turf == here && networks[apc_node.network.id] == apc_node.network)

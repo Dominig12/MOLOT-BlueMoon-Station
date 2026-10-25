@@ -26,6 +26,9 @@
 /atom/proc/netrun_window_feed(datum/netrun_console/console, datum/component/netrun_node/node)
 	if(!netrun_view_capable() || console.node_level(node) < NETRUN_ACCESS_USER)
 		return null
+	if(console.view_denial(node))
+		console.remote_session.feed_node = null
+		return null
 	var/atom/eye = node.is_online() && console.can_route(node) ? netrun_view_target() : null
 	if(!eye)
 		console.remote_session.feed_node = null
@@ -119,6 +122,8 @@
 	var/list/extra = list()
 	for(var/list/entry as anything in A.netrun_window_actions(owner, node))
 		entry["allowed"] = level >= (entry["access"] || NETRUN_ACCESS_GUEST) && route_ok && online && unlocked
+		if(entry["id"] == "view_watch" && owner.view_denial(node))
+			entry["allowed"] = FALSE
 		extra += list(entry)
 	var/datum/netrun_network/network = node.network
 	return list(
@@ -228,6 +233,15 @@
 
 // MARK: Видеопотоки
 
+/// A client can retain actor-specific optical policy alongside route and node permissions.
+/datum/netrun_console/proc/view_denial(datum/component/netrun_node/node)
+	var/mob/viewer = netrun_console_owner(src)
+	return viewer?.netrun_view_denial(node)
+
+/// Native actor restrictions follow the operator across built-in clients and ordinary terminals.
+/mob/proc/netrun_view_denial(datum/component/netrun_node/node)
+	return null
+
 /// Revalidate the source on every tick, including worn optics and disabled implants.
 /datum/netrun_console/proc/watch_target()
 	return remote_session.watch_target()
@@ -235,12 +249,12 @@
 /datum/netrun_remote_session/proc/watch_target()
 	if(QDELETED(watch_node) || QDELETED(owner.operator) || watch_viewer != owner.operator || owner.is_locked())
 		return null
-	if(!watch_node.is_online())
+	if(!watch_node.is_online() || owner.view_denial(watch_node))
 		return null
 	// Refresh moving endpoints before borrowing the retained routing table.
 	owner.refresh_route_node(watch_node)
 	var/route_started = SSnetrun.profile_armed ? TICK_USAGE : 0
-	var/turf/here = get_turf(owner.host)
+	var/turf/here = owner.physical_turf()
 	// Outside allowed wireless zones the connection uses a request-local restricted tree.
 	// Never modify the shared table (e.g. reached.Cut()) or delete it.
 	var/private_tree = owner.connection.wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z)))

@@ -26,8 +26,8 @@
 	set_jack(null)
 
 /datum/netrun_connection/proc/jack_valid()
-	var/turf/source_turf = get_turf(owner?.host)
-	var/turf/target_turf = get_turf(jack?.parent)
+	var/turf/source_turf = owner?.physical_turf()
+	var/turf/target_turf = jack?.physical_turf()
 	return source_turf && target_turf && source_turf.z == target_turf.z && get_dist(source_turf, target_turf) <= 1
 
 /// Acquired grants belong to the session; ID credentials still come from its operator.

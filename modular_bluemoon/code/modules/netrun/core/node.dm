@@ -1,3 +1,13 @@
+/// Native organs live in nullspace while installed; their wearer is their physical endpoint.
+/atom/proc/netrun_physical_host()
+	return src
+
+/obj/item/organ/netrun_physical_host()
+	return owner || src
+
+/atom/proc/netrun_turf()
+	return get_turf(netrun_physical_host())
+
 /// Сетевой узел: делает атом адресуемым в сети и даёт ему набор команд
 /datum/component/netrun_node
 	var/address
@@ -50,6 +60,8 @@
 	var/processing_update = FALSE
 	/// Owned subscription list, including every statically matching provider's signals.
 	var/list/subscribed_state_signals
+	/// An installed nullspace organ receives physical movement from its native wearer.
+	var/atom/movable/physical_carrier
 
 /datum/component/netrun_node/Initialize(node_type, list/command_ids, security = 1, list/required_access, storage_capacity = 0)
 	if(!isatom(parent))
@@ -63,7 +75,7 @@
 		RegisterSignal(file_store, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_storage_changed))
 	address = SSnetrun.make_address()
 	SSnetrun.nodes_by_address[address] = src
-	topology_turf = get_turf(parent)
+	topology_turf = physical_turf()
 	// Publish registry event: topology listens and indexes APC/relay membership.
 	SSnetrun.get_topology()
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_REGISTERED, src)
@@ -78,15 +90,18 @@
 	RegisterSignal(parent, subscribed_state_signals - availability_signals, PROC_REF(on_state_changed))
 	if(ismovable(parent))
 		RegisterSignal(parent, COMSIG_MOVABLE_MOVED, PROC_REF(on_moved))
+	refresh_physical_host()
 	var/atom/host = parent
 	host.ensure_netrun_machine_services(src)
 
 /datum/component/netrun_node/UnregisterFromParent()
+	clear_physical_carrier()
 	UnregisterSignal(parent, list(COMSIG_ATOM_EMP_ACT, COMSIG_MOVABLE_MOVED))
 	UnregisterSignal(parent, subscribed_state_signals)
 	subscribed_state_signals = null
 
 /datum/component/netrun_node/Destroy()
+	clear_physical_carrier()
 	var/atom/host = parent
 	for(var/id in host.netrun_machine_services?.Copy())
 		var/datum/netrun_machine_service/service = host.netrun_machine_services[id]
@@ -122,7 +137,7 @@
 		// The APC already resolved its own LAN; reuse it instead of recomputing the lookup per endpoint.
 		new_net = bound_apc.network || SSnetrun.get_apc_network(bound_apc)
 	else
-		new_net = netrun_fallback_network_for(get_turf(parent))
+		new_net = netrun_fallback_network_for(physical_turf())
 	if(network == new_net)
 		return
 	leave_network()
@@ -141,9 +156,31 @@
 	network = null
 	notify_changed(NETRUN_CHANGED_BINDING)
 
+/datum/component/netrun_node/proc/physical_turf()
+	var/atom/host = parent
+	return host?.netrun_turf()
+
+/datum/component/netrun_node/proc/clear_physical_carrier()
+	if(physical_carrier)
+		UnregisterSignal(physical_carrier, COMSIG_MOVABLE_MOVED)
+	physical_carrier = null
+
+/// Called after native organ ownership changes, once Insert/Remove has finished.
+/datum/component/netrun_node/proc/refresh_physical_host()
+	var/atom/host = parent
+	var/atom/movable/carrier = host?.netrun_physical_host()
+	if(carrier == parent || !ismovable(carrier))
+		carrier = null
+	if(physical_carrier != carrier)
+		clear_physical_carrier()
+		physical_carrier = carrier
+		if(physical_carrier)
+			RegisterSignal(physical_carrier, COMSIG_MOVABLE_MOVED, PROC_REF(on_moved))
+	on_moved(parent)
+
 /datum/component/netrun_node/proc/on_moved(datum/source)
 	SIGNAL_HANDLER
-	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_MOVED, src, topology_turf, get_turf(parent))
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_MOVED, src, topology_turf, physical_turf())
 	join_network()
 	// refresh_node emits BINDING only when the actual APC attachment changes.
 	notify_changed(NETRUN_CHANGED_STATE)
@@ -322,7 +359,7 @@
 
 /datum/component/netrun_node/proc/ui_entry(datum/netrun_console/console)
 	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
-	var/turf/T = get_turf(parent)
+	var/turf/T = physical_turf()
 	var/datum/component/netrun_node/uplink = uplink_node()
 	. = list(
 		"address" = address,

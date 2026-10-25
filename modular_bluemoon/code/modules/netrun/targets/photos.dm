@@ -29,7 +29,16 @@
 	icon = "camera"
 	trace = 2
 
+/datum/netrun_command/cam_photo/ui_entry(datum/component/netrun_node/node, datum/netrun_console/console, full_id)
+	. = ..()
+	if(console.view_denial(node))
+		.["allowed"] = FALSE
+
 /datum/netrun_command/cam_photo/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	var/reason = console.view_denial(node)
+	if(reason)
+		console.log_line(reason, "bad")
+		return
 	var/obj/machinery/camera/camera = node.parent
 	if(!camera.status || !camera.can_use())
 		return "Камера не передаёт изображение."

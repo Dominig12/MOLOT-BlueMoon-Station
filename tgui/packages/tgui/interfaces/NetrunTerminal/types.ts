@@ -48,11 +48,33 @@ export type Storage = {
   capacity: number;
 };
 
+export type NodeInteraction = {
+  id: string;
+  name: string;
+  icon: string;
+  enabled: boolean;
+  reason?: string | null;
+};
+
+export type EntityContact = {
+  ref: string;
+  name: string;
+  kind: 'entity' | 'ice';
+  integrity: number;
+  max_integrity: number;
+  state: string;
+  self: boolean;
+  can_signal: boolean;
+  can_message: boolean;
+};
+
 export type SelectedNode = NetNode & {
   network: string;
   legit: number;
   commands: NetCommand[];
   status: string[];
+  interactions?: NodeInteraction[];
+  contacts?: EntityContact[];
   logs?: string[];
   files?: NetFile[];
   storage?: { used: number; capacity: number };

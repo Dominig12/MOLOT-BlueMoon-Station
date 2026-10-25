@@ -110,6 +110,13 @@
 		invalidate_projection_caches()
 	invalidate_ui()
 
+/// Internal organs live in nullspace; their wearer supplies the client's physical position.
+/datum/netrun_console/proc/physical_host()
+	return host?.netrun_physical_host()
+
+/datum/netrun_console/proc/physical_turf()
+	return get_turf(physical_host())
+
 /// Never serialize UI or rebuild topology inside a synchronous signal handler.
 /datum/netrun_console/proc/invalidate_ui(immediate = TRUE)
 	if(QDELETED(src))

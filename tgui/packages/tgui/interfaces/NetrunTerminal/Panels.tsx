@@ -187,7 +187,7 @@ const ConsoleLogView = (props: { active?: boolean } = {}) => {
 };
 
 const StoragePanelView = () => {
-  const { act, data } = useBackend<NetrunData>(['storage', 'shard', 'selected', 'host_actions']);
+  const { data } = useBackend<NetrunData>(['storage', 'shard', 'selected']);
   const { storage, shard, selected } = data;
   const canUpload = !!selected?.files && selected.access >= 2;
   return (
@@ -204,13 +204,6 @@ const StoragePanelView = () => {
                 {shard.name} {shard.used}/{shard.capacity}
               </Box>
               <FileList files={shard.files} canUpload={canUpload} />
-            </Box>
-          )}
-          {data.host_actions.length > 0 && (
-            <Box mt={1}>
-              {data.host_actions.map((a) => (
-                <Button key={a.id} icon={a.icon} content={a.name} onClick={() => act(a.id)} />
-              ))}
             </Box>
           )}
         </div>

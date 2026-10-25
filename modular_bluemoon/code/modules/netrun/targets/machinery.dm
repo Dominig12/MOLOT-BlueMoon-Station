@@ -81,7 +81,7 @@
 
 /obj/machinery/camera/Initialize(mapload, obj/structure/camera_assembly/CA)
 	. = ..()
-	AddComponent(/datum/component/netrun_node, NETRUN_NODE_CAMERA, list("cam_toggle", "cam_loop"), 1, list(ACCESS_SECURITY))
+	AddComponent(/datum/component/netrun_node, NETRUN_NODE_CAMERA, list("cam_toggle", "cam_loop", "cam_ai_jump"), 1, list(ACCESS_SECURITY))
 
 /obj/machinery/camera/netrun_online(remote = TRUE)
 	return !(machine_stat & (BROKEN | EMPED))

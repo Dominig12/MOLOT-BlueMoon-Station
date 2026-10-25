@@ -39,7 +39,14 @@
 
 /mob/living/silicon/ai/Initialize(mapload, datum/ai_laws/L, mob/target_ai)
 	. = ..()
+	if(. == INITIALIZE_HINT_QDEL)
+		return
 	AddComponent(/datum/component/netrun_node, NETRUN_NODE_AI, list("ai_jam"), 5, list(ACCESS_AI_UPLOAD))
+	initialize_netrun_access()
+
+/mob/living/silicon/ai/Destroy()
+	destroy_netrun_access()
+	return ..()
 
 /mob/living/silicon/ai/netrun_online(remote = TRUE)
 	return stat != DEAD

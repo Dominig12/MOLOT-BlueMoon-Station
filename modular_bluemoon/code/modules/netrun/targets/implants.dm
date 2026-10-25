@@ -254,9 +254,7 @@
 	if(!src.console)
 		return
 	src.console.intrusion.lockout_until = max(src.console.intrusion.lockout_until, world.time + 45 SECONDS)
-	src.console.access_session.node_access.Cut()
-	src.console.access_session.network_access.Cut()
-	QDEL_NULL(src.console.intrusion.breach)
+	src.console.disconnect_client(TRUE)
 	src.console.log_line("Сессия разорвана извне.", "bad")
 	to_chat(owner, span_warning("Нейролинк теряет связь с сетью."))
 	return "Сессия нейролинка разорвана, вход заблокирован на 45 секунд."

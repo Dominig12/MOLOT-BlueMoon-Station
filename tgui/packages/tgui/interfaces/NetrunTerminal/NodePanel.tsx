@@ -3,6 +3,8 @@ import { memo, useRef } from 'react';
 import { Box, Button, Icon, LabeledList, Section } from '../../components';
 import { AutoBreachButton } from './AutoBreachButton';
 import { CommandList } from './CommandList';
+import { EntityContacts } from './EntityContacts';
+import { NodeInteractions } from './NodeInteractions';
 import {
   ACCESS_COLORS,
   ACCESS_NAMES,
@@ -188,6 +190,7 @@ const NodePanelView = () => {
           )}
         </LabeledList.Item>
       </LabeledList>
+      <NodeInteractions actions={selected.interactions} pending={pending} />
       {selected.access < 1 && (
         <Box mt={1} color={THEME.warn}>
           Узел закрыт. Подберите доступ к узлу или его сети.
@@ -279,6 +282,8 @@ const NodePanelView = () => {
         />
       )}
       {!!can_breach && selected.access >= 1 && selected.access < 2 && <AutoBreachButton kind="node" id={selected.address} disabled={!selected.online} />}
+      <EntityContacts address={selected.address} contacts={selected.contacts} pending={pending}
+        localEntity={display.entity?.host === selected.address} />
       {!!selected.files && (
         <Box mt={2}>
           <Box color={THEME.muted} mb={0.5}>

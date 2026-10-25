@@ -32,6 +32,7 @@
 #define NETRUN_ORIGIN_ENTITY "entity"
 #define NETRUN_ORIGIN_CIRCUIT "circuit"
 #define NETRUN_ORIGIN_PAI "pai"
+#define NETRUN_ORIGIN_AI "ai"
 
 /// Shared by scheduler implementations and unit tests included before module sources.
 #define NETRUN_TASK_CRITICAL 1

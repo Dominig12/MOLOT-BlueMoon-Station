@@ -58,14 +58,9 @@
 		console.set_jack(null)
 		to_chat(user, span_notice("Вы выдёргиваете кабель из [target]."))
 		return
-	to_chat(user, span_notice("Вы ищете сервисный порт на [target]..."))
-	if(!do_after(user, 3 SECONDS, target = target))
-		return
-	console.set_jack(node)
-	console.log_line("Кабель подключён: [node.get_name()] [node.address].", "good")
-	to_chat(user, span_notice("Кабель [src] входит в порт [target]."))
-	playsound(target, 'sound/machines/click.ogg', 40, TRUE)
-	console.ui_interact(user)
+	console.operator = user
+	if(console.plug_into(node, user))
+		console.ui_interact(user)
 
 /obj/item/netrun_deck/netrun_traced(datum/netrun_console/traced)
 	burnt_until = world.time + NETRUN_TRACE_LOCKOUT
@@ -90,12 +85,12 @@
 /// Имплант прямого подключения: беспроводной доступ к сети из головы и погружение
 /obj/item/organ/cyberimp/brain/netlink
 	name = "neural netlink implant"
-	desc = "Нейроинтерфейс прямого подключения к сети. Позволяет работать с сетью без терминала и полностью погружаться в неё."
+	desc = "Нейроинтерфейс прямого подключения к сети с коротким сервисным кабелем. Позволяет работать с сетью без терминала, подключаться к машинам рядом и полностью погружаться в выбранный узел."
 	icon_state = "brain_implant"
 	implant_color = "#4a9eff"
 	slot = "brain_netlink"
 	actions_types = list(/datum/action/item_action/organ_action/netrun_console, /datum/action/item_action/organ_action/netrun_dive)
-	var/datum/netrun_console/console
+	var/datum/netrun_console/implant/console
 
 /obj/item/organ/cyberimp/brain/netlink/Initialize(mapload)
 	. = ..()
@@ -107,13 +102,17 @@
 	AddComponent(/datum/component/netrun_access_device, console, NETRUN_NODE_IMPLANT)
 
 /obj/item/organ/cyberimp/brain/netlink/Destroy()
+	console?.disconnect_client(TRUE)
 	QDEL_NULL(console)
 	return ..()
 
 /obj/item/organ/cyberimp/brain/netlink/Remove(special = FALSE)
 	if(console)
-		SStgui.close_uis(console)
-	return ..()
+		console.disconnect_client(TRUE)
+		console.operator = null
+	. = ..()
+	var/datum/component/netrun_node/node = GetComponent(/datum/component/netrun_node)
+	node?.refresh_physical_host()
 
 /obj/item/organ/cyberimp/brain/netlink/ui_action_click(mob/user, actiontype)
 	if(!owner || owner != user)
@@ -123,26 +122,47 @@
 		return
 	console.ui_interact(owner)
 
-/obj/item/organ/cyberimp/brain/netlink/proc/try_dive()
-	var/datum/component/netrun_node/node = console.selected_node()
-	if(!node)
-		to_chat(owner, span_warning("Выберите узел для погружения в интерфейсе нейролинка."))
-		return
-	if(!node.is_online() || console.node_level(node) < NETRUN_ACCESS_USER)
-		to_chat(owner, span_warning("Для погружения нужен доступ пользователя к узлу [node.address]."))
-		return
-	if(owner.stat != CONSCIOUS)
-		return
-	to_chat(owner, span_notice("Вы закрываете глаза и проваливаетесь в сеть..."))
-	if(!do_after(owner, 3 SECONDS, target = owner))
-		return
-	if(!node.is_online() || console.node_level(node) < NETRUN_ACCESS_USER)
-		return
-	var/mob/camera/netrun_entity/entity = netrun_start_dive(owner, node)
+/obj/item/organ/cyberimp/brain/netlink/proc/try_dive(datum/component/netrun_node/node)
+	var/mob/living/carbon/diver = owner
+	if(!diver || !console)
+		return FALSE
+	console.operator = diver
+	node = node || console.selected_node()
+	var/reason = console.dive_denial(node, diver)
+	if(reason)
+		console.log_line(reason, "bad")
+		to_chat(diver, span_warning(reason))
+		return FALSE
+	console.diving = TRUE
+	to_chat(diver, span_notice("Вы закрываете глаза и проваливаетесь в сеть..."))
+	var/ready = do_after(diver, 3 SECONDS, target = diver)
+	if(QDELETED(src) || QDELETED(console))
+		return FALSE
+	console.diving = FALSE
+	if(!ready || owner != diver || console.dive_denial(node, diver))
+		return FALSE
+	return complete_dive(node, diver)
+
+/// Keep the final admission and mind transfer atomic after the interruptible preparation.
+/obj/item/organ/cyberimp/brain/netlink/proc/complete_dive(datum/component/netrun_node/node, mob/living/carbon/diver)
+	if(owner != diver || !console || console.dive_denial(node, diver))
+		return FALSE
+	var/mob/camera/netrun_entity/entity = netrun_start_dive(diver, node)
 	if(entity)
 		// Доступы, добытые нейролинком, переходят в погружение
-		entity.console.access_session.node_access = console.access_session.node_access.Copy()
+		for(var/address in console.access_session.node_access)
+			entity.console.access_session.node_access[address] = max(entity.console.access_session.node_access[address] || 0, console.access_session.node_access[address])
 		entity.console.access_session.network_access = console.access_session.network_access.Copy()
+		console.dive_ref = WEAKREF(entity)
+		entity.dive_link.entry_client_ref = WEAKREF(console)
+		if(console.connection.jack)
+			entity.dive_link.entry_jack_ref = WEAKREF(console.connection.jack)
+		console.stop_watch()
+		for(var/datum/component/netrun_node/listened_node as anything in console.listening.Copy())
+			listened_node.stop_listening(console)
+		SStgui.close_uis(console)
+		return TRUE
+	return FALSE
 
 /obj/item/organ/cyberimp/brain/netlink/netrun_traced(datum/netrun_console/traced)
 	if(!owner)

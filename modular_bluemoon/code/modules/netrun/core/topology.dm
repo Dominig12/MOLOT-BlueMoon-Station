@@ -158,7 +158,7 @@
 		if(QDELETED(node) || QDELETED(node.parent))
 			continue
 		indexed_infrastructure_visits++
-		var/sector = netrun_sector_for(get_turf(node.parent))
+		var/sector = netrun_sector_for(node.physical_turf())
 		if(!sector)
 			continue
 		var/list/sector_apcs = apcs_by_sector[sector]
@@ -171,7 +171,7 @@
 		if(QDELETED(node) || QDELETED(node.parent))
 			continue
 		indexed_infrastructure_visits++
-		if(netrun_sector_for(get_turf(node.parent)))
+		if(netrun_sector_for(node.physical_turf()))
 			relay_addresses += address
 	indexed_revision = infrastructure_revision
 
@@ -193,9 +193,9 @@
 	// The index is address-sorted, so equal distances have a total, stable tie-break.
 	for(var/address in candidates)
 		var/datum/component/netrun_node/candidate = SSnetrun.nodes_by_address[address]
-		if(QDELETED(candidate) || netrun_sector_for(get_turf(candidate.parent)) != sector)
+		if(QDELETED(candidate) || netrun_sector_for(candidate.physical_turf()) != sector)
 			continue
-		var/distance = netrun_topology_distance(position, get_turf(candidate.parent))
+		var/distance = netrun_topology_distance(position, candidate.physical_turf())
 		var/native = apc_area(candidate) == root_area
 		if((native && !best_native) || (native == best_native && distance < best_distance))
 			best = candidate
@@ -209,7 +209,7 @@
 /datum/netrun_topology/proc/refresh_node(datum/component/netrun_node/node)
 	if(QDELETED(node) || QDELETED(node.parent))
 		return
-	var/turf/position = get_turf(node.parent)
+	var/turf/position = node.physical_turf()
 	// Fast path: an already-bound node that has not moved, under unchanged infrastructure,
 	// keeps its binding - skip the sector/area/nearest-APC work entirely.
 	if(position == node.topology_turf && node.binding_checked && node.binding_infra_revision == infrastructure_revision)
@@ -232,7 +232,7 @@
 		return
 	var/context_changed = !node.binding_checked || node.binding_area != root_area || node.binding_sector != sector
 	var/datum/component/netrun_node/previous = node.bound_apc
-	var/valid_binding = !QDELETED(previous) && previous.node_type == NETRUN_NODE_APC && SSnetrun.nodes_by_address[previous.address] == previous && sector && netrun_sector_for(get_turf(previous.parent)) == sector
+	var/valid_binding = !QDELETED(previous) && previous.node_type == NETRUN_NODE_APC && SSnetrun.nodes_by_address[previous.address] == previous && sector && netrun_sector_for(previous.physical_turf()) == sector
 	if(node.node_type == NETRUN_NODE_APC)
 		node.bound_apc = null
 	else if(context_changed || (previous && !valid_binding) || (!previous && node.binding_infra_revision != infrastructure_revision))
@@ -296,7 +296,7 @@
 		return NETRUN_RELAY_LATENCY
 	var/datum/component/netrun_node/from_node = nodes[first]
 	var/datum/component/netrun_node/to_node = nodes[second]
-	return max(1, CEILING(netrun_topology_distance(get_turf(from_node?.parent), get_turf(to_node?.parent)) / NETRUN_LINK_TILES_PER_DS, 1))
+	return max(1, CEILING(netrun_topology_distance(from_node?.physical_turf(), to_node?.physical_turf()) / NETRUN_LINK_TILES_PER_DS, 1))
 
 /datum/netrun_topology/proc/refresh_node_weights(datum/component/netrun_node/node)
 	var/changed = FALSE
@@ -310,7 +310,7 @@
 			delta = cost - edge["latency"]
 			edge["latency"] = cost
 			changed = TRUE
-		edge["distance"] = netrun_topology_distance(get_turf(node.parent), get_turf(peer.parent))
+		edge["distance"] = netrun_topology_distance(node.physical_turf(), peer.physical_turf())
 	if(changed)
 		var/previous_geometry = weight_revision
 		weight_revision++
@@ -333,7 +333,7 @@
 	var/datum/component/netrun_node/from_node = nodes[first]
 	var/datum/component/netrun_node/to_node = nodes[second]
 	var/list/edge = list("id" = "[kind]:[first]>[second]", "from" = first, "to" = second, "kind" = kind,
-		"latency" = edge_cost(first, second), "distance" = netrun_topology_distance(get_turf(from_node.parent), get_turf(to_node.parent)))
+		"latency" = edge_cost(first, second), "distance" = netrun_topology_distance(from_node.physical_turf(), to_node.physical_turf()))
 	edges += list(edge)
 	edge_lookup["[first]>[second]"] = edge
 	edge_lookup["[second]>[first]"] = edge
@@ -373,7 +373,7 @@
 		components[address] = address
 		input_order[address] = i
 		var/datum/component/netrun_node/apc = nodes[address]
-		positions[address] = get_turf(apc.parent)
+		positions[address] = apc.physical_turf()
 	var/datum/netrun_apc_spatial_index/spatial = new(addresses, positions)
 	for(var/address in addresses)
 		nearest[address] = spatial.nearest_edges(address)
@@ -451,7 +451,7 @@
 		var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
 		if(QDELETED(node) || !is_infrastructure(node))
 			continue
-		var/turf/position = get_turf(node.parent)
+		var/turf/position = node.physical_turf()
 		if(node.topology_turf != position)
 			node.topology_turf = position
 			moved_infrastructure = TRUE

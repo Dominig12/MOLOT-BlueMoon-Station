@@ -17,7 +17,7 @@ import { WindowPanel } from './WindowPanel';
 const ORIGIN_NAMES: Record<string, string> = {
   terminal: 'Проводной терминал', deck: 'Кибердека', implant: 'Нейролинк',
   ntos: 'NTOS-клиент', entity: 'Резидентный процесс', circuit: 'Схема',
-  pai: 'пИИ', neural: 'Нейроинтерфейс',
+  pai: 'пИИ', ai: 'ИИ', neural: 'Нейроинтерфейс',
 };
 
 const PAGE_NAMES: Record<WorkspaceView, string> = {
@@ -215,10 +215,11 @@ const NodeSidebar = memo((props: { suspended: boolean }) => {
   return content.current;
 });
 const Header = memo(() => {
-  const { data } = useBackend<NetrunData>(['origin', 'uplink', 'trace', 'locked', 'wireless', 'jack', 'entity']);
+  const { act, data } = useBackend<NetrunData>(['origin', 'uplink', 'trace', 'locked', 'wireless', 'jack', 'entity', 'host_actions']);
   const { origin, uplink, trace, locked, wireless, jack, entity } = data;
   const traceColor = trace > 66 ? THEME.bad : trace > 33 ? THEME.warn : THEME.accent;
   return (
+    <>
     <header className="netrun-header">
       <div className="netrun-header__brand" aria-label="NetRun">
         <span className="netrun-header__logo"><Icon name="network-wired" /></span>
@@ -248,6 +249,16 @@ const Header = memo(() => {
         </div>
       </div>
     </header>
+    {!!data.host_actions?.length && (
+      <div role="group" aria-label="Действия подключения"
+        style={{ flex: '0 0 auto', display: 'flex', flexWrap: 'wrap', gap: '3px', padding: '5px 0' }}>
+        {data.host_actions.map((action) => (
+          <Button key={action.id} compact icon={action.icon} content={action.name}
+            onClick={() => act(action.id)} />
+        ))}
+      </div>
+    )}
+    </>
   );
 });
 

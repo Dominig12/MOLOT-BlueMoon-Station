@@ -78,7 +78,7 @@
 	leave_node()
 	host_node = node
 	LAZYADD(node.entities, src)
-	abstract_move(get_turf(node.parent))
+	abstract_move(node.physical_turf())
 	console.map_view.viewed_network_id = node.network?.id
 	console.map_view.selected_address = node.address
 	node.touch()
@@ -177,7 +177,7 @@
 /// Синхронизация с носителем, вызывается консолью раз в секунду
 /mob/camera/netrun_entity/proc/process_tick(delta)
 	if(host_node)
-		var/turf/T = get_turf(host_node.parent)
+		var/turf/T = host_node.physical_turf()
 		if(T && loc != T)
 			abstract_move(T)
 	// A slow self-repair even mid-fight, faster once the heat is off, so a single
@@ -394,7 +394,7 @@
 /proc/netrun_start_dive(mob/living/carbon/body, datum/component/netrun_node/start)
 	if(!body?.mind || !start)
 		return
-	var/mob/camera/netrun_entity/entity = new(get_turf(start.parent), start)
+	var/mob/camera/netrun_entity/entity = new(start.physical_turf(), start)
 	entity.set_net_name(body.real_name, "Нетраннер")
 	entity.dive_link.attach(body, start)
 	body.SetUnconscious(5 SECONDS)
