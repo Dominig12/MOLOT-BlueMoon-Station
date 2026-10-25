@@ -8,6 +8,7 @@ import { PixiActors } from './pixiActors';
 import { PixiLabels } from './pixiLabels';
 import type { PixiLibrary } from './pixiPrimitives';
 import { PixiScenery } from './pixiScenery';
+import { themeId, themePalette } from './themes';
 import type { NetEdge } from './types';
 
 export type PixiCamera = GraphCamera;
@@ -69,10 +70,14 @@ class NetrunPixiSurface implements PixiSurface {
   private labelDirty = true;
   private interacting = false;
   private labelCamera: PixiCamera | null = null;
+  private palette = themePalette();
+  private currentTheme = '';
+  private themeRoot: HTMLElement | null = null;
+  private themeObserver: MutationObserver | null = null;
 
   constructor(private readonly app: Application, private readonly canvas: HTMLCanvasElement,
     private readonly context: WebGL2RenderingContext, pixi: PixiLibrary, width: number, height: number,
-    private readonly onUnavailable: (() => void) | undefined, private readonly options: PixiMountOptions) {
+    private readonly onUnavailable: (() => void) | undefined, private readonly options: PixiMountOptions, host: HTMLElement) {
     this.width = width; this.height = height;
     this.scenery = new PixiScenery(pixi); this.actors = new PixiActors(pixi); this.labels = new PixiLabels(pixi);
     this.grid = new pixi.Graphics();
@@ -89,8 +94,23 @@ class NetrunPixiSurface implements PixiSurface {
     canvas.addEventListener('webglcontextrestored', this.onRestored);
     document.addEventListener('visibilitychange', this.onVisible);
     options.signal?.addEventListener('abort', this.destroy, { once: true });
+    this.themeRoot = host.closest<HTMLElement>('[data-net-theme]');
+    this.syncTheme();
+    if (this.themeRoot && typeof MutationObserver !== 'undefined') {
+      this.themeObserver = new MutationObserver(this.syncTheme);
+      this.themeObserver.observe(this.themeRoot, { attributes: true, attributeFilter: ['data-net-theme'] });
+    }
     this.requestRender();
   }
+
+  private syncTheme = () => {
+    const id = themeId(this.themeRoot?.dataset.netTheme);
+    if (this.currentTheme === id || this.disposed) { return; }
+    this.currentTheme = id; this.palette = themePalette(id);
+    if (this.app.renderer.background) { this.app.renderer.background.color = Number.parseInt(this.palette.map.slice(1), 16); }
+    this.canvas.dataset.netTheme = id;
+    this.cameraDirty = true; this.requestRender();
+  };
 
   updateScene(scene: GraphScene, base: GraphBase) {
     if (this.disposed || this.failed) { return false; }
@@ -222,13 +242,13 @@ class NetrunPixiSurface implements PixiSurface {
     this.grid.clear();
     for (let px = ((x % step) + step) % step; px < this.width; px += step) { this.grid.moveTo(px, 0).lineTo(px, this.height); }
     for (let py = ((y % step) + step) % step; py < this.height; py += step) { this.grid.moveTo(0, py).lineTo(this.width, py); }
-    this.grid.stroke({ color: 0x468298, alpha: .08, width: 1 });
+    this.grid.stroke({ color: Number.parseInt(this.palette.accent.slice(1), 16), alpha: .08, width: 1 });
     // Larger guide lines provide orientation at every zoom without textures,
     // custom shaders or a persistent animation loop.
     const major = step * 4;
     for (let px = ((x % major) + major) % major; px < this.width; px += major) { this.grid.moveTo(px, 0).lineTo(px, this.height); }
     for (let py = ((y % major) + major) % major; py < this.height; py += major) { this.grid.moveTo(0, py).lineTo(this.width, py); }
-    this.grid.stroke({ color: 0x548b9f, alpha: .15, width: 1.15 });
+    this.grid.stroke({ color: Number.parseInt(this.palette.accent.slice(1), 16), alpha: .15, width: 1.15 });
   }
   private onVisible = () => { if (document.hidden) { this.cancelFrame(); this.cancelWake(); } else { this.requestRender(); } };
   private onMotion = () => {
@@ -253,6 +273,7 @@ class NetrunPixiSurface implements PixiSurface {
   destroy = () => {
     if (this.disposed) { return; }
     this.disposed = true; this.cancelFrame(); this.cancelWake();
+    this.themeObserver?.disconnect(); this.themeObserver = null; this.themeRoot = null;
     if (this.restoreTimer !== null) { window.clearTimeout(this.restoreTimer); this.restoreTimer = null; }
     this.canvas.removeEventListener('webglcontextlost', this.onLost); this.canvas.removeEventListener('webglcontextrestored', this.onRestored);
     document.removeEventListener('visibilitychange', this.onVisible); this.motionQuery?.removeEventListener?.('change', this.onMotion);
@@ -282,7 +303,7 @@ export async function mountNetrunPixi(host: HTMLElement, width: number, height: 
     if (options.signal?.aborted) { disposeApplication(app, canvas, context); return null; }
     canvas.setAttribute('data-net-pixi', 'webgl2'); canvas.setAttribute('data-pixi-state', 'ready'); canvas.setAttribute('aria-hidden', 'true');
     Object.assign(canvas.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', display: 'block', pointerEvents: 'none' });
-    const surface = new NetrunPixiSurface(app, canvas, context, library, width, height, onUnavailable, options);
+    const surface = new NetrunPixiSurface(app, canvas, context, library, width, height, onUnavailable, options, host);
     host.appendChild(canvas); options.onStatus?.('ready'); return surface;
   } catch (error) {
     console.error('NetRun Pixi initialization failed', error);

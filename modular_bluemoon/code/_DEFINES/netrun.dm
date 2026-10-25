@@ -23,6 +23,7 @@
 #define NETRUN_NODE_NEURAL "neural"
 #define NETRUN_NODE_PAI "pai"
 #define NETRUN_NODE_DECK "deck"
+#define NETRUN_NODE_MODSUIT "modsuit"
 
 // Точки подключения консоли
 #define NETRUN_ORIGIN_TERMINAL "terminal"

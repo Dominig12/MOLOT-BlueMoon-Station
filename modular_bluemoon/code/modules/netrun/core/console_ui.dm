@@ -208,6 +208,7 @@
 	var/list/data = list()
 	data["input_ack"] = input_ack
 	data["origin"] = origin
+	data["ui_theme"] = theme_id(user)
 	data["workspace_view"] = workspace_view
 	data["wireless"] = connection.wireless
 	if(!intrusion.breach || world.time >= ui_uplink_refresh)
@@ -534,6 +535,10 @@
 	if(file_act(action, params, ui.user))
 		return TRUE
 	switch(action)
+		if("set_theme")
+			return set_ui_theme(params["id"], ui.user)
+		if("appearance_update")
+			return update_persona(params, ui.user)
 		if("workspace_view")
 			var/page = params["page"]
 			if(page in list("terminal", "map", "files", "pinned", "combat", "breach", "web"))

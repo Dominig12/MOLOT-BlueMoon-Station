@@ -3,12 +3,14 @@ import './netrun-workspace.scss';
 import { memo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
 import { Box, Button, Icon, Tabs } from '../../components';
+import { AppearancePanel } from './AppearancePanel';
 import { CombatPanel } from './CombatPanel';
 import { MatrixPanel } from './Matrix';
 import { StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
 import { SessionStatus } from './SessionStatus';
+import { themeId, themeStyle } from './themes';
 import { ACCESS_COLORS, ACCESS_NAMES, NetrunData, THEME, WorkspaceView } from './types';
 import { NetrunFeedbackProvider, useNetrunBackend as useBackend, useNetrunSelector } from './useNetrunBackend';
 import { WebPanel } from './WebPanel';
@@ -48,6 +50,9 @@ const NetrunWorkspace = () => {
   const [terminalTab, setTerminalTab] = useState<'console' | 'chat'>('console');
   const [compact, setCompact] = useState(() => window.innerWidth < 860);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const currentTheme = useNetrunSelector((state) => state.ui_theme);
+  const openAppearance = useCallback(() => setAppearanceOpen(true), []);
   const previousPage = useRef<WorkspaceView>(page === 'breach' ? 'terminal' : page);
   const hadBreach = useRef(!!breach);
   const { incomingCount, webAvailable } = data;
@@ -97,9 +102,9 @@ const NetrunWorkspace = () => {
   if (webAvailable || page === 'web') { tabs.push({ id: 'web', icon: 'globe' }); }
 
   return (
-    <Box className="netrun-shell" style={{ color: THEME.text, background: THEME.panel, height: '100%', minHeight: 0, minWidth: 0,
+    <Box className="netrun-shell" data-net-theme={themeId(currentTheme)} style={{ ...themeStyle(currentTheme), color: THEME.text, background: THEME.panel, height: '100%', minHeight: 0, minWidth: 0,
       display: 'flex', flexDirection: 'column', boxSizing: 'border-box', overflow: 'hidden' }}>
-      <Header />
+      <Header onAppearance={openAppearance} />
       <div className="netrun-navigation" aria-label="Разделы нетрана">
         <Tabs role="tablist" aria-label="Рабочие страницы" className="netrun-navigation__tabs">
           {tabs.map((tab) => (
@@ -159,6 +164,7 @@ const NetrunWorkspace = () => {
           <WebWorkspace />
         </WorkspacePage>
       </div>
+      {appearanceOpen && <AppearancePanel onClose={() => setAppearanceOpen(false)} />}
     </Box>
   );
 };
@@ -214,7 +220,7 @@ const NodeSidebar = memo((props: { suspended: boolean }) => {
   if (!props.suspended) { content.current = <NodePanel />; }
   return content.current;
 });
-const Header = memo(() => {
+const Header = memo(({ onAppearance }: { onAppearance: () => void }) => {
   const { act, data } = useBackend<NetrunData>(['origin', 'uplink', 'trace', 'locked', 'wireless', 'jack', 'entity', 'host_actions']);
   const { origin, uplink, trace, locked, wireless, jack, entity } = data;
   const traceColor = trace > 66 ? THEME.bad : trace > 33 ? THEME.warn : THEME.accent;
@@ -226,6 +232,7 @@ const Header = memo(() => {
         <span className="netrun-header__title">NETRUN <small>NETWORK OPERATIONS</small></span>
       </div>
       <div className="netrun-header__indicators">
+        <Button icon="palette" tooltip="Оформление и сетевая личность" aria-label="Оформление и сетевая личность" onClick={onAppearance} />
         <span className="netrun-indicator" title={ORIGIN_NAMES[origin] || origin}>
           <Icon name={wireless ? 'wifi' : 'ethernet'} color={uplink ? THEME.accent : THEME.bad} />
           <span>{ORIGIN_NAMES[origin] || origin}</span>

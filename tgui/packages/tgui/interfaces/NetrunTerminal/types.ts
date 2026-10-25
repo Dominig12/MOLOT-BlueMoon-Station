@@ -25,6 +25,10 @@ export type NetCommand = {
   name: string;
   desc: string;
   help?: string;
+  details?: string;
+  latency_ms?: number;
+  works_offline?: boolean;
+  unavailable_reason?: string | null;
   icon: string;
   danger: boolean;
   access: number;
@@ -66,6 +70,7 @@ export type EntityContact = {
   self: boolean;
   can_signal: boolean;
   can_message: boolean;
+  persona?: Persona;
 };
 
 export type SelectedNode = NetNode & {
@@ -155,12 +160,27 @@ export type EntityState = {
   host_name: string | null;
   diving: boolean;
   travel?: { target: string; remaining: number } | null;
+  persona?: Persona;
+};
+
+export type Persona = {
+  avatar: string;
+  accent: string;
+  tagline: string;
+  name?: string;
+  theme?: string;
+  options?: {
+    avatars: { id: string; name: string; icon: string }[];
+    accents: { id: string; name: string; color: string }[];
+    themes: string[];
+  };
 };
 
 export type CombatTarget = {
   ref: string;
   name: string;
   kind: 'entity' | 'ice';
+  persona?: Persona;
   hostile: boolean;
   integrity: number;
   max_integrity: number;
@@ -217,6 +237,7 @@ export type NetrunData = {
   /** Receipt of a UI request; it does not imply the game action succeeded. */
   input_ack?: string | null;
   workspace_view?: WorkspaceView;
+  ui_theme?: string;
   origin: string;
   wireless: boolean;
   uplink: boolean;
@@ -418,7 +439,7 @@ export type MachineWindow = {
       allowed: boolean;
       danger?: boolean;
       reason?: string | null;
-      params?: { id: string; name: string; type: 'text' | 'number'; value?: string | number; min?: number; max?: number }[];
+      params?: { id: string; name: string; type: 'text' | 'number'; value?: string | number; min?: number; max?: number; options?: { value: string; name: string }[] }[];
     }[];
   } | null;
 };
@@ -447,6 +468,7 @@ export const ACCESS_NAMES = ['НЕТ', 'ГОСТЬ', 'ПОЛЬЗОВАТЕЛЬ',
 export const ACCESS_COLORS = ['#59606e', '#8b93a3', '#4ac0ff', '#3cdc8c'];
 
 export const NODE_ICONS: Record<string, string> = {
+  modsuit: 'user-shield',
   atmos: 'wind',
   relay: 'tower-broadcast',
   airlock: 'door-closed',
@@ -469,6 +491,7 @@ export const NODE_ICONS: Record<string, string> = {
 };
 
 export const NODE_NAMES: Record<string, string> = {
+  modsuit: 'МОД-костюмы',
   atmos: 'Атмосфера',
   relay: 'Реле NTnet',
   airlock: 'Шлюзы',
@@ -491,13 +514,13 @@ export const NODE_NAMES: Record<string, string> = {
 };
 
 export const THEME = {
-  bg: '#080f18',
-  panel: '#101d29',
-  line: '#294053',
-  text: '#e5f1fa',
-  muted: '#8298a8',
-  accent: '#55cbe9',
-  good: '#5bdab1',
-  warn: '#f5c477',
-  bad: '#f08387',
+  bg: 'var(--net-bg, #080f18)',
+  panel: 'var(--net-panel, #101d29)',
+  line: 'var(--net-border, #294053)',
+  text: 'var(--net-text, #e5f1fa)',
+  muted: 'var(--net-muted, #8298a8)',
+  accent: 'var(--net-accent, #55cbe9)',
+  good: 'var(--net-good, #5bdab1)',
+  warn: 'var(--net-warn, #f5c477)',
+  bad: 'var(--net-bad, #f08387)',
 };

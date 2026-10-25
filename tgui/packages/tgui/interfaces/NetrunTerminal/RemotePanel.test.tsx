@@ -62,3 +62,23 @@ test('switching to another endpoint does not reuse its previous numeric draft', 
   panel.rerender(<RemotePanel address="OTHER-PUMP" remote={panel.remote} />);
   expect((panel.getByLabelText('Давление, кПа') as HTMLInputElement).value).toBe('50');
 });
+
+test('module menus show names and reject a selection removed by a live suit update', () => {
+  const moduleAction: Remote['actions'][number] = { id: 'select_module', name: 'Переключить модуль', access: 2, allowed: true,
+    params: [{ id: 'module', name: 'Модуль', type: 'text', value: 'light-ref', options: [
+      { value: 'light-ref', name: 'Фонарь' }, { value: 'visor-ref', name: 'Визор' },
+    ] }] };
+  const panel = setup([moduleAction]);
+  const menu = panel.getByLabelText('Модуль') as HTMLSelectElement;
+  expect(menu.tagName).toBe('SELECT'); expect(menu.value).toBe('light-ref');
+  fireEvent.change(menu, { target: { value: 'visor-ref' } });
+  fireEvent.click(panel.getByText('Переключить модуль'));
+  expect(sent(panel.topic)).toEqual([{ address: 'PUMP', request: 'select_module', arguments: { module: 'visor-ref' } }]);
+  panel.rerender(<RemotePanel address="PUMP" remote={{ ...panel.remote, actions: [{ ...moduleAction,
+    params: [{ ...moduleAction.params[0], options: [{ value: 'light-ref', name: 'Фонарь' }] }],
+  }] }} />);
+  expect(menu.value).toBe('');
+  fireEvent.click(panel.getByText('Переключить модуль'));
+  expect(sent(panel.topic)).toHaveLength(1);
+  expect(panel.getByRole('status').textContent).toContain('выберите доступный вариант');
+});

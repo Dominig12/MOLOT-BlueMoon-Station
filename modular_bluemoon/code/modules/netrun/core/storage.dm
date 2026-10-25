@@ -47,13 +47,20 @@
 		if("file_edit")
 			edit_text_file(file, params["content"])
 		if("file_rename")
-			file.name = netrun_file_name(params["name"], file.name)
-			if(file.picture)
-				file.picture.picture_name = file.name
-			inventory.store_for(file)?.notify_changed()
-			log_line("Файл переименован: [file.name].", "good")
+			rename_local_file(file, params["name"])
 		if("file_copy", "file_move")
 			transfer_local_file(file, !!params["to_shard"], action == "file_move")
+	return TRUE
+
+/datum/netrun_console/proc/rename_local_file(datum/netrun_file/file, new_name)
+	var/datum/netrun_file_store/source = inventory.store_for(file)
+	if(!source || !istext(new_name) || !length(trim(new_name)))
+		return FALSE
+	file.name = netrun_file_name(new_name, file.name)
+	if(file.picture)
+		file.picture.picture_name = file.name
+	source.notify_changed()
+	log_line("Файл переименован: [file.name].", "good")
 	return TRUE
 
 /datum/netrun_console/proc/create_text_file(file_name, text, to_shard = FALSE)

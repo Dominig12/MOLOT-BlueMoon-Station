@@ -38,6 +38,23 @@ test('framebuffer resolution adapts large displays without imposing topology lim
   expect(framebufferResolution(1280, 800, 1)).toBe(1);
 });
 
+test('theme changes repaint the same Pixi surface and defer hidden work without a new GPU context', async () => {
+  const shell = document.createElement('div'), host = document.createElement('div');
+  shell.dataset.netTheme = 'amber'; shell.appendChild(host); document.body.appendChild(shell);
+  const surface = await mountNetrunPixi(host, 800, 600); flush();
+  const app = MockApplication.instances[0];
+  expect(app.renderer.background.color).toBe(0x1a120c);
+  const before = app.renderer.render.mock.calls.length;
+  surface.setSuspended(true); shell.dataset.netTheme = 'phosphor'; await Promise.resolve();
+  expect(frames.size).toBe(0); expect(app.renderer.render).toHaveBeenCalledTimes(before);
+  expect(app.renderer.background.color).toBe(0x09130d);
+  surface.setSuspended(false); flush();
+  expect(MockApplication.instances).toHaveLength(1); expect(host.children).toHaveLength(1);
+  expect(host.querySelector('canvas').dataset.netTheme).toBe('phosphor');
+  surface.destroy(); shell.dataset.netTheme = 'noir'; await Promise.resolve();
+  expect(frames.size).toBe(0); expect(app.destroys).toBe(1);
+});
+
 test('aborting pending async init releases its context and never appends an orphan surface', async () => {
   let ready: () => void;
   MockApplication.pending = new Promise<void>((resolve) => { ready = resolve; });

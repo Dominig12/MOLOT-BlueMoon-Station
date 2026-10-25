@@ -650,29 +650,29 @@ describe('Netrun terminal panels', () => {
   test('Tab completes addresses from the unified map', async () => {
     setup();
     const { getByPlaceholderText } = render(<ConsoleLog />);
-    const input = getByPlaceholderText('help — список команд · ↑ история · Tab дополнение') as HTMLInputElement;
+    const input = getByPlaceholderText('Введите команду…') as HTMLInputElement;
     fireEvent.change(input, { target: { value: 'sel BBB' } });
     fireEvent.keyDown(input, { key: 'Tab' });
-    expect(input.value).toBe('sel BBBB:0002');
+    expect(input.value).toBe('sel BBBB:0002 ');
     fireEvent.change(input, { target: { value: 'sel AAAA:000' } });
     fireEvent.keyDown(input, { key: 'Tab' });
-    expect(input.value).toBe('sel AAAA:0001');
+    expect(input.value).toBe('sel AAAA:0001 ');
   });
 
-  test('history keeps twenty commands and restores the unfinished draft', async () => {
+  test('history keeps fifty commands and restores the unfinished draft', async () => {
     setup();
     const { getByPlaceholderText } = render(<ConsoleLog />);
-    const input = getByPlaceholderText('help — список команд · ↑ история · Tab дополнение') as HTMLInputElement;
-    for (let i = 0; i < 21; i++) {
+    const input = getByPlaceholderText('Введите команду…') as HTMLInputElement;
+    for (let i = 0; i < 51; i++) {
       fireEvent.change(input, { target: { value: `cmd${i}` } });
       fireEvent.keyDown(input, { key: 'Enter' });
     }
     fireEvent.change(input, { target: { value: 'draft' } });
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 55; i++) {
       fireEvent.keyDown(input, { key: 'ArrowUp' });
     }
     expect(input.value).toBe('cmd1');
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 50; i++) {
       fireEvent.keyDown(input, { key: 'ArrowDown' });
     }
     expect(input.value).toBe('draft');

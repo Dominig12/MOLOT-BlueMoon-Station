@@ -1,6 +1,8 @@
 import { memo, useEffect, useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
+import { ActionTooltip } from './CommandTooltip';
+import { EntityAvatar } from './EntityAvatar';
 import { CombatTarget, NetrunData, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
@@ -124,12 +126,13 @@ const CombatPanelView = () => {
             }}
           >
             <Box color={t.hostile ? THEME.bad : THEME.text}>
-              <Icon name={t.hostile ? 'skull' : 'ghost'} mr={1} />
+              {t.kind === 'entity' ? <EntityAvatar avatar={t.persona?.avatar} accent={t.persona?.accent} size={30} /> : <Icon name="skull" mr={1} />}
               {t.name}
               {t.stunned ? <Box inline ml={1} color={THEME.warn}>оглушён</Box> : null}
               {t.shielded ? <Box inline ml={1} color={THEME.accent}>щит</Box> : null}
               {target === t.ref ? <Box inline ml={1} color={THEME.accent}>● цель</Box> : null}
             </Box>
+            {!!t.persona?.tagline && <Box className="netrun-contact-tagline">{t.persona.tagline}</Box>}
             {!!t.node && <Box color={THEME.muted} fontSize="10px">{t.node_name} {t.node}</Box>}
             {!!t.unavailable_reason && <Box color={THEME.warn} fontSize="11px">{t.unavailable_reason}</Box>}
             <IntegrityBar cur={t.integrity} max={t.max_integrity} />
@@ -163,7 +166,14 @@ const CombatPanelView = () => {
                 disabled={onCd || needTarget || !!p.unavailable_reason || combat.self?.stunned || data.locked > 0}
                 style={{ background: THEME.panel, border: `1px solid ${ROLE_COLORS[p.role] || THEME.line}`,
                   minWidth: '138px', minHeight: '40px', borderRadius: '7px' }}
-                tooltip={`${p.desc}${p.consumable ? ' (одноразовая)' : ''}${p.unavailable_reason ? ` · ${p.unavailable_reason}` : ''}${onCd ? ` · перезарядка ${p.ready_in}с` : ''}`}
+                tooltip={<ActionTooltip name={p.name} id={p.id} icon={p.icon} description={p.desc}
+                  facts={[
+                    { label: 'Сила', value: String(p.power) },
+                    { label: 'Перезарядка', value: onCd ? `Ещё ${p.ready_in} с` : `${p.cooldown} с`, warning: onCd },
+                    { label: 'Файл', value: p.consumable ? 'Одноразовый' : 'Многоразовый' },
+                    { label: 'Цель', value: p.needs_target ? 'Процесс в одном узле' : 'Собственная сущность' },
+                  ]}
+                  notices={p.unavailable_reason ? [{ text: p.unavailable_reason }] : needTarget ? [{ text: 'Сначала выберите доступную цель.' }] : []} />}
                 onClick={() => act('program_use', { uid: p.uid, target: p.needs_target ? target : null })}
               >
                 {p.name.replace(/\.(exe|card)$/, '')}

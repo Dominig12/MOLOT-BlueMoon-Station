@@ -36,15 +36,30 @@
 /datum/netrun_command/proc/ui_entry(datum/component/netrun_node/node, datum/netrun_console/console, full_id)
 	var/level = console.node_level(node)
 	var/legit = console.legit_node_level(node)
+	var/reachable = console.can_route(node)
+	var/online = works_offline || node.is_online(node != console.connection.jack)
+	var/reason
+	if(console.is_locked())
+		reason = "Сетевой клиент заблокирован."
+	else if(!reachable)
+		reason = "Нет действующего маршрута к узлу."
+	else if(!online)
+		reason = "Узел не отвечает."
+	else if(level < access)
+		reason = "Недостаточно прав: нужен [netrun_access_name(access)]."
 	return list(
 		"id" = full_id || id,
 		"name" = display_name(node, netrun_command_arg(full_id)),
 		"desc" = desc,
 		"help" = help_text(node, console, full_id),
+		"details" = help,
+		"latency_ms" = ignores_latency ? 0 : console.latency_to(node) * 100,
+		"works_offline" = works_offline,
+		"unavailable_reason" = reason,
 		"icon" = icon,
 		"danger" = danger,
 		"access" = access,
-		"allowed" = level >= access && console.can_route(node) && (works_offline || node.is_online(node != console.connection.jack)) && !console.is_locked(),
+		"allowed" = !reason,
 		"illegal" = legit < access,
 		"trace" = legit < access ? round(trace * node.get_security() * console.effective_trace_mult()) : 0,
 	)

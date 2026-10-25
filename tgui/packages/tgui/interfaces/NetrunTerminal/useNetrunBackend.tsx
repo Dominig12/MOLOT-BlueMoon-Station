@@ -24,6 +24,7 @@ const LABELS: Record<string, string> = {
   program_use: 'Запуск программы', recover_salvage: 'Подбор данных', chat_send: 'Отправка сообщения',
   cli: 'Команда терминала', web_site: 'Открытие сайта', web_page: 'Открытие страницы', web_back: 'Навигация WEB',
   entity_signal: 'Сигнал сущности', entity_message: 'Личное сообщение сущности',
+  set_theme: 'Тема интерфейса', appearance_update: 'Профиль сущности',
 };
 
 const actionLabel = (action: string, params: Record<string, unknown>, data: NetrunData) => {

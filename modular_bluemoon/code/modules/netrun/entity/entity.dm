@@ -27,6 +27,8 @@
 
 /mob/camera/netrun_entity/Initialize(mapload, datum/component/netrun_node/start)
 	. = ..()
+	persona = new(src)
+	RegisterSignal(src, COMSIG_MOB_ON_NEW_MIND, PROC_REF(on_persona_mind_changed))
 	dive_link = new(src)
 	console = new(src, NETRUN_ORIGIN_ENTITY)
 	navigation = new(src)
@@ -43,6 +45,7 @@
 
 /mob/camera/netrun_entity/Destroy()
 	SSnetrun.entities -= src
+	persona = null // The entity or its mind owns the profile's deletion signal.
 	QDEL_NULL(navigation)
 	leave_node()
 	QDEL_NULL(console)
@@ -53,6 +56,7 @@
 
 /mob/camera/netrun_entity/Login()
 	. = ..()
+	get_persona()
 	if(!client)
 		return
 	to_chat(src, span_notice("Вы — процесс в сети станции. Мир виден через доступную оптику: камеры, киберглаза и взломанные HUD-очки. \
@@ -493,6 +497,7 @@
 		return null
 	return list(
 		"name" = entity.real_name,
+		"persona" = entity.get_persona().ui_payload(),
 		"integrity" = round(entity.integrity),
 		"max_integrity" = entity.max_integrity,
 		"host" = entity.host_node?.address,
@@ -528,5 +533,5 @@
 	new_name = reject_bad_name(new_name, allow_numbers = TRUE)
 	if(!new_name)
 		return
-	entity.set_net_name(new_name)
+	entity.rename_persona(new_name)
 	to_chat(entity, span_notice("Имя изменено на [new_name]."))

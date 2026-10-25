@@ -49,7 +49,7 @@ export class MockApplication {
   static pending: Promise<void> | null = null;
   static rejectInit = false;
   stage = new MockContainer();
-  renderer = { resize: jest.fn(), render: jest.fn(), destroy: jest.fn() };
+  renderer = { resize: jest.fn(), render: jest.fn(), destroy: jest.fn(), background: { color: 0 } };
   canvas: HTMLCanvasElement;
   stops = 0; destroys = 0;
   constructor() { MockApplication.instances.push(this); }

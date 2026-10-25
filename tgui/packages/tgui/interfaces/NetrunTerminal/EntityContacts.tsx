@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
+import { EntityAvatar } from './EntityAvatar';
 import { EntityContact, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
@@ -40,9 +41,10 @@ const ContactCard = (props: { contact: EntityContact; pending: boolean }) => {
   return (
     <Box p={1} mb={0.5} style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
       <Box bold>
-        <Icon name={contact.kind === 'ice' ? 'shield-halved' : 'user-astronaut'} mr={0.5} />
+        {contact.kind === 'entity' ? <EntityAvatar avatar={contact.persona?.avatar} accent={contact.persona?.accent} size={28} /> : <Icon name="shield-halved" mr={0.5} />}
         {contact.name}{contact.self ? ' · вы' : ''}
       </Box>
+      {!!contact.persona?.tagline && <Box className="netrun-contact-tagline">{contact.persona.tagline}</Box>}
       <Box color={THEME.muted} fontSize="11px">
         {contact.kind === 'ice' ? 'ICE' : 'Сущность'} · {contact.state}
         {' · '}{contact.integrity}/{contact.max_integrity}

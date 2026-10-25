@@ -227,8 +227,10 @@
 	if(owns_tree)
 		qdel(tree)
 
-/datum/netrun_combat_context/proc/program_entry(datum/netrun_program/program, uid, builtin = FALSE)
+/datum/netrun_combat_context/proc/program_entry(datum/netrun_program/program, uid, builtin = FALSE, file_name)
 	var/list/entry = program.ui_entry()
+	if(file_name)
+		entry["name"] = file_name
 	entry["uid"] = uid
 	entry["builtin"] = builtin
 	entry["ready_in"] = max(0, round(((program_cd[program.id] || 0) - world.time) / (1 SECONDS), 0.1))
@@ -246,7 +248,7 @@
 			continue
 		var/datum/netrun_program/program = SSnetrun.get_program(file.content)
 		if(program && program.role != NETRUN_PROGRAM_TRACE)
-			. += list(program_entry(program, file.uid))
+			. += list(program_entry(program, file.uid, FALSE, file.name))
 
 /datum/netrun_combat_context/proc/incoming()
 	. = list()
@@ -342,8 +344,9 @@
 		program = SSnetrun.get_program(file.content)
 	if(!program || program.role == NETRUN_PROGRAM_TRACE)
 		return FALSE
+	var/executable_name = file?.name || program.name
 	if(world.time < (program_cd[program.id] || 0))
-		console.log_line("[program.name]: идёт перезарядка.", "bad")
+		console.log_line("[executable_name]: идёт перезарядка.", "bad")
 		return FALSE
 	var/datum/self = console.combat_self()
 	var/list/hp = netrun_combatant_integrity(self)
@@ -352,7 +355,7 @@
 		return FALSE
 	var/datum/target = program.needs_target ? locate(target_ref) : self
 	if(!target)
-		console.log_line(program.needs_target ? "Цель недоступна." : "[program.name]: нужна собственная сущность в сети.", "bad")
+		console.log_line(program.needs_target ? "Цель недоступна." : "[executable_name]: нужна собственная сущность в сети.", "bad")
 		return FALSE
 	prune_contacts()
 	var/datum/netrun_path_tree/tree = console.make_path_tree()
@@ -367,13 +370,13 @@
 		return FALSE
 	next_program = world.time + 0.5 SECONDS
 	program_cd[program.id] = world.time + program.cooldown
-	console.apply_program_effect(program, target, node)
+	console.apply_program_effect(program, target, node, executable_name)
 	if(program.trace)
 		console.add_trace(program.trace)
 	SSnetrun.post_event("intrusion", node.network?.id, node.address)
 	if(program.consumable)
 		console.delete_local_file(file)
-		console.log_line("Карточка [program.name] израсходована.", "average")
+		console.log_line("Карточка [executable_name] израсходована.", "average")
 	changed()
 	console.finish_user_action(node)
 	return TRUE
@@ -402,17 +405,18 @@
 		return TRUE
 	return FALSE
 
-/datum/netrun_console/proc/apply_program_effect(datum/netrun_program/program, target, datum/component/netrun_node/node)
+/datum/netrun_console/proc/apply_program_effect(datum/netrun_program/program, target, datum/component/netrun_node/node, executable_name)
+	executable_name = executable_name || program.name
 	var/target_name = netrun_combatant_name(target)
 	netrun_apply_program(program, target, src)
 	switch(program.role)
 		if(NETRUN_PROGRAM_ATTACK)
-			log_line("[program.name] -> [target_name]: урон [program.power].", "good")
+			log_line("[executable_name] -> [target_name]: урон [program.power].", "good")
 		if(NETRUN_PROGRAM_STUN)
-			log_line("[program.name] -> [target_name]: цель оглушена.", "good")
+			log_line("[executable_name] -> [target_name]: цель оглушена.", "good")
 		if(NETRUN_PROGRAM_SHIELD)
-			log_line("[program.name]: защитный контур поднят.", "good")
+			log_line("[executable_name]: защитный контур поднят.", "good")
 		if(NETRUN_PROGRAM_REPAIR)
-			log_line("[program.name]: целостность восстановлена.", "good")
+			log_line("[executable_name]: целостность восстановлена.", "good")
 	node.touch()
-	node.add_log("[log_source()]: запущена программа [program.name].")
+	node.add_log("[log_source()]: запущена программа [executable_name].")

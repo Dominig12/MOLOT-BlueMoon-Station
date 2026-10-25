@@ -1,5 +1,6 @@
 import { Box, Button } from '../../components';
-import { ACCESS_NAMES, NetCommand, THEME } from './types';
+import { CommandTooltip } from './CommandTooltip';
+import { NetCommand, THEME } from './types';
 
 /** The same command metadata and access explanation in a card and machine tab. */
 export const CommandList = (props: {
@@ -38,13 +39,7 @@ export const CommandList = (props: {
           color={command.danger ? 'bad' : command.illegal ? 'average' : undefined}
           disabled={disabled || !command.allowed}
           style={{ height: '100%', margin: 0, minHeight: '36px', textAlign: 'left' }}
-          tooltip={
-            (command.help || command.desc || '') + '\n' +
-            `Нужно: ${ACCESS_NAMES[command.access]}.` +
-            (command.allowed && command.trace
-              ? ` Трассировка +${command.trace}%.`
-              : '')
-          }
+          tooltip={<CommandTooltip command={command} />}
           onClick={() => onCommand(command.id)}
         />
       ))}

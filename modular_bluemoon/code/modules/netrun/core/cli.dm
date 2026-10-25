@@ -62,13 +62,53 @@
 			cli_commands[command.id] = command
 	return cli_commands
 
+/// Quoting is shared by every verb: filenames are arguments, never daemon definition IDs.
+/proc/netrun_cli_tokens(text)
+	var/list/result = list()
+	var/token = ""
+	var/quote
+	var/started = FALSE
+	for(var/index = 1; index <= length_char(text); index++)
+		var/character = copytext_char(text, index, index + 1)
+		if(character == "\\")
+			if(index == length_char(text))
+				return null
+			index++
+			token += copytext_char(text, index, index + 1)
+			started = TRUE
+		else if(quote)
+			if(character == quote)
+				quote = null
+			else
+				token += character
+		else if(character == "\"" || character == "'")
+			quote = character
+			started = TRUE
+		else if(character == " " || character == "\t" || character == "\n")
+			if(started)
+				result += token
+				token = ""
+				started = FALSE
+		else
+			token += character
+			started = TRUE
+	if(quote)
+		return null
+	if(started)
+		result += token
+	return result
+
 /datum/netrun_console/proc/cli(text)
-	text = trim(copytext_char("[text]", 1, 200))
+	text = trim(copytext_char("[text]", 1, 513))
 	if(!length(text))
 		return
 	log_line("$ [text]", "label")
-	var/list/words = splittext(text, " ")
-	words -= ""
+	var/list/words = netrun_cli_tokens(text)
+	if(isnull(words))
+		log_line("Незакрытая кавычка или обратная косая черта в конце. Пример: exec \"Мой демон.exe\".", "bad")
+		return
+	if(!length(words))
+		return
 	var/verb_name = lowertext(words[1])
 	var/list/registry = SSnetrun.get_cli_commands()
 	var/datum/netrun_cli_command/command = registry[verb_name]
@@ -320,12 +360,12 @@
 
 /datum/netrun_cli_command/run
 	id = "run"
-	args = "<команда>"
-	desc = "Выполнить команду на выбранном узле."
+	args = "<команда|файл> \[цель\]"
+	desc = "Команда выбранного узла или исполняемый файл по текущему имени."
 	category = "Действия"
 
 /datum/netrun_cli_command/run/detailed_help(datum/netrun_console/console)
-	. = list("run <команда>", "Выполнить команду на выбранном узле. Доступные команды узла:")
+	. = list("run <команда|файл> \[цель\]", "Команды выбранного узла перечислены ниже. Для файла используйте текущее имя или UID; exec всегда обращается к файлу.", "Имена с пробелами заключайте в кавычки: exec \"Мой щит.exe\". Боевой цели нужен REF из targets.", "Демоны дают пассивный эффект, пока находятся на подключённом носителе.", "Доступные команды узла:")
 	var/datum/component/netrun_node/node = console.selected_node()
 	if(!node)
 		. += "  (узел не выбран)"
@@ -339,7 +379,12 @@
 	if(length(words) < 2)
 		console.log_line("Укажите команду: run <команда>.", "bad")
 		return
-	console.run_command(console.selected_node(), lowertext(words[2]))
+	var/datum/component/netrun_node/node = console.selected_node()
+	var/command_id = lowertext(words[2])
+	if(node && (command_id in node.all_command_ids()))
+		console.run_command(node, command_id)
+		return
+	console.cli_execute_file(words[2], length(words) > 2 ? words[3] : null)
 
 /datum/netrun_cli_command/run/completions(datum/netrun_console/console, partial)
 	. = list()
@@ -347,6 +392,7 @@
 	if(node)
 		for(var/command_id in node.all_command_ids())
 			. += command_id
+	. |= console.cli_file_completions(list(NETRUN_FILE_DAEMON, NETRUN_FILE_PROGRAM))
 
 /datum/netrun_cli_command/scan
 	id = "scan"
@@ -405,7 +451,7 @@
 		console.log_line("Хранилище пусто.")
 		return
 	for(var/datum/netrun_file/file as anything in files)
-		console.log_line("[file.name] — [file.kind], [file.size]")
+		console.log_line("[file.name] — [file.kind], [file.size] памяти · [console.inventory.store_for(file) == console.inventory.local_store ? "local" : "shard"] · UID [file.uid]")
 
 /datum/netrun_cli_command/mem
 	id = "mem"
@@ -437,12 +483,11 @@
 	for(var/list/definition as anything in SSnetrun.daemon_definitions())
 		if(filter && definition["id"] != filter)
 			continue
-		var/installed = FALSE
+		var/list/installed = list()
 		for(var/datum/netrun_file/file as anything in console.all_files())
 			if(file.kind == NETRUN_FILE_DAEMON && file.content == definition["id"])
-				installed = TRUE
-				break
-		console.log_line("[definition["id"]] — [definition["name"]] ([definition["size"]] памяти): [installed ? "активна" : "не установлена"].", installed ? "good" : "label")
+				installed += "[file.name] (#[file.uid])"
+		console.log_line("[definition["id"]] — [definition["name"]] ([definition["size"]] памяти): [length(installed) ? "активна: [jointext(installed, ", ")]" : "не установлена"].", length(installed) ? "good" : "label")
 		console.log_line("  [definition["desc"]]")
 
 /datum/netrun_cli_command/daemons/completions(datum/netrun_console/console, partial)
@@ -452,26 +497,226 @@
 
 /datum/netrun_cli_command/rm
 	id = "rm"
-	args = "<имя>"
-	desc = "Удалить файл из локального хранилища."
+	args = "<имя|UID>"
+	desc = "Удалить файл из памяти или подключённого шарда."
 	category = "Память"
 
 /datum/netrun_cli_command/rm/execute(datum/netrun_console/console, list/words, raw)
 	if(length(words) < 2)
 		console.log_line("Укажите имя файла.", "bad")
 		return
-	var/wanted = lowertext(trim(copytext(raw, length(words[1]) + 2)))
-	for(var/datum/netrun_file/file as anything in console.all_files())
-		if(lowertext(file.name) == wanted)
-			console.delete_local_file(file)
-			console.log_line("Удалён [file.name].")
-			return
-	console.log_line("Файл не найден.", "bad")
+	var/datum/netrun_file/file = console.cli_file(words[2])
+	if(file)
+		var/file_name = file.name
+		if(console.delete_local_file(file))
+			console.log_line("Удалён [file_name].", "good")
 
 /datum/netrun_cli_command/rm/completions(datum/netrun_console/console, partial)
+	return console.cli_file_completions()
+
+/// Always resolve live disk membership. Definition IDs describe effects, not executable paths.
+/datum/netrun_console/proc/cli_file(selector, list/kinds)
+	if(!istext(selector) || !length(selector))
+		log_line("Укажите текущее имя файла или #UID. ls — содержимое носителей.", "bad")
+		return null
+	var/wanted = lowertext(selector)
+	var/datum/netrun_file_store/disk
+	if(findtext(wanted, "local:") == 1)
+		disk = inventory.local_store
+		wanted = copytext(wanted, 7)
+	else if(findtext(wanted, "shard:") == 1)
+		disk = inventory.shard?.file_store
+		wanted = copytext(wanted, 7)
+		if(!disk)
+			log_line("Шард не подключён.", "bad")
+			return null
+	var/list/files = disk ? disk.files : all_files(TRUE)
+	var/list/matches = list()
+	var/explicit_uid = findtext(wanted, "#") == 1
+	for(var/datum/netrun_file/file as anything in files)
+		if(explicit_uid && wanted == "#[file.uid]")
+			matches = list(file)
+			break
+		if(!explicit_uid && lowertext(file.name) == wanted)
+			matches += file
+	// A bare number can be a real current filename. Preserve that name before
+	// accepting legacy unprefixed UIDs; #UID is the explicit identity namespace.
+	if(!explicit_uid && !length(matches))
+		for(var/datum/netrun_file/file as anything in files)
+			if(wanted == file.uid)
+				matches = list(file)
+				break
+	if(length(matches) != 1)
+		if(!length(matches))
+			log_line("Файл «[selector]» не найден. ls — текущие имена и UID.", "bad")
+		else
+			var/list/options = list()
+			for(var/datum/netrun_file/file as anything in matches)
+				options += "#[file.uid] ([inventory.store_for(file) == inventory.local_store ? "local" : "shard"])"
+			log_line("Несколько файлов «[selector]»: [jointext(options, ", ")]. Укажите #UID или local:/shard: перед именем.", "bad")
+		return null
+	var/datum/netrun_file/result = matches[1]
+	if(length(kinds) && !(result.kind in kinds))
+		log_line("Файл [result.name] не подходит для этой операции ([result.kind]).", "bad")
+		return null
+	return result
+
+/datum/netrun_console/proc/cli_file_completions(list/kinds)
 	. = list()
-	for(var/datum/netrun_file/file as anything in console.all_files())
-		. += file.name
+	for(var/datum/netrun_file/file as anything in all_files())
+		if(!length(kinds) || (file.kind in kinds))
+			. |= list(file.name, "#[file.uid]")
+
+/datum/netrun_console/proc/cli_execute_file(selector, target_ref)
+	var/datum/netrun_file/file = cli_file(selector, list(NETRUN_FILE_DAEMON, NETRUN_FILE_PROGRAM))
+	if(!file)
+		return FALSE
+	if(file.kind == NETRUN_FILE_DAEMON)
+		var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(file.content)
+		if(!daemon)
+			log_line("Исполняемый файл [file.name] повреждён.", "bad")
+			return FALSE
+		log_line("[file.name]: пассивный демон уже работает с подключённого носителя. [daemon.desc]", "good")
+		return TRUE
+	return program_use(file.uid, target_ref)
+
+/datum/netrun_cli_command/exec
+	id = "exec"
+	args = "<имя|#UID> \[REF цели\]"
+	desc = "Запустить боевой файл или проверить работу пассивного демона."
+	category = "Память"
+
+/datum/netrun_cli_command/exec/execute(datum/netrun_console/console, list/words, raw)
+	console.cli_execute_file(length(words) > 1 ? words[2] : null, length(words) > 2 ? words[3] : null)
+
+/datum/netrun_cli_command/exec/detailed_help(datum/netrun_console/console)
+	. = ..()
+	. += list("Пример: exec \"Мой щит.exe\". Имена и #UID смотрите в ls.", "Файлы выбираются по текущему имени, не по ID из каталога демонов. При совпадениях используйте #UID, local:имя или shard:имя.", "Демоны работают пассивно из памяти и подключённого шарда. Боевые программы запускаются через тот же механизм, что во вкладке боя; targets показывает REF целей.")
+
+/datum/netrun_cli_command/exec/completions(datum/netrun_console/console, partial)
+	return console.cli_file_completions(list(NETRUN_FILE_DAEMON, NETRUN_FILE_PROGRAM))
+
+/datum/netrun_cli_command/targets
+	id = "targets"
+	desc = "Цели доступных боевых программ и их REF для exec."
+	category = "Действия"
+
+/datum/netrun_cli_command/targets/execute(datum/netrun_console/console, list/words, raw)
+	var/list/targets = console.combat_targets()
+	if(!length(targets))
+		console.log_line("Нет боевых контактов. Цель должна быть на вашем узле или атаковать вашу сессию.")
+	for(var/list/entry as anything in targets)
+		console.log_line("[entry["name"]] · [entry["integrity"]]/[entry["max_integrity"]] · [entry["ref"]][entry["unavailable_reason"] ? " · [entry["unavailable_reason"]]" : ""]")
+
+/datum/netrun_cli_command/cat
+	id = "cat"
+	args = "<имя|#UID>"
+	desc = "Прочитать текстовый файл прямо в терминале."
+	category = "Память"
+
+/datum/netrun_cli_command/cat/execute(datum/netrun_console/console, list/words, raw)
+	var/datum/netrun_file/file = console.cli_file(length(words) > 1 ? words[2] : null, list(NETRUN_FILE_TEXT))
+	if(file)
+		console.inventory.selected_file_uid = file.uid
+		console.log_line("── [file.name] · #[file.uid]", "label")
+		console.log_line(file.content || "(пустой файл)")
+
+/datum/netrun_cli_command/cat/completions(datum/netrun_console/console, partial)
+	return console.cli_file_completions(list(NETRUN_FILE_TEXT))
+
+/datum/netrun_cli_command/rename
+	id = "rename"
+	args = "<имя|#UID> <новое имя>"
+	desc = "Переименовать файл. Для пробелов используйте кавычки."
+	category = "Память"
+
+/datum/netrun_cli_command/rename/execute(datum/netrun_console/console, list/words, raw)
+	if(length(words) != 3)
+		console.log_line("Использование: rename <имя|#UID> <новое имя>. Имена с пробелами заключайте в кавычки.", "bad")
+		return
+	var/datum/netrun_file/file = console.cli_file(words[2])
+	if(file)
+		console.rename_local_file(file, words[3])
+
+/datum/netrun_cli_command/rename/completions(datum/netrun_console/console, partial)
+	return console.cli_file_completions()
+
+/datum/netrun_cli_command/cp
+	id = "cp"
+	args = "<имя|#UID> <local|shard>"
+	desc = "Скопировать файл на выбранный носитель."
+	category = "Память"
+	var/move = FALSE
+
+/datum/netrun_cli_command/cp/execute(datum/netrun_console/console, list/words, raw)
+	if(length(words) != 3 || !(lowertext(words[3]) in list("local", "shard")))
+		console.log_line("Использование: [id] <имя|#UID> <local|shard>.", "bad")
+		return
+	var/datum/netrun_file/file = console.cli_file(words[2])
+	if(file)
+		console.transfer_local_file(file, lowertext(words[3]) == "shard", move)
+
+/datum/netrun_cli_command/cp/completions(datum/netrun_console/console, partial)
+	return console.cli_file_completions() | list("local", "shard")
+
+/datum/netrun_cli_command/mv
+	parent_type = /datum/netrun_cli_command/cp
+	id = "mv"
+	desc = "Переместить файл между памятью и шардом без изменения UID."
+	move = TRUE
+
+// MARK: Оформление клиента и личность процесса
+
+/datum/netrun_cli_command/theme
+	id = "theme"
+	args = "\[стиль\]"
+	desc = "Текущая тема интерфейса или выбор нового оформления."
+	category = "Оформление"
+
+/datum/netrun_cli_command/theme/execute(datum/netrun_console/console, list/words, raw)
+	if(length(words) < 2)
+		console.log_line("Тема: [console.theme_id()]. Доступны: [jointext(netrun_theme_ids(), ", ")].", "label")
+	else if(console.set_ui_theme(lowertext(words[2]), console.operator))
+		console.log_line("Выбрана тема [console.theme_id()].", "good")
+	else
+		console.log_line("Не удалось сменить тему. theme — доступные стили.", "bad")
+
+/datum/netrun_cli_command/theme/completions(datum/netrun_console/console, partial)
+	return netrun_theme_ids()
+
+/datum/netrun_cli_command/profile
+	id = "profile"
+	args = "\[name|avatar|accent|tagline\] \[значение\]"
+	desc = "Посмотреть или изменить собственный профиль сетевой сущности."
+	category = "Оформление"
+
+/datum/netrun_cli_command/profile/execute(datum/netrun_console/console, list/words, raw)
+	if(!istype(console.host, /mob/camera/netrun_entity))
+		console.log_line("Профиль доступен собственной сетевой сущности. Для оформления клиента используйте theme.", "bad")
+		return
+	var/mob/camera/netrun_entity/entity = console.host
+	if(length(words) < 2)
+		var/datum/netrun_persona/persona = entity.get_persona()
+		console.log_line("[entity.real_name] · аватар [persona.avatar] · акцент [persona.accent]", "label")
+		console.log_line(persona.tagline || "Подпись не задана. profile tagline \"Ваша подпись\" — изменить.")
+		return
+	if(length(words) != 3 || !(words[2] in list("name", "avatar", "accent", "tagline")) || !console.update_persona(list("[words[2]]" = words[3]), console.operator))
+		console.log_line("Использование: profile <name|avatar|accent|tagline> <значение>. help profile — доступные аватары и акценты.", "bad")
+		return
+	console.log_line("Профиль обновлён.", "good")
+
+/datum/netrun_cli_command/profile/detailed_help(datum/netrun_console/console)
+	. = ..()
+	var/list/avatars = list()
+	for(var/list/option as anything in netrun_avatar_options())
+		avatars += option["id"]
+	var/list/accents = list()
+	for(var/list/option as anything in netrun_accent_options())
+		accents += option["id"]
+	. += list("Аватары: [jointext(avatars, ", ")].", "Акценты: [jointext(accents, ", ")].", "Пример: profile tagline \"Тихий сигнал\". Профиль меняет только внешность вашего процесса, не его доступы.")
+
+/datum/netrun_cli_command/profile/completions(datum/netrun_console/console, partial)
+	return list("name", "avatar", "accent", "tagline")
 
 // MARK: Связь
 

@@ -114,7 +114,7 @@ describe('Netrun workspace pages', () => {
 
   test('navigation preserves the command line, file draft, map filters and viewport instance', async () => {
     const { panel, page, update } = setup();
-    const cli = panel.getByPlaceholderText('help — список команд · ↑ история · Tab дополнение') as HTMLInputElement;
+    const cli = panel.getByLabelText('Командная строка') as HTMLInputElement;
     fireEvent.change(cli, { target: { value: 'ping unfinished' } });
     fireEvent.click(panel.getByText('Файлы'));
     fireEvent.click(within(page('files')).getByText('Новый текстовый файл'));
