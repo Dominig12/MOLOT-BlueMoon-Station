@@ -113,6 +113,7 @@
 	var/list/bucket = SSnetrun.get_machine_transport().atmos_devices_by_area[REF(registration_area)]
 	for(var/datum/netrun_machine_service/atmos/device/device as anything in bucket)
 		device.acknowledged_controllers -= REF(src)
+		device.registration_attempts = 0
 		device.arm_registration(world.tick_lag)
 
 /datum/netrun_machine_service/atmos/controller/control_frequency()
@@ -195,6 +196,7 @@
 	SIGNAL_HANDLER
 	refresh_registration()
 	acknowledged_controllers.Cut()
+	registration_attempts = 0
 	arm_registration(world.tick_lag)
 
 /datum/netrun_machine_service/atmos/device/proc/registration_complete()
@@ -214,6 +216,8 @@
 	if(QDELETED(controller) || !controller.matches(src, null))
 		return
 	acknowledged_controllers[REF(controller)] = WEAKREF(controller)
+	// A real acknowledgement is progress, so give any still-unacked controllers a fresh budget.
+	registration_attempts = 0
 	if(registration_complete())
 		if(registration_timer)
 			deltimer(registration_timer)
@@ -238,6 +242,7 @@
 /datum/netrun_machine_service/atmos/device/proc/retry_registration()
 	refresh_registration()
 	if(registration_complete())
+		registration_attempts = 0
 		return
 	var/online_missing = FALSE
 	var/list/bucket = SSnetrun.get_machine_transport().atmos_controllers_by_area[REF(registration_area)]
@@ -246,17 +251,31 @@
 		if(!QDELETED(controller) && controller.matches(src, null) && ack?.resolve() != controller && controller.resolve_node()?.is_online())
 			online_missing = TRUE
 			break
-	if(online_missing && resolve_node()?.is_online() && control_frequency())
-		// New controllers invalidate the DNS revision, including cached negatives.
-		// Do not resend statuses to an absent or entirely powered-down area.
-		registration_attempts++
-		var/obj/machinery/atmospherics/components/unary/device = host
-		if(istype(device, /obj/machinery/atmospherics/components/unary/vent_pump))
-			var/obj/machinery/atmospherics/components/unary/vent_pump/vent = device
-			vent.broadcast_status()
-		else
-			var/obj/machinery/atmospherics/components/unary/vent_scrubber/scrubber = device
-			scrubber.broadcast_status()
+	if(!online_missing)
+		// No reachable controller to register with. A controller appearing, powering on,
+		// moving or changing frequency re-arms us through rearm_local_devices(), and our own
+		// power/move/stat signals re-arm us too. Polling an empty area forever only churns the
+		// scheduler, so stop and let one of those events grant a fresh retry budget.
+		registration_attempts = 0
+		return
+	if(!(resolve_node()?.is_online() && control_frequency()))
+		// We cannot emit right now (offline or unconfigured). Our own power/config signals
+		// will re-arm us once we can, so there is no point spinning in the meantime.
+		return
+	if(registration_attempts >= NETRUN_ATMOS_REGISTRATION_MAX_ATTEMPTS)
+		// A reachable controller keeps ignoring us. Stop hammering it; the signal handlers
+		// above reset the budget whenever conditions actually change.
+		return
+	// New controllers invalidate the DNS revision, including cached negatives.
+	// Do not resend statuses to an absent or entirely powered-down area.
+	registration_attempts++
+	var/obj/machinery/atmospherics/components/unary/device = host
+	if(istype(device, /obj/machinery/atmospherics/components/unary/vent_pump))
+		var/obj/machinery/atmospherics/components/unary/vent_pump/vent = device
+		vent.broadcast_status()
+	else
+		var/obj/machinery/atmospherics/components/unary/vent_scrubber/scrubber = device
+		scrubber.broadcast_status()
 	arm_registration()
 
 /datum/netrun_task/atmos_registration
