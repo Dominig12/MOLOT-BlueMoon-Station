@@ -4,7 +4,7 @@ SUBSYSTEM_DEF(netrun)
 	// Machine traffic now shares this worker. Ordinary MC service prevents unrelated
 	// foreground work starving delivery; the internal scheduler still bounds CPU/tasks.
 	flags = 0
-	runlevels = RUNLEVEL_GAME | RUNLEVEL_POSTGAME
+	runlevels = RUNLEVEL_LOBBY | RUNLEVEL_GAME | RUNLEVEL_POSTGAME
 
 	/// id = /datum/netrun_network
 	var/list/networks = list()
@@ -288,8 +288,7 @@ SUBSYSTEM_DEF(netrun)
 	for(var/datum/netrun_ice/ice as anything in ice_processes)
 		if(QDELETED(ice))
 			continue
-		if(ice.needs_netrun_tick())
-			scheduler.enqueue("ice", ice, ice.pending_program ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL)
+		if(ice.needs_netrun_tick())			scheduler.enqueue("ice", ice, ice.pending_program ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL)
 	for(var/datum/netrun_request/delivery/request as anything in pending_requests)
 		if(QDELETED(request))
 			pending_requests -= request
