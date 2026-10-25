@@ -12,9 +12,12 @@ const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; 
   const feedback = useNetrunFeedback();
   const incoming = !!data.combat?.incoming?.length;
   const travel = data.entity?.travel;
-  const latestOperation = data.operations?.[data.operations.length - 1];
+  const operations = Array.isArray(data.operations)
+    ? data.operations
+    : Object.values(data.operations ?? {});
+  const latestOperation = operations[operations.length - 1];
   const operation = feedback
-    ? data.operations?.find((entry) => entry.nonce === feedback.nonce)
+    ? operations.find((entry) => entry.nonce === feedback.nonce)
     : latestOperation;
   const operationState = operation ? OPERATION_PHASES[operation.phase] : null;
   return (
@@ -41,7 +44,7 @@ const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; 
       {!!travel && <Button compact icon="stop" content={incoming ? 'Стоп' : 'Остановить маршрут'}
         aria-label="Остановить автопроход" tooltip={`Остановить автопроход к ${travel.target}`}
         onClick={() => act('travel_cancel')} />}
-      {!!props.onOperations && <Button compact role="button" icon="list-check" content={`Операции${data.operations?.some(operationActive) ? ` (${data.operations.filter(operationActive).length})` : ''}`}
+      {!!props.onOperations && <Button compact role="button" icon="list-check" content={`Операции${operations.some(operationActive) ? ` (${operations.filter(operationActive).length})` : ''}`}
         onClick={props.onOperations} />}
     </div>
   );

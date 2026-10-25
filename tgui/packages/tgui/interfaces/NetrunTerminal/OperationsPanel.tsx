@@ -17,7 +17,9 @@ const EMPTY: NetOperation[] = [];
 /** Server delivery outcomes stay separate from the immediate input receipt. */
 export const OperationsPanel = memo((props: { onLocate: (address: string) => void }) => {
   const { data } = useNetrunBackend(['operations']);
-  const operations = data.operations ?? EMPTY;
+  const operations = Array.isArray(data.operations)
+    ? data.operations
+    : Object.values(data.operations ?? EMPTY);
   const [filter, setFilter] = useState<'all' | 'active' | 'errors'>('all');
   const [query, setQuery] = useState('');
   const shown = useMemo(() => operations.filter((operation) => (
