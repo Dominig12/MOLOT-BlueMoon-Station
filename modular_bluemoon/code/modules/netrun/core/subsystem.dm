@@ -1,7 +1,9 @@
 SUBSYSTEM_DEF(netrun)
 	name = "Netrun"
 	wait = NETRUN_DEFAULT_FIRE_INTERVAL
-	flags = SS_BACKGROUND
+	// Machine traffic now shares this worker. Ordinary MC service prevents unrelated
+	// foreground work starving delivery; the internal scheduler still bounds CPU/tasks.
+	flags = 0
 	runlevels = RUNLEVEL_GAME | RUNLEVEL_POSTGAME
 
 	/// id = /datum/netrun_network
@@ -303,6 +305,14 @@ SUBSYSTEM_DEF(netrun)
 /datum/controller/subsystem/netrun/proc/execute_task(datum/netrun_task/task)
 	return task.execute(src, get_execution_limits())
 
+/// Timers admit ready I/O to the existing MC worker, never execute it themselves.
+/datum/controller/subsystem/netrun/proc/wake_ready_delivery()
+	wait = world.tick_lag
+	next_fire = min(next_fire, world.time + world.tick_lag)
+
+/datum/controller/subsystem/netrun/proc/refresh_delivery_interval()
+	wait = task_scheduler?.ready_deliveries ? world.tick_lag : NETRUN_DEFAULT_FIRE_INTERVAL
+
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
 	var/slice_start_usage = TICK_USAGE
 	if(!resumed)
@@ -337,6 +347,7 @@ SUBSYSTEM_DEF(netrun)
 		qdel(task)
 		executed++
 		if(MC_TICK_CHECK)
+			refresh_delivery_interval()
 			scheduler.last_executed = executed
 			scheduler.last_budget_ms = budget_ms
 			scheduler.last_execution_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
@@ -352,6 +363,7 @@ SUBSYSTEM_DEF(netrun)
 	if(scheduler.last_execution_ms > budget_ms)
 		scheduler.budget_overruns++
 	current_pass_cost_ms += scheduler.last_execution_ms
+	refresh_delivery_interval()
 	on_pass_finished(executed)
 
 /datum/controller/subsystem/netrun/proc/get_network(id)

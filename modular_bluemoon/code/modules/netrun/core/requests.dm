@@ -89,6 +89,7 @@
 	var/interactive = console?.origin != NETRUN_ORIGIN_CIRCUIT
 	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
 	SSnetrun.get_task_scheduler().enqueue("request_delivery", src, interactive ? limits.interactive_priority : NETRUN_TASK_NORMAL, interactive)
+	SSnetrun.wake_ready_delivery()
 	return TRUE
 
 /datum/netrun_request/delivery/proc/deliver()

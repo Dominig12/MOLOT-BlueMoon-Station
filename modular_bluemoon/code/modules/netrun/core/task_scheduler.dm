@@ -6,6 +6,8 @@
 	var/datum/weakref/target_ref
 	var/enqueued_at
 	var/interactive = FALSE
+	/// Ready delivery affects worker cadence, independently of scheduling priority.
+	var/delivery = FALSE
 	/// Intrusive FIFO links: cancellation and promotion unlink in constant time.
 	var/datum/netrun_task_queue/queue
 	var/datum/netrun_task/previous
@@ -200,6 +202,7 @@
 	var/list/queues
 	var/datum/netrun_task_queue/interactive_queue
 	var/interactive_streak = 0
+	var/ready_deliveries = 0
 	var/interactive_burst = NETRUN_DEFAULT_INTERACTIVE_BURST
 	var/list/counts = list(0, 0, 0)
 	var/dispatch_cursor = 0
@@ -281,6 +284,8 @@
 	var/datum/netrun_task/task = new path(kind, key, priority, target)
 	task.interactive = interactive
 	by_key[key] = task
+	if(task.delivery)
+		ready_deliveries++
 	counts[priority]++
 	peak_queued_by_priority[priority] = max(peak_queued_by_priority[priority], counts[priority])
 	peak_pending = max(peak_pending, length(by_key))
@@ -294,6 +299,8 @@
 		return FALSE
 	counts[task.priority]--
 	by_key -= key
+	if(task.delivery)
+		ready_deliveries--
 	cancelled++
 	qdel(task)
 	return TRUE
@@ -306,6 +313,8 @@
 	if(!task)
 		return null
 	by_key -= task.key
+	if(task.delivery)
+		ready_deliveries--
 	counts[priority]--
 	return task
 
@@ -329,6 +338,8 @@
 		return null
 	interactive_streak++
 	by_key -= task.key
+	if(task.delivery)
+		ready_deliveries--
 	counts[task.priority]--
 	return task
 

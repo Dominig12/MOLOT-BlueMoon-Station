@@ -216,6 +216,9 @@
 	TEST_ASSERT_EQUAL(console.next_command, 0, "An unpublished action must not be scheduled for delivery")
 	var/original_flags = turret.turret_flags
 	TEST_ASSERT(console.remote_request(node.address, "shootall", list()), "An authorized published control must reach the machine")
+	var/datum/netrun_request/remote/packet = netrun_operation_packet(console, /datum/netrun_request/remote)
+	TEST_ASSERT_NOTNULL(packet, "A published UI control must own its queued delivery")
+	TEST_ASSERT(packet.deliver(), "The queued control must pass the native delivery boundary")
 	TEST_ASSERT_EQUAL(turret.turret_flags, original_flags ^ TURRET_FLAG_SHOOT_ALL, "The published action must use the real machine implementation")
 
 /// The service wire cannot keep its direct route after the client moves away or changes Z.

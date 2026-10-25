@@ -647,6 +647,7 @@
 		return FALSE
 	delivery_queued = TRUE
 	SSnetrun.get_task_scheduler().enqueue("machine_delivery", src, delivery_priority())
+	SSnetrun.wake_ready_delivery()
 	return TRUE
 
 /datum/netrun_machine_packet/proc/deliver()
