@@ -57,6 +57,9 @@
 #define NETRUN_DEFAULT_TASK_COST_SMOOTHING 0.15
 #define NETRUN_DEFAULT_TASK_POPULATION_INTERVAL (1 SECONDS)
 #define NETRUN_DEFAULT_APC_PREBUILD_OPERATIONS 96
+/// How many times an atmos device re-broadcasts to an online-but-silent controller before
+/// giving up. Controller/device signals (power, move, config) grant a fresh budget on change.
+#define NETRUN_ATMOS_REGISTRATION_MAX_ATTEMPTS 10
 #define NETRUN_DEFAULT_ROUTE_REFRESH_INTERVAL (1 SECONDS)
 #define NETRUN_DEFAULT_ROUTE_EXPIRY_INTERVAL (30 SECONDS)
 #define NETRUN_DEFAULT_UI_REFRESH_INTERVAL (1 SECONDS)
