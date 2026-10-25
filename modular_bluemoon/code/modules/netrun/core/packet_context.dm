@@ -139,8 +139,15 @@
 		operation_snapshots.Cut(1, length(operation_snapshots) - 31)
 	invalidate_ui()
 
+/// operation_snapshots is an indexed list whose elements are themselves assoc lists.
+/// deepCopyList() on such a container would treat each element-list as an associative
+/// key (mapping it to null), turning the result into an assoc list that json_encode
+/// then serializes as an object instead of an array. Copy each snapshot individually.
 /datum/netrun_console/proc/operations_payload()
-	return deepCopyList(operation_snapshots)
+	var/list/payload = list()
+	for(var/list/snapshot as anything in operation_snapshots)
+		payload += list(deepCopyList(snapshot))
+	return payload
 
 /// Preflight failure has an operation result but never pretends to have crossed the network.
 /datum/netrun_console/proc/reject_operation(datum/netrun_packet_context/operation, reason)

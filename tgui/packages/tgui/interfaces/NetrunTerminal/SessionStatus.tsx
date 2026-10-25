@@ -3,7 +3,7 @@ import { memo } from 'react';
 import { Box, Button } from '../../components';
 import { IncomingAttacks } from './CombatPanel';
 import { OPERATION_PHASES, operationActive } from './OperationsPanel';
-import { NetrunData, normalizeOperations, THEME } from './types';
+import { NetrunData, THEME } from './types';
 import { useNetrunBackend as useBackend, useNetrunFeedback } from './useNetrunBackend';
 
 /** A reserved row keeps urgent feedback visible without moving tools or taking focus. */
@@ -12,10 +12,9 @@ const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; 
   const feedback = useNetrunFeedback();
   const incoming = !!data.combat?.incoming?.length;
   const travel = data.entity?.travel;
-  const operations = normalizeOperations(data.operations);
-  const latestOperation = operations[operations.length - 1];
+  const latestOperation = data.operations?.[data.operations.length - 1];
   const operation = feedback
-    ? operations.find((entry) => entry.nonce === feedback.nonce)
+    ? data.operations?.find((entry) => entry.nonce === feedback.nonce)
     : latestOperation;
   const operationState = operation ? OPERATION_PHASES[operation.phase] : null;
   return (
@@ -42,7 +41,7 @@ const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; 
       {!!travel && <Button compact icon="stop" content={incoming ? 'Стоп' : 'Остановить маршрут'}
         aria-label="Остановить автопроход" tooltip={`Остановить автопроход к ${travel.target}`}
         onClick={() => act('travel_cancel')} />}
-      {!!props.onOperations && <Button compact role="button" icon="list-check" content={`Операции${operations.some(operationActive) ? ` (${operations.filter(operationActive).length})` : ''}`}
+      {!!props.onOperations && <Button compact role="button" icon="list-check" content={`Операции${data.operations?.some(operationActive) ? ` (${data.operations.filter(operationActive).length})` : ''}`}
         onClick={props.onOperations} />}
     </div>
   );
