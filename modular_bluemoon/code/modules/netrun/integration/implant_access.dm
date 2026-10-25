@@ -48,7 +48,7 @@
 	if(return_body)
 		var/mob/camera/netrun_entity/entity = dive_ref?.resolve()
 		if(entity?.dive_link.body && !QDELETED(entity.dive_link.body))
-			entity.return_to_body()
+			entity.dive_link.emergency_return("Нейролинк принудительно отключён!")
 		dive_ref = null
 	set_jack(null)
 	stop_watch()
@@ -57,6 +57,12 @@
 	access_session.revoke_all()
 	QDEL_NULL(intrusion.breach)
 	SStgui.close_uis(src)
+
+/datum/netrun_console/implant/set_jack(datum/component/netrun_node/node)
+	. = ..()
+	var/mob/camera/netrun_entity/entity = dive_ref?.resolve()
+	if(entity?.dive_link.entry_jack_ref && entity.dive_link.entry_jack_ref.resolve() != connection.jack)
+		entity.dive_link.emergency_return("Сервисный кабель нейролинка отключён!")
 
 /datum/netrun_console/implant/process_tick(delta)
 	var/mob/camera/netrun_entity/entity = dive_ref?.resolve()

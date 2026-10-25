@@ -5,6 +5,8 @@
 
 //Techweb datums are meant to store unlocked research, being able to be stored on research consoles, servers, and disks. They are NOT global.
 /datum/techweb
+	/// Only a physical R&D server owns authoritative research memory.
+	var/datum/weakref/research_owner_ref
 	var/list/researched_nodes = list()		//Already unlocked and all designs are now available. Assoc list, id = TRUE
 	var/list/visible_nodes = list()			//Visible nodes, doesn't mean it can be researched. Assoc list, id = TRUE
 	var/list/available_nodes = list()		//Nodes that can immediately be researched, all reqs met. assoc list, id = TRUE
@@ -310,7 +312,7 @@
 /proc/register_gas_synthesis(gas_id)
 	if(!SSresearch || !SSresearch.science_tech)
 		return FALSE
-	return SSresearch.science_tech.discover_gas_synthesis(gas_id)
+	return SSresearch.science_tech?.discover_gas_synthesis(gas_id)
 
 /// То же для машин, отдающих сразу смесь (HFR). Смесь обязана содержать только
 /// свежий выхлоп, иначе открытием засчитается транзитный газ.
@@ -376,7 +378,7 @@
 /datum/techweb/proc/printout_points()
 	return techweb_point_display_generic(research_points)
 
-/datum/techweb/proc/research_node_id(id, force, auto_update_points)
+/datum/techweb/proc/research_node_id(id, force = FALSE, auto_update_points = TRUE)
 	return research_node(SSresearch.techweb_node_by_id(id), force, auto_update_points)
 
 /datum/techweb/proc/research_node(datum/techweb_node/node, force = FALSE, auto_adjust_cost = TRUE)

@@ -4,7 +4,7 @@ SUBSYSTEM_DEF(netrun)
 	// Machine traffic now shares this worker. Ordinary MC service prevents unrelated
 	// foreground work starving delivery; the internal scheduler still bounds CPU/tasks.
 	flags = 0
-	runlevels = RUNLEVEL_LOBBY | RUNLEVEL_GAME | RUNLEVEL_POSTGAME
+	runlevels = RUNLEVEL_LOBBY | RUNLEVEL_SETUP | RUNLEVEL_GAME | RUNLEVEL_POSTGAME
 
 	/// id = /datum/netrun_network
 	var/list/networks = list()
@@ -315,6 +315,8 @@ SUBSYSTEM_DEF(netrun)
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
 	var/slice_start_usage = TICK_USAGE
 	if(!resumed)
+		get_machine_transport().prepare_network()
+	if(!resumed)
 		current_pass_cost_ms = 0
 	var/datum/netrun_execution_limits/limits = get_execution_limits(TRUE)
 	var/datum/netrun_task_scheduler/scheduler = get_task_scheduler()
@@ -322,7 +324,11 @@ SUBSYSTEM_DEF(netrun)
 	if(!resumed && world.time >= next_task_population)
 		last_processed_nodes = 0
 		last_processed_consoles = 0
-		populate_tasks()
+		if(SSticker.current_state < GAME_STATE_PLAYING)
+			// Lobby preparation must not start patrols or autonomous game processes.
+			populate_node_tasks()
+		else
+			populate_tasks()
 		next_task_population = world.time + limits.population_interval
 	var/budget_ms = limits.budget_for(TICK_USAGE)
 	var/max_items = limits.tasks_for(budget_ms, scheduler.average_ms)

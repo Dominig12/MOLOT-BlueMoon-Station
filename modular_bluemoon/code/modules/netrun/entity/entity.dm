@@ -199,12 +199,11 @@
 /mob/camera/netrun_entity/proc/dive_link_intact()
 	return dive_link.link_intact()
 
-/// Обрезали маршрут к телу: сначала нарастающий урон мозгу, затем - либо гибель
-/// тела с остаточным процессом в сети, либо жёсткий аварийный выход.
+/// Broken physical return paths eject the neural user on the first failed check.
 /mob/camera/netrun_entity/proc/check_dive_link(delta)
 	return dive_link.check_link(delta)
 
-/// Процесс теряет связь с мёртвым телом и остаётся самостоятельной сущностью в сети.
+/// Compatibility entry point: neural processes cannot remain stranded after a break.
 /mob/camera/netrun_entity/proc/strand_in_network()
 	return dive_link.strand_in_network()
 

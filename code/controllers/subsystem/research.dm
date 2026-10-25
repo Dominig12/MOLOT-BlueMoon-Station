@@ -321,7 +321,8 @@ SUBSYSTEM_DEF(research)
 	point_types = TECHWEB_POINT_TYPE_LIST_ASSOCIATIVE_NAMES
 	initialize_all_techweb_designs()
 	initialize_all_techweb_nodes()
-	science_tech = new /datum/techweb/science
+	// Compatibility aliases are assigned only to memory owned by a physical server.
+	science_tech = null
 	admin_tech = new /datum/techweb/admin
 	autosort_categories()
 	error_design = new
@@ -405,19 +406,41 @@ SUBSYSTEM_DEF(research)
 /datum/controller/subsystem/research/proc/get_rnd_network(network_id, techweb_type = /datum/techweb/isolated)
 	if(network_id == RND_NETWORK_STATION)
 		return science_tech
-	. = rnd_networks[network_id]
-	if(!.)
-		. = new techweb_type
-		rnd_networks[network_id] = .
+	return rnd_networks[network_id]
 
 /datum/controller/subsystem/research/proc/get_rnd_network_for(atom/target, network_id, techweb_type = /datum/techweb/isolated)
-	if(network_id == RND_NETWORK_AUTO)
-		if(target && is_station_level(target.z))
-			return science_tech
-		return new techweb_type
-	if(!network_id)
-		return new techweb_type
-	return get_rnd_network(network_id, techweb_type)
+	if(!target)
+		return null
+	var/turf/spot = get_turf(target)
+	if(!spot)
+		return null
+	var/selector = network_id
+	if(selector == RND_NETWORK_AUTO && is_station_level(spot.z))
+		selector = RND_NETWORK_STATION
+	// Registry insertion order picks the original reachable server deterministically.
+	for(var/obj/machinery/rnd/server/server as anything in servers)
+		if(QDELETED(server) || QDELETED(server.stored_research))
+			continue
+		if(selector && server.research_network_id() != selector)
+			continue
+		if(!selector && server.z != spot.z)
+			continue
+		if(netrun_research_route_available(target, server))
+			return server.stored_research
+	return null
+
+/// These references never allocate or retain an orphan database after owner deletion.
+/datum/controller/subsystem/research/proc/refresh_research_authorities()
+	science_tech = null
+	rnd_networks.Cut()
+	for(var/obj/machinery/rnd/server/server as anything in servers)
+		if(QDELETED(server) || QDELETED(server.stored_research))
+			continue
+		var/key = server.research_network_id()
+		if(key == RND_NETWORK_STATION && !science_tech)
+			science_tech = server.stored_research
+		if(!rnd_networks[key])
+			rnd_networks[key] = server.stored_research
 //BLUEMOON ADD END
 
 /datum/controller/subsystem/research/proc/autosort_categories()

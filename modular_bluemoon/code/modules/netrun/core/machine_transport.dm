@@ -196,7 +196,8 @@
 		return null
 	var/query_key = "[destination_id]|[recipient_tag]"
 	var/datum/netrun_machine_directory/entry = directory[query_key]
-	if(entry && entry.expires > world.time && entry.revision == SSnetrun.get_machine_transport().service_revisions[destination_id] && can_reach(entry.resolver_ref?.resolve(), FALSE))
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	if(entry && entry.expires > world.time && entry.revision == transport.service_revisions[destination_id] && transport.reachable(src, entry.resolver_ref?.resolve(), netrun_communication_policy(src, destination_id)))
 		return entry
 	return null
 
@@ -224,7 +225,7 @@
 		return TRUE
 	for(var/query_key in directory)
 		var/datum/netrun_machine_directory/entry = directory[query_key]
-		if(entry.expires <= world.time || !SSnetrun.get_machine_transport().reachable(src, entry.resolver_ref?.resolve()))
+		if(entry.expires <= world.time || !SSnetrun.get_machine_transport().reachable(src, entry.resolver_ref?.resolve(), netrun_communication_policy(src, target.service_id)))
 			continue
 		for(var/datum/weakref/ref as anything in entry.records)
 			if(ref.resolve() == target)
@@ -264,6 +265,12 @@
 	var/path_builds = 0
 	var/path_cache_hits = 0
 	var/tree_builds = 0
+	var/list/prewarm_roots = list()
+	var/prewarm_revision = -1
+	var/prewarm_infrastructure = -1
+	var/prewarm_steps = 0
+	var/prewarm_limit = 64
+	var/bootstrap_at
 
 /datum/netrun_machine_transport/New()
 	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_UNREGISTERED, PROC_REF(node_deleted))
@@ -277,20 +284,74 @@
 /datum/netrun_machine_transport/proc/is_ready()
 	return bootstrap_complete && !preparing && SSnetrun.initialized && SSatoms.initialized == INITIALIZATION_INNEW_REGULAR
 
-/// Finalize map bindings and names after native Initialize/LateInitialize, before clients run.
+/// Master starts subsystem fire only after its whole initialization loop. The atom
+/// post-init signal alone is too early: power, research and native links can change.
 /datum/netrun_machine_transport/proc/prepare_network()
-	if(preparing || !SSnetrun.initialized || SSatoms.initialized != INITIALIZATION_INNEW_REGULAR)
+	if(preparing || !SSnetrun.initialized || SSatoms.initialized != INITIALIZATION_INNEW_REGULAR || Master.initializing_subsystem || !Master.current_runlevel)
 		return
+	var/pregame = SSticker.current_state < GAME_STATE_PLAYING
+	if(bootstrap_complete && !pregame)
+		return
+	var/datum/netrun_topology/graph = SSnetrun.get_topology()
+	if(!bootstrap_complete || graph.dirty || prewarm_revision != graph.revision || length(prewarm_roots))
+		SSnetrun.get_task_scheduler().enqueue("network_bootstrap", src, NETRUN_TASK_BACKGROUND)
+
+/// One topology preparation slice or one retained infrastructure tree per task.
+/datum/netrun_machine_transport/proc/advance_bootstrap(datum/netrun_execution_limits/limits)
+	if(preparing || Master.initializing_subsystem || SSatoms.initialized != INITIALIZATION_INNEW_REGULAR)
+		return FALSE
 	preparing = TRUE
-	SSnetrun.ensure_station_dns()
-	SSnetrun.ensure_topology()
-	for(var/key in services.Copy())
-		var/datum/netrun_machine_service/service = services[key]
-		if(!QDELETED(service))
-			index_service(service)
-	bootstrap_complete = TRUE
+	if(!bootstrap_complete)
+		SSnetrun.spawn_roundstart_servers()
+	var/datum/netrun_topology/graph = SSnetrun.get_topology()
+	if(graph.dirty)
+		if(!graph.advance_apc_prebuild(limits.apc_operations))
+			preparing = FALSE
+			return FALSE
+	if(!bootstrap_complete)
+		for(var/key in services.Copy())
+			var/datum/netrun_machine_service/service = services[key]
+			if(!QDELETED(service))
+				index_service(service)
+		bootstrap_complete = TRUE
+		bootstrap_at = world.time
+		wake_resolutions()
+	if(prewarm_revision != graph.revision || prewarm_infrastructure != graph.infrastructure_revision)
+		prewarm_roots.Cut()
+		prewarm_revision = graph.revision
+		prewarm_infrastructure = graph.infrastructure_revision
+		// Discovery and native communications are useful first. Store APC anchors,
+		// never a whole station-sized routing table per vent, radio or PDA.
+		for(var/id in list("dns", "research.server", "telecomms.relay", "research.client"))
+			for(var/datum/netrun_machine_service/service as anything in by_id[id])
+				var/datum/component/netrun_node/node = service.resolve_node()
+				var/datum/component/netrun_node/root = graph.is_infrastructure(node) ? node : node?.bound_apc
+				if(root && length(prewarm_roots) < prewarm_limit)
+					prewarm_roots |= root.address
+		for(var/address in graph.registered_apcs)
+			if(length(prewarm_roots) >= prewarm_limit)
+				break
+			prewarm_roots |= address
+	if(length(prewarm_roots))
+		var/address = prewarm_roots[1]
+		prewarm_roots.Cut(1, 2)
+		var/datum/component/netrun_node/root = graph.nodes[address]
+		if(!QDELETED(root) && root.is_online())
+			path_tree(graph, root)
+			prewarm_steps++
 	preparing = FALSE
-	wake_resolutions()
+	return !length(prewarm_roots)
+
+/datum/netrun_task/network_bootstrap
+	kind = "network_bootstrap"
+
+/datum/netrun_task/network_bootstrap/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	var/datum/netrun_machine_transport/transport = target()
+	if(QDELETED(transport))
+		return FALSE
+	if(!transport.advance_bootstrap(limits || worker.get_execution_limits()))
+		worker.get_task_scheduler().enqueue(kind, transport, NETRUN_TASK_BACKGROUND)
+	return TRUE
 
 /datum/netrun_machine_transport/proc/network_changed(datum/source, datum/component/netrun_node/node, flags)
 	SIGNAL_HANDLER
@@ -377,7 +438,7 @@
 		if(packet.source == service || packet.recipient == service)
 			packet.fail("машина отключена")
 
-/datum/netrun_machine_transport/proc/lookup(datum/netrun_machine_service/source, destination_id, recipient_tag)
+/datum/netrun_machine_transport/proc/lookup(datum/netrun_machine_service/source, destination_id, recipient_tag, communications)
 	. = list()
 	var/list/bucket = isnull(recipient_tag) ? by_id[destination_id] : by_tag["[destination_id]|[recipient_tag]"]
 	// A few native tag setters still write fields directly. Repair a stale/missing
@@ -389,11 +450,13 @@
 				index_service(candidate)
 				bucket |= candidate
 	for(var/datum/netrun_machine_service/target as anything in bucket)
-		if(!QDELETED(target) && target.matches(source, recipient_tag) && reachable(source, target))
+		if(!QDELETED(target) && target.matches(source, recipient_tag) && reachable(source, target, communications))
 			. += target
 
-/datum/netrun_machine_transport/proc/reachable(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient)
-	return !!borrowed_path(source, recipient)
+/datum/netrun_machine_transport/proc/reachable(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient, communications)
+	if(isnull(communications))
+		communications = netrun_communication_policy(source, recipient?.service_id)
+	return !!(borrowed_path(source, recipient) || (communications && communication_path(source, recipient)))
 
 /// This cache owns its paths; only route() exposes mutable request-owned copies.
 /datum/netrun_machine_path
@@ -451,8 +514,12 @@
 	return tree
 
 /// Return a mutable request-owned route; boolean checks borrow cached paths directly.
-/datum/netrun_machine_transport/proc/route(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient)
+/datum/netrun_machine_transport/proc/route(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient, communications, frequency)
 	var/datum/netrun_machine_path/path = borrowed_path(source, recipient)
+	if(isnull(communications))
+		communications = netrun_communication_policy(source, recipient?.service_id)
+	if(!path && communications)
+		path = communication_path(source, recipient, frequency)
 	if(!path)
 		return null
 	var/datum/netrun_route/result = new
@@ -620,7 +687,7 @@
 	if(length(transport.packets) >= NETRUN_MAX_MACHINE_PACKETS)
 		fail("очередь транспортных пакетов переполнена")
 		return FALSE
-	var/datum/netrun_route/route = transport.route(source, recipient)
+	var/datum/netrun_route/route = transport.route(source, recipient, communication_policy(), communication_frequency())
 	if(!route)
 		qdel(route)
 		fail("нет сетевого маршрута")
@@ -641,6 +708,13 @@
 /datum/netrun_machine_packet/proc/delivery_priority()
 	return NETRUN_TASK_NORMAL
 
+/// DNS explicitly carries its caller's restricted policy; arbitrary data never opts in.
+/datum/netrun_machine_packet/proc/communication_policy()
+	return FALSE
+
+/datum/netrun_machine_packet/proc/communication_frequency()
+	return null
+
 /datum/netrun_machine_packet/proc/queue_delivery()
 	timer_id = null
 	if(delivery_queued || finishing || QDELETED(src))
@@ -659,7 +733,7 @@
 	timer_id = null
 	if(finishing)
 		return
-	var/datum/netrun_route/route = SSnetrun.get_machine_transport().route(source, recipient)
+	var/datum/netrun_route/route = SSnetrun.get_machine_transport().route(source, recipient, communication_policy(), communication_frequency())
 	if(!route)
 		fail("маршрут разорван")
 		return
@@ -712,6 +786,13 @@
 /datum/netrun_machine_packet/data/delivery_priority()
 	return message.delivery_priority()
 
+/datum/netrun_machine_packet/data/communication_policy()
+	return netrun_communication_policy(source, recipient?.service_id) && (istype(message, /datum/netrun_machine_message/telecomms) || istype(message, /datum/netrun_machine_message/communications))
+
+/datum/netrun_machine_packet/data/communication_frequency()
+	var/datum/netrun_machine_message/telecomms/packet = message
+	return istype(packet) ? packet.signal?.frequency : null
+
 /datum/netrun_machine_packet/data/execute()
 	if(recipient.matches(source, recipient_tag) && recipient.accepts(message) && recipient.receive(message))
 		operation.finish("completed")
@@ -747,11 +828,13 @@
 	var/attempt_generation = 0
 	var/list/tried_resolvers = list()
 	var/datum/weakref/active_packet_ref
+	var/communications = FALSE
 
 /datum/netrun_machine_resolution/New(datum/netrun_machine_service/source, destination_id, recipient_tag)
 	src.source = source
 	src.destination_id = destination_id
 	src.recipient_tag = recipient_tag
+	communications = netrun_communication_policy(source, destination_id)
 	query_key = "[destination_id]|[recipient_tag]"
 	query_id = ++SSnetrun.get_machine_transport().packet_serial
 	operation_id = "discovery-[query_id]"
@@ -817,7 +900,7 @@
 		failure_reason = "DNS: исчерпан срок или лимит попыток обнаружения"
 		qdel(src)
 		return
-	var/list/servers = SSnetrun.get_machine_transport().lookup(source, "dns", null)
+	var/list/servers = SSnetrun.get_machine_transport().lookup(source, "dns", null, communications)
 	var/datum/netrun_machine_service/next_resolver
 	for(var/datum/netrun_machine_service/candidate as anything in servers)
 		if(!(REF(candidate) in tried_resolvers))
@@ -871,7 +954,7 @@
 	if(!QDELETED(previous))
 		previous.abandon_attempt(reason)
 	failure_reason = "DNS: [reason]"
-	var/list/alternatives = SSnetrun.get_machine_transport().lookup(source, "dns", null)
+	var/list/alternatives = SSnetrun.get_machine_transport().lookup(source, "dns", null, communications)
 	var/has_alternative = FALSE
 	for(var/datum/netrun_machine_service/candidate as anything in alternatives)
 		if(!(REF(candidate) in tried_resolvers))
@@ -889,7 +972,7 @@
 	if(QDELETED(source) || QDELETED(resolver))
 		qdel(src)
 		return
-	records = SSnetrun.get_machine_transport().lookup(source, destination_id, recipient_tag)
+	records = SSnetrun.get_machine_transport().lookup(source, destination_id, recipient_tag, communications)
 	records_revision = SSnetrun.get_machine_transport().service_revisions[destination_id]
 	var/datum/netrun_machine_packet/dns_reply/packet = new(resolver, source, src)
 	active_packet_ref = WEAKREF(packet)
@@ -953,6 +1036,9 @@
 /datum/netrun_machine_packet/dns_query/execute()
 	if(!QDELETED(query))
 		query.answer(query_generation)
+
+/datum/netrun_machine_packet/dns_query/communication_policy()
+	return query?.communications
 
 /// A retired attempt cannot call back into the new resolver generation.
 /datum/netrun_machine_packet/dns_query/proc/abandon_attempt(reason)

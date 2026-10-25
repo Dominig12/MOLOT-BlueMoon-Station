@@ -124,13 +124,14 @@
 	var/datum/netrun_file/file = new("private.txt", NETRUN_FILE_TEXT, "SECRET_OPERATION_PAYLOAD", 1)
 	TEST_ASSERT(scene.console.store_file(file), "The sender must own a real source file")
 	scene.target_node.file_store.capacity = 0
+	var/baseline_files = length(scene.target_node.file_store.files)
 	TEST_ASSERT(scene.console.queue_file_request("upload", scene.target_node, file.uid, FALSE, "full-disk"), "A valid upload must be queued before the receiving disk is checked")
 	var/datum/netrun_request/file/packet = netrun_operation_packet(scene.console, /datum/netrun_request/file)
 	var/id = packet.operation.id
 	TEST_ASSERT(!packet.deliver(), "A full destination disk must return an actual failed result")
 	var/list/rejected = netrun_operation_result(scene.console, id)
 	TEST_ASSERT_EQUAL(rejected?["phase"], "rejected", "A failed file mutation must never appear completed")
-	TEST_ASSERT_EQUAL(length(scene.target_node.file_store.files), 0, "The rejected upload must not change the destination")
+	TEST_ASSERT_EQUAL(length(scene.target_node.file_store.files), baseline_files, "The rejected upload must not change the destination")
 	scene.target_node.file_store.capacity = 8
 	scene.console.next_command = 0
 	TEST_ASSERT(scene.console.queue_file_request("upload", scene.target_node, file.uid, FALSE, "free-disk"), "A recovered disk must admit a new independent upload")
@@ -139,7 +140,7 @@
 	TEST_ASSERT(packet.deliver(), "A real file mutation must report its successful handling")
 	var/list/completed = netrun_operation_result(scene.console, id)
 	TEST_ASSERT_EQUAL(completed?["phase"], "completed", "The completed file mutation must have a final result")
-	TEST_ASSERT_EQUAL(length(scene.target_node.file_store.files), 1, "The accepted upload must create exactly one copy")
+	TEST_ASSERT_EQUAL(length(scene.target_node.file_store.files), baseline_files + 1, "The accepted upload must create exactly one copy")
 	TEST_ASSERT(!findtext(json_encode(scene.console.operations_payload()), "SECRET_OPERATION_PAYLOAD"), "Operation values must never expose file contents")
 	TEST_ASSERT(!findtext(json_encode(scene.target_node.packet_logs), "SECRET_OPERATION_PAYLOAD"), "Node journals must never expose file contents")
 

@@ -40,6 +40,8 @@ Nothing else in the console has ID requirements.
 	var/list/id_cache = list()
 	var/id_cache_seq = 1
 	var/compact = TRUE
+	var/list/netrun_static_catalog
+	var/netrun_static_catalog_size
 
 	var/research_control = TRUE
 
@@ -108,13 +110,7 @@ Nothing else in the console has ID requirements.
 	. = ..()
 	AddComponent(/datum/component/techweb_holder)
 	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
-	if(network_id == RND_NETWORK_AUTO)	//BLUEMOON CHANGE: станция — в глобальную сеть науки, иное — без сети (подключается мультитулом к серверам)
-		if(is_station_level(z))
-			SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, SSresearch.science_tech)
-			stored_research.consoles_accessing[src] = TRUE
-	else if(network_id)	//BLUEMOON CHANGE: консоль подключается к своей сети через реестр; без ID — изолированная
-		SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, SSresearch.get_rnd_network_for(src, network_id, techweb_type))
-		stored_research.consoles_accessing[src] = TRUE
+	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, SSresearch.get_rnd_network_for(src, network_id, techweb_type))
 
 /obj/machinery/computer/rdconsole/Destroy()
 	QDEL_NULL(netrun_research_cache)
@@ -172,8 +168,8 @@ Nothing else in the console has ID requirements.
 	return request_research_action("research", user, list("node_id" = id))
 
 /// Executed by the research server after the request has crossed the network.
-/obj/machinery/computer/rdconsole/proc/perform_research_node(id, mob/user)
-	if(!stored_research)	//BLUEMOON ADD: консоль без подключённой сети
+/obj/machinery/computer/rdconsole/proc/perform_research_node(id, mob/user, datum/techweb/authority)
+	if(!authority || authority != stored_research || !netrun_research_authorizes(src, authority))
 		say("База данных исследований не подключена!")
 		return FALSE
 	if(!stored_research.available_nodes[id] || stored_research.researched_nodes[id])
@@ -379,6 +375,10 @@ Nothing else in the console has ID requirements.
 		"static_data" = list(),
 		"researchable" = research_control
 	)
+	var/catalog_size = "[length(SSresearch.techweb_nodes)]:[length(SSresearch.techweb_designs)]"
+	if(netrun_static_catalog && netrun_static_catalog_size == catalog_size)
+		.["static_data"] = netrun_static_catalog
+		return
 	// Build node cache...
 	// Note this looks a bit ugly but its to reduce the size of the JSON payload
 	// by the greatest amount that we can, as larger JSON payloads result in
@@ -428,6 +428,8 @@ Nothing else in the console has ID requirements.
 		"design_cache" = design_cache,
 		"id_cache" = flat_id_cache
 	)
+	netrun_static_catalog = .["static_data"]
+	netrun_static_catalog_size = catalog_size
 
 /obj/machinery/computer/rdconsole/ui_act(action, list/params)
 	. = ..()

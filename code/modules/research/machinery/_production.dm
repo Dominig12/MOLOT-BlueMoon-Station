@@ -20,6 +20,7 @@
 	var/network_id = RND_NETWORK_AUTO			//AUTO: станция — science_tech, иначе — персональная изолированная сеть
 	var/techweb_type = /datum/techweb/isolated	//Тип техвеба нестанционной сети
 	var/last_design_count = 0	// Хранит предшествующее синхронизации количество доступных дизайнов
+	var/research_print_pending = FALSE
 
 	var/lathe_prod_time = 0.5
 	var/emag_only_access = TRUE
@@ -377,6 +378,29 @@
 	return !ispath(path, /obj/item/stack/sheet) && !ispath(path, /obj/item/stack/ore/bluespace_crystal) && !ispath(path, /obj/item/stack/ducts)
 
 /obj/machinery/rnd/production/proc/user_try_print_id(id, amount)
+	if(QDELETED(src) || busy || research_print_pending || !id || ((!istype(linked_console) && requires_console)))
+		return FALSE
+	var/mob/user = usr
+	if(user && !user.can_use_production_topic(src, "build"))
+		return FALSE
+	var/datum/netrun_machine_service/research_client/client = get_netrun_machine_service("research.client")
+	research_print_pending = TRUE
+	if(client?.request_design(id, CALLBACK(src, PROC_REF(finish_research_print), id, amount, user ? WEAKREF(user) : null)))
+		return TRUE
+	research_print_pending = FALSE
+	return FALSE
+
+/obj/machinery/rnd/production/proc/finish_research_print(id, amount, datum/weakref/user_ref, datum/techweb/authority)
+	research_print_pending = FALSE
+	if(QDELETED(src) || !netrun_online() || !netrun_research_authorizes(src, authority, id))
+		return FALSE
+	var/mob/user = user_ref?.resolve()
+	if(user_ref && (QDELETED(user) || !user.can_use_production_topic(src, "build")))
+		return FALSE
+	return world.PushUsr(user, CALLBACK(src, PROC_REF(perform_print_id), id, amount))
+
+/// Native resource, department and security checks run only after the server replies.
+/obj/machinery/rnd/production/proc/perform_print_id(id, amount)
 	if((!istype(linked_console) && requires_console) || !id)
 		return FALSE
 	if(busy)

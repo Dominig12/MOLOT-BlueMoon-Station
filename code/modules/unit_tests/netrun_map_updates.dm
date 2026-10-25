@@ -50,6 +50,62 @@
 	serialized_nodes++
 	return ..()
 
+/// Walking a carried terminal must update its marker, not rebuild every permitted endpoint.
+/datum/unit_test/netrun_map_carrier_motion_work/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	for(var/turf/spot as anything in block(origin, locate(origin.x + 8, origin.y + 2, origin.z)))
+		scene.take(spot, room)
+	scene.machine(/obj/machinery/power/apc, get_step(origin, NORTH))
+	var/mob/living/carbon/human/carrier = allocate(/mob/living/carbon/human, origin)
+	var/obj/item/netrun_deck/deck = allocate(/obj/item/netrun_deck, carrier)
+	for(var/i in 1 to 100)
+		var/obj/item/device = allocate(/obj/item, locate(origin.x + i % 8, origin.y + 2, origin.z))
+		device.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_console/console = deck.console
+	qdel(console.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+	console.map_view = view
+	console.workspace_view = "map"
+	console.ui_data(null)
+	var/builds = view.rebuilds
+	var/entries = view.serialized_nodes
+	var/paint = view.static_revision
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/graph_revision = graph.revision
+	var/datum/component/netrun_node/source = deck.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_path_tree/table = graph.route_tables[source.address]
+	var/started = TICK_USAGE
+	for(var/i in 1 to 20)
+		carrier.forceMove(locate(origin.x + i % 2, origin.y, origin.z))
+		console.ui_data(null)
+	world.log << "NETRUN_LOAD 100 endpoints, 20 carrier moves: [round(TICK_DELTA_TO_MS(TICK_USAGE - started), 0.01)]ms; map rebuilds [view.rebuilds - builds], projected [view.serialized_nodes - entries]."
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Twenty same-area carrier moves must not rebuild the full permitted map")
+	TEST_ASSERT(view.serialized_nodes <= entries + 20, "Movement must project only the moving endpoint, independent of the other hundred nodes")
+	TEST_ASSERT_EQUAL(view.static_revision, paint, "Carried endpoint movement must retain the stationary Pixi canvas")
+	TEST_ASSERT_EQUAL(graph.revision, graph_revision, "A moving leaf must retain the structural topology")
+	TEST_ASSERT_EQUAL(graph.route_tables[source.address], table, "Movement must reuse the retained source tree")
+
+/// A movement signal must not measure cables, scan APCs or walk active route tables inline.
+/datum/unit_test/netrun_movement_queues_binding/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	var/turf/destination = scene.take(get_step(origin, EAST), room)
+	scene.machine(/obj/machinery/power/apc, scene.take(get_step(origin, NORTH), room))
+	var/obj/item/endpoint = allocate(/obj/item, origin)
+	var/datum/component/netrun_node/node = endpoint.AddComponent(/datum/component/netrun_node, NETRUN_NODE_DECK)
+	SSnetrun.ensure_topology()
+	var/turf/previous = node.topology_turf
+	endpoint.forceMove(destination)
+	TEST_ASSERT_EQUAL(node.topology_turf, previous, "Movement must defer binding/weight work until the queued task or explicit route consumer")
+	TEST_ASSERT(SSnetrun.get_task_scheduler().by_key["node:[REF(node)]"], "Movement must queue one bounded node update")
+	var/datum/netrun_task/node/task = allocate(/datum/netrun_task/node, "node", "motion-test", NETRUN_TASK_NORMAL, node)
+	task.execute(SSnetrun)
+	TEST_ASSERT_EQUAL(node.topology_turf, destination, "The worker must reconcile the latest physical position")
+
 /datum/unit_test/netrun_map_incremental_work/Run()
 	var/turf/origin = run_loc_floor_bottom_left
 	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
