@@ -249,8 +249,13 @@ export type NetOperation = {
   route: string[];
 };
 
+/** BYOND serializes an assoc list as an object, so coerce either shape to a plain array. */
+export const normalizeOperations = (operations?: NetOperation[] | Record<string, NetOperation>): NetOperation[] =>
+  Array.isArray(operations) ? operations : Object.values(operations ?? {});
+
 export type NetrunData = {
-  operations?: NetOperation[];
+  /** BYOND serializes an assoc list as an object, so tolerate both shapes; normalize with normalizeOperations. */
+  operations?: NetOperation[] | Record<string, NetOperation>;
   /** Receipt of a UI request; it does not imply the game action succeeded. */
   input_ack?: string | null;
   workspace_view?: WorkspaceView;

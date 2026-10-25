@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
-import { NetOperation, THEME } from './types';
+import { NetOperation, normalizeOperations, THEME } from './types';
 import { useNetrunBackend } from './useNetrunBackend';
 
 export const operationActive = (operation: NetOperation) => operation.phase === 'queued' || operation.phase === 'running';
@@ -12,14 +12,11 @@ export const OPERATION_PHASES: Record<NetOperation['phase'], { label: string; ic
   rejected: { label: 'Отклонено', icon: 'triangle-exclamation', color: THEME.bad },
   cancelled: { label: 'Отменено', icon: 'ban', color: THEME.warn },
 };
-const EMPTY: NetOperation[] = [];
 
 /** Server delivery outcomes stay separate from the immediate input receipt. */
 export const OperationsPanel = memo((props: { onLocate: (address: string) => void }) => {
   const { data } = useNetrunBackend(['operations']);
-  const operations = Array.isArray(data.operations)
-    ? data.operations
-    : Object.values(data.operations ?? EMPTY);
+  const operations = normalizeOperations(data.operations);
   const [filter, setFilter] = useState<'all' | 'active' | 'errors'>('all');
   const [query, setQuery] = useState('');
   const shown = useMemo(() => operations.filter((operation) => (

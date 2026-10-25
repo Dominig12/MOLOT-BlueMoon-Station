@@ -3,7 +3,7 @@ import { memo } from 'react';
 import { Box, Button } from '../../components';
 import { IncomingAttacks } from './CombatPanel';
 import { OPERATION_PHASES, operationActive } from './OperationsPanel';
-import { NetrunData, THEME } from './types';
+import { NetrunData, normalizeOperations, THEME } from './types';
 import { useNetrunBackend as useBackend, useNetrunFeedback } from './useNetrunBackend';
 
 /** A reserved row keeps urgent feedback visible without moving tools or taking focus. */
@@ -12,9 +12,7 @@ const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; 
   const feedback = useNetrunFeedback();
   const incoming = !!data.combat?.incoming?.length;
   const travel = data.entity?.travel;
-  const operations = Array.isArray(data.operations)
-    ? data.operations
-    : Object.values(data.operations ?? {});
+  const operations = normalizeOperations(data.operations);
   const latestOperation = operations[operations.length - 1];
   const operation = feedback
     ? operations.find((entry) => entry.nonce === feedback.nonce)
