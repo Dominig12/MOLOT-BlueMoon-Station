@@ -478,7 +478,7 @@
 	if(first_time)
 		var/research_reward = rand(5000, 20000)
 		priority_announce("Временные аномалии обнаружены в локации [T.loc]. Анализ завершён, [research_reward] научных очков получено.", "Исследовательский отдел Нантрейзен", ANNOUNCER_SPANOMALIES)
-		SSresearch.science_tech.add_points_all(research_reward)
+		SSresearch.science_tech?.add_points_all(research_reward)
 	first_time = FALSE
 	pulser.blind_eyes(300)
 	pulser.Stun(100)

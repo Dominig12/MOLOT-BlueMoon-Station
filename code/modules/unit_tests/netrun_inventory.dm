@@ -1,4 +1,79 @@
 /// A failed disk transaction retains the source; a successful move has one owner and one UID.
+/datum/unit_test/netrun_machine_manuals/Run()
+	var/obj/item/endpoint = allocate(/obj/item)
+	var/datum/component/netrun_node/node = endpoint.AddComponent(/datum/component/netrun_node, NETRUN_NODE_CAMERA, list("scan", "ping"), 1, list(), 2)
+	var/datum/netrun_file/manual
+	for(var/datum/netrun_file/file as anything in node.file_store?.files)
+		if(file.name == "readme.txt")
+			manual = file
+	TEST_ASSERT_NOTNULL(manual, "Every machine node must expose an in-world readme.txt")
+	TEST_ASSERT_EQUAL(manual.kind, NETRUN_FILE_TEXT, "The built-in manual must be readable text")
+	TEST_ASSERT(findtext(manual.content, "камер") && findtext(manual.content, "APC") && findtext(manual.content, "ПОЛЬЗОВАТЕЛЬ"), "The manual must explain this machine's role, routing and legitimate access")
+	TEST_ASSERT(findtext(manual.content, "scan") && findtext(manual.content, "ping"), "The manual must enumerate commands the node actually supports")
+	TEST_ASSERT_EQUAL(node.file_store.used(), 0, "Built-in documentation must not consume payload disk space")
+	TEST_ASSERT_EQUAL(node.file_store.capacity, 2, "Documentation must preserve the machine's original writable capacity")
+	var/datum/netrun_file/full = new("user.txt", NETRUN_FILE_TEXT, "payload", 2)
+	TEST_ASSERT(node.file_store.insert(full), "The entire original payload capacity must remain writable")
+	var/datum/netrun_file/copy = manual.copy()
+	TEST_ASSERT(copy.size > 0, "A downloaded manual must consume ordinary destination capacity")
+	qdel(copy)
+
+/datum/unit_test/netrun_zero_capacity_manual/Run()
+	var/obj/item/endpoint = allocate(/obj/item)
+	var/datum/component/netrun_node/node = endpoint.AddComponent(/datum/component/netrun_node, NETRUN_NODE_ATMOS)
+	TEST_ASSERT_NOTNULL(node.file_store, "Storage-less nodes still need their built-in documentation")
+	TEST_ASSERT_EQUAL(node.file_store.capacity, 0, "Documentation must not grant a new writable disk")
+	TEST_ASSERT_EQUAL(length(node.file_store.files), 1, "A storage-less endpoint must contain only its manual")
+	var/datum/netrun_file/manual = node.file_store.files[1]
+	TEST_ASSERT_EQUAL(manual.name, "readme.txt", "The built-in manual needs the expected filename")
+	TEST_ASSERT(findtext(manual.content, "атмос"), "An atmospheric endpoint needs its own usage instructions")
+
+/datum/unit_test/netrun_manual_live_contracts/Run()
+	var/obj/item/netrun_provider_test/endpoint = allocate(/obj/item/netrun_provider_test)
+	var/datum/component/netrun_node/node = endpoint.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_file/manual = node.file_store.files[1]
+	node.command_ids |= "pc_shutdown"
+	var/datum/netrun_file/download = manual.copy()
+	TEST_ASSERT(findtext(download.content, "pc_shutdown"), "Reading a manual must reflect commands installed after node registration")
+	TEST_ASSERT(findtext(download.content, "ProviderTest") && findtext(download.content, "write") && findtext(download.content, "value"), "Provider instructions must include the real interface, actions and parameters")
+	TEST_ASSERT(download.size > 0, "A manual copy must be an ordinary charged text file")
+	qdel(download)
+	qdel(manual)
+	node.file_store.files.Cut()
+	var/datum/netrun_file/user_readme = new("readme.txt", NETRUN_FILE_TEXT, "User-authored instructions")
+	node.file_store.insert(user_readme, TRUE)
+	endpoint.ensure_netrun_manual(node)
+	TEST_ASSERT_EQUAL(length(node.file_store.files), 1, "Repeated provisioning must not duplicate an existing readme")
+	TEST_ASSERT_EQUAL(node.file_store.files[1], user_readme, "Manual provisioning must preserve the actual existing user file")
+	TEST_ASSERT_EQUAL(user_readme.content, "User-authored instructions", "Manual provisioning must not overwrite user content")
+
+/datum/unit_test/netrun_manual_provider_coverage/Run()
+	var/covered = 0
+	for(var/datum/netrun_provider/path as anything in subtypesof(/datum/netrun_provider))
+		if(!initial(path.atom_type))
+			continue
+		var/datum/netrun_provider/provider = allocate(path)
+		var/text = jointext(provider.manual_instructions(), "\n")
+		for(var/action in provider.actions)
+			TEST_ASSERT(findtext(text, action), "Provider [path] omitted its real action [action] from documentation")
+			var/list/schema = provider.actions[action]
+			for(var/list/parameter as anything in schema["params"])
+				TEST_ASSERT(findtext(text, parameter["id"]), "Provider [path] omitted an actual action parameter")
+		covered++
+	TEST_ASSERT(covered >= 7, "Documentation coverage must include all published native interfaces")
+
+/datum/unit_test/netrun_manual_preload_notes/Run()
+	var/obj/machinery/netrun_server/stash/breach_suite/archive = allocate(/obj/machinery/netrun_server/stash/breach_suite)
+	var/datum/component/netrun_node/node = archive.GetComponent(/datum/component/netrun_node)
+	var/count = 0
+	for(var/datum/netrun_file/file as anything in node.file_store.files)
+		if(file.name != "readme.txt")
+			continue
+		count++
+		TEST_ASSERT(findtext(file.content, archive.preload_files["readme.txt"]), "The built-in manual must preserve the exact authored archive notes")
+		TEST_ASSERT(findtext(file.content, "APC"), "Archive notes must remain alongside real network instructions")
+	TEST_ASSERT_EQUAL(count, 1, "A predefined readme must not create ambiguous duplicate filenames")
+
 /datum/unit_test/netrun_file_store_transaction/Run()
 	var/datum/netrun_file_store/source = allocate(/datum/netrun_file_store, null, 2)
 	var/datum/netrun_file_store/destination = allocate(/datum/netrun_file_store, null, 1)

@@ -36,6 +36,7 @@
 
 	/// Copy of the currently synced techweb.
 	var/datum/techweb/stored_research
+	var/research_build_pending = FALSE
 
 	/// Whether the Exofab links to the ore silo on init. Special derelict or maintanance variants should set this to FALSE.
 	var/link_on_init = TRUE
@@ -348,15 +349,13 @@
   * * verbose - Whether the machine should use say() procs. Set to FALSE to disable the machine saying reasons for failure to build.
   */
 /obj/machinery/mecha_part_fabricator/proc/build_next_in_queue(verbose = TRUE)
+	if(research_build_pending)
+		return TRUE
 	if(!length(queue))
 		return FALSE
 
 	var/datum/design/D = queue[1]
-	if(build_part(D, verbose))
-		remove_from_queue(1)
-		return TRUE
-
-	return FALSE
+	return build_part(D, verbose, TRUE)
 
 /**
   * Starts the build process for a given design datum.
@@ -366,7 +365,31 @@
   * * D - Design datum to attempt to print.
   * * verbose - Whether the machine should use say() procs. Set to FALSE to disable the machine saying reasons for failure to build.
   */
-/obj/machinery/mecha_part_fabricator/proc/build_part(datum/design/D, verbose = TRUE)
+/obj/machinery/mecha_part_fabricator/proc/build_part(datum/design/D, verbose = TRUE, from_queue = FALSE)
+	if(!D || being_built || research_build_pending || !(D.build_type & MECHFAB))
+		return FALSE
+	var/datum/netrun_machine_service/research_client/client = get_netrun_machine_service("research.client")
+	research_build_pending = TRUE
+	if(client?.request_design(D.id, CALLBACK(src, PROC_REF(finish_research_build), D, verbose, from_queue)))
+		return TRUE
+	research_build_pending = FALSE
+	return FALSE
+
+/obj/machinery/mecha_part_fabricator/proc/finish_research_build(datum/design/D, verbose, from_queue, datum/techweb/authority)
+	research_build_pending = FALSE
+	if(QDELETED(src) || !netrun_online() || being_built || !netrun_research_authorizes(src, authority, D.id))
+		return FALSE
+	if(from_queue && (!process_queue || !length(queue) || queue[1] != D))
+		return FALSE
+	if(!perform_build_part(D, verbose))
+		return FALSE
+	if(from_queue)
+		remove_from_queue(1)
+	on_start_printing()
+	START_PROCESSING(SSfastprocess, src)
+	return TRUE
+
+/obj/machinery/mecha_part_fabricator/proc/perform_build_part(datum/design/D, verbose = TRUE)
 	if(!D || !(D.build_type & MECHFAB) || !stored_research.researched_designs[D.id])
 		return FALSE
 

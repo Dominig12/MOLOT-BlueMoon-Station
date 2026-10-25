@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { Box, Button } from '../../components';
 import { ActionTooltip } from './CommandTooltip';
+import { machinePresentation } from './nativePresentation';
 import { remoteArguments, remoteParameterValue } from './remoteParameters';
 import { ACCESS_NAMES, MachineWindow, NetrunData, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
@@ -19,17 +20,29 @@ const LABELS: Record<string, string> = {
 };
 
 /** Data only: native actions are declared and validated by the machine adapter. */
-export const RemotePanel = (props: { address: string; remote: Remote }) => (
+export const RemotePanel = (props: { address: string; remote: Remote }) => {
+  const machine = machinePresentation(props.remote);
+  const [diagnostics, setDiagnostics] = useState(false);
+  return (
   <Box mt={1} className="netrun-remote-panel">
-    <Box bold mb={1}>Управление машиной · {props.remote.interface}</Box>
-    <Box p={1} mb={1} className="netrun-remote-tree" style={{ background: THEME.bg, maxHeight: '350px', overflowY: 'auto' }}>
-      <DataTree value={props.remote.data} depth={0} />
-    </Box>
-    {props.remote.actions.map((action) => (
+    <Box bold mb={1}>{machine?.title || `Управление машиной · ${props.remote.interface}`}</Box>
+    {machine && <dl style={{ margin: '0 0 12px', overflowWrap: 'anywhere' }}>
+      {machine.readings.map((reading, index) => (<div key={`${reading.label}:${index}`} style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '4px' }}>
+        <dt style={{ color: THEME.muted }}>{reading.label}:</dt><dd style={{ margin: 0 }}>{reading.value}</dd>
+                                                 </div>))}
+                </dl>}
+    {(machine?.actions || props.remote.actions).map((action) => (
       <RemoteAction key={`${props.address}:${props.remote.interface}:${action.id}`} address={props.address} action={action} />
     ))}
+    <details open={diagnostics || !machine} onToggle={(event) => setDiagnostics(event.currentTarget.open)}>
+      <summary>Данные устройства · {props.remote.interface}</summary>
+      {(diagnostics || !machine) && <Box p={1} mt={1} className="netrun-remote-tree" style={{ background: THEME.bg, maxHeight: '350px', overflowY: 'auto' }}>
+        <DataTree value={props.remote.data} depth={0} />
+                                    </Box>}
+    </details>
   </Box>
-);
+  );
+};
 
 const DataTree = (props: { value: unknown; depth: number }) => {
   const { value, depth } = props;
@@ -81,7 +94,7 @@ const RemoteAction = (props: { address: string; action: Remote['actions'][number
   return (
     <Box className="netrun-remote-action" mb={1}>
       {params.map((param) => (
-        <label key={param.id} style={{ display: 'inline-block', marginRight: '6px', marginBottom: '5px' }}>
+        <label key={param.id} style={{ display: 'block', maxWidth: '100%', minWidth: 0, marginRight: '6px', marginBottom: '5px' }}>
           <span style={{ marginRight: '5px' }}>{param.name}</span>
           {param.options ? <select aria-label={param.name} value={remoteParameterValue(param, values)} disabled={!action.allowed}
             onChange={(event) => setValues((previous) => ({ ...previous, [param.id]: event.target.value }))}

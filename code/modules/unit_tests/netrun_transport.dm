@@ -43,6 +43,118 @@
 		outcomes["delivered"] = (outcomes["delivered"] || 0) + 1
 		outcomes["at"] = world.time
 
+/// Observe native receiver admission without requiring the rest of its radio chain.
+/obj/machinery/telecomms/receiver/prerelease_fixture
+	var/received_packets = 0
+
+/obj/machinery/telecomms/receiver/prerelease_fixture/receive_signal(datum/signal/subspace/signal)
+	received_packets++
+
+/// Two real sectors, joined only by the native telecommunications relay/hub link.
+/datum/netrun_communication_scene
+	parent_type = /datum/netrun_transport_scene
+	var/obj/item/radio/radio
+	var/obj/machinery/telecomms/relay/relay
+	var/obj/machinery/telecomms/hub/hub
+	var/obj/machinery/telecomms/receiver/prerelease_fixture/receiver_port
+	var/datum/netrun_machine_service/radio_port
+	var/datum/netrun_machine_service/receiver_service
+
+/datum/netrun_communication_scene/New(turf/origin)
+	..(origin)
+	var/list/levels = multiz_gravity_test_levels()
+	mark_station(levels[1])
+	var/area/remote_room = room(/area/netrun_route_test)
+	var/turf/remote = take(locate(80, 80, levels[1]), remote_room, TRUE)
+	var/turf/remote_apc = take(locate(81, 80, levels[1]), remote_room, TRUE)
+	machine(/obj/machinery/power/apc, remote_apc)
+	dns.forceMove(remote)
+	receiver.forceMove(remote)
+	radio = new(source_spot)
+	owned += radio
+	relay = machine(/obj/machinery/telecomms/relay, source_spot)
+	hub = machine(/obj/machinery/telecomms/hub, remote)
+	receiver_port = machine(/obj/machinery/telecomms/receiver/prerelease_fixture, remote)
+	relay.links = list(hub)
+	hub.links = list(relay, receiver_port)
+	receiver_port.links = list(hub)
+	radio_port = radio.get_netrun_machine_service("telecomms.origin")
+	receiver_service = receiver_port.get_netrun_machine_service("telecomms.receiver")
+	SSnetrun.ensure_topology()
+
+/datum/netrun_communication_scene/proc/signal()
+	var/datum/signal/subspace/result = new
+	result.source = radio
+	result.frequency = FREQ_COMMON
+	result.levels = list(radio.z)
+	return result
+
+/datum/unit_test/netrun_transport_native_relay_policy/Run()
+	var/datum/netrun_communication_scene/scene = allocate(/datum/netrun_communication_scene, run_loc_floor_bottom_left)
+	var/datum/signal/subspace/signal = scene.signal()
+	allocated += signal
+	TEST_ASSERT(scene.radio_port.send("telecomms.receiver", new /datum/netrun_machine_message/telecomms(signal), scene.receiver_service.service_tag()), "Communication discovery must be admitted across a native relay")
+	var/deadline = world.time + 4 SECONDS
+	while(!scene.receiver_port.received_packets && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(scene.receiver_port.received_packets, 1, "Cold DNS query, reply and communication must cross telecomms without an NTnet relay")
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	TEST_ASSERT(!transport.reachable(scene.source, scene.target), "A communication path must not enter the ordinary machine route cache")
+	var/datum/component/netrun_node/start = scene.source.resolve_node()
+	var/datum/netrun_path_tree/tree = new(SSnetrun.ensure_topology(), start)
+	allocated += tree
+	TEST_ASSERT(!tree.reached[scene.target.resolve_node().address], "Telecommunications must not widen runner, research or atmosphere topology")
+	scene.relay.receiving = FALSE
+	TEST_ASSERT(!transport.reachable(scene.radio_port, scene.receiver_service), "A disabled native receive direction must revoke a cached communication route")
+	scene.relay.receiving = TRUE
+	scene.relay.set_machine_stat(BROKEN)
+	TEST_ASSERT(!transport.reachable(scene.radio_port, scene.receiver_service), "Broken native relays must revoke cached communication routes")
+
+/datum/unit_test/netrun_transport_native_relay_delivery_revalidation/Run()
+	var/datum/netrun_communication_scene/scene = allocate(/datum/netrun_communication_scene, run_loc_floor_bottom_left)
+	var/datum/signal/subspace/signal = scene.signal()
+	allocated += signal
+	var/datum/netrun_machine_packet/data/packet = new(scene.radio_port, scene.receiver_service, new /datum/netrun_machine_message/telecomms(signal))
+	TEST_ASSERT(packet.send(), "A live native relay must admit the communication packet")
+	scene.relay.freq_listening = list(FREQ_SCIENCE)
+	packet.deliver()
+	TEST_ASSERT_EQUAL(scene.receiver_port.received_packets, 0, "A frequency change in flight must reject the packet at delivery")
+
+/datum/unit_test/netrun_transport_atmos_late_controller_registration/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/atmospherics/components/unary/vent_pump/vent = scene.machine(/obj/machinery/atmospherics/components/unary/vent_pump, scene.target_spot)
+	vent.broadcast_status()
+	sleep(3 SECONDS)
+	var/obj/machinery/airalarm/alarm = scene.machine(/obj/machinery/airalarm, scene.source_spot)
+	alarm.buildstage = 2
+	var/deadline = world.time + 12 SECONDS
+	while(!alarm.netrun_vent_info[vent.id_tag] && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(alarm.netrun_vent_info[vent.id_tag], "An idle vent must retry after its initial discovery found no air alarm")
+	var/received_at = alarm.netrun_vent_info[vent.id_tag]["timestamp"]
+	sleep(11 SECONDS)
+	TEST_ASSERT_EQUAL(alarm.netrun_vent_info[vent.id_tag]["timestamp"], received_at, "Acknowledged devices must stop periodic registration packets")
+	qdel(alarm)
+	alarm = scene.machine(/obj/machinery/airalarm, scene.source_spot)
+	alarm.buildstage = 2
+	deadline = world.time + 12 SECONDS
+	while(!alarm.netrun_vent_info[vent.id_tag] && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(alarm.netrun_vent_info[vent.id_tag], "Deleting and replacing the controller must rearm idle device registration")
+
+/datum/unit_test/netrun_roundstart_telecommunications_placement/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/area/science/server/science = scene.room(/area/science/server)
+	var/area/tcommsat/server/telecomms = scene.room(/area/tcommsat/server)
+	scene.take(locate(scene.source_spot.x + 3, scene.source_spot.y + 2, scene.source_spot.z), science)
+	scene.take(locate(scene.source_spot.x + 4, scene.source_spot.y + 2, scene.source_spot.z), telecomms)
+	var/list/saved_areas = GLOB.sortedAreas
+	GLOB.sortedAreas = list(science, telecomms)
+	var/turf/selected = SSnetrun.find_server_spot()
+	GLOB.sortedAreas = saved_areas
+	TEST_ASSERT(istype(get_area(selected), /area/tcommsat), "Roundstart DNS and information servers must choose telecommunications before science")
+	TEST_ASSERT(SSnetrun.runlevels & RUNLEVEL_LOBBY, "Network preparation must run during the lobby after subsystem initialization")
+
 /datum/netrun_transport_scene
 	parent_type = /datum/netrun_route_scene
 	var/list/saved_dns

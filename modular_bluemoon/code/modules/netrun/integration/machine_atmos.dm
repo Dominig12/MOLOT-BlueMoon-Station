@@ -1,5 +1,16 @@
 /** Native atmosphere automation speaks through the same routed network as runners. */
 /datum/netrun_machine_message/atmos
+	var/datum/weakref/registration_ref
+
+/datum/netrun_machine_message/atmos/copy()
+	var/datum/netrun_machine_message/atmos/result = ..()
+	result.registration_ref = registration_ref
+	return result
+
+/datum/netrun_machine_message/atmos/delivered(datum/netrun_machine_service/recipient_service)
+	var/datum/netrun_machine_service/atmos/device/device = registration_ref?.resolve()
+	if(istype(recipient_service, /datum/netrun_machine_service/atmos/controller))
+		device?.acknowledge_controller(recipient_service)
 
 /datum/netrun_machine_message/atmos/coalescing_key()
 	if(payload["sigtype"] == "status")
@@ -14,11 +25,48 @@
 	var/list/wire_data = deepCopyList(data)
 	wire_data -= "user"
 	var/datum/netrun_machine_message/atmos/message = new(wire_data)
+	if(destination_id == "atmos.controller" && wire_data["sigtype"] == "status" && istype(service, /datum/netrun_machine_service/atmos/device))
+		var/datum/netrun_machine_service/atmos/device/device = service
+		device.refresh_registration()
+		message.registration_ref = WEAKREF(device)
+		device.arm_registration()
 	if(user)
 		message.user_ref = WEAKREF(user)
 	return service.send(destination_id, message, recipient_tag)
 
 /datum/netrun_machine_service/atmos
+	var/area/registration_area
+
+/datum/netrun_machine_transport
+	/// These small area buckets avoid a station-wide alarm/device scan per retry.
+	var/list/atmos_devices_by_area = list()
+	var/list/atmos_controllers_by_area = list()
+
+/datum/netrun_machine_service/atmos/proc/unindex_registration(list/index)
+	if(!registration_area)
+		return
+	var/key = REF(registration_area)
+	var/list/bucket = index[key]
+	if(bucket)
+		bucket -= src
+	if(!length(bucket))
+		index -= key
+	registration_area = null
+
+/datum/netrun_machine_service/atmos/proc/index_registration(list/index)
+	var/area/current = get_base_area(host)
+	if(current == registration_area)
+		return FALSE
+	unindex_registration(index)
+	registration_area = current
+	if(current)
+		var/key = REF(current)
+		var/list/bucket = index[key]
+		if(!bucket)
+			bucket = list()
+			index[key] = bucket
+		bucket |= src
+	return TRUE
 
 /datum/netrun_machine_service/atmos/proc/control_frequency()
 	return null
@@ -28,6 +76,40 @@
 
 /datum/netrun_machine_service/atmos/controller
 	service_id = "atmos.controller"
+	var/registered_frequency
+
+/datum/netrun_machine_service/atmos/controller/New(datum/component/netrun_node/node, atom/host_override)
+	..(node, host_override)
+	index_registration(SSnetrun.get_machine_transport().atmos_controllers_by_area)
+	registered_frequency = control_frequency()
+	RegisterSignal(host, list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_MOVABLE_MOVED), PROC_REF(registration_changed))
+	rearm_local_devices()
+
+/datum/netrun_machine_service/atmos/controller/Destroy()
+	if(host)
+		UnregisterSignal(host, list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_MOVABLE_MOVED))
+	rearm_local_devices()
+	unindex_registration(SSnetrun.get_machine_transport().atmos_controllers_by_area)
+	return ..()
+
+/datum/netrun_machine_service/atmos/controller/host_initialized()
+	. = ..()
+	var/changed = index_registration(SSnetrun.get_machine_transport().atmos_controllers_by_area)
+	if(changed || registered_frequency != control_frequency())
+		registered_frequency = control_frequency()
+		rearm_local_devices()
+
+/datum/netrun_machine_service/atmos/controller/proc/registration_changed()
+	SIGNAL_HANDLER
+	rearm_local_devices()
+	if(index_registration(SSnetrun.get_machine_transport().atmos_controllers_by_area))
+		rearm_local_devices()
+
+/datum/netrun_machine_service/atmos/controller/proc/rearm_local_devices()
+	var/list/bucket = SSnetrun.get_machine_transport().atmos_devices_by_area[REF(registration_area)]
+	for(var/datum/netrun_machine_service/atmos/device/device as anything in bucket)
+		device.acknowledged_controllers -= REF(src)
+		device.arm_registration(world.tick_lag)
 
 /datum/netrun_machine_service/atmos/controller/control_frequency()
 	var/obj/machinery/airalarm/alarm = host
@@ -67,6 +149,127 @@
 
 /datum/netrun_machine_service/atmos/device
 	service_id = "atmos.device"
+	var/list/acknowledged_controllers = list()
+	var/registration_tag
+	var/registration_frequency
+	var/registration_timer
+	var/registration_at = INFINITY
+	var/registration_attempts = 0
+
+/datum/netrun_machine_service/atmos/device/New(datum/component/netrun_node/node, atom/host_override)
+	..(node, host_override)
+	if(!registration_required())
+		return
+	refresh_registration()
+	RegisterSignal(host, list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_MOVABLE_MOVED), PROC_REF(registration_changed))
+	arm_registration(5 SECONDS + rand(0, 2 SECONDS))
+
+/datum/netrun_machine_service/atmos/device/Destroy()
+	SSnetrun.task_scheduler?.cancel("atmos_registration", src)
+	if(registration_timer)
+		deltimer(registration_timer)
+	if(host && registration_required())
+		UnregisterSignal(host, list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_MOVABLE_MOVED))
+	unindex_registration(SSnetrun.get_machine_transport().atmos_devices_by_area)
+	acknowledged_controllers.Cut()
+	return ..()
+
+/datum/netrun_machine_service/atmos/device/host_initialized()
+	. = ..()
+	if(registration_required() && refresh_registration())
+		arm_registration(world.tick_lag)
+
+/datum/netrun_machine_service/atmos/device/proc/registration_required()
+	return istype(host, /obj/machinery/atmospherics/components/unary/vent_pump) || istype(host, /obj/machinery/atmospherics/components/unary/vent_scrubber)
+
+/datum/netrun_machine_service/atmos/device/proc/refresh_registration()
+	if(!registration_required())
+		return FALSE
+	var/changed = index_registration(SSnetrun.get_machine_transport().atmos_devices_by_area)
+	if(changed || registration_tag != service_tag() || registration_frequency != control_frequency())
+		registration_tag = service_tag()
+		registration_frequency = control_frequency()
+		acknowledged_controllers.Cut()
+		return TRUE
+	return FALSE
+
+/datum/netrun_machine_service/atmos/device/proc/registration_changed()
+	SIGNAL_HANDLER
+	refresh_registration()
+	acknowledged_controllers.Cut()
+	arm_registration(world.tick_lag)
+
+/datum/netrun_machine_service/atmos/device/proc/registration_complete()
+	var/found = FALSE
+	var/list/bucket = SSnetrun.get_machine_transport().atmos_controllers_by_area[REF(registration_area)]
+	for(var/datum/netrun_machine_service/atmos/controller/controller as anything in bucket)
+		if(QDELETED(controller) || !controller.matches(src, null))
+			continue
+		found = TRUE
+		var/datum/weakref/ack = acknowledged_controllers[REF(controller)]
+		if(ack?.resolve() != controller)
+			return FALSE
+	return found
+
+/datum/netrun_machine_service/atmos/device/proc/acknowledge_controller(datum/netrun_machine_service/atmos/controller/controller)
+	refresh_registration()
+	if(QDELETED(controller) || !controller.matches(src, null))
+		return
+	acknowledged_controllers[REF(controller)] = WEAKREF(controller)
+	if(registration_complete())
+		if(registration_timer)
+			deltimer(registration_timer)
+		registration_timer = null
+		registration_at = INFINITY
+		SSnetrun.task_scheduler?.cancel("atmos_registration", src)
+
+/datum/netrun_machine_service/atmos/device/proc/arm_registration(delay = 5 SECONDS)
+	if(!registration_required() || QDELETED(src) || (registration_timer && registration_at <= world.time + delay))
+		return
+	if(registration_timer)
+		deltimer(registration_timer)
+	registration_at = world.time + delay
+	registration_timer = addtimer(CALLBACK(src, PROC_REF(queue_registration)), delay, TIMER_STOPPABLE | TIMER_DELETE_ME)
+
+/datum/netrun_machine_service/atmos/device/proc/queue_registration()
+	registration_timer = null
+	registration_at = INFINITY
+	if(!QDELETED(host))
+		SSnetrun.get_task_scheduler().enqueue("atmos_registration", src, NETRUN_TASK_BACKGROUND)
+
+/datum/netrun_machine_service/atmos/device/proc/retry_registration()
+	refresh_registration()
+	if(registration_complete())
+		return
+	var/online_missing = FALSE
+	var/list/bucket = SSnetrun.get_machine_transport().atmos_controllers_by_area[REF(registration_area)]
+	for(var/datum/netrun_machine_service/atmos/controller/controller as anything in bucket)
+		var/datum/weakref/ack = acknowledged_controllers[REF(controller)]
+		if(!QDELETED(controller) && controller.matches(src, null) && ack?.resolve() != controller && controller.resolve_node()?.is_online())
+			online_missing = TRUE
+			break
+	if(online_missing && resolve_node()?.is_online() && control_frequency())
+		// New controllers invalidate the DNS revision, including cached negatives.
+		// Do not resend statuses to an absent or entirely powered-down area.
+		registration_attempts++
+		var/obj/machinery/atmospherics/components/unary/device = host
+		if(istype(device, /obj/machinery/atmospherics/components/unary/vent_pump))
+			var/obj/machinery/atmospherics/components/unary/vent_pump/vent = device
+			vent.broadcast_status()
+		else
+			var/obj/machinery/atmospherics/components/unary/vent_scrubber/scrubber = device
+			scrubber.broadcast_status()
+	arm_registration()
+
+/datum/netrun_task/atmos_registration
+	kind = "atmos_registration"
+
+/datum/netrun_task/atmos_registration/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	var/datum/netrun_machine_service/atmos/device/device = target()
+	if(QDELETED(device))
+		return FALSE
+	device.retry_registration()
+	return TRUE
 
 /datum/netrun_machine_service/atmos/device/matches(datum/netrun_machine_service/source_service, recipient_tag)
 	if(!..() || !same_channel(source_service))

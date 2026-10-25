@@ -154,9 +154,9 @@
 			entity.console.access_session.node_access[address] = max(entity.console.access_session.node_access[address] || 0, console.access_session.node_access[address])
 		entity.console.access_session.network_access = console.access_session.network_access.Copy()
 		console.dive_ref = WEAKREF(entity)
-		entity.dive_link.entry_client_ref = WEAKREF(console)
-		if(console.connection.jack)
-			entity.dive_link.entry_jack_ref = WEAKREF(console.connection.jack)
+		entity.dive_link.bind_client(console, console.connection.jack)
+		if(QDELETED(entity))
+			return FALSE
 		console.stop_watch()
 		for(var/datum/component/netrun_node/listened_node as anything in console.listening.Copy())
 			listened_node.stop_listening(console)

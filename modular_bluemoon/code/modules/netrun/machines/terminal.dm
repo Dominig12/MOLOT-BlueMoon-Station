@@ -104,6 +104,15 @@ APC одной группы этажей связаны между собой. �
 		capacity += bin.rating * 10
 	var/datum/component/netrun_node/node = AddComponent(/datum/component/netrun_node, NETRUN_NODE_SERVER, list("purge", "issue_key", "reboot"), server_security, server_access, capacity)
 	for(var/file_name in preload_files)
+		if(file_name == "readme.txt")
+			var/documented = FALSE
+			for(var/datum/netrun_file/manual/manual as anything in node.file_store.files)
+				if(istype(manual) && manual.name == file_name)
+					documented = TRUE
+					break
+			if(documented)
+				// The firmware manual includes the exact authored preload as machine notes.
+				continue
 		node.file_store.insert(new /datum/netrun_file(file_name, NETRUN_FILE_TEXT, preload_files[file_name]), TRUE)
 	for(var/daemon_id in preload_daemons)
 		var/datum/netrun_file/daemon_file = netrun_daemon_file(daemon_id)

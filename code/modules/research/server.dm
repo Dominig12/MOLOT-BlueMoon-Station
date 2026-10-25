@@ -46,9 +46,19 @@
 
 /obj/machinery/rnd/server/LateInitialize()
 	. = ..()
+	if(!stored_research)
+		var/memory_type = (network_id == RND_NETWORK_AUTO && is_station_level(z)) || network_id == RND_NETWORK_STATION ? /datum/techweb/science : techweb_type
+		stored_research = new memory_type
+		stored_research.research_owner_ref = WEAKREF(src)
 	AddComponent(/datum/component/techweb_holder)
 	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
-	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, SSresearch.get_rnd_network_for(src, network_id, techweb_type))
+	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, stored_research)
+	SSresearch.refresh_research_authorities()
+
+/obj/machinery/rnd/server/proc/research_network_id()
+	if(network_id == RND_NETWORK_AUTO)
+		return is_station_level(z) ? RND_NETWORK_STATION : REF(src)
+	return network_id
 
 /obj/machinery/rnd/server/process()
 	if(!(machine_stat & NOPOWER) && working)
@@ -76,6 +86,10 @@
 /obj/machinery/rnd/server/Destroy()
 	SSresearch.servers -= src
 	GLOB.rndservers_list -= src
+	var/datum/techweb/memory = stored_research
+	stored_research = null
+	qdel(memory)
+	SSresearch.refresh_research_authorities()
 	QDEL_NULL(alarmloop)
 	return ..()
 
@@ -96,31 +110,12 @@
 
 /// BLUEMOON ADD: сеть ближайшего РНД-сервера на том же Z-уровне, что и источник, либо null.
 /proc/find_nearest_rnd_techweb(atom/source)
-	var/turf/source_turf = get_turf(source)
-	if(!source_turf)
-		return null
-	var/obj/machinery/rnd/server/nearest
-	var/best_dist = INFINITY
-	for(var/obj/machinery/rnd/server/S as anything in SSmachines.get_machines_by_type_and_subtypes(/obj/machinery/rnd/server))
-		var/turf/server_turf = get_turf(S)
-		if(!server_turf || server_turf.z != source_turf.z)
-			continue
-		var/dist = get_dist(source_turf, server_turf)
-		if(dist <= best_dist)
-			best_dist = dist
-			nearest = S
-	return nearest?.stored_research
+	return SSresearch.get_rnd_network_for(source, RND_NETWORK_AUTO)
 
 /// BLUEMOON ADD: авто-подключение устройства к сети: сервер на том же Z-уровне,
 /// иначе на станции — глобальная научная сеть (как раньше), вне станции — null (подключается вручную).
 /proc/find_rnd_network_for_object(atom/source)
-	var/datum/techweb/nearest = find_nearest_rnd_techweb(source)
-	if(nearest)
-		return nearest
-	var/turf/source_turf = get_turf(source)
-	if(source_turf && is_station_level(source_turf.z))
-		return SSresearch.science_tech
-	return null
+	return SSresearch.get_rnd_network_for(source, RND_NETWORK_AUTO)
 //BLUEMOON ADD END
 
 /obj/machinery/rnd/server/attackby(obj/item/W, mob/user, params)
@@ -133,7 +128,10 @@
 		if(current_web == stored_research)
 			to_chat(user, span_notice("[W] уже подключён к [stored_research.organization]."))
 		else
-			W.vars["linked_techweb"] = stored_research
+			if(W.GetComponent(/datum/component/techweb_holder))
+				SEND_SIGNAL(W, COMSIG_ATOM_SET_TECHWEB, stored_research)
+			else
+				W.vars["linked_techweb"] = stored_research
 			to_chat(user, span_notice("Вы подключаете [W] к сети сервера [stored_research.organization]."))
 		return TRUE
 	return .

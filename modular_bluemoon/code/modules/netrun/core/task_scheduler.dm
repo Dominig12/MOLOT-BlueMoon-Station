@@ -96,7 +96,7 @@
 	worker.dirty_nodes -= node
 	node.processing_update = TRUE
 	var/datum/netrun_topology/graph = worker.get_topology()
-	if(node.is_dynamic() || !node.binding_checked || node.binding_infra_revision != graph.infrastructure_revision)
+	if(node.pending_physical_update || node.is_dynamic() || !node.binding_checked || node.binding_infra_revision != graph.infrastructure_revision)
 		node.join_network()
 	node.reconcile_state()
 	node.processing_update = FALSE

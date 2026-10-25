@@ -106,6 +106,7 @@
 /datum/controller/subsystem/netrun
 	/// Сколько серверов с загруженным семенем появляется на станции в начале раунда
 	var/roundstart_seeds = 1
+	var/roundstart_servers_created = FALSE
 
 /datum/controller/subsystem/netrun/Initialize()
 	. = ..()
@@ -128,6 +129,9 @@
 			log_game("NETRUN: DNS не создан — не найдено места на станции.")
 
 /datum/controller/subsystem/netrun/proc/spawn_roundstart_servers()
+	if(roundstart_servers_created)
+		return
+	roundstart_servers_created = TRUE
 	ensure_station_dns()
 	for(var/i in 1 to roundstart_seeds)
 		var/turf/spot = find_server_spot()
@@ -138,9 +142,9 @@
 		server.plant_seed(announce = FALSE)
 		log_game("NETRUN: раундстартовый сервер с семенем в [AREACOORD(server)]")
 
-/// Свободная клетка в серверной: сначала серверные НИО и телекомов, потом любые научные и техсклад
+/// Серверы инфраструктуры принадлежат телекоммуникациям; занятое оборудование не заменяется.
 /datum/controller/subsystem/netrun/proc/find_server_spot()
-	var/static/list/preferred = list(/area/science/server, /area/tcommsat/server, /area/engineering/storage/tech, /area/science)
+	var/static/list/preferred = list(/area/tcommsat/server, /area/tcommsat)
 	for(var/area_type in preferred)
 		var/list/candidates = list()
 		for(var/area/A in GLOB.sortedAreas)

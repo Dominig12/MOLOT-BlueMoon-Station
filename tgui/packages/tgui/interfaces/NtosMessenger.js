@@ -61,14 +61,22 @@ export const NtosMessenger = (props) => {
   return (
     <NtosWindow width={600} height={850}>
       <NtosWindow.Content>
-        {!!delivery_status && (
-          <NoticeBox
-            danger={delivery_error}
-            info={delivery_pending}>
-            {delivery_status}
-          </NoticeBox>
-        )}
-        {content}
+        <Stack vertical fill className="NtosMessenger">
+          {!!delivery_status && (
+            <Stack.Item shrink={0}>
+              <NoticeBox
+                role="status"
+                aria-live="polite"
+                danger={delivery_error}
+                info={delivery_pending}>
+                {delivery_status}
+              </NoticeBox>
+            </Stack.Item>
+          )}
+          <Stack.Item grow minHeight={0} className="NtosMessenger__body">
+            {content}
+          </Stack.Item>
+        </Stack>
       </NtosWindow.Content>
     </NtosWindow>
   );
@@ -703,7 +711,7 @@ const ChatScreen = (props) => {
         </Section>
       )}
 
-      <Stack.Item grow={1}>
+      <Stack.Item grow={1} minHeight={0}>
         <Section
           scrollable
           fill

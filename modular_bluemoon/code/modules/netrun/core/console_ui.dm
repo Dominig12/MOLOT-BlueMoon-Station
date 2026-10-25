@@ -9,6 +9,7 @@
 	var/ui_transit_revision = -1
 	var/list/ui_context_sources = list()
 	var/list/ui_legacy_context
+	var/turf/ui_legacy_turf
 	var/ui_legacy_status_address
 	var/list/ui_legacy_status
 
@@ -30,6 +31,7 @@
 		UnregisterSignal(source, ui_context_sources[source])
 	ui_context_sources.Cut()
 	ui_legacy_context = null
+	ui_legacy_turf = null
 	ui_legacy_status = null
 	ui_legacy_status_address = null
 
@@ -55,11 +57,18 @@
 	for(var/atom/source as anything in targets)
 		if(ui_context_sources[source] || QDELETED(source))
 			continue
-		var/list/signals = list(COMSIG_MOVABLE_MOVED, COMSIG_ATOM_ENTERED, COMSIG_ATOM_EXITED, COMSIG_PARENT_QDELETING)
+		var/list/signals = list(COMSIG_ATOM_ENTERED, COMSIG_ATOM_EXITED, COMSIG_PARENT_QDELETING)
 		if(ismob(source))
 			signals |= list(COMSIG_MOB_EQUIPPED_ITEM, COMSIG_MOB_UNEQUIPPED_ITEM)
-		ui_context_sources[source] = signals
+		ui_context_sources[source] = signals | list(COMSIG_MOVABLE_MOVED)
 		RegisterSignal(source, signals, PROC_REF(on_ui_context_changed))
+		RegisterSignal(source, COMSIG_MOVABLE_MOVED, PROC_REF(on_ui_context_moved))
+
+/// Movement changes coordinates. Credentials and source/sector context are checked
+/// independently; clearing them here turns each walking step into a full map scan.
+/datum/netrun_console/proc/on_ui_context_moved(datum/source)
+	SIGNAL_HANDLER
+	invalidate_ui()
 
 /datum/netrun_console/proc/on_ui_context_changed(datum/source)
 	SIGNAL_HANDLER
@@ -82,7 +91,11 @@
 	for(var/datum/tgui/ui as anything in viewers)
 		if(ui.user && ui.user != operator)
 			credentials += list(list(ui.user, netrun_mob_access(ui.user)))
-	var/list/current = list(operator, physical_turf(), credentials, SSntnet.is_enabled(), length(SSntnet.catalog), SSnetworks.station_network?.setting_disabled)
+	var/turf/here = physical_turf()
+	if(ui_legacy_turf != here)
+		on_ui_context_moved(src)
+	ui_legacy_turf = here
+	var/list/current = list(operator, credentials, SSntnet.is_enabled(), length(SSntnet.catalog), SSnetworks.station_network?.setting_disabled)
 	if(ui_legacy_context && !netrun_snapshot_equal(ui_legacy_context, current))
 		on_ui_context_changed(src)
 	ui_legacy_context = current

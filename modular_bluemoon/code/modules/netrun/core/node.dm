@@ -53,6 +53,8 @@
 	var/last_active
 	var/last_dynamic
 	var/pending_state_notification = FALSE
+	/// Movement handlers only enqueue; routing consumers may reconcile before the worker.
+	var/pending_physical_update = FALSE
 	/// Cold display notifications are coalesced from the last completed processing, not input.
 	var/last_processed_at = -INFINITY
 	var/pending_changed_flags = 0
@@ -70,9 +72,9 @@
 	src.command_ids = list("scan", "ping", "node_log", "packet_log", "extract", "traceroute", "siphon", "spoof_log") | (command_ids || list())
 	base_security = security
 	src.required_access = required_access
-	if(storage_capacity)
-		file_store = new(src, storage_capacity)
-		RegisterSignal(file_store, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_storage_changed))
+	// Firmware documentation is available even on endpoints without writable storage.
+	file_store = new(src, storage_capacity || 0)
+	RegisterSignal(file_store, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_storage_changed))
 	address = SSnetrun.make_address()
 	SSnetrun.nodes_by_address[address] = src
 	topology_turf = physical_turf()
@@ -93,6 +95,7 @@
 	refresh_physical_host()
 	var/atom/host = parent
 	host.ensure_netrun_machine_services(src)
+	host.ensure_netrun_manual(src)
 
 /datum/component/netrun_node/UnregisterFromParent()
 	clear_physical_carrier()
@@ -130,6 +133,7 @@
 /datum/component/netrun_node/proc/join_network()
 	var/datum/netrun_topology/topology = SSnetrun.get_topology()
 	topology.refresh_node(src)
+	pending_physical_update = FALSE
 	var/datum/netrun_network/new_net
 	if(node_type == NETRUN_NODE_APC)
 		new_net = SSnetrun.get_apc_network(src)
@@ -181,9 +185,12 @@
 /datum/component/netrun_node/proc/on_moved(datum/source)
 	SIGNAL_HANDLER
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_MOVED, src, topology_turf, physical_turf())
-	join_network()
-	// refresh_node emits BINDING only when the actual APC attachment changes.
-	notify_changed(NETRUN_CHANGED_STATE)
+	// Never scan bindings or repair every retained route inside the character's move.
+	// The existing node task coalesces several moves, and explicit route consumers
+	// call join_network() themselves before authorizing a packet or serializing UI.
+	pending_physical_update = TRUE
+	pending_changed_flags |= NETRUN_CHANGED_STATE
+	SSnetrun.queue_node(src, TRUE)
 
 /datum/component/netrun_node/proc/on_state_changed(datum/source)
 	SIGNAL_HANDLER
