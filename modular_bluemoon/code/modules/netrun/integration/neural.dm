@@ -184,7 +184,7 @@
 		shown++
 		var/image/overlay = image(icon = overlay_node)
 		overlay.color = netrun_access_color(level, node.is_online())
-		owner.write_image_data("\ref[node]:NETVISION", overlay, node.parent, "[node.address]\n[netrun_neural_access_name(level)]", 1.5 SECONDS, 24, -6, 10)
+		owner.write_image_data("\ref[node]:NETVISION", overlay, node.parent, "[node.address]\n[netrun_neural_access_name(level)]", 1.5 SECONDS, 24, -6, 12)
 	return TRUE
 
 /proc/netrun_access_color(level, online = TRUE)
