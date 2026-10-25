@@ -4,7 +4,7 @@ SUBSYSTEM_DEF(netrun)
 	// Machine traffic now shares this worker. Ordinary MC service prevents unrelated
 	// foreground work starving delivery; the internal scheduler still bounds CPU/tasks.
 	flags = 0
-	runlevels = RUNLEVEL_LOBBY | RUNLEVEL_SETUP | RUNLEVEL_GAME | RUNLEVEL_POSTGAME
+	runlevels = RUNLEVEL_LOBBY | RUNLEVEL_GAME | RUNLEVEL_POSTGAME
 
 	/// id = /datum/netrun_network
 	var/list/networks = list()
