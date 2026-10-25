@@ -553,6 +553,9 @@
 		COOLDOWN_START(src, cooldown_say, cooldown_say_time)
 
 	if(!netrun_atom_techweb(src))
+		var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+		if(holder?.had_authority)
+			return FALSE
 		var/datum/techweb/binding
 		for(var/obj/machinery/computer/rdconsole/console in orange(7, src))
 			binding = netrun_atom_techweb(console)
@@ -637,9 +640,9 @@
 	)
 
 /obj/machinery/mecha_part_fabricator/ui_interact(mob/user, datum/tgui/ui)
-	sync(TRUE, TRUE)
 	ui = SStgui.try_update_ui(user, src, ui)
 	if(!ui)
+		sync(TRUE, TRUE)
 		ui = new(user, src, "ExosuitFabricator")
 		ui.open()
 

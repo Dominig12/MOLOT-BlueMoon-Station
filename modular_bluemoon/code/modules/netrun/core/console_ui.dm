@@ -784,7 +784,11 @@
 	if(node.used_storage() + file.size > node.file_store?.capacity)
 		log_line("На узле нет места.", "bad")
 		return
-	node.file_store.insert(file.copy())
+	var/datum/netrun_file/copy = file.copy()
+	if(!node.file_store.insert(copy))
+		qdel(copy)
+		log_line("На узле нет места для копии файла.", "bad")
+		return FALSE
 	node.touch()
 	node.add_log("[log_source()]: загружен [file.name].")
 	log_line("Загружено: [file.name].", "good")

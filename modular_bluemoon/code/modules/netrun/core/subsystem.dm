@@ -310,11 +310,11 @@ SUBSYSTEM_DEF(netrun)
 	next_fire = min(next_fire, world.time + world.tick_lag)
 
 /datum/controller/subsystem/netrun/proc/refresh_delivery_interval()
-	wait = task_scheduler?.ready_deliveries ? world.tick_lag : NETRUN_DEFAULT_FIRE_INTERVAL
+	wait = task_scheduler?.pending() ? world.tick_lag : NETRUN_DEFAULT_FIRE_INTERVAL
 
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
 	var/slice_start_usage = TICK_USAGE
-	if(!resumed)
+	if(!resumed && initialized)
 		get_machine_transport().prepare_network()
 	if(!resumed)
 		current_pass_cost_ms = 0
@@ -331,7 +331,10 @@ SUBSYSTEM_DEF(netrun)
 			populate_tasks()
 		next_task_population = world.time + limits.population_interval
 	var/budget_ms = limits.budget_for(TICK_USAGE)
-	var/max_items = limits.tasks_for(budget_ms, scheduler.average_ms)
+	// A previous expensive UI/topology task must not ration a following burst of
+	// cheap machine deliveries. Actual elapsed CPU and MC_TICK_CHECK bound the
+	// work; the item ceiling remains a separate hard stop for near-zero-cost tasks.
+	var/max_items = limits.max_per_pass
 	var/executed = 0
 	while(executed < max_items)
 		if(executed && max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage)) >= budget_ms)

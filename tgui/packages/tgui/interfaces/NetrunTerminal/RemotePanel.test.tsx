@@ -94,6 +94,22 @@ test('native pump readings show physical units rather than a raw property tree',
   expect(panel.getByText('123.5 кПа')).toBeTruthy();
 });
 
+test('native turret reports the actual head exemption setting', () => {
+  const panel = setup([], 'PortableTurret', { on: true, locked: false, ignore_heads: true });
+  const label = panel.getByText('Исключение глав:');
+  expect(label.parentElement?.textContent).toBe('Исключение глав:Включено');
+});
+
+test('native DM zero research-control flag disables research requests', () => {
+  const panel = setup([{ id: 'researchNode', name: 'Исследовать технологию', access: 2, allowed: true,
+    params: [{ id: 'node_id', name: 'Код технологии', type: 'text' }] }], 'Techweb', {
+    researchable: 0, locked: 0, nodes: [{ id: 'comptech', tier: 1, can_unlock: 1 }],
+  });
+  fireEvent.change(panel.getByLabelText('Код технологии'), { target: { value: 'comptech' } });
+  fireEvent.click(panel.getByText('Исследовать технологию'));
+  expect(sent(panel.topic)).toEqual([]);
+});
+
 test('Russian decimal input sends a number and live polling retains the draft', () => {
   const panel = setup();
   const field = panel.getByLabelText('Давление, кПа') as HTMLInputElement;

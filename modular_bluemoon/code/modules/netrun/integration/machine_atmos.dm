@@ -15,6 +15,10 @@
 /datum/netrun_machine_message/atmos/coalescing_key()
 	if(payload["sigtype"] == "status")
 		return "[payload["device"]]:[payload["tag"]]"
+	if(payload["sigtype"] == "command" && ("status" in payload) && length(payload) <= 3)
+		// Native read-only polls carry only tag, sigtype and status. Real orders
+		// remain independent even when they also ask for a resulting status.
+		return "atmos.poll:[payload["tag"]]"
 	return null
 
 /// Actor provenance is separate from the copied wire payload.
@@ -133,12 +137,6 @@
 	SStgui.update_uis(alarm)
 	SEND_SIGNAL(alarm, COMSIG_NETRUN_SERVICE_STATE_CHANGED)
 	return TRUE
-
-/datum/netrun_machine_service/atmos/controller/directory_ready(destination_id, recipient_tag)
-	if(destination_id == "atmos.device" && recipient_tag)
-		var/obj/machinery/airalarm/alarm = host
-		alarm.send_signal(recipient_tag, list("status"))
-	return ..()
 
 /datum/netrun_machine_service/atmos/alarm_source
 	service_id = "atmos.alarm"

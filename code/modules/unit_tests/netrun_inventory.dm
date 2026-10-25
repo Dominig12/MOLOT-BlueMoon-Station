@@ -74,6 +74,49 @@
 		TEST_ASSERT(findtext(file.content, "APC"), "Archive notes must remain alongside real network instructions")
 	TEST_ASSERT_EQUAL(count, 1, "A predefined readme must not create ambiguous duplicate filenames")
 
+/// The existing node-independent terminal help must not resolve to a machine hook.
+/datum/unit_test/netrun_terminal_manual_contract/Run()
+	var/obj/machinery/computer/netrun_terminal/terminal = allocate(/obj/machinery/computer/netrun_terminal, run_loc_floor_bottom_left)
+	var/datum/netrun_file/local_manual
+	for(var/datum/netrun_file/file as anything in terminal.console.inventory.local_store.files)
+		if(file.name == "readme.txt")
+			local_manual = file
+	TEST_ASSERT_NOTNULL(local_manual, "The terminal must retain its local general-purpose user guide")
+	TEST_ASSERT(findtext(local_manual.content, "СЕТЕВОЙ ТЕРМИНАЛ") && findtext(local_manual.content, "Командная строка"), "Terminal initialization must call the original node-independent guide")
+	var/datum/component/netrun_node/node = terminal.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT_NOTNULL(node.file_store, "Terminal initialization must separately provision its machine-node guide")
+	var/datum/netrun_file/node_manual = node.file_store.files[1]
+	TEST_ASSERT(node_manual != local_manual && findtext(node_manual.content, "КОМАНДЫ ЭТОГО УЗЛА"), "The machine guide and the local terminal user guide must have separate ownership and contracts")
+
+/// A free firmware source still produces a charged copy through the generic disk transaction.
+/datum/unit_test/netrun_manual_copy_capacity/Run()
+	var/obj/item/endpoint = allocate(/obj/item)
+	var/datum/component/netrun_node/node = endpoint.AddComponent(/datum/component/netrun_node, NETRUN_NODE_CAMERA)
+	var/datum/netrun_file/manual = node.file_store.files[1]
+	var/datum/netrun_file_store/destination = allocate(/datum/netrun_file_store, null, 0)
+	var/source_revision = node.file_store.revision
+	TEST_ASSERT_NULL(node.file_store.transfer_to(destination, manual), "An ordinary manual copy must not bypass a zero-capacity destination")
+	TEST_ASSERT_EQUAL(length(destination.files), 0, "A rejected manual copy must not overfill its destination")
+	TEST_ASSERT(manual in node.file_store.files, "A rejected copy must preserve the firmware source")
+	TEST_ASSERT_EQUAL(node.file_store.revision, source_revision, "A rejected copy must leave source storage unchanged")
+	destination.capacity = netrun_text_size(manual.content)
+	var/datum/netrun_file/copy = node.file_store.transfer_to(destination, manual)
+	TEST_ASSERT_NOTNULL(copy, "The same ordinary copy must fit when the destination has enough payload capacity")
+	TEST_ASSERT(copy.size > 0 && destination.used() == copy.size, "The destination must charge the ordinary copy's complete size")
+
+/// The upload boundary must report the actual insert outcome for a charged copy.
+/datum/unit_test/netrun_manual_upload_capacity/Run()
+	var/datum/netrun_entity_contact_scene/scene = allocate(/datum/netrun_entity_contact_scene, run_loc_floor_bottom_left)
+	scene.authorize()
+	scene.console.access_session.node_access[scene.target_node.address] = NETRUN_ACCESS_USER
+	var/datum/netrun_file/manual = scene.source_node.file_store.files[1]
+	TEST_ASSERT(scene.source_node.file_store.remove(manual), "The fixture must transfer actual ownership of a firmware file")
+	TEST_ASSERT(scene.console.inventory.local_store.insert(manual), "The sender must actually own the file before upload")
+	var/baseline_files = length(scene.target_node.file_store.files)
+	TEST_ASSERT(!scene.console.transfer_to_node(manual.uid, scene.target_node, TRUE), "A rejected charged copy must not report a completed upload")
+	TEST_ASSERT_EQUAL(length(scene.target_node.file_store.files), baseline_files, "The rejected upload must leave the zero-capacity receiver unchanged")
+	TEST_ASSERT(manual in scene.console.inventory.local_store.files, "The failed upload must retain the original sender-owned file")
+
 /datum/unit_test/netrun_file_store_transaction/Run()
 	var/datum/netrun_file_store/source = allocate(/datum/netrun_file_store, null, 2)
 	var/datum/netrun_file_store/destination = allocate(/datum/netrun_file_store, null, 1)

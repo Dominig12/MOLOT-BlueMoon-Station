@@ -61,7 +61,7 @@
 			var/first = cached.hops[i - 1]
 			var/second = cached.hops[i]
 			cached.latency += graph.edge_lookup["[first]>[second]"] ? graph.cached_edge_cost(first, second) : NETRUN_RELAY_LATENCY
-		pair_used[key] = ++pair_serial
+		touch_pair_route(key)
 		path_cache_hits++
 		return cached
 	var/list/ports = list()

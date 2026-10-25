@@ -63,6 +63,12 @@
 	if(QDELETED(destination) || !(file in files) || (move && destination == src) || !destination.can_fit(file))
 		return null
 	var/datum/netrun_file/result = move ? file : file.copy()
+	// A free firmware source produces an ordinary charged text copy that can grow.
+	// Validate the actual owned result before changing either disk.
+	if(!destination.can_fit(result))
+		if(!move)
+			qdel(result)
+		return null
 	if(move)
 		files -= file
 	destination.files += result

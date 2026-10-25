@@ -257,9 +257,9 @@ Nothing else in the console has ID requirements.
 	return TRUE
 
 /obj/machinery/computer/rdconsole/ui_interact(mob/user, datum/tgui/ui = null)
-	request_research_snapshot()
 	ui = SStgui.try_update_ui(user, src, ui)
 	if (!ui)
+		request_research_snapshot()
 		ui = new(user, src, "Techweb", name)
 		ui.open()
 		ui.set_autoupdate(TRUE)
@@ -482,14 +482,9 @@ Nothing else in the console has ID requirements.
 			var/slot = text2num(params["slot"])
 			var/datum/design/design = SSresearch.techweb_design_by_id(params["selectedDesign"])
 			if(design && netrun_research_cache?.researched_designs[design.id] && slot >= 1 && slot <= d_disk.max_blueprints)
-				var/autolathe_friendly = design.is_autolathe_compatible()
-				if(!autolathe_friendly)
-					design.category -= "Imported"
-
-				if(design.build_type & (AUTOLATHE|PROTOLATHE)) // Specifically excludes circuit imprinter and mechfab
-					design.build_type = autolathe_friendly ? (design.build_type | AUTOLATHE) : design.build_type
-					design.category |= "Imported"
-				d_disk.blueprints[slot] = design
+				var/datum/netrun_machine_service/research_client/client = get_netrun_machine_service("research.client")
+				if(!client?.request_design(design.id, CALLBACK(src, PROC_REF(finish_research_blueprint), design.id, slot, REF(d_disk))))
+					say("Сервер исследований недоступен; чертёж не записан.")
 			return TRUE
 		if ("uploadDesignSlot")
 			if(QDELETED(d_disk))
@@ -571,6 +566,22 @@ Nothing else in the console has ID requirements.
 				return
 			linked_destroy.unload_item()
 			return TRUE
+
+/obj/machinery/computer/rdconsole/proc/finish_research_blueprint(id, slot, disk_ref, datum/techweb/authority)
+	if(QDELETED(src) || !netrun_online() || locked || QDELETED(d_disk) || REF(d_disk) != disk_ref || slot < 1 || slot > d_disk.max_blueprints || !netrun_research_authorizes(src, authority, id))
+		return FALSE
+	var/datum/design/design = SSresearch.techweb_design_by_id(id)
+	if(!istype(design))
+		return FALSE
+	var/autolathe_friendly = design.is_autolathe_compatible()
+	if(!autolathe_friendly)
+		design.category -= "Imported"
+	if(design.build_type & (AUTOLATHE | PROTOLATHE))
+		design.build_type = autolathe_friendly ? (design.build_type | AUTOLATHE) : design.build_type
+		design.category |= "Imported"
+	d_disk.blueprints[slot] = design
+	SStgui.update_uis(src)
+	return TRUE
 
 /obj/machinery/computer/rdconsole/proc/eject_disk(type)
 	if(type == "design")
