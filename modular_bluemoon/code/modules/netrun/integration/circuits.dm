@@ -84,7 +84,7 @@
 /datum/netrun_console/circuit/log_source()
 	return "интегральная схема"
 
-/datum/netrun_console/circuit/run_command(datum/component/netrun_node/node, command_id)
+/datum/netrun_console/circuit/run_command(datum/component/netrun_node/node, command_id, input_nonce)
 	// Схема работает только легально: без нужного доступа команда просто не выполняется
 	var/datum/netrun_command/command = SSnetrun.get_command(command_id)
 	if(command && node && legit_node_level(node) < command.access)

@@ -49,3 +49,27 @@ test('click feedback is immediate, correlated with server receipt and preserves 
     expect(jest.getTimerCount()).toBe(0);
   } finally { jest.useRealTimers(); }
 });
+
+test('an unrelated operation cannot replace current feedback and a matching denial reports the actual result', () => {
+  (global as any).Byond = { winset: () => {}, topic: jest.fn() };
+  const store = createStore(combineReducers({ backend: backendReducer, debug: debugReducer }));
+  setGlobalStore(store);
+  store.dispatch(backendUpdate({ config: { interface: 'NetrunTerminal' }, data: {
+    locked: 0, breach: null, combat: null, entity: null, window: null, host_actions: [],
+    selected: { access: 1, commands: [{ id: 'door_open', name: 'Открыть шлюз' }] },
+  } }));
+  const panel = render(<NetrunFeedbackProvider><Probe /></NetrunFeedbackProvider>);
+  fireEvent.click(panel.getByText('Выполнить команду'));
+  const call = (global as any).Byond.topic.mock.calls.find((entry) => entry[0]?.type === 'act/command');
+  const nonce = JSON.parse(call[0].payload)._netrun_action;
+  const operation = { id: 'packet-1', operation_id: 'operation-1', kind: 'command',
+    label: 'Другая команда', from: 'A', to: 'B', phase: 'rejected', reason: 'Нет связи',
+    started_at: 1, updated_at: 2, route: ['A', 'B'], nonce: 'another-window' };
+  act(() => store.dispatch(backendUpdate({ data: { operations: [operation], input_ack: nonce } })));
+  expect(panel.getByRole('status').textContent).toBe('Сервер ответил: Открыть шлюз');
+  act(() => store.dispatch(backendUpdate({ data: { operations: [operation,
+    { ...operation, id: 'packet-2', label: 'Открыть шлюз', nonce, reason: 'Доступ отозван' }] } })));
+  expect(panel.getByRole('status').textContent).toBe('Отклонено: Открыть шлюз · Доступ отозван');
+  expect(store.getState().backend.data.selected.access).toBe(1);
+  panel.unmount();
+});

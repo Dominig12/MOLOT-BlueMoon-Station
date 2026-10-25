@@ -373,33 +373,36 @@
 		return FALSE
 	return owner.node_level(node) >= NETRUN_ACCESS_GUEST || (node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)) || owner.daemon_bonus("mapper")
 
-/datum/netrun_console/proc/run_command(datum/component/netrun_node/node, command_id)
+/datum/netrun_console/proc/run_command(datum/component/netrun_node/node, command_id, input_nonce)
+	var/datum/netrun_packet_context/operation = new("command", "Команда устройства",
+		route_source()?.address, node?.address, command_id, src, input_nonce)
 	if(world.time < next_command)
-		return FALSE
+		return reject_operation(operation, "Канал команд ещё занят.")
 	next_command = world.time + 0.5 SECONDS
 	node = refresh_route_node(node)
 	if(!node || !(command_id in node.all_command_ids()))
-		return FALSE
+		return reject_operation(operation, "Узел или команда недоступны.")
 	var/datum/netrun_command/command = SSnetrun.get_command(command_id)
 	if(!command)
-		return FALSE
+		return reject_operation(operation, "Команда не найдена.")
+	operation.label = command.display_name(node, netrun_command_arg(command_id))
 	if(is_locked())
 		log_line("Точка подключения заблокирована.", "bad")
-		return FALSE
+		return reject_operation(operation, "Точка подключения заблокирована.")
 	var/datum/netrun_path_tree/tree = make_path_tree()
 	if(!can_route(node, tree))
 		qdel(tree)
 		log_line("[node.address]: нет маршрута к узлу.", "bad")
-		return FALSE
+		return reject_operation(operation, "Нет маршрута к узлу.")
 	if(!command.works_offline && !node.is_online(node != connection.jack))
 		qdel(tree)
 		log_line("[node.address]: узел не отвечает.", "bad")
-		return FALSE
+		return reject_operation(operation, "Узел не отвечает.")
 	var/level = node_level(node, tree)
 	if(level < command.access)
 		qdel(tree)
 		log_line("[node.address]: недостаточно прав для «[command.name]».", "bad")
-		return FALSE
+		return reject_operation(operation, "Недостаточно прав для команды.")
 	node.touch()
 	// Задержка маршрута: прямое/близкое подключение - почти мгновенно, дальнее через реле - с лагом.
 	var/lat = command.ignores_latency ? 0 : latency_to(node, tree)
@@ -407,29 +410,36 @@
 	qdel(tree)
 	if(lat <= 0)
 		log_line("> [command_id] @ [node.address]")
-		var/datum/netrun_request/command/packet = new(src, node, command, command_id, node.network, operator, inventory.selected_file_uid || "none")
+		var/datum/netrun_request/command/packet = new(src, node, command, command_id, node.network, operator, inventory.selected_file_uid || "none", operation)
 		return packet.send(0, poll_route)
 	else
 		log_line("> [command_id] @ [node.address] (отправка, ~[lat * 100]мс)")
 		next_command = world.time + max(0.5 SECONDS, lat)
-		var/datum/netrun_request/command/packet = new(src, node, command, command_id, node.network, operator, inventory.selected_file_uid || "none")
+		var/datum/netrun_request/command/packet = new(src, node, command, command_id, node.network, operator, inventory.selected_file_uid || "none", operation)
 		return packet.send(lat, poll_route)
 
 /// Собственно выполнение команды - может вызываться с задержкой маршрута
-/datum/netrun_console/proc/do_command(datum/component/netrun_node/node, datum/netrun_command/command, command_id, illegal, datum/netrun_network/sent_network, mob/sender, file_uid)
+/datum/netrun_console/proc/do_command(datum/component/netrun_node/node, datum/netrun_command/command, command_id, illegal, datum/netrun_network/sent_network, mob/sender, file_uid, datum/netrun_packet_context/operation)
 	if(QDELETED(src) || QDELETED(node) || !command)
-		return
+		operation?.finish("cancelled", "Узел или сеанс удалён.")
+		return FALSE
 	node.join_network()
 	if(is_locked())
+		operation?.finish("rejected", "Точка подключения заблокирована.")
 		return FALSE
 	var/datum/netrun_path_tree/tree = make_path_tree()
-	if(sender != operator || !can_route(node, tree) || node.network != sent_network || !(command_id in node.all_command_ids()) || node_level(node, tree) < command.access)
+	var/reachable = can_route(node, tree)
+	if(reachable)
+		operation?.receive(tree.addresses_to(node.address))
+	if(sender != operator || !reachable || node.network != sent_network || !(command_id in node.all_command_ids()) || node_level(node, tree) < command.access)
 		qdel(tree)
 		log_line("[node.address]: запрос отменён — маршрут, оператор или права изменились.", "bad")
+		operation?.finish("rejected", "Маршрут, оператор или права изменились.")
 		return FALSE
 	if(!command.works_offline && !node.is_online(node != connection.jack))
 		qdel(tree)
 		log_line("[node.address]: узел не отвечает.", "bad")
+		operation?.finish("rejected", "Узел не отвечает.")
 		return FALSE
 	illegal = legit_node_level(node, tree) < command.access
 	qdel(tree)
@@ -437,9 +447,10 @@
 	var/result = world.PushUsr(operator, CALLBACK(command, TYPE_PROC_REF(/datum/netrun_command, execute), node, src, netrun_command_arg(command_id), request))
 	qdel(request)
 	if(QDELETED(src) || QDELETED(node))
-		return FALSE
+		return !isnull(result)
 	node.notify_changed()
 	if(isnull(result))
+		operation?.finish("rejected", "Команда не принята устройством. Подробности в терминале.")
 		return FALSE
 	log_line(result, illegal ? "average" : "good")
 	node.add_log("[log_source()]: [command.name][illegal ? " (без авторизации)" : ""].")

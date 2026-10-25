@@ -301,9 +301,10 @@
 		logs.Cut(1, length(logs) - NETRUN_MAX_LOG + 1)
 	notify_changed()
 
-/datum/component/netrun_node/proc/add_packet_log(packet_id, phase, kind, from_address, to_address, service_id, reason)
+/datum/component/netrun_node/proc/add_packet_log(packet_id, phase, kind, from_address, to_address, service_id, reason, operation_id, list/route)
 	packet_logs += list(list("id" = packet_id, "time" = world.time, "phase" = phase, "kind" = kind,
-		"from" = from_address, "to" = to_address, "service" = service_id, "reason" = reason))
+		"from" = from_address, "to" = to_address, "service" = service_id, "reason" = reason,
+		"operation_id" = operation_id || packet_id, "route" = route))
 	if(length(packet_logs) > NETRUN_MAX_PACKET_LOG)
 		packet_logs.Cut(1, length(packet_logs) - NETRUN_MAX_PACKET_LOG + 1)
 	// Logging does not broadcast per packet or keep unrelated nodes in the hot lane.

@@ -23,7 +23,9 @@
 	access_copy += ACCESS_NETWORK
 	TEST_ASSERT(!(ACCESS_NETWORK in assembly.access_card.GetAccess()), "A caller must not mutate the assembly's native credentials through the returned list")
 	TEST_ASSERT_EQUAL(chip.console.legit_node_level(node), NETRUN_ACCESS_USER, "The scanned matching access must authorize USER without granting ROOT")
-	TEST_ASSERT(chip.console.run_command(node, "apc_lighting"), "The actual scanned ID must enable legal synchronous automation")
+	TEST_ASSERT(chip.console.run_command(node, "apc_lighting"), "The actual scanned ID must admit legal automation")
+	var/datum/netrun_request/command/packet = netrun_operation_packet(chip.console, /datum/netrun_request/command)
+	TEST_ASSERT(packet && packet.deliver(), "Admitted automation must execute through the budgeted packet boundary")
 	TEST_ASSERT_NOTEQUAL(apc.lighting, initial_lighting, "Authorized automation must change the real APC channel")
 	TEST_ASSERT_EQUAL(chip.console.intrusion.trace, 0, "Legal circuit automation must not accumulate intrusion trace")
 	assembly.remove_component(chip)

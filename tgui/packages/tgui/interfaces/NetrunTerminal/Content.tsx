@@ -6,8 +6,9 @@ import { Box, Button, Icon, Tabs } from '../../components';
 import { AppearancePanel } from './AppearancePanel';
 import { CombatPanel } from './CombatPanel';
 import { MatrixPanel } from './Matrix';
-import { StationMap } from './NetworkMap';
+import { MapFocusRequest, StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
+import { OperationsPanel } from './OperationsPanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
 import { SessionStatus } from './SessionStatus';
 import { themeId, themeStyle } from './themes';
@@ -47,9 +48,10 @@ const NetrunWorkspace = () => {
   const storedPage = data.workspace_view === 'breach' && !breach ? 'terminal' : data.workspace_view;
   const [page, setPage] = useState<WorkspaceView>(() => storedPage
     ?? (breach ? 'breach' : data.hasWindow ? 'pinned' : web ? 'web' : 'terminal'));
-  const [terminalTab, setTerminalTab] = useState<'console' | 'chat'>('console');
+  const [terminalTab, setTerminalTab] = useState<'console' | 'chat' | 'operations'>('console');
   const [compact, setCompact] = useState(() => window.innerWidth < 860);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [mapFocusRequest, setMapFocusRequest] = useState<MapFocusRequest | null>(null);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const currentTheme = useNetrunSelector((state) => state.ui_theme);
   const openAppearance = useCallback(() => setAppearanceOpen(true), []);
@@ -64,6 +66,11 @@ const NetrunWorkspace = () => {
   }, [act]);
   const openCombat = useCallback(() => navigate('combat'), [navigate]);
   const openBreach = useCallback(() => navigate('breach'), [navigate]);
+  const openOperations = useCallback(() => { setTerminalTab('operations'); navigate('terminal'); }, [navigate]);
+  const locateOperationNode = useCallback((address: string) => {
+    setMapFocusRequest((previous) => ({ address, sequence: (previous?.sequence ?? 0) + 1 }));
+    navigate('map'); setSidebarOpen(true);
+  }, [navigate]);
 
   useEffect(() => {
     const resize = () => setCompact(window.innerWidth < 860);
@@ -119,7 +126,7 @@ const NetrunWorkspace = () => {
           ))}
         </Tabs>
       </div>
-      <div className="netrun-status"><SessionStatus onCombat={openCombat} onBreach={openBreach} /></div>
+      <div className="netrun-status"><SessionStatus onCombat={openCombat} onBreach={openBreach} onOperations={openOperations} /></div>
       <div className="netrun-workspace" data-net-layout="workspace" style={{ display: 'flex', flex: '1 1 0', minHeight: 0, minWidth: 0,
         position: 'relative', borderRadius: '10px', overflow: 'hidden' }}>
         <WorkspacePage id="terminal" active={page}>
@@ -127,9 +134,13 @@ const NetrunWorkspace = () => {
           <Tabs>
             <Tabs.Tab icon="terminal" selected={terminalTab === 'console'} onClick={() => setTerminalTab('console')}>Консоль</Tabs.Tab>
             <Tabs.Tab icon="comments" selected={terminalTab === 'chat'} onClick={() => setTerminalTab('chat')}>#noosphere</Tabs.Tab>
+            <Tabs.Tab icon="list-check" selected={terminalTab === 'operations'} onClick={() => setTerminalTab('operations')}>Операции</Tabs.Tab>
           </Tabs>
           <div style={{ display: terminalTab === 'console' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}><ConsoleLog active={page === 'terminal' && terminalTab === 'console'} /></div>
           <div style={{ display: terminalTab === 'chat' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}><NetChat active={page === 'terminal' && terminalTab === 'chat'} /></div>
+          <div style={{ display: terminalTab === 'operations' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}>
+            <OperationsPanel onLocate={locateOperationNode} />
+          </div>
         </WorkspacePage>
         <WorkspacePage id="map" active={page}>
           <div style={{ display: 'flex', flex: '1 1 0', minWidth: 0, minHeight: 0, gap: '7px', position: 'relative' }}>
@@ -139,7 +150,7 @@ const NetrunWorkspace = () => {
                   content={sidebarOpen ? 'Скрыть информацию об узле' : 'Показать информацию об узле'}
                   onClick={() => setSidebarOpen(!sidebarOpen)} />
               </div>
-              <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}><StationMap suspended={page !== 'map'} /></div>
+              <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}><StationMap suspended={page !== 'map'} focusRequest={mapFocusRequest} /></div>
             </div>
             <div className="netrun-inspector" data-net-layout="sidebar" style={{ display: sidebarOpen ? 'block' : 'none',
               flex: compact ? 'none' : '0 0 320px', width: compact ? 'min(88%, 350px)' : '320px',

@@ -5390,6 +5390,8 @@
 #include "modular_bluemoon\code\modules\netrun\core\map_geometry.dm"
 #include "modular_bluemoon\code\modules\netrun\core\map_view.dm"
 #include "modular_bluemoon\code\modules\netrun\core\machine_transport.dm"
+#include "modular_bluemoon\code\modules\netrun\core\packet_context.dm"
+#include "modular_bluemoon\code\modules\netrun\core\delivery_tasks.dm"
 #include "modular_bluemoon\code\modules\netrun\core\network.dm"
 #include "modular_bluemoon\code\modules\netrun\core\node.dm"
 #include "modular_bluemoon\code\modules\netrun\core\programs.dm"

@@ -233,7 +233,24 @@ export type SearchResult = {
 
 export type WorkspaceView = 'terminal' | 'map' | 'files' | 'pinned' | 'combat' | 'breach' | 'web';
 
+export type NetOperation = {
+  id: string;
+  operation_id: string;
+  nonce?: string | null;
+  kind: string;
+  label: string;
+  from: string | null;
+  to: string | null;
+  service?: string | null;
+  phase: 'queued' | 'running' | 'completed' | 'rejected' | 'cancelled';
+  reason?: string | null;
+  started_at: number;
+  updated_at: number;
+  route: string[];
+};
+
 export type NetrunData = {
+  operations?: NetOperation[];
   /** Receipt of a UI request; it does not imply the game action succeeded. */
   input_ack?: string | null;
   workspace_view?: WorkspaceView;

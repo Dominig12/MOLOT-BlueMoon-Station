@@ -11,11 +11,12 @@ const snapshot = (): ViewportSnapshot => {
   suspended: false };
 };
 const callbacks = () => ({ onStatus: jest.fn(), onHUD: jest.fn(), onHover: jest.fn(), onSelect: jest.fn() });
-const hostElement = () => {
+const hostElement = (scale = 1, left = 0, top = 0) => {
   const host = document.createElement('div');
   host.tabIndex = 0;
   Object.defineProperties(host, { clientWidth: { configurable: true, value: 720 }, clientHeight: { configurable: true, value: 480 } });
-  host.getBoundingClientRect = () => ({ left: 0, top: 0, width: 720, height: 480, right: 720, bottom: 480, x: 0, y: 0, toJSON: () => ({}) });
+  host.getBoundingClientRect = () => ({ left, top, width: 720 * scale, height: 480 * scale,
+    right: left + 720 * scale, bottom: top + 480 * scale, x: left, y: top, toJSON: () => ({}) });
   document.body.appendChild(host);
   return host;
 };
@@ -97,6 +98,80 @@ test('pan and zoom update the GPU camera without reuploading the graph or reconc
     expect(surface.updateScene).toHaveBeenCalledTimes(uploads);
     expect(surface.updateActors).toHaveBeenCalledTimes(actorsAfterSelection);
     expect(handlers.onHUD).toHaveBeenCalled();
+  } finally { controller.detach(); host.remove(); }
+});
+
+test.each([.75, 1, 1.25])('selection, hover and wheel follow the rendered pointer at CSS scale %s', async (scale) => {
+  const left = 37, top = 53, host = hostElement(scale, left, top), data = snapshot(), handlers = callbacks();
+  const factory = jest.fn(async (element: HTMLElement) => makePixiSurfaceMock(element));
+  const controller = new NetworkViewportController(data, handlers, factory);
+  try {
+    controller.attach(host); const surface = await factory.mock.results[0].value; await Promise.resolve();
+    const nodePosition = controller.camera.project(node);
+    const clientX = left + nodePosition.px * scale, clientY = top + nodePosition.py * scale;
+    expect(controller.hit(clientX, clientY)?.address).toBe('APC');
+    pointer(host, 'pointermove', clientX, clientY, 1, 0);
+    expect(handlers.onHover).toHaveBeenLastCalledWith({ address: 'APC', x: nodePosition.px, y: nodePosition.py });
+    pointer(host, 'pointerdown', clientX, clientY); pointer(host, 'pointerup', clientX, clientY);
+    expect(handlers.onSelect).toHaveBeenCalledWith('APC');
+    const anchor = controller.camera.unproject(240, 160), beforeZoom = controller.camera.zoom;
+    host.dispatchEvent(new WheelEvent('wheel', { clientX: left + 240 * scale, clientY: top + 160 * scale,
+      deltaY: 120, cancelable: true }));
+    expect(controller.camera.zoom).toBeLessThan(beforeZoom);
+    const projected = controller.camera.project(anchor);
+    expect(projected.px).toBeCloseTo(240);
+    expect(projected.py).toBeCloseTo(160);
+    expect(surface.resize).toHaveBeenLastCalledWith(720, 480);
+  } finally { controller.detach(); host.remove(); }
+});
+
+test.each([.75, 1, 1.25])('pan and release momentum keep the same visible displacement at CSS scale %s', async (scale) => {
+  const left = 37, top = 53, host = hostElement(scale, left, top), data = snapshot();
+  const factory = jest.fn(async (element: HTMLElement) => makePixiSurfaceMock(element));
+  const controller = new NetworkViewportController(data, callbacks(), factory);
+  const frames: FrameRequestCallback[] = [];
+  const animation = jest.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { frames.push(callback); return frames.length; });
+  const cancel = jest.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+  let now = 0;
+  const clock = jest.spyOn(performance, 'now').mockImplementation(() => now);
+  try {
+    controller.attach(host); await factory.mock.results[0].value; await Promise.resolve();
+    const initial = { x: controller.camera.x, y: controller.camera.y };
+    const clientX = left + 360 * scale, clientY = top + 240 * scale;
+    pointer(host, 'pointerdown', clientX, clientY);
+    now = 16; pointer(document, 'pointermove', clientX + 60, clientY + 30);
+    expect((controller.camera.x - initial.x) * scale).toBeCloseTo(60);
+    expect((controller.camera.y - initial.y) * scale).toBeCloseTo(30);
+    pointer(document, 'pointerup', clientX + 60, clientY + 30);
+    const released = { x: controller.camera.x, y: controller.camera.y };
+    expect(frames).toHaveLength(1);
+    now = 32; frames.shift()(now);
+    const momentum = .45 * 60 / 16 * (1 - Math.exp(-16 / 125)) * 125;
+    expect((controller.camera.x - released.x) * scale).toBeCloseTo(momentum);
+    expect((controller.camera.y - released.y) * scale).toBeCloseTo(momentum / 2);
+  } finally { controller.detach(); host.remove(); animation.mockRestore(); cancel.mockRestore(); clock.mockRestore(); }
+});
+
+test('a CSS scale or camera change during a held press applies only new pointer movement', async () => {
+  const host = hostElement(), data = snapshot();
+  const factory = jest.fn(async (element: HTMLElement) => makePixiSurfaceMock(element));
+  const controller = new NetworkViewportController(data, callbacks(), factory);
+  try {
+    controller.attach(host); await factory.mock.results[0].value; await Promise.resolve();
+    const initial = { x: controller.camera.x, y: controller.camera.y };
+    pointer(host, 'pointerdown', 360, 240);
+    pointer(host, 'pointermove', 400, 260);
+    const bounds = host.getBoundingClientRect();
+    host.getBoundingClientRect = () => ({ ...bounds, left: 50, top: 20, width: 540, height: 360, right: 590, bottom: 380 });
+    window.dispatchEvent(new Event('resize'));
+    pointer(document, 'pointermove', 460, 290);
+    expect(controller.camera.x).toBeCloseTo(initial.x + 40 + 80);
+    expect(controller.camera.y).toBeCloseTo(initial.y + 20 + 40);
+    controller.center('APC');
+    const centered = { x: controller.camera.x, y: controller.camera.y };
+    pointer(document, 'pointermove', 475, 305);
+    expect(controller.camera.x).toBeCloseTo(centered.x + 20);
+    expect(controller.camera.y).toBeCloseTo(centered.y + 20);
   } finally { controller.detach(); host.remove(); }
 });
 

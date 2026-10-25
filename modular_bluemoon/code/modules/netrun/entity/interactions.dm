@@ -41,34 +41,37 @@
 	return null
 
 /// Null text is a presence signal; nonempty text is a private addressed message.
-/datum/netrun_console/proc/signal_entity(datum/component/netrun_node/node, recipient_ref, text)
+/datum/netrun_console/proc/signal_entity(datum/component/netrun_node/node, recipient_ref, text, input_nonce)
+	var/kind = isnull(text) ? "entity.signal" : "entity.message"
+	var/datum/netrun_packet_context/operation = new(kind, isnull(text) ? "Сигнал процессу" : "Личное сообщение процессу",
+		route_source()?.address, node?.address, "entity_contact", src, input_nonce)
 	if(!istext(recipient_ref))
-		return FALSE
+		return reject_operation(operation, "Некорректный адрес процесса.")
 	if(world.time < next_entity_signal)
 		log_line("Канал связи с процессами ещё занят.", "average")
-		return FALSE
+		return reject_operation(operation, "Канал связи с процессами ещё занят.")
 	var/mob/camera/netrun_entity/recipient = locate(recipient_ref)
 	if(!istype(recipient))
-		return FALSE
+		return reject_operation(operation, "Процесс больше не существует.")
 	var/datum/netrun_path_tree/tree = make_path_tree()
 	var/reason = entity_contact_denial(node, recipient, tree)
 	if(reason)
 		qdel(tree)
 		log_line("Связь с процессом недоступна: [reason].", "bad")
-		return FALSE
+		return reject_operation(operation, reason)
 	if(!isnull(text))
 		if(!istext(text))
 			qdel(tree)
-			return FALSE
+			return reject_operation(operation, "Некорректный текст сообщения.")
 		text = trim(copytext_char(sanitize(text), 1, 241))
 		if(!length(text))
 			qdel(tree)
-			return FALSE
+			return reject_operation(operation, "Сообщение пустое.")
 	var/latency = latency_to(node, tree)
 	var/list/route_hops = tree.addresses_to(node.address)
 	qdel(tree)
 	next_entity_signal = world.time + 2 SECONDS
-	var/datum/netrun_request/entity_contact/packet = new(src, node, recipient, text)
+	var/datum/netrun_request/entity_contact/packet = new(src, node, recipient, text, operation)
 	return packet.send(latency, route_hops)
 
 /// The delivery owns its recipient and message snapshot, without borrowing a UI route.
@@ -78,33 +81,19 @@
 	var/message
 	var/sender_name
 	var/source_address
-	var/packet_id
-	var/packet_kind
+	operation_kind = "entity.signal"
+	operation_label = "Связь с процессом"
 
-/datum/netrun_request/entity_contact/New(datum/netrun_console/console, datum/component/netrun_node/node, mob/camera/netrun_entity/recipient, text)
-	..(console, node, node?.network, console.operator)
+/datum/netrun_request/entity_contact/New(datum/netrun_console/console, datum/component/netrun_node/node, mob/camera/netrun_entity/recipient, text, datum/netrun_packet_context/context)
+	..(console, node, node?.network, console.operator, null, context)
 	recipient_ref = WEAKREF(recipient)
 	message = text
 	sender_name = console.get_handle()
-	source_address = console.route_source()?.address
-	packet_id = REF(src)
-	packet_kind = isnull(message) ? "entity.signal" : "entity.message"
+	source_address = operation.from_address
 
 /datum/netrun_request/entity_contact/Destroy()
-	if(sent && !delivering)
-		journal(source_address, "DROP", "отправка отменена: сеанс или узел удалён")
 	recipient_ref = null
 	return ..()
-
-/datum/netrun_request/entity_contact/send(delay = 0, list/route_hops)
-	if(!sent)
-		journal(source_address, "SEND")
-	return ..()
-
-/datum/netrun_request/entity_contact/proc/journal(address, phase, reason)
-	var/datum/component/netrun_node/hop = SSnetrun.find_node(address)
-	if(!QDELETED(hop))
-		hop.add_packet_log(packet_id, phase, packet_kind, source_address, node?.address, "entity_contact", reason)
 
 /datum/netrun_request/entity_contact/execute()
 	if(QDELETED(console) || QDELETED(node))
@@ -117,14 +106,11 @@
 		reason = "сеанс отправителя изменился"
 	if(reason)
 		qdel(tree)
-		journal(source_address, "DROP", reason)
 		console.log_line("Доставка процессу отменена: [reason].", "bad")
-		return FALSE
+		return reject(reason)
 	var/list/route_hops = tree.addresses_to(node.address)
 	qdel(tree)
-	for(var/i = 2; i < length(route_hops); i++)
-		journal(route_hops[i], "FORWARD")
-	journal(node.address, "RECEIVE")
+	operation.receive(route_hops)
 	var/line = isnull(message) ? "Адресный сигнал от [sender_name] ([source_address])." : "Личное сообщение от [sender_name] ([source_address]): [message]"
 	recipient.console.log_line(line, "good")
 	to_chat(recipient, span_notice(line))

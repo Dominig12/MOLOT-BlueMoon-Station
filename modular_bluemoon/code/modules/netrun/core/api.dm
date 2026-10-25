@@ -51,37 +51,39 @@
 	var/datum/netrun_provider/api = SSnetrun.get_provider(node.parent)
 	return api?.payload(node.parent, src, node)
 
-/datum/netrun_console/proc/remote_request(address, action, list/arguments)
+/datum/netrun_console/proc/remote_request(address, action, list/arguments, input_nonce)
 	var/datum/component/netrun_node/node = refresh_route_node(SSnetrun.find_node(address))
 	var/datum/netrun_provider/api = node ? SSnetrun.get_provider(node.parent) : null
 	var/list/entry = api?.actions[action]
+	var/datum/netrun_packet_context/operation = new("remote", entry?["name"] || "Запрос устройства",
+		route_source()?.address, node?.address, action, src, input_nonce)
 	if(!entry)
-		return FALSE
+		return reject_operation(operation, "Действие устройства недоступно.")
 	var/datum/netrun_path_tree/tree = make_path_tree()
 	if(!can_route(node, tree) || !node.is_online() || is_locked() || node_level(node, tree) < api.action_access(action) || world.time < next_command)
 		qdel(tree)
-		return FALSE
+		return reject_operation(operation, "Запрос недоступен: нет связи, доступа или канал занят.")
 	var/reason = api.action_unavailable_reason(node.parent, action, src, node)
 	if(reason)
 		qdel(tree)
 		log_line(reason, "bad")
-		return FALSE
+		return reject_operation(operation, reason)
 	var/list/clean = api.clean_params(action, arguments || list())
 	if(isnull(clean))
 		qdel(tree)
 		log_line("Некорректные параметры запроса [action].", "bad")
-		return FALSE
+		return reject_operation(operation, "Некорректные параметры запроса.")
 	var/lat = latency_to(node, tree)
 	var/list/poll_route = tree.addresses_to(node.address)
 	qdel(tree)
 	next_command = world.time + max(lat, 0.5 SECONDS)
 	log_line("[address]: [entry["name"]] — доставка ~[lat * 100] мс.")
-	var/datum/netrun_request/remote/request = new(src, node, api, action, clean, node.network, operator)
+	var/datum/netrun_request/remote/request = new(src, node, api, action, clean, node.network, operator, operation)
 	return request.send(lat, poll_route)
 
 /datum/netrun_console/proc/do_remote_request(datum/component/netrun_node/node, datum/netrun_provider/api, action, list/params, datum/netrun_network/sent_network, mob/sender)
 	var/datum/netrun_request/remote/request = new(src, node, api, action, params, sent_network, sender)
-	return request.send()
+	return request.deliver()
 
 /// Контекст проверенного сетевого запроса: не раздаёт привилегии или доступ мобу.
 /datum/ui_state/netrun_request

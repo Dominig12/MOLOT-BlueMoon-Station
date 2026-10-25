@@ -13,13 +13,19 @@
 	var/sent = FALSE
 	/// Owned copy of the dispatch snapshot's path; interest never builds a second route tree.
 	var/list/poll_route = list()
+	var/datum/netrun_packet_context/operation
+	var/operation_kind = "request"
+	var/operation_label = "Сетевой запрос"
+	var/delivery_queued = FALSE
 
-/datum/netrun_request/delivery/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/netrun_network/sent_network, mob/sender, file_uid)
+/datum/netrun_request/delivery/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/netrun_network/sent_network, mob/sender, file_uid, datum/netrun_packet_context/context)
 	..(file_uid)
 	src.console = console
 	src.node = node
 	src.sent_network = sent_network
 	src.sender = sender
+	operation = context || new /datum/netrun_packet_context(operation_kind, operation_label,
+		console?.route_source()?.address, node?.address, operation_kind, console)
 	for(var/datum/dependency as anything in list(console, node, sent_network, sender))
 		if(QDELETED(dependency) || (dependency in dependencies))
 			continue
@@ -27,7 +33,9 @@
 		RegisterSignal(dependency, COMSIG_PARENT_QDELETING, PROC_REF(on_dependency_deleted))
 
 /datum/netrun_request/delivery/Destroy()
+	SSnetrun.task_scheduler?.cancel("request_delivery", src)
 	SSnetrun.pending_requests -= src
+	QDEL_NULL(operation)
 	poll_route.Cut()
 	if(timer_id)
 		deltimer(timer_id)
@@ -45,6 +53,8 @@
 	SIGNAL_HANDLER
 	cancelled = TRUE
 	if(!delivering)
+		operation?.finish("cancelled", "Доставка отменена: сеанс или узел удалён.")
+	if(!delivering)
 		qdel(src)
 
 /datum/netrun_request/delivery/proc/send(delay = 0, list/route_hops)
@@ -53,32 +63,65 @@
 	if(cancelled || QDELETED(console) || QDELETED(node))
 		qdel(src)
 		return FALSE
+	if(length(SSnetrun.pending_requests) >= NETRUN_MAX_PENDING_REQUESTS)
+		operation.finish("rejected", "Очередь доставки запросов переполнена.")
+		qdel(src)
+		return FALSE
 	sent = TRUE
 	poll_route = route_hops ? route_hops.Copy() : list()
+	operation.queued(poll_route)
 	SSnetrun.pending_requests[src] = TRUE
 	SSnetrun.collect_request_node_interest(src)
 	// Circuits are autonomous; explicit player packets enter the interactive lane.
 	if(console.origin != NETRUN_ORIGIN_CIRCUIT)
 		console.note_user_action()
 	if(delay <= 0)
-		return deliver()
-	timer_id = addtimer(CALLBACK(src, PROC_REF(deliver)), delay, TIMER_STOPPABLE | TIMER_DELETE_ME)
+		return queue_delivery()
+	timer_id = addtimer(CALLBACK(src, PROC_REF(queue_delivery)), delay, TIMER_STOPPABLE | TIMER_DELETE_ME)
+	return TRUE
+
+/// Timer callbacks only admit ready work; execution shares the subsystem budget.
+/datum/netrun_request/delivery/proc/queue_delivery()
+	timer_id = null
+	if(delivery_queued || delivering || QDELETED(src))
+		return FALSE
+	delivery_queued = TRUE
+	var/interactive = console?.origin != NETRUN_ORIGIN_CIRCUIT
+	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
+	SSnetrun.get_task_scheduler().enqueue("request_delivery", src, interactive ? limits.interactive_priority : NETRUN_TASK_NORMAL, interactive)
 	return TRUE
 
 /datum/netrun_request/delivery/proc/deliver()
+	set waitfor = FALSE
 	if(delivering || QDELETED(src))
 		return FALSE
-	// Direct delivery also consumes this packet; an early delivery cancels its timer.
+	// Trusted direct callers keep their explicit execution boundary. Native input
+	// may yield; the packet keeps its lifetime, while the scheduler can continue.
+	SSnetrun.task_scheduler?.cancel("request_delivery", src)
+	delivery_queued = FALSE
+	if(!sent)
+		operation.queued(poll_route)
+		SSnetrun.pending_requests[src] = TRUE
 	sent = TRUE
 	if(timer_id)
 		deltimer(timer_id)
 	timer_id = null
 	delivering = TRUE
 	if(!cancelled && !QDELETED(console) && !QDELETED(node))
+		operation.running()
 		. = execute()
+		if(!operation.finished)
+			operation.finish(. ? "completed" : (cancelled ? "cancelled" : "rejected"), . ? null : "Устройство не приняло запрос.")
 		if(!QDELETED(console) && console.origin != NETRUN_ORIGIN_CIRCUIT)
 			console.finish_user_action(QDELETED(node) ? null : node)
+	else
+		operation.finish("cancelled", "Доставка отменена: сеанс или узел удалён.")
 	qdel(src)
+	return .
+
+/datum/netrun_request/delivery/proc/reject(reason)
+	operation.finish("rejected", reason)
+	return FALSE
 
 /datum/netrun_request/delivery/proc/execute()
 	return FALSE
@@ -88,9 +131,11 @@
 	parent_type = /datum/netrun_request/delivery
 	var/datum/netrun_command/command
 	var/command_id
+	operation_kind = "command"
+	operation_label = "Команда устройства"
 
-/datum/netrun_request/command/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/netrun_command/command, command_id, datum/netrun_network/sent_network, mob/sender, file_uid)
-	..(console, node, sent_network, sender, file_uid)
+/datum/netrun_request/command/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/netrun_command/command, command_id, datum/netrun_network/sent_network, mob/sender, file_uid, datum/netrun_packet_context/context)
+	..(console, node, sent_network, sender, file_uid, context)
 	src.command = command
 	src.command_id = command_id
 
@@ -100,7 +145,7 @@
 	return ..()
 
 /datum/netrun_request/command/execute()
-	return console.do_command(node, command, command_id, FALSE, sent_network, sender, file_uid)
+	return console.do_command(node, command, command_id, FALSE, sent_network, sender, file_uid, operation)
 
 /// Published native API actions share packet lifecycle with ordinary commands.
 /datum/netrun_request/remote
@@ -108,9 +153,11 @@
 	var/datum/netrun_provider/api
 	var/action
 	var/list/arguments
+	operation_kind = "remote"
+	operation_label = "Запрос устройства"
 
-/datum/netrun_request/remote/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/netrun_provider/api, action, list/arguments, datum/netrun_network/sent_network, mob/sender)
-	..(console, node, sent_network, sender)
+/datum/netrun_request/remote/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/netrun_provider/api, action, list/arguments, datum/netrun_network/sent_network, mob/sender, datum/netrun_packet_context/context)
+	..(console, node, sent_network, sender, null, context)
 	src.api = api
 	src.action = action
 	src.arguments = arguments ? arguments.Copy() : list()
@@ -124,27 +171,30 @@
 	node.join_network()
 	var/list/entry = api?.actions[action]
 	var/datum/netrun_path_tree/tree = console.make_path_tree()
-	if(!entry || QDELETED(api) || SSnetrun.get_provider(node.parent) != api || !console.operator || sender != console.operator || node.network != sent_network || console.is_locked() || !console.can_route(node, tree) || !node.is_online() || console.node_level(node, tree) < api.action_access(action))
+	var/reachable = console.can_route(node, tree)
+	if(reachable)
+		operation.receive(tree.addresses_to(node.address))
+	if(!entry || QDELETED(api) || SSnetrun.get_provider(node.parent) != api || !console.operator || sender != console.operator || node.network != sent_network || console.is_locked() || !reachable || !node.is_online() || console.node_level(node, tree) < api.action_access(action))
 		qdel(tree)
 		console.log_line("Запрос устройства отменён: связь или доступ изменились.", "bad")
-		return FALSE
+		return reject("Связь, оператор или доступ к устройству изменились.")
 	var/illegal = console.legit_node_level(node, tree) < api.action_access(action)
 	qdel(tree)
 	var/atom/target = node.parent
 	var/reason = api.action_unavailable_reason(target, action, console, node)
 	if(reason)
 		console.log_line("Запрос устройства отменён: [reason]", "bad")
-		return FALSE
+		return reject(reason)
 	// Also validate callers of do_remote_request and packets whose schema changed
 	// in flight. The provider only receives its published primitive arguments.
 	var/list/clean = api.clean_params(action, arguments)
 	if(isnull(clean))
 		console.log_line("Запрос устройства отменён: некорректные параметры.", "bad")
-		return FALSE
+		return reject("Некорректные параметры запроса.")
 	if(!api.execute(target, action, clean, console, node))
 		if(!QDELETED(console))
 			console.log_line("Сервис устройства не принял запрос.", "bad")
-		return FALSE
+		return reject("Штатный интерфейс устройства не принял запрос.")
 	// Native actions may yield, delete their host, or close the originating session.
 	if(QDELETED(console) || QDELETED(node))
 		return TRUE
@@ -162,9 +212,11 @@
 	parent_type = /datum/netrun_request/delivery
 	var/action
 	var/list/arguments
+	operation_kind = "window"
+	operation_label = "Действие устройства"
 
-/datum/netrun_request/window/New(datum/netrun_console/console, datum/component/netrun_node/node, action, list/arguments, datum/netrun_network/sent_network, mob/sender)
-	..(console, node, sent_network, sender)
+/datum/netrun_request/window/New(datum/netrun_console/console, datum/component/netrun_node/node, action, list/arguments, datum/netrun_network/sent_network, mob/sender, datum/netrun_packet_context/context)
+	..(console, node, sent_network, sender, null, context)
 	src.action = action
 	src.arguments = arguments ? arguments.Copy() : list()
 
@@ -173,18 +225,20 @@
 	return ..()
 
 /datum/netrun_request/window/execute()
-	return console.do_window_act(node, action, arguments, sent_network, sender)
+	return console.do_window_act(node, action, arguments, sent_network, sender, operation)
 
 /// A file request fixes the UID at send time; a later selection cannot substitute another file.
 /datum/netrun_request/file
 	parent_type = /datum/netrun_request/delivery
 	var/action
 	var/to_shard = FALSE
+	operation_kind = "file"
+	operation_label = "Файловый запрос"
 
-/datum/netrun_request/file/New(datum/netrun_console/console, datum/component/netrun_node/node, action, file_uid, to_shard, datum/netrun_network/sent_network, mob/sender)
-	..(console, node, sent_network, sender, file_uid)
+/datum/netrun_request/file/New(datum/netrun_console/console, datum/component/netrun_node/node, action, file_uid, to_shard, datum/netrun_network/sent_network, mob/sender, datum/netrun_packet_context/context)
+	..(console, node, sent_network, sender, file_uid, context)
 	src.action = action
 	src.to_shard = to_shard
 
 /datum/netrun_request/file/execute()
-	return console.deliver_file_request(action, node, file_uid, to_shard, sent_network, sender)
+	return console.deliver_file_request(action, node, file_uid, to_shard, sent_network, sender, operation)

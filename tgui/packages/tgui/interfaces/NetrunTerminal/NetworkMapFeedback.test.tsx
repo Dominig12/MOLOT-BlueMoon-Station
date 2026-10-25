@@ -3,7 +3,7 @@ import { combineReducers, createStore, setGlobalStore } from 'common/redux';
 
 import { backendReducer, backendUpdate } from '../../backend';
 import { debugReducer } from '../../debug';
-import { StationMap } from './NetworkMap';
+import { MapFocusRequest, StationMap } from './NetworkMap';
 import { mountNetrunPixi } from './pixiSurface';
 import { makePixiSurfaceMock } from './testSupport/pixiSurfaceMock';
 import { NetrunFeedbackProvider } from './useNetrunBackend';
@@ -13,7 +13,7 @@ const mount = jest.mocked(mountNetrunPixi);
 const source = { address: 'SOURCE', name: 'APC', type: 'apc', x: 0, y: 0, online: true,
   security: 1, access: 2, legit: 2, entities: 0, active: false, uplink: null, commands: [], status: [] };
 const peer = { ...source, address: 'PEER', name: 'Сервер', type: 'server', x: 20, access: 0, legit: 0 };
-const View = (props: { suspended?: boolean } = {}) => <NetrunFeedbackProvider><StationMap suspended={props.suspended} /></NetrunFeedbackProvider>;
+const View = (props: { suspended?: boolean; focusRequest?: MapFocusRequest } = {}) => <NetrunFeedbackProvider><StationMap suspended={props.suspended} focusRequest={props.focusRequest} /></NetrunFeedbackProvider>;
 
 const setup = () => {
   const topic = jest.fn();
@@ -88,6 +88,29 @@ test('a dropped selection delta retains the GPU map, requests resync, and acknow
   expect(panel.getByLabelText('Карта сети')).toBeTruthy();
   await waitFor(() => expect((global as any).Byond.topic.mock.calls.filter(
     (call) => call[0]?.type === 'act/map_sync_ack').length).toBeGreaterThanOrEqual(2));
+});
+
+test('a consumed focus request is not replayed after graph recovery and a new request can locate the same node again', async () => {
+  const { panel, store, selection } = setup();
+  await waitFor(() => expect(panel.getByLabelText('Карта сети').getAttribute('data-net-runtime')).toBe('ready'));
+  const focusRequest = { address: peer.address, sequence: 1 };
+  panel.rerender(<View focusRequest={focusRequest} />);
+  expect(selection().map((entry) => entry.address)).toEqual(['PEER']);
+  const full = { nodes: [source, peer], edges: [], gateways: [], focus: source.address,
+    revision: 1, structure_revision: 1, static_revision: 1, state_revision: 10,
+    epoch: 'session:one', full: 1 };
+  act(() => store.dispatch(backendUpdate({ data: { map: full, selected: peer } })));
+  fireEvent.keyDown(panel.getByLabelText('Карта сети'), { key: 'a' });
+  expect(selection().map((entry) => entry.address)).toEqual(['PEER', 'SOURCE']);
+  act(() => store.dispatch(backendUpdate({ data: { selected: source, map: {
+    epoch: 'session:two', full: 0, base_revision: 10, state_revision: 11, nodes: [], edges: [],
+  } } })));
+  expect(panel.queryByLabelText('Карта сети')).toBeNull();
+  act(() => store.dispatch(backendUpdate({ data: { map: { ...full, epoch: 'session:two', state_revision: 12 } } })));
+  await waitFor(() => expect(panel.getByLabelText('Карта сети').getAttribute('data-net-runtime')).toBe('ready'));
+  expect(selection().map((entry) => entry.address)).toEqual(['PEER', 'SOURCE']);
+  panel.rerender(<View focusRequest={{ address: peer.address, sequence: 2 }} />);
+  expect(selection().map((entry) => entry.address)).toEqual(['PEER', 'SOURCE', 'PEER']);
 });
 
 test('ping metadata reaches Pixi without extending the same event or suppressing a repeat on the same path', async () => {

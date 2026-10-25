@@ -13,6 +13,11 @@ import { useNetrunBackend as useBackend, useNetrunFeedback } from './useNetrunBa
 
 type Placed = NetNode & GraphPoint;
 type Act = (action: string, payload?: object) => void;
+export type MapFocusRequest = { address: string; sequence: number };
+type FocusProps = {
+  focusRequest?: MapFocusRequest | null;
+  consumeFocusRequest?: (request: MapFocusRequest) => boolean;
+};
 type MapInput = {
   map: NetMap | null;
   selectedAddress: string | null;
@@ -44,7 +49,7 @@ const useSemanticValue = <T, >(value: T, signature: string | undefined): T => {
   if (previous.current.signature !== signature) { previous.current = { value, signature }; }
   return previous.current.value;
 };
-export const StationMap = memo((props: { suspended?: boolean } = {}) => {
+export const StationMap = memo((props: { suspended?: boolean; focusRequest?: MapFocusRequest | null } = {}) => {
   const { act, data } = useBackend<NetrunData>(['map', 'selected', 'selected_network', 'jack', 'entity', 'ping_route', 'ping', 'events', 'waypoint', 'search']);
   const [stream] = useState(() => new NetrunMapStream());
   const [, refreshRecovery] = useState(0);
@@ -53,6 +58,14 @@ export const StationMap = memo((props: { suspended?: boolean } = {}) => {
   const acknowledgementGeneration = useRef(0);
   const pingClock = useRef<{ id: number; expires: number } | null>(null);
   const latest = useRef<MapInput | null>(null);
+  const consumedFocusSequence = useRef<number | null>(null);
+  // Keep consumption outside the projected graph, which may remount after a
+  // transport resync. An old history click must never override a later selection.
+  const consumeFocusRequest = useCallback((request: MapFocusRequest) => {
+    if (consumedFocusSequence.current === request.sequence) { return false; }
+    consumedFocusSequence.current = request.sequence;
+    return true;
+  }, []);
   // Timestamp receipt even while the map is hidden. Opening it later must not
   // turn an old remaining_ms snapshot into a fresh full display lifetime.
   if (data.ping && pingClock.current?.id !== data.ping.id) {
@@ -103,7 +116,8 @@ export const StationMap = memo((props: { suspended?: boolean } = {}) => {
     lastAcknowledged.current = key;
     act('map_sync_ack', { epoch: packet.epoch, revision: packet.state_revision });
   }, [props.suspended, data.map, stream, act]);
-  return latest.current ? <MapSnapshot input={latest.current} act={act} suspended={props.suspended} />
+  return latest.current ? <MapSnapshot input={latest.current} act={act} suspended={props.suspended}
+    focusRequest={props.focusRequest} consumeFocusRequest={consumeFocusRequest} />
     : props.suspended ? null : <Box p={1} role="status" color={THEME.muted}>
       {stream.resyncToken ? 'Синхронизация карты после пропущенного обновления…' : 'Ожидание карты сети…'}
       <Button compact ml={1} icon="rotate" content="Обновить карту" onClick={() => {
@@ -115,7 +129,7 @@ export const StationMap = memo((props: { suspended?: boolean } = {}) => {
                                </Box>;
 });
 
-const MapSnapshot = memo(({ input, act, suspended }: { input: MapInput; act: Act; suspended?: boolean }) => {
+const MapSnapshot = memo(({ input, act, suspended, focusRequest, consumeFocusRequest }: { input: MapInput; act: Act; suspended?: boolean } & FocusProps) => {
   const rawNodes = input.map?.nodes ?? EMPTY_NODES;
   const rawEdges = input.map?.edges ?? EMPTY_EDGES;
   const streamed = input.map?.epoch !== undefined;
@@ -148,12 +162,13 @@ const MapSnapshot = memo(({ input, act, suspended }: { input: MapInput; act: Act
   const waypoint = useSemanticValue(input.waypoint, JSON.stringify(input.waypoint));
   const search = useSemanticValue(input.search, JSON.stringify(input.search));
   return (<GraphMap {...input} map={map} topologyKey={topologyKey} suspended={suspended}
+    focusRequest={focusRequest} consumeFocusRequest={consumeFocusRequest}
     pingRoute={pingRoute} events={events} waypoint={waypoint} search={search} act={act} />);
 });
 
-const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
+const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & FocusProps) => {
   const { act, selectedAddress, selectedNetwork, jackAddress, entityHost, hasEntity,
-    map, topologyKey, pingRoute, pingId, pingExpiresAt, events, waypoint, search, suspended } = props;
+    map, topologyKey, pingRoute, pingId, pingExpiresAt, events, waypoint, search, suspended, focusRequest, consumeFocusRequest } = props;
   const viewport = useRef<NetworkViewportHandle>(null);
   const feedback = useNetrunFeedback();
   const latestFeedback = useRef(feedback); latestFeedback.current = feedback;
@@ -205,6 +220,10 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act }) => {
     previewSelection(address, own ? 'focus_host' : 'select');
     if (own) { act('focus_host'); } else { act('select', { address }); }
   }, [act, previewSelection]);
+  useEffect(() => {
+    if (suspended || !focusRequest || !consumeFocusRequest?.(focusRequest)) { return; }
+    locate(focusRequest.address);
+  }, [suspended, focusRequest, consumeFocusRequest, locate]);
   useEffect(() => {
     const intent = selectionIntent.current;
     if (!intent) { return; }

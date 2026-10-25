@@ -7,7 +7,7 @@
 	var/datum/netrun_console/console
 	var/mob/camera/netrun_entity/recipient
 
-/datum/netrun_entity_contact_scene/New(turf/origin)
+/datum/netrun_entity_contact_scene/New(turf/origin, storage_capacity = 0)
 	..(origin.z)
 	var/area/room = room(/area/engineering/netrun_route_test)
 	take(origin, room)
@@ -19,7 +19,7 @@
 	source_node = source_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_DECK)
 	var/obj/item/target_host = new(target_spot)
 	owned += target_host
-	target_node = target_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	target_node = target_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list(), 1, list(), storage_capacity)
 	console = new(source_host, NETRUN_ORIGIN_DECK)
 	owned += console
 	recipient = new(null, target_node)
@@ -82,7 +82,7 @@
 	var/list/sent = scene.source_node.packet_logs[length(scene.source_node.packet_logs)]
 	var/list/received = scene.target_node.packet_logs[length(scene.target_node.packet_logs)]
 	TEST_ASSERT_EQUAL(sent["phase"], "SEND", "The source must journal the emitted packet")
-	TEST_ASSERT_EQUAL(received["phase"], "RECEIVE", "The destination must journal receipt")
+	TEST_ASSERT_EQUAL(received["phase"], "ACCEPT", "The destination must journal its terminal acceptance after receipt")
 	TEST_ASSERT_EQUAL(sent["id"], received["id"], "Node journals must correlate the same addressed packet")
 	TEST_ASSERT_EQUAL(received["kind"], "entity.message", "The journal must distinguish private messages from pings")
 	TEST_ASSERT(!scene.console.signal_entity(scene.target_node, REF(scene.recipient)), "Repeated signals must respect the communication cooldown")
@@ -101,8 +101,10 @@
 	scene.console.next_entity_signal = 0
 	scene.console.set_jack(scene.target_node)
 	var/previous_logs = length(scene.target_node.packet_logs)
-	TEST_ASSERT(scene.console.signal_entity(scene.target_node, REF(scene.recipient)), "A single-node direct route must deliver immediately")
-	TEST_ASSERT_EQUAL(length(scene.target_node.packet_logs), previous_logs + 2, "A direct route must journal SEND and RECEIVE without invented forwarding hops")
+	TEST_ASSERT(scene.console.signal_entity(scene.target_node, REF(scene.recipient)), "A single-node direct route must admit delivery without artificial latency")
+	packet = scene.packet()
+	TEST_ASSERT(packet && packet.deliver(), "A ready direct packet must use the same budgeted delivery boundary")
+	TEST_ASSERT_EQUAL(length(scene.target_node.packet_logs), previous_logs + 3, "A direct route must journal SEND, RECEIVE and ACCEPT without invented forwarding hops")
 
 /datum/unit_test/netrun_entity_contact_recipient_move/Run()
 	var/datum/netrun_entity_contact_scene/scene = allocate(/datum/netrun_entity_contact_scene, run_loc_floor_bottom_left)
@@ -113,7 +115,7 @@
 	TEST_ASSERT(packet && !packet.deliver(), "A queued message must not silently follow a resident to another node")
 	TEST_ASSERT(!scene.received("Must not follow"), "The moved recipient must not receive a stale-node message")
 	var/list/dropped = scene.source_node.packet_logs[length(scene.source_node.packet_logs)]
-	TEST_ASSERT_EQUAL(dropped["phase"], "DROP", "A stale resident must leave an explainable packet failure")
+	TEST_ASSERT_EQUAL(dropped["phase"], "REJECT", "A stale resident must leave an explainable packet rejection")
 
 /datum/unit_test/netrun_entity_contact_authority_lifecycle/Run()
 	var/datum/netrun_entity_contact_scene/scene = allocate(/datum/netrun_entity_contact_scene, run_loc_floor_bottom_left)

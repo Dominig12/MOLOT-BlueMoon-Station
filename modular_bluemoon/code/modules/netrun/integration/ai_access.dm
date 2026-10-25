@@ -85,7 +85,7 @@
 		return list()
 	return ..()
 
-/datum/netrun_console/ai/handle_ui_action(action, list/params, datum/tgui/ui)
+/datum/netrun_console/ai/handle_ui_action(action, list/params, datum/tgui/ui, input_nonce)
 	if(!available_to(ui?.user))
 		return FALSE
 	return ..()

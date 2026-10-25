@@ -1,5 +1,33 @@
 // NetRun's visual vocabulary is scoped to the workspace. Existing tgui widgets
 // retain their interaction, disabled and focus semantics; the map stays mounted.
+.netrun-operations {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  padding: 10px;
+
+  &__tools { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-bottom: 10px; }
+  &__tools input {
+    flex: 1 1 180px;
+    min-width: 100px;
+    padding: 6px 8px;
+    color: var(--net-text);
+    background: var(--net-bg);
+    border: 1px solid var(--net-border);
+    border-radius: 4px;
+  }
+  &__list { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+  &__entry { margin-bottom: 6px; border: 1px solid var(--net-border); border-radius: 6px; background: var(--net-bg); }
+  &__entry summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 9px; cursor: pointer; }
+  &__label { flex: 1 1 140px; font-weight: bold; }
+  &__details { padding: 0 10px 10px; overflow-wrap: anywhere; }
+  &__details > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  &__details > div > span:first-child { color: var(--net-muted); }
+  code { overflow-wrap: anywhere; font-size: 11px; }
+}
+
 .netrun-viewport {
   position: relative;
   isolation: isolate;

@@ -70,6 +70,7 @@
 	return result
 
 /datum/netrun_machine_message/proc/reply(datum/netrun_machine_message/response)
+	response.correlation_id = correlation_id
 	return recipient.send_to(source, response)
 
 /datum/netrun_machine_message/proc/failed(reason)
@@ -81,6 +82,11 @@
 /// Only replaceable state snapshots opt in; commands retain their own delivery.
 /datum/netrun_machine_message/proc/coalescing_key()
 	return null
+
+/// Replaceable telemetry yields to ordinary traffic. An actor reference is not
+/// evidence of explicit input: radio speech and automated notices also have one.
+/datum/netrun_machine_message/proc/delivery_priority()
+	return isnull(coalescing_key()) ? NETRUN_TASK_NORMAL : NETRUN_TASK_BACKGROUND
 
 /datum/netrun_machine_service
 	var/service_id
@@ -583,19 +589,25 @@
 	var/packet_id
 	var/source_address
 	var/destination_address
+	var/datum/netrun_packet_context/operation
+	var/delivery_queued = FALSE
 
-/datum/netrun_machine_packet/New(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient)
+/datum/netrun_machine_packet/New(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient, operation_id)
 	src.source = source
 	src.recipient = recipient
-	packet_id = ++SSnetrun.get_machine_transport().packet_serial
 	source_address = source?.resolve_node()?.address
 	destination_address = recipient?.resolve_node()?.address
+	operation = new(kind, kind == "dns" ? "Обнаружение службы DNS" : "Обмен между машинами",
+		source_address, destination_address, recipient?.service_id, operation_id = operation_id)
+	packet_id = operation.id
 
 /datum/netrun_machine_packet/Destroy()
+	SSnetrun.task_scheduler?.cancel("machine_delivery", src)
 	if(timer_id)
 		deltimer(timer_id)
 	SSnetrun.get_machine_transport().packets -= src
 	SSnetrun.get_machine_transport().interactive_packets -= src
+	QDEL_NULL(operation)
 	interest_route = null
 	source = null
 	recipient = null
@@ -603,13 +615,18 @@
 
 /datum/netrun_machine_packet/proc/send()
 	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	if(finishing || delivery_queued || timer_id || (src in transport.packets))
+		return FALSE
+	if(length(transport.packets) >= NETRUN_MAX_MACHINE_PACKETS)
+		fail("очередь транспортных пакетов переполнена")
+		return FALSE
 	var/datum/netrun_route/route = transport.route(source, recipient)
-	if(!route || length(transport.packets) >= 2048)
+	if(!route)
 		qdel(route)
 		fail("нет сетевого маршрута")
 		return FALSE
 	transport.packets |= src
-	journal(source_address, "SEND")
+	operation.queued(route.hops)
 	var/mob/user = interest_user()
 	var/mob/camera/netrun_entity/entity = user
 	if(user?.client || (istype(entity) && entity.dive_link?.body?.client))
@@ -618,10 +635,26 @@
 		SSnetrun.retain_route_interest(interest_route, world.time + NETRUN_NODE_INTEREST_LEASE)
 	var/delay = clamp(route.latency * NETRUN_MACHINE_LATENCY_SCALE, world.tick_lag, NETRUN_MACHINE_MAX_LATENCY)
 	qdel(route)
-	timer_id = addtimer(CALLBACK(src, PROC_REF(deliver)), delay, TIMER_STOPPABLE | TIMER_DELETE_ME)
+	timer_id = addtimer(CALLBACK(src, PROC_REF(queue_delivery)), delay, TIMER_STOPPABLE | TIMER_DELETE_ME)
+	return TRUE
+
+/datum/netrun_machine_packet/proc/delivery_priority()
+	return NETRUN_TASK_NORMAL
+
+/datum/netrun_machine_packet/proc/queue_delivery()
+	timer_id = null
+	if(delivery_queued || finishing || QDELETED(src))
+		return FALSE
+	delivery_queued = TRUE
+	SSnetrun.get_task_scheduler().enqueue("machine_delivery", src, delivery_priority())
 	return TRUE
 
 /datum/netrun_machine_packet/proc/deliver()
+	set waitfor = FALSE
+	SSnetrun.task_scheduler?.cancel("machine_delivery", src)
+	delivery_queued = FALSE
+	if(timer_id)
+		deltimer(timer_id)
 	timer_id = null
 	if(finishing)
 		return
@@ -631,12 +664,13 @@
 		return
 	finishing = TRUE
 	destination_address = route.hops[length(route.hops)]
-	for(var/i in 2 to length(route.hops) - 1)
-		journal(route.hops[i], "FORWARD")
-	journal(destination_address, "RECEIVE")
+	operation.running()
+	operation.receive(route.hops)
 	SSnetrun.get_machine_transport().record_flow(source, recipient, kind, route.hops)
 	qdel(route)
 	execute()
+	if(!operation.finished)
+		operation.finish("completed")
 	qdel(src)
 
 /datum/netrun_machine_packet/proc/execute()
@@ -646,15 +680,13 @@
 	return null
 
 /datum/netrun_machine_packet/proc/journal(address, phase, reason)
-	var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
-	if(!QDELETED(node))
-		node.add_packet_log(packet_id, phase, kind, source_address, destination_address, recipient?.service_id, reason)
+	operation.journal(address, phase, reason)
 
 /datum/netrun_machine_packet/proc/fail(reason)
 	if(finishing)
 		return
 	finishing = TRUE
-	journal(source_address, "DROP", reason)
+	operation.finish(operation.sent ? "cancelled" : "rejected", reason, source_address)
 	qdel(src)
 
 /datum/netrun_machine_packet/data
@@ -662,10 +694,11 @@
 	var/recipient_tag
 
 /datum/netrun_machine_packet/data/New(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient, datum/netrun_machine_message/message)
-	..(source, recipient)
+	..(source, recipient, message.correlation_id)
 	src.message = message
 	message.source = source
 	message.recipient = recipient
+	message.correlation_id = operation.operation_id
 	recipient_tag = recipient?.service_tag()
 
 /datum/netrun_machine_packet/data/Destroy()
@@ -675,13 +708,16 @@
 /datum/netrun_machine_packet/data/interest_user()
 	return message.user_ref?.resolve()
 
+/datum/netrun_machine_packet/data/delivery_priority()
+	return message.delivery_priority()
+
 /datum/netrun_machine_packet/data/execute()
 	if(recipient.matches(source, recipient_tag) && recipient.accepts(message) && recipient.receive(message))
-		journal(destination_address, "ACCEPT")
+		operation.finish("completed")
 		message.delivered(recipient)
 	else
 		var/reason = recipient.rejection_reason(message)
-		journal(destination_address, "REJECT", reason)
+		operation.finish("rejected", reason)
 		message.failed(reason)
 
 /datum/netrun_machine_packet/data/fail(reason)
@@ -705,6 +741,11 @@
 	var/completed = FALSE
 	var/failure_reason = "DNS: запрос отменён"
 	var/query_id
+	var/operation_id
+	var/deadline = 0
+	var/attempt_generation = 0
+	var/list/tried_resolvers = list()
+	var/datum/weakref/active_packet_ref
 
 /datum/netrun_machine_resolution/New(datum/netrun_machine_service/source, destination_id, recipient_tag)
 	src.source = source
@@ -712,8 +753,10 @@
 	src.recipient_tag = recipient_tag
 	query_key = "[destination_id]|[recipient_tag]"
 	query_id = ++SSnetrun.get_machine_transport().packet_serial
+	operation_id = "discovery-[query_id]"
 
 /datum/netrun_machine_resolution/Destroy()
+	active_packet_ref = null
 	SSnetrun.get_machine_transport().waiting_resolutions -= src
 	if(timer_id)
 		deltimer(timer_id)
@@ -723,7 +766,7 @@
 	if(length(abandoned) && !QDELETED(source))
 		var/datum/component/netrun_node/node = source.resolve_node()
 		if(!QDELETED(node))
-			node.add_packet_log(query_id, "DNS_FAIL", "dns", node.address, resolver?.resolve_node()?.address, destination_id, failure_reason)
+			node.add_packet_log(query_id, "DNS_FAIL", "dns", node.address, resolver?.resolve_node()?.address, destination_id, failure_reason, operation_id)
 	SSnetrun.get_machine_transport().queued_messages -= length(queued)
 	queued.Cut()
 	for(var/datum/netrun_machine_message/message as anything in abandoned)
@@ -735,6 +778,8 @@
 	return ..()
 
 /datum/netrun_machine_resolution/proc/enqueue(datum/netrun_machine_message/message)
+	if(!message.correlation_id)
+		message.correlation_id = operation_id
 	var/coalescing_key = message.coalescing_key()
 	if(!completed && !isnull(coalescing_key))
 		for(var/i in 1 to length(queued))
@@ -761,34 +806,97 @@
 		transport.waiting_resolutions |= src
 		timer_id = addtimer(CALLBACK(src, PROC_REF(begin)), 1 SECONDS, TIMER_STOPPABLE | TIMER_DELETE_ME)
 		return
+	if(QDELETED(source) || QDELETED(source.host))
+		failure_reason = "DNS: источник недоступен"
+		qdel(src)
+		return
+	if(!deadline)
+		deadline = world.time + NETRUN_DNS_TIMEOUT
+	if(world.time >= deadline || attempts >= NETRUN_DNS_MAX_ATTEMPTS)
+		failure_reason = "DNS: исчерпан срок или лимит попыток обнаружения"
+		qdel(src)
+		return
 	var/list/servers = SSnetrun.get_machine_transport().lookup(source, "dns", null)
-	if(!length(servers))
+	var/datum/netrun_machine_service/next_resolver
+	for(var/datum/netrun_machine_service/candidate as anything in servers)
+		if(!(REF(candidate) in tried_resolvers))
+			next_resolver = candidate
+			break
+	if(length(servers) && !next_resolver)
+		failure_reason = "DNS: доступные резервные серверы уже проверены"
+		qdel(src)
+		return
+	if(!next_resolver)
 		failure_reason = length(transport.by_id["dns"]) ? "DNS: сервер выключен или нет физического маршрута" : "DNS: сервер не зарегистрирован в сети"
 		// Readiness events can probe immediately, but cannot spend the timed retry
 		// budget repeatedly while unrelated initialization/power signals arrive.
 		if(world.time >= next_attempt_at)
 			next_attempt_at = world.time + 2 SECONDS
-			if(++attempts >= 5)
+			if(++attempts >= NETRUN_DNS_MAX_ATTEMPTS)
 				qdel(src)
 				return
 		transport.waiting_resolutions |= src
 		timer_id = addtimer(CALLBACK(src, PROC_REF(begin)), max(world.tick_lag, next_attempt_at - world.time), TIMER_STOPPABLE | TIMER_DELETE_ME)
 		return
 	transport.waiting_resolutions -= src
-	resolver = servers[1]
+	resolver = next_resolver
+	tried_resolvers |= REF(resolver)
+	attempts++
+	attempt_generation++
+	timer_id = addtimer(CALLBACK(src, PROC_REF(attempt_expired), attempt_generation), min(NETRUN_DNS_ATTEMPT_TIMEOUT, deadline - world.time), TIMER_STOPPABLE | TIMER_DELETE_ME)
 	var/datum/netrun_machine_packet/dns_query/packet = new(source, resolver, src)
+	active_packet_ref = WEAKREF(packet)
 	packet.send()
 
-/datum/netrun_machine_resolution/proc/answer()
+/datum/netrun_machine_resolution/proc/is_current(generation)
+	return !completed && generation == attempt_generation && !QDELETED(src)
+
+/datum/netrun_machine_resolution/proc/attempt_expired(generation)
+	if(!is_current(generation))
+		return
+	timer_id = null
+	retry("истёк срок ответа выбранного DNS", generation)
+
+/// Failover is discovery-only: no already-executed machine command is retried.
+/datum/netrun_machine_resolution/proc/retry(reason, generation)
+	if(!is_current(generation))
+		return
+	attempt_generation++
+	if(timer_id)
+		deltimer(timer_id)
+	timer_id = null
+	var/datum/netrun_machine_packet/dns_query/previous = active_packet_ref?.resolve()
+	active_packet_ref = null
+	if(!QDELETED(previous))
+		previous.abandon_attempt(reason)
+	failure_reason = "DNS: [reason]"
+	var/list/alternatives = SSnetrun.get_machine_transport().lookup(source, "dns", null)
+	var/has_alternative = FALSE
+	for(var/datum/netrun_machine_service/candidate as anything in alternatives)
+		if(!(REF(candidate) in tried_resolvers))
+			has_alternative = TRUE
+			break
+	if(!has_alternative || attempts >= NETRUN_DNS_MAX_ATTEMPTS || world.time >= deadline)
+		qdel(src)
+		return
+	// Defer until unregister/power callbacks have unwound; no recursive send chain.
+	timer_id = addtimer(CALLBACK(src, PROC_REF(begin)), world.tick_lag, TIMER_STOPPABLE | TIMER_DELETE_ME)
+
+/datum/netrun_machine_resolution/proc/answer(generation)
+	if(!is_current(generation))
+		return
 	if(QDELETED(source) || QDELETED(resolver))
 		qdel(src)
 		return
 	records = SSnetrun.get_machine_transport().lookup(source, destination_id, recipient_tag)
 	records_revision = SSnetrun.get_machine_transport().service_revisions[destination_id]
 	var/datum/netrun_machine_packet/dns_reply/packet = new(resolver, source, src)
+	active_packet_ref = WEAKREF(packet)
 	packet.send()
 
-/datum/netrun_machine_resolution/proc/finish()
+/datum/netrun_machine_resolution/proc/finish(generation)
+	if(!is_current(generation))
+		return
 	completed = TRUE
 	var/datum/netrun_machine_directory/entry = new
 	entry.resolver_ref = WEAKREF(resolver)
@@ -822,10 +930,12 @@
 /datum/netrun_machine_packet/dns_query
 	kind = "dns"
 	var/datum/netrun_machine_resolution/query
+	var/query_generation
 
 /datum/netrun_machine_packet/dns_query/New(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient, datum/netrun_machine_resolution/query)
-	..(source, recipient)
+	..(source, recipient, query.operation_id)
 	src.query = query
+	query_generation = query.attempt_generation
 	RegisterSignal(query, COMSIG_PARENT_QDELETING, PROC_REF(query_deleted))
 
 /datum/netrun_machine_packet/dns_query/proc/query_deleted()
@@ -841,7 +951,14 @@
 
 /datum/netrun_machine_packet/dns_query/execute()
 	if(!QDELETED(query))
-		query.answer()
+		query.answer(query_generation)
+
+/// A retired attempt cannot call back into the new resolver generation.
+/datum/netrun_machine_packet/dns_query/proc/abandon_attempt(reason)
+	if(query)
+		UnregisterSignal(query, COMSIG_PARENT_QDELETING)
+		query = null
+	fail(reason)
 
 /datum/netrun_machine_packet/dns_query/fail(reason)
 	if(finishing)
@@ -853,8 +970,9 @@
 		UnregisterSignal(pending, COMSIG_PARENT_QDELETING)
 		query = null
 	if(!QDELETED(pending))
-		pending.failure_reason = "DNS: [reason]"
-		qdel(pending)
+		if(pending.active_packet_ref?.resolve() == src)
+			pending.active_packet_ref = null
+		pending.retry(reason, query_generation)
 	return ..()
 
 /datum/netrun_machine_packet/dns_reply
@@ -862,4 +980,4 @@
 
 /datum/netrun_machine_packet/dns_reply/execute()
 	if(!QDELETED(query))
-		query.finish()
+		query.finish(query_generation)

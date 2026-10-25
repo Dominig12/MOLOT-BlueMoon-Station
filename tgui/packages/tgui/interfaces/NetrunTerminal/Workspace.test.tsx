@@ -6,7 +6,7 @@ import { debugReducer } from '../../debug';
 import { NetrunContent } from './Content';
 import { mountNetrunPixi } from './pixiSurface';
 import type { MockPixiSurface } from './testSupport/pixiSurfaceMock';
-import { MatrixState, NetrunData, WorkspaceView } from './types';
+import { MatrixState, NetOperation, NetrunData, WorkspaceView } from './types';
 
 jest.mock('./pixiSurface', () => ({
   mountNetrunPixi: jest.fn(async (host: HTMLElement) =>
@@ -176,6 +176,71 @@ describe('Netrun workspace pages', () => {
     expect(surface.setSuspended).toHaveBeenLastCalledWith(false);
     expect(jest.mocked(mountNetrunPixi)).toHaveBeenCalledTimes(1);
     expect(panel.container.querySelector('[data-net-pixi]')).toBe(element);
+  });
+
+  test('operation history opens from the map and locates its target without losing the console draft or camera', async () => {
+    const peer = { ...node, address: 'TEST:0002', name: 'Реле диагностики', x: 2, y: 2 };
+    const map: NetrunData['map'] = { nodes: [node, peer], edges: [{ id: 'peer', from: node.address, to: peer.address, kind: 'endpoint' }],
+      gateways: [], focus: node.address, revision: 1 };
+    const first: NetOperation = { id: 'command-1', operation_id: 'operation-1', phase: 'queued', kind: 'command',
+      label: 'Диагностика реле', from: node.address, to: peer.address, started_at: 10, updated_at: 10, route: [node.address, peer.address] };
+    const second: NetOperation = { ...first, id: 'command-2', operation_id: 'operation-2', label: 'Чтение журнала' };
+    const { panel, page, update, topic } = setup({ map, operations: [first, second] });
+    const cli = panel.getByLabelText('Командная строка') as HTMLInputElement;
+    fireEvent.change(cli, { target: { value: 'run "Демон диагностики.exe"' } });
+    fireEvent.click(panel.getByRole('tab', { name: 'Карта' }));
+    update({ workspace_view: 'map' });
+    await act(async () => {});
+    const surface = await jest.mocked(mountNetrunPixi).mock.results.slice(-1)[0].value as MockPixiSurface;
+    fireEvent.input(panel.getByPlaceholderText('поиск узла…'), { target: { value: 'Сервер' } });
+    const canvas = surface.element, viewport = page('map').querySelector('[data-net-viewport]');
+    const initialCamera = { ...surface.updateCamera.mock.calls.slice(-1)[0][0] };
+    const pointer = (target: EventTarget, type: string, clientX: number, clientY: number) => {
+      const event = new MouseEvent(type, { bubbles: true, clientX, clientY, button: 0, buttons: type === 'pointercancel' ? 0 : 1 });
+      Object.defineProperty(event, 'pointerId', { value: 1 });
+      act(() => target.dispatchEvent(event));
+    };
+    pointer(viewport, 'pointerdown', 100, 100);
+    pointer(document, 'pointermove', 160, 140);
+    pointer(document, 'pointercancel', 160, 140);
+    const camera = { ...surface.updateCamera.mock.calls.slice(-1)[0][0] };
+    expect(camera.x).toBe(initialCamera.x + 60);
+    expect(camera.y).toBe(initialCamera.y + 40);
+    const geometryUploads = surface.updateScene.mock.calls.length;
+    const status = panel.container.querySelector<HTMLElement>('[data-net-layout="status"]');
+    fireEvent.click(within(status).getByText('Операции (2)'));
+    expect(panel.getByRole('tabpanel', { name: 'Терминал' })).toBeTruthy();
+    const journal = panel.getByRole('region', { name: 'Журнал сетевых операций' });
+    expect(within(journal).getByText(first.label)).toBeTruthy();
+    update({ workspace_view: 'terminal', map: null, selected: null,
+      operations: [{ ...first, phase: 'completed', updated_at: 12 }, { ...second, phase: 'running' }] });
+    expect(within(journal).getByText('Обработано')).toBeTruthy();
+    expect(within(journal).getByText('Обрабатывается')).toBeTruthy();
+    expect(cli.value).toBe('run "Демон диагностики.exe"');
+    expect(surface.setSuspended).toHaveBeenLastCalledWith(true);
+    expect(surface.updateScene).toHaveBeenCalledTimes(geometryUploads);
+    expect(surface.updateCamera.mock.calls.slice(-1)[0][0]).toEqual(camera);
+    const entry = journal.querySelector('[data-net-operation="command-1"]') as HTMLElement;
+    fireEvent.click(within(entry).getByText('Показать узел'));
+    expect(actions(topic, 'select')).toEqual([{ address: peer.address }]);
+    expect(panel.getByRole('tabpanel', { name: 'Карта' })).toBeTruthy();
+    expect((panel.getByPlaceholderText('поиск узла…') as HTMLInputElement).value).toBe('');
+    expect(surface.updateCamera.mock.calls.slice(-1)[0][0]).toEqual(camera);
+    update({ workspace_view: 'map', map, selected: peer });
+    expect(within(page('map').querySelector<HTMLElement>('[data-net-layout="sidebar"]')).getByText(peer.name)).toBeTruthy();
+    expect(page('map').querySelector('[data-net-viewport]')).toBe(viewport);
+    expect(panel.container.querySelector('[data-net-pixi]')).toBe(canvas);
+    const centeredCamera = surface.updateCamera.mock.calls.slice(-1)[0][0];
+    const target = surface.updateScene.mock.calls.slice(-1)[0][0].byAddress.get(peer.address);
+    expect(centeredCamera.x + target.px * centeredCamera.zoom).toBeCloseTo(360);
+    expect(centeredCamera.y + target.py * centeredCamera.zoom).toBeCloseTo(240);
+    expect({ ...centeredCamera }).not.toEqual(camera);
+    expect(surface.destroy).not.toHaveBeenCalled();
+    fireEvent.click(panel.getByRole('tab', { name: 'Терминал' }));
+    fireEvent.click(within(page('terminal')).getByText('Консоль'));
+    expect(panel.getByLabelText('Командная строка')).toBe(cli);
+    expect(cli.value).toBe('run "Демон диагностики.exe"');
+    expect(document.activeElement).toBe(cli);
   });
 
   test('an active breach has its own page while files and map retain their state', () => {

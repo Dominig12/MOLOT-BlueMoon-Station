@@ -361,6 +361,7 @@
 #include "netrun_client_interactions.dm"
 #include "netrun_ai_access.dm"
 #include "netrun_entity_interactions.dm"
+#include "netrun_operations.dm"
 #include "netrun_cli_release.dm"
 #include "netrun_modsuits.dm"
 #include "netrun_persona.dm"

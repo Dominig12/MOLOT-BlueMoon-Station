@@ -2,6 +2,7 @@ import type { GraphOverlay } from './graphPresentation';
 import { GraphScene, PlacedNode } from './graphScene';
 import { GraphViewport } from './graphViewport';
 import type { PixiSurface } from './pixiSurface';
+import { ViewportCoordinates } from './viewportCoordinates';
 
 export type ViewportPhase = 'loading' | 'ready' | 'empty' | 'paused' | 'error';
 export type ViewportStatus = { phase: ViewportPhase; message?: string };
@@ -44,7 +45,7 @@ export class NetworkViewportController {
   private lastZones: GraphOverlay['apcZones'];
   private hover: ViewportHover = null;
   private hud: ViewportHUD = { nodes: -1, zoom: -1 };
-  private press: { pointer: number; x: number; y: number; panX: number; panY: number; moved: boolean;
+  private press: { pointer: number; x: number; y: number; moved: boolean;
     lastX: number; lastY: number; lastAt: number; velocityX: number; velocityY: number } | null = null;
   private fitLimit: { scene: GraphScene; zones: GraphOverlay['apcZones']; width: number; height: number; zoom: number } | null = null;
   private cameraInitialized = false;
@@ -163,9 +164,12 @@ export class NetworkViewportController {
   rejectSelection = (message: string) => { this.finishSelection('rejected', message); };
 
   hit(clientX: number, clientY: number): PlacedNode | null {
-    const bounds = this.host?.getBoundingClientRect();
-    if (!bounds) { return null; }
-    const point = this.camera.unproject(clientX - bounds.left, clientY - bounds.top);
+    const point = this.coordinates()?.point(clientX, clientY);
+    return point ? this.hitLocal(point.x, point.y) : null;
+  }
+
+  private hitLocal(x: number, y: number): PlacedNode | null {
+    const point = this.camera.unproject(x, y);
     try {
       return this.surface?.hitTest ? this.surface.hitTest(point, this.camera.zoom)
         : this.snapshot.scene.hit(point, this.camera.zoom);
@@ -173,6 +177,12 @@ export class NetworkViewportController {
   }
 
   private size() { return { width: this.host?.clientWidth || 720, height: this.host?.clientHeight || 480 }; }
+
+  private coordinates() {
+    if (!this.host) { return null; }
+    const { width, height } = this.size();
+    return new ViewportCoordinates(this.host.getBoundingClientRect(), width, height);
+  }
 
   private setStatus(status: ViewportStatus) {
     if (this.status.phase === status.phase && this.status.message === status.message) { return; }
@@ -317,7 +327,7 @@ export class NetworkViewportController {
     }
     const now = performance.now();
     this.press = { pointer: event.pointerId, x: event.clientX, y: event.clientY,
-      panX: this.camera.x, panY: this.camera.y, moved: false,
+      moved: false,
       lastX: event.clientX, lastY: event.clientY, lastAt: now, velocityX: 0, velocityY: 0 };
     this.host?.focus({ preventScroll: true });
     // Keep following the gesture even if WebView releases capture or capture is
@@ -330,8 +340,9 @@ export class NetworkViewportController {
 
   private pointerMove = (event: PointerEvent) => {
     if (this.press || this.status.phase !== 'ready' || this.snapshot.suspended) { return; }
-    const node = this.hit(event.clientX, event.clientY), bounds = this.host?.getBoundingClientRect();
-    this.setHover(node && bounds ? { address: node.address, x: event.clientX - bounds.left, y: event.clientY - bounds.top } : null);
+    const point = this.coordinates()?.point(event.clientX, event.clientY);
+    const node = point ? this.hitLocal(point.x, point.y) : null;
+    this.setHover(node && point ? { address: node.address, x: point.x, y: point.y } : null);
   };
 
   private dragMove = (event: PointerEvent) => {
@@ -345,14 +356,18 @@ export class NetworkViewportController {
     const dx = event.clientX - press.x, dy = event.clientY - press.y;
     if (dx * dx + dy * dy > 16) { press.moved = true; }
     if (press.moved) {
+      const delta = this.coordinates()?.delta(event.clientX - press.lastX, event.clientY - press.lastY);
+      if (!delta) { return; }
       this.host?.setAttribute('data-net-panning', 'true');
       const now = performance.now(), dt = Math.max(8, Math.min(64, now - press.lastAt));
-      const vx = (event.clientX - press.lastX) / dt, vy = (event.clientY - press.lastY) / dt;
+      const vx = delta.x / dt, vy = delta.y / dt;
       press.velocityX = press.velocityX * .55 + vx * .45;
       press.velocityY = press.velocityY * .55 + vy * .45;
       press.lastX = event.clientX; press.lastY = event.clientY; press.lastAt = now;
       this.surface?.setInteracting(true);
-      this.camera.pan(press.panX + dx, press.panY + dy);
+      // Integrate only new pointer movement. A CSS scale/layout change or wheel
+      // zoom during a held press must not restore the camera's old origin.
+      this.camera.pan(this.camera.x + delta.x, this.camera.y + delta.y);
       this.setHover(null); this.publishCamera();
     }
   };
@@ -436,8 +451,8 @@ export class NetworkViewportController {
       this.zoomEndTimer = null;
       if (!this.press && !this.kinetic) { this.surface?.setInteracting(false); }
     }, 120);
-    const bounds = this.host?.getBoundingClientRect();
-    if (!bounds) { return; }
+    const point = this.coordinates()?.point(event.clientX, event.clientY);
+    if (!point) { return; }
     const dimensions = this.size();
     let limit = this.fitLimit;
     if (!limit || limit.scene !== this.snapshot.scene || limit.zones !== this.snapshot.overlay.apcZones
@@ -446,7 +461,7 @@ export class NetworkViewportController {
       limit = this.fitLimit = { scene: this.snapshot.scene, zones: this.snapshot.overlay.apcZones, ...dimensions, zoom: fitted.zoom };
     }
     const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? dimensions.height : 1);
-    this.camera.zoomAt(event.clientX - bounds.left, event.clientY - bounds.top, delta, limit.zoom);
+    this.camera.zoomAt(point.x, point.y, delta, limit.zoom);
     this.publishCamera();
   };
 }
