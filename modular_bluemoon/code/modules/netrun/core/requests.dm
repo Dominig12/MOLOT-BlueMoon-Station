@@ -1,12 +1,12 @@
 /// A queued packet owns its immutable sender/target context and its cancellable timer.
 /// UI route snapshots never survive the delivery boundary.
 /datum/netrun_request/delivery
+	delivery_kind = "request_delivery"
 	var/datum/netrun_console/console
 	var/datum/component/netrun_node/node
 	var/datum/netrun_network/sent_network
 	var/mob/sender
 	var/list/dependencies = list()
-	var/timer_id
 	var/delivering = FALSE
 	var/cancelled = FALSE
 	/// A packet may be dispatched once, whether immediately or through its owned timer.
@@ -16,7 +16,6 @@
 	var/datum/netrun_packet_context/operation
 	var/operation_kind = "request"
 	var/operation_label = "Сетевой запрос"
-	var/delivery_queued = FALSE
 
 /datum/netrun_request/delivery/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/netrun_network/sent_network, mob/sender, file_uid, datum/netrun_packet_context/context)
 	..(file_uid)
@@ -33,13 +32,10 @@
 		RegisterSignal(dependency, COMSIG_PARENT_QDELETING, PROC_REF(on_dependency_deleted))
 
 /datum/netrun_request/delivery/Destroy()
-	SSnetrun.task_scheduler?.cancel("request_delivery", src)
+	cancel_delivery()
 	SSnetrun.pending_requests -= src
 	QDEL_NULL(operation)
 	poll_route.Cut()
-	if(timer_id)
-		deltimer(timer_id)
-		timer_id = null
 	for(var/datum/dependency as anything in dependencies)
 		UnregisterSignal(dependency, COMSIG_PARENT_QDELETING)
 	dependencies.Cut()
@@ -75,38 +71,30 @@
 	// Circuits are autonomous; explicit player packets enter the interactive lane.
 	if(console.origin != NETRUN_ORIGIN_CIRCUIT)
 		console.note_user_action()
-	if(delay <= 0)
-		return queue_delivery()
-	timer_id = addtimer(CALLBACK(src, PROC_REF(queue_delivery)), delay, TIMER_STOPPABLE | TIMER_DELETE_ME)
-	return TRUE
+	return schedule_delivery(delay)
 
 /// Timer callbacks only admit ready work; execution shares the subsystem budget.
-/datum/netrun_request/delivery/proc/queue_delivery()
-	timer_id = null
-	if(delivery_queued || delivering || QDELETED(src))
-		return FALSE
-	delivery_queued = TRUE
-	var/interactive = console?.origin != NETRUN_ORIGIN_CIRCUIT
-	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
-	SSnetrun.get_task_scheduler().enqueue("request_delivery", src, interactive ? limits.interactive_priority : NETRUN_TASK_NORMAL, interactive)
-	SSnetrun.wake_ready_delivery()
-	return TRUE
+/datum/netrun_request/delivery/can_queue_delivery()
+	return !delivering && !cancelled
 
-/datum/netrun_request/delivery/proc/deliver()
+/datum/netrun_request/delivery/delivery_priority()
+	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
+	return delivery_interactive() ? limits.interactive_priority : NETRUN_TASK_NORMAL
+
+/datum/netrun_request/delivery/delivery_interactive()
+	return console?.origin != NETRUN_ORIGIN_CIRCUIT
+
+/datum/netrun_request/delivery/deliver()
 	set waitfor = FALSE
 	if(delivering || QDELETED(src))
 		return FALSE
 	// Trusted direct callers keep their explicit execution boundary. Native input
 	// may yield; the packet keeps its lifetime, while the scheduler can continue.
-	SSnetrun.task_scheduler?.cancel("request_delivery", src)
-	delivery_queued = FALSE
+	cancel_delivery()
 	if(!sent)
 		operation.queued(poll_route)
 		SSnetrun.pending_requests[src] = TRUE
 	sent = TRUE
-	if(timer_id)
-		deltimer(timer_id)
-	timer_id = null
 	delivering = TRUE
 	if(!cancelled && !QDELETED(console) && !QDELETED(node))
 		operation.running()

@@ -140,6 +140,12 @@
 	scene.relay.freq_listening = list(FREQ_SCIENCE)
 	packet.deliver()
 	TEST_ASSERT_EQUAL(scene.receiver_port.received_packets, 0, "A frequency change in flight must reject the packet at delivery")
+	scene.relay.freq_listening = list()
+	packet = new(scene.radio_port, scene.receiver_service, new /datum/netrun_machine_message/telecomms(signal))
+	TEST_ASSERT(packet.send(), "Restoring a relay filter must restore communication admission")
+	scene.hub.freq_listening = list(FREQ_SCIENCE)
+	packet.deliver()
+	TEST_ASSERT_EQUAL(scene.receiver_port.received_packets, 0, "An in-flight hub frequency change must revoke the native bridge as well")
 
 /datum/unit_test/netrun_transport_atmos_late_controller_registration/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
@@ -175,6 +181,173 @@
 	GLOB.sortedAreas = saved_areas
 	TEST_ASSERT(istype(get_area(selected), /area/tcommsat), "Roundstart DNS and information servers must choose telecommunications before science")
 	TEST_ASSERT(SSnetrun.runlevels & RUNLEVEL_LOBBY, "Network preparation must run during the lobby after subsystem initialization")
+
+/// A failed initial discovery window must not permanently disable registration.
+/datum/unit_test/netrun_transport_atmos_registration_backoff/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/airalarm/alarm = scene.machine(/obj/machinery/airalarm, scene.source_spot)
+	var/obj/machinery/atmospherics/components/unary/vent_pump/vent = scene.machine(/obj/machinery/atmospherics/components/unary/vent_pump, scene.target_spot)
+	var/datum/netrun_machine_service/atmos/device/device = vent.get_netrun_machine_service("atmos.device")
+	device.registration_attempts = NETRUN_ATMOS_REGISTRATION_MAX_ATTEMPTS
+	if(device.registration_timer)
+		deltimer(device.registration_timer)
+	device.registration_timer = null
+	device.registration_at = INFINITY
+	device.retry_registration()
+	TEST_ASSERT(device.registration_timer && device.registration_at >= world.time + 30 SECONDS, "An exhausted fast retry window must retain a bounded slow retry, rather than abandon a live controller")
+	var/deadline = world.time + 4 SECONDS
+	while(!alarm.netrun_vent_info[vent.id_tag] && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(alarm.netrun_vent_info[vent.id_tag], "A device at its old retry limit must still deliver registration after routing recovers")
+	TEST_ASSERT_NULL(device.registration_timer, "Successful registration must cancel the slow retry")
+
+/// All native channel setters must wake idle devices and controllers.
+/datum/unit_test/netrun_transport_atmos_registration_frequency_change/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/airalarm/alarm = scene.machine(/obj/machinery/airalarm, scene.source_spot)
+	var/obj/machinery/atmospherics/components/unary/vent_pump/vent = scene.machine(/obj/machinery/atmospherics/components/unary/vent_pump, scene.target_spot)
+	var/obj/machinery/atmospherics/components/unary/vent_scrubber/scrubber = scene.machine(/obj/machinery/atmospherics/components/unary/vent_scrubber, scene.target_spot)
+	var/datum/netrun_machine_service/atmos/device/vent_service = vent.get_netrun_machine_service("atmos.device")
+	var/datum/netrun_machine_service/atmos/device/scrub_service = scrubber.get_netrun_machine_service("atmos.device")
+	vent.broadcast_status()
+	scrubber.broadcast_status()
+	var/deadline = world.time + 5 SECONDS
+	while((!alarm.netrun_vent_info[vent.id_tag] || !alarm.netrun_scrub_info[scrubber.id_tag]) && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(alarm.netrun_vent_info[vent.id_tag] && alarm.netrun_scrub_info[scrubber.id_tag], "Both idle device types must first complete their initial registration")
+	alarm.netrun_vent_info.Cut()
+	alarm.netrun_scrub_info.Cut()
+	alarm.set_frequency(FREQ_ATMOS_STORAGE)
+	TEST_ASSERT(vent_service.registration_timer && scrub_service.registration_timer, "Changing the controller channel must rearm its former area devices")
+	// Let the first mismatched-channel attempt settle: no matching controller must
+	// leave behind recurring retries, while later device reconfiguration wakes it.
+	vent_service.retry_registration()
+	scrub_service.retry_registration()
+	vent.set_frequency(FREQ_ATMOS_STORAGE)
+	scrubber.set_frequency(FREQ_ATMOS_STORAGE)
+	TEST_ASSERT(vent_service.registration_frequency == FREQ_ATMOS_STORAGE && scrub_service.registration_frequency == FREQ_ATMOS_STORAGE, "Native device setters must publish their new registration channels immediately")
+	deadline = world.time + 5 SECONDS
+	while((!alarm.netrun_vent_info[vent.id_tag] || !alarm.netrun_scrub_info[scrubber.id_tag]) && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(alarm.netrun_vent_info[vent.id_tag] && alarm.netrun_scrub_info[scrubber.id_tag], "Idle vents and scrubbers must register on the new compatible channel without a UI status poll")
+
+/// Reproduce the actual Peace Syndicate R&D machine types through deferred map initialization.
+/datum/unit_test/netrun_transport_atmos_native_mapload/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	SSatoms.map_loader_begin()
+	var/obj/machinery/atmospherics/components/unary/vent_pump/on/layer2/vent = new(scene.target_spot)
+	var/obj/machinery/atmospherics/components/unary/vent_scrubber/on/layer4/scrubber = new(scene.target_spot)
+	var/obj/machinery/airalarm/alarm = new(scene.source_spot)
+	SSatoms.map_loader_stop()
+	scene.owned += list(vent, scrubber, alarm)
+	SSatoms.InitializeAtoms(list(vent, scrubber, alarm))
+	// SSair initializes mapped pipe components after SSatoms. Keep those native
+	// defaults: no synthetic frequency, machine_stat, buildstage or node grants.
+	vent.atmosinit()
+	scrubber.atmosinit()
+	var/datum/netrun_machine_service/atmos/device/vent_port = vent.get_netrun_machine_service("atmos.device")
+	var/datum/netrun_machine_service/atmos/device/scrub_port = scrubber.get_netrun_machine_service("atmos.device")
+	var/datum/netrun_machine_service/atmos/controller/controller = alarm.get_netrun_machine_service("atmos.controller")
+	TEST_ASSERT(vent.netrun_online() && scrubber.netrun_online() && alarm.netrun_online(), "The actual mapped constructors must be online with ordinary native defaults in a powered room")
+	TEST_ASSERT(controller.matches(vent_port, null) && controller.matches(scrub_port, null), "Default native map types in one compartment must agree on area and control channel")
+	var/deadline = world.time + 8 SECONDS
+	while((!alarm.netrun_vent_info[vent.id_tag] || !alarm.netrun_scrub_info[scrubber.id_tag]) && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(alarm.netrun_vent_info[vent.id_tag] && alarm.netrun_scrub_info[scrubber.id_tag], "Native mapload plus SSair startup broadcasts must register both actual R&D device types")
+	TEST_ASSERT(vent_port.registration_complete() && scrub_port.registration_complete(), "Delivered native mapload status must complete registration rather than retry forever")
+
+/// Run explicitly on a real production map; kept outside the hermetic NetRun runner selection.
+/datum/unit_test/atmos_netrun_roundstart_registration
+	requires_full_map = TRUE
+
+/datum/unit_test/atmos_netrun_roundstart_registration/Run()
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/obj/machinery/airalarm/research_alarm
+	var/list/research_devices = list()
+	var/online_dns = 0
+	for(var/datum/netrun_machine_service/dns/server as anything in transport.by_id["dns"])
+		var/turf/server_turf = get_turf(server.host)
+		var/datum/component/netrun_node/server_node = server.resolve_node()
+		if(server_node?.is_online() && server_turf && is_station_level(server_turf.z))
+			online_dns++
+	for(var/datum/netrun_machine_service/atmos/controller/controller as anything in transport.by_id["atmos.controller"])
+		var/turf/controller_turf = get_turf(controller.host)
+		var/datum/component/netrun_node/controller_node = controller.resolve_node()
+		if(istype(get_base_area(controller.host), /area/science/research) && controller_turf && is_station_level(controller_turf.z) && controller_node?.is_online())
+			research_alarm = controller.host
+			break
+	TEST_ASSERT(research_alarm, "The production map must contain a powered native R&D air alarm for this startup regression")
+	for(var/datum/netrun_machine_service/atmos/device/device as anything in transport.by_id["atmos.device"])
+		var/datum/component/netrun_node/device_node = device.resolve_node()
+		if(device.registration_required() && device_node?.is_online() && get_base_area(device.host) == get_base_area(research_alarm))
+			research_devices += device
+	TEST_ASSERT(length(research_devices), "The real mapped R&D compartment must contain native vents or scrubbers")
+	var/deadline = world.time + 20 SECONDS
+	var/missing = length(research_devices)
+	while(missing && world.time < deadline)
+		missing = 0
+		for(var/datum/netrun_machine_service/atmos/device/device as anything in research_devices)
+			var/list/received = istype(device.host, /obj/machinery/atmospherics/components/unary/vent_pump) ? research_alarm.netrun_vent_info : research_alarm.netrun_scrub_info
+			if(!received[device.service_tag()])
+				missing++
+		if(missing)
+			sleep(1 SECONDS)
+	log_world("NETRUN MAP startup: map=[SSmapping.config.map_name] dns_online=[online_dns] ready=[transport.is_ready()] bootstrap=[transport.bootstrap_complete] controllers=[length(transport.by_id["atmos.controller"])] devices=[length(transport.by_id["atmos.device"])] rnd_devices=[length(research_devices)] rnd_missing=[missing] packets=[length(transport.packets)] queued=[transport.queued_messages]")
+	for(var/datum/netrun_machine_service/atmos/device/device as anything in research_devices)
+		var/datum/netrun_machine_service/atmos/controller/controller = research_alarm.get_netrun_machine_service("atmos.controller")
+		log_world("NETRUN MAP device: type=[device.host.type] tag=[device.service_tag()] frequency=[device.control_frequency()] controller_frequency=[controller.control_frequency()] same_area=[get_base_area(device.host) == get_base_area(research_alarm)] matches=[controller.matches(device, null)] registered=[device.registration_complete()] retries=[device.registration_attempts] queries=[length(device.resolutions)] area_index=[device.registration_area == controller.registration_area]")
+	TEST_ASSERT(online_dns, "Mapped station startup must create a powered DNS server in telecommunications")
+	TEST_ASSERT_EQUAL(missing, 0, "Opening the real R&D air alarm must find its native mapped devices without any forced status poll or channel override")
+
+/// Nondense mapped equipment also occupies a tile; science never substitutes for telecomms.
+/datum/unit_test/netrun_roundstart_free_telecommunications_tile/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/area/tcommsat/server/telecomms = scene.room(/area/tcommsat/server)
+	var/turf/only_spot = scene.take(locate(scene.source_spot.x + 4, scene.source_spot.y + 2, scene.source_spot.z), telecomms)
+	var/obj/machinery/occupant = scene.machine(/obj/machinery, only_spot)
+	occupant.density = FALSE
+	var/list/saved_areas = GLOB.sortedAreas
+	GLOB.sortedAreas = list(telecomms)
+	var/turf/occupied_selection = SSnetrun.find_server_spot()
+	qdel(occupant)
+	var/turf/free_selection = SSnetrun.find_server_spot()
+	var/area/science/server/science = scene.room(/area/science/server)
+	scene.take(locate(scene.source_spot.x + 3, scene.source_spot.y + 2, scene.source_spot.z), science)
+	GLOB.sortedAreas = list(science)
+	var/turf/science_selection = SSnetrun.find_server_spot()
+	GLOB.sortedAreas = saved_areas
+	TEST_ASSERT_NULL(occupied_selection, "A nondense mapped machine must exclude its tile from roundstart server placement")
+	TEST_ASSERT_EQUAL(free_selection, only_spot, "Removing the occupying machine must make its otherwise valid telecomms floor available")
+	TEST_ASSERT_NULL(science_selection, "A station with no telecommunications tile must not spawn infrastructure in science")
+
+/// An isolated transport prepares routes in the lobby only after all subsystems finish.
+/datum/unit_test/netrun_transport_lobby_bootstrap_barrier/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_machine_transport/transport = allocate(/datum/netrun_machine_transport)
+	// Avoid creating real roundstart infrastructure in this isolated route-cache test.
+	transport.bootstrap_complete = TRUE
+	transport.prewarm_limit = 1
+	transport.by_id["dns"] = list(scene.dns.get_netrun_machine_service("dns"))
+	var/key = "network_bootstrap:[REF(transport)]"
+	var/saved_state = SSticker.current_state
+	var/datum/controller/subsystem/saved_initializing = Master.initializing_subsystem
+	SSticker.current_state = GAME_STATE_PREGAME
+	Master.initializing_subsystem = SSnetrun
+	transport.prepare_network()
+	var/premature = SSnetrun.get_task_scheduler().by_key[key]
+	var/advanced_early = transport.advance_bootstrap(SSnetrun.get_execution_limits())
+	Master.initializing_subsystem = saved_initializing
+	transport.prepare_network()
+	var/datum/netrun_task/queued = SSnetrun.get_task_scheduler().by_key[key]
+	transport.advance_bootstrap(SSnetrun.get_execution_limits())
+	SSticker.current_state = saved_state
+	TEST_ASSERT_NULL(premature, "Lobby bootstrap must not start inside the Master subsystem initialization loop")
+	TEST_ASSERT(!advanced_early, "A bootstrap task must also respect the initialization barrier")
+	TEST_ASSERT(queued, "Finishing initialization must enqueue the same bounded infrastructure work during the lobby")
+	TEST_ASSERT_EQUAL(transport.prewarm_steps, 1, "A single bootstrap task must prepare one useful infrastructure root")
+	TEST_ASSERT(length(transport.route_trees) == 1 && transport.tree_builds == 1, "Lobby preparation must retain its route tree for later requests")
+	TEST_ASSERT_EQUAL(transport.prewarm_revision, SSnetrun.get_topology().revision, "The prepared routes must match the current physical graph")
+	TEST_ASSERT(!QDELETED(scene.apc), "The cache fixture must retain its real infrastructure owner")
 
 /datum/netrun_transport_scene
 	parent_type = /datum/netrun_route_scene

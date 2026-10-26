@@ -49,7 +49,7 @@
 	if(!stored_research)
 		var/memory_type = (network_id == RND_NETWORK_AUTO && is_station_level(z)) || network_id == RND_NETWORK_STATION ? /datum/techweb/science : techweb_type
 		stored_research = new memory_type
-		stored_research.research_owner_ref = WEAKREF(src)
+		stored_research.add_research_owner(src)
 	AddComponent(/datum/component/techweb_holder)
 	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
 	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, stored_research)
@@ -88,7 +88,7 @@
 	GLOB.rndservers_list -= src
 	var/datum/techweb/memory = stored_research
 	stored_research = null
-	qdel(memory)
+	memory?.remove_research_owner(src)
 	SSresearch.refresh_research_authorities()
 	QDEL_NULL(alarmloop)
 	return ..()

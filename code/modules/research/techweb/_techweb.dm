@@ -7,6 +7,11 @@
 /datum/techweb
 	/// Only a physical R&D server owns authoritative research memory.
 	var/datum/weakref/research_owner_ref
+	/// Explicitly linked physical servers retain the same authoritative database.
+	/// Clients never join this set; losing the last physical owner destroys it.
+	var/list/research_owner_refs = list()
+	/// Used only while merging two physical server groups to rebind their clients.
+	var/datum/weakref/research_successor_ref
 	var/list/researched_nodes = list()		//Already unlocked and all designs are now available. Assoc list, id = TRUE
 	var/list/visible_nodes = list()			//Visible nodes, doesn't mean it can be researched. Assoc list, id = TRUE
 	var/list/available_nodes = list()		//Nodes that can immediately be researched, all reqs met. assoc list, id = TRUE
@@ -181,15 +186,18 @@
 		V.ui_update()
 
 /datum/techweb/proc/add_point_list(list/pointlist, income = TRUE)
+	var/changed = FALSE
 	if(income) // i DO NOT TRUST byond to optimize this way properly
 		for(var/i in pointlist)
 			if(SSresearch.point_types[i] && pointlist[i] > 0)
 				next_income[i] += pointlist[i]
+				changed = TRUE
 	else
 		for(var/i in pointlist)
 			if(SSresearch.point_types[i] && pointlist[i] > 0)
 				research_points[i] += pointlist[i]
-	if(!income)
+				changed = TRUE
+	if(changed && !income)
 		netrun_research_changed()
 
 /datum/techweb/proc/add_points_all(amount)
@@ -346,10 +354,12 @@
 /datum/techweb/proc/add_design(datum/design/design, custom = FALSE)
 	if(!istype(design))
 		return FALSE
+	var/changed = !researched_designs[design.id] || (custom && !custom_designs[design.id])
 	researched_designs[design.id] = TRUE
 	if(custom)
 		custom_designs[design.id] = TRUE
-	netrun_research_changed()
+	if(changed)
+		netrun_research_changed()
 	return TRUE
 
 /datum/techweb/proc/remove_design_by_id(id, custom = FALSE)

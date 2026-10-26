@@ -305,6 +305,9 @@
 
 /// Borrowed snapshots must never be modified or qdel()ed by callers.
 /datum/netrun_topology/proc/route_snapshot(datum/component/netrun_node/start, borrow = FALSE)
+	reconcile_movement()
+	if(dirty && !rebuilding)
+		SSnetrun.ensure_topology()
 	if(QDELETED(start) || nodes[start.address] != start)
 		if(borrow)
 			return null

@@ -176,6 +176,7 @@
 /datum/netrun_machine_service/atmos/device/host_initialized()
 	. = ..()
 	if(registration_required() && refresh_registration())
+		registration_attempts = 0
 		arm_registration(world.tick_lag)
 
 /datum/netrun_machine_service/atmos/device/proc/registration_required()
@@ -225,7 +226,11 @@
 		registration_at = INFINITY
 		SSnetrun.task_scheduler?.cancel("atmos_registration", src)
 
-/datum/netrun_machine_service/atmos/device/proc/arm_registration(delay = 5 SECONDS)
+/datum/netrun_machine_service/atmos/device/proc/arm_registration(delay)
+	if(isnull(delay))
+		// A long DNS/cable outage must not permanently strand an otherwise live
+		// device. Keep probing slowly after the initial fast retry window.
+		delay = registration_attempts >= NETRUN_ATMOS_REGISTRATION_MAX_ATTEMPTS ? 30 SECONDS : 5 SECONDS
 	if(!registration_required() || QDELETED(src) || (registration_timer && registration_at <= world.time + delay))
 		return
 	if(registration_timer)
@@ -262,13 +267,9 @@
 		// We cannot emit right now (offline or unconfigured). Our own power/config signals
 		// will re-arm us once we can, so there is no point spinning in the meantime.
 		return
-	if(registration_attempts >= NETRUN_ATMOS_REGISTRATION_MAX_ATTEMPTS)
-		// A reachable controller keeps ignoring us. Stop hammering it; the signal handlers
-		// above reset the budget whenever conditions actually change.
-		return
 	// New controllers invalidate the DNS revision, including cached negatives.
 	// Do not resend statuses to an absent or entirely powered-down area.
-	registration_attempts++
+	registration_attempts = min(registration_attempts + 1, NETRUN_ATMOS_REGISTRATION_MAX_ATTEMPTS)
 	var/obj/machinery/atmospherics/components/unary/device = host
 	if(istype(device, /obj/machinery/atmospherics/components/unary/vent_pump))
 		var/obj/machinery/atmospherics/components/unary/vent_pump/vent = device

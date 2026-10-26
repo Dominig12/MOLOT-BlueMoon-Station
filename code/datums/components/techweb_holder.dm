@@ -19,10 +19,13 @@
 	SIGNAL_HANDLER
 	if(QDELETED(new_web))
 		new_web = null
-	// A server's disk is physical memory, never a replica of another server.
+	if(istype(parent, /obj/machinery/rnd/server) && !new_web && !QDELETED(parent) && !QDELETED(linked_techweb))
+		return
+	// Only an explicit binding joins physical research servers into a shared pool.
 	if(istype(parent, /obj/machinery/rnd/server) && new_web)
-		var/datum/techweb/proposed = new_web
-		if(proposed.research_owner_ref?.resolve() != parent)
+		var/obj/machinery/rnd/server/server = parent
+		if(!new_web.has_research_owner(server))
+			server.link_research_cluster(new_web)
 			return
 	if(linked_techweb == new_web)
 		return
@@ -36,18 +39,24 @@
 
 /datum/component/techweb_holder/proc/research_deleted(datum/source)
 	SIGNAL_HANDLER
-	on_set_techweb(parent, null)
+	var/datum/techweb/old_web = source
+	on_set_techweb(parent, old_web.research_successor_ref?.resolve())
 
 /datum/component/techweb_holder/proc/on_multitool_act(datum/source, mob/living/user, obj/item/I, list/mutable_recipes)
 	SIGNAL_HANDLER
 	var/obj/item/multitool/tool = I
 	if(istype(tool.buffer, /datum/techweb))
+		if(istype(parent, /obj/machinery/rnd/server))
+			var/obj/machinery/rnd/server/server = parent
+			if(!server.allowed(user))
+				to_chat(user, span_warning("Недостаточно прав для объединения исследовательских серверов."))
+				return TRUE
 		var/datum/techweb/new_web = tool.buffer
 		if(new_web == linked_techweb)
 			to_chat(user, span_notice("Объект уже подключён к [new_web.organization]."))
 			return TRUE
 		on_set_techweb(parent, new_web)
-		to_chat(user, linked_techweb == new_web ? span_notice("Вы подключаете объект к [new_web.organization].") : span_warning("Сервер хранит собственную исследовательскую сеть и не принимает чужую привязку."))
+		to_chat(user, linked_techweb == new_web ? span_notice("Вы подключаете объект к [new_web.organization].") : span_warning("Нет рабочего сетевого пути к физическому исследовательскому серверу."))
 	else if(!tool.buffer)
 		if(linked_techweb)
 			tool.buffer = linked_techweb

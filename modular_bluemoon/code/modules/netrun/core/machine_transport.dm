@@ -160,20 +160,25 @@
 		return FALSE
 	var/datum/netrun_machine_directory/entry = cached_directory(destination_id, recipient_tag)
 	if(entry)
-		var/list/targets = resolve(destination_id, recipient_tag, entry)
-		var/admitted = FALSE
-		for(var/datum/netrun_machine_service/target as anything in targets)
-			admitted = send_to(target, message.copy()) || admitted
-		if(!length(targets))
-			message.failed("DNS: получатель недоступен")
-		qdel(message)
-		return admitted
+		return send_resolved(destination_id, message, recipient_tag, entry)
 	var/datum/netrun_machine_resolution/query = get_resolution(destination_id, recipient_tag)
 	if(!query)
 		message.failed("источник недоступен")
 		qdel(message)
 		return FALSE
 	return query.enqueue(message)
+
+/// Cold discovery and cache hits use the same target policy. Domain services may
+/// select a single replica; transport must never turn one mutation into a broadcast.
+/datum/netrun_machine_service/proc/send_resolved(destination_id, datum/netrun_machine_message/message, recipient_tag, datum/netrun_machine_directory/entry)
+	var/list/targets = resolve(destination_id, recipient_tag, entry)
+	var/admitted = FALSE
+	for(var/datum/netrun_machine_service/target as anything in targets)
+		admitted = send_to(target, message.copy()) || admitted
+	if(!length(targets))
+		message.failed("DNS: получатель недоступен")
+	qdel(message)
+	return admitted
 
 /// Replies and peers already obtained through service discovery do not repeat DNS.
 /datum/netrun_machine_service/proc/send_to(datum/netrun_machine_service/target, datum/netrun_machine_message/message)
@@ -245,6 +250,11 @@
 	var/list/by_tag = list()
 	var/list/waiting_resolutions = list()
 	var/wake_timer
+	/// Readiness notifications share one bounded common-worker continuation.
+	var/wake_queued = FALSE
+	var/list/wake_queries
+	var/wake_cursor = 1
+	var/wake_again = FALSE
 	var/preparing = FALSE
 	var/bootstrap_complete = FALSE
 	var/packet_serial = 0
@@ -363,15 +373,12 @@
 	return !length(prewarm_roots)
 
 /datum/netrun_task/network_bootstrap
+	parent_type = /datum/netrun_task/continuation
 	kind = "network_bootstrap"
 
-/datum/netrun_task/network_bootstrap/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+/datum/netrun_task/network_bootstrap/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
 	var/datum/netrun_machine_transport/transport = target()
-	if(QDELETED(transport))
-		return FALSE
-	if(!transport.advance_bootstrap(limits || worker.get_execution_limits()))
-		worker.get_task_scheduler().enqueue(kind, transport, NETRUN_TASK_BACKGROUND)
-	return TRUE
+	return transport.advance_bootstrap(limits)
 
 /datum/netrun_machine_transport/proc/network_changed(datum/source, datum/component/netrun_node/node, flags)
 	SIGNAL_HANDLER
@@ -380,14 +387,55 @@
 
 /// Registration/power restoration wakes pending discovery once, after construction unwinds.
 /datum/netrun_machine_transport/proc/wake_resolutions()
-	if(length(waiting_resolutions) && !wake_timer)
-		wake_timer = addtimer(CALLBACK(src, PROC_REF(resume_resolutions)), world.tick_lag, TIMER_STOPPABLE | TIMER_DELETE_ME)
+	if(!length(waiting_resolutions) || wake_timer)
+		return
+	if(wake_queued)
+		wake_again = TRUE
+		return
+	wake_timer = addtimer(CALLBACK(src, PROC_REF(resume_resolutions)), world.tick_lag, TIMER_STOPPABLE | TIMER_DELETE_ME)
 
 /datum/netrun_machine_transport/proc/resume_resolutions()
+	if(wake_timer)
+		deltimer(wake_timer)
 	wake_timer = null
-	for(var/datum/netrun_machine_resolution/query as anything in waiting_resolutions.Copy())
-		if(!QDELETED(query))
+	if(!length(waiting_resolutions))
+		return
+	if(wake_queued)
+		wake_again = TRUE
+		return
+	wake_queued = TRUE
+	SSnetrun.get_task_scheduler().enqueue("dns_wake", src, NETRUN_TASK_BACKGROUND)
+	SSnetrun.wake_ready_delivery()
+
+/// Copying the wave and native begin() both run inside the shared MC budget.
+/// A notification during a wave coalesces into one fresh snapshot afterwards.
+/datum/netrun_machine_transport/proc/advance_resolutions()
+	if(!wake_queries)
+		wake_queries = waiting_resolutions.Copy()
+		wake_cursor = 1
+		wake_again = FALSE
+	var/stop = min(length(wake_queries), wake_cursor + 7)
+	while(wake_cursor <= stop)
+		var/datum/netrun_machine_resolution/query = wake_queries[wake_cursor++]
+		if(!QDELETED(query) && (query in waiting_resolutions))
 			query.begin()
+	if(wake_cursor <= length(wake_queries))
+		return FALSE
+	wake_queries = null
+	if(wake_again && length(waiting_resolutions))
+		wake_again = FALSE
+		return FALSE
+	wake_again = FALSE
+	wake_queued = FALSE
+	return TRUE
+
+/datum/netrun_task/dns_wake
+	parent_type = /datum/netrun_task/continuation
+	kind = "dns_wake"
+
+/datum/netrun_task/dns_wake/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	var/datum/netrun_machine_transport/transport = target()
+	return transport.advance_resolutions()
 
 /datum/netrun_machine_transport/proc/node_deleted(datum/source, datum/component/netrun_node/node)
 	SIGNAL_HANDLER
@@ -397,10 +445,14 @@
 
 /datum/netrun_machine_transport/Destroy()
 	SSnetrun.task_scheduler?.cancel("network_bootstrap", src)
+	SSnetrun.task_scheduler?.cancel("dns_wake", src)
 	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_UNREGISTERED, COMSIG_NETRUN_NODE_CHANGED))
 	UnregisterSignal(SSatoms, COMSIG_SUBSYSTEM_POST_INITIALIZE)
 	if(wake_timer)
 		deltimer(wake_timer)
+	wake_queued = FALSE
+	wake_queries = null
+	wake_again = FALSE
 	QDEL_LIST(packets)
 	replaceable_packets.Cut()
 	for(var/address in route_trees)
@@ -717,9 +769,10 @@
 
 /// A cancellable packet checks the current route again when its latency elapses.
 /datum/netrun_machine_packet
+	parent_type = /datum/netrun_delivery
+	delivery_kind = "machine_delivery"
 	var/datum/netrun_machine_service/source
 	var/datum/netrun_machine_service/recipient
-	var/timer_id
 	var/finishing = FALSE
 	var/kind = "machine"
 	var/list/interest_route
@@ -727,10 +780,8 @@
 	var/source_address
 	var/destination_address
 	var/datum/netrun_packet_context/operation
-	var/delivery_queued = FALSE
 	var/sent_at
 	var/due_at
-	var/ready_at
 
 /datum/netrun_machine_packet/New(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient, operation_id)
 	src.source = source
@@ -742,9 +793,7 @@
 	packet_id = operation.id
 
 /datum/netrun_machine_packet/Destroy()
-	SSnetrun.task_scheduler?.cancel("machine_delivery", src)
-	if(timer_id)
-		deltimer(timer_id)
+	cancel_delivery()
 	SSnetrun.get_machine_transport().packets -= src
 	SSnetrun.get_machine_transport().interactive_packets -= src
 	QDEL_NULL(operation)
@@ -773,15 +822,19 @@
 		interest_route = route.hops.Copy()
 		transport.interactive_packets |= src
 		SSnetrun.retain_route_interest(interest_route, world.time + NETRUN_NODE_INTEREST_LEASE)
-	var/delay = clamp(route.latency * NETRUN_MACHINE_LATENCY_SCALE, world.tick_lag, NETRUN_MACHINE_MAX_LATENCY)
+	var/delay = clamp(route.latency * NETRUN_MACHINE_LATENCY_SCALE, 0, NETRUN_MACHINE_MAX_LATENCY)
+	// Scaled local hops are shorter than one representable world tick. Admit
+	// them asynchronously to MC directly instead of adding a timer tick and a
+	// second dispatch tick at every native telecomms/DNS stage.
+	if(delay < world.tick_lag)
+		delay = 0
 	sent_at = world.time
 	due_at = world.time + delay
 	qdel(route)
-	timer_id = addtimer(CALLBACK(src, PROC_REF(queue_delivery)), delay, TIMER_STOPPABLE | TIMER_DELETE_ME)
-	return TRUE
+	return schedule_delivery(delay)
 
-/datum/netrun_machine_packet/proc/delivery_priority()
-	return NETRUN_TASK_NORMAL
+/datum/netrun_machine_packet/can_queue_delivery()
+	return !finishing
 
 /// DNS explicitly carries its caller's restricted policy; arbitrary data never opts in.
 /datum/netrun_machine_packet/proc/communication_policy()
@@ -790,23 +843,9 @@
 /datum/netrun_machine_packet/proc/communication_frequency()
 	return null
 
-/datum/netrun_machine_packet/proc/queue_delivery()
-	timer_id = null
-	if(delivery_queued || finishing || QDELETED(src))
-		return FALSE
-	delivery_queued = TRUE
-	ready_at = world.time
-	SSnetrun.get_task_scheduler().enqueue("machine_delivery", src, delivery_priority())
-	SSnetrun.wake_ready_delivery()
-	return TRUE
-
-/datum/netrun_machine_packet/proc/deliver()
+/datum/netrun_machine_packet/deliver()
 	set waitfor = FALSE
-	SSnetrun.task_scheduler?.cancel("machine_delivery", src)
-	delivery_queued = FALSE
-	if(timer_id)
-		deltimer(timer_id)
-	timer_id = null
+	cancel_delivery()
 	if(finishing)
 		return
 	var/datum/netrun_route/route = SSnetrun.get_machine_transport().route(source, recipient, communication_policy(), communication_frequency())
@@ -1082,14 +1121,7 @@
 	SSnetrun.get_machine_transport().queued_messages -= length(queued)
 	queued.Cut()
 	for(var/datum/netrun_machine_message/message as anything in messages)
-		var/eligible = 0
-		for(var/datum/netrun_machine_service/target as anything in records)
-			if(!QDELETED(target) && target.matches(source, recipient_tag))
-				eligible++
-				source.send_to(target, message.copy())
-		if(!eligible)
-			message.failed("DNS: получатель не найден")
-		qdel(message)
+		source.send_resolved(destination_id, message, recipient_tag, entry)
 	source.directory_ready(destination_id, recipient_tag)
 	qdel(src)
 

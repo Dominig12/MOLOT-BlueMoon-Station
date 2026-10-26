@@ -58,6 +58,169 @@
 	TEST_ASSERT(!console.netrun_research_cache, "The console must discard the destroyed server's presentation cache")
 	TEST_ASSERT(!console.request_research_snapshot(), "A bound client must not silently recover the destroyed authority")
 
+/// Redundancy is explicit; linked physical servers retain one authoritative pool.
+/datum/unit_test/netrun_research_linked_servers/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/first = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	var/obj/machinery/rnd/server/second = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	first.base_mining_income = list()
+	second.base_mining_income = list()
+	first.stored_research.research_points = list(TECHWEB_POINT_TYPE_GENERIC = 4000)
+	second.stored_research.research_points = list(TECHWEB_POINT_TYPE_GENERIC = 3000)
+	first.stored_research.next_income = list()
+	second.stored_research.next_income = list()
+	first.stored_research.research_node_id("datatheory", TRUE, FALSE)
+	second.stored_research.add_design_by_id("mmi", TRUE)
+	var/obj/machinery/computer/rdconsole/console = scene.machine(/obj/machinery/computer/rdconsole, scene.source_spot)
+	SEND_SIGNAL(console, COMSIG_ATOM_SET_TECHWEB, second.stored_research)
+	var/datum/techweb/retired = second.stored_research
+	SEND_SIGNAL(second, COMSIG_ATOM_SET_TECHWEB, first.stored_research)
+	TEST_ASSERT_EQUAL(second.stored_research, first.stored_research, "An explicit server binding must join the physical research pool")
+	TEST_ASSERT(QDELETED(retired), "A merged authority must not retain an orphan database")
+	var/datum/techweb/shared = first.stored_research
+	TEST_ASSERT_EQUAL(length(shared.research_owner_refs), 2, "Only the two physical servers may own the research pool")
+	TEST_ASSERT(shared.researched_nodes["datatheory"] && shared.researched_designs["mmi"], "Merging must preserve each server's existing technology and custom designs")
+	TEST_ASSERT_EQUAL(shared.research_points[TECHWEB_POINT_TYPE_GENERIC], 7000, "Merging must preserve each independent balance once")
+	TEST_ASSERT_EQUAL(console.stored_research, shared, "Clients of the merged server must be rebound to the surviving physical pool")
+	TEST_ASSERT_EQUAL(netrun_atom_techweb(console), shared, "The native console and holder must agree after a merge")
+	// Repeating the same explicit binding must not duplicate stored points.
+	SEND_SIGNAL(second, COMSIG_ATOM_SET_TECHWEB, shared)
+	TEST_ASSERT_EQUAL(shared.research_points[TECHWEB_POINT_TYPE_GENERIC], 7000, "Repeating a cluster binding must not duplicate balances")
+	console.request_research_snapshot()
+	var/deadline = world.time + 5 SECONDS
+	while(!console.netrun_research_cache && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(console.netrun_research_cache, "The console must obtain a delivered snapshot from the shared physical servers")
+	first.set_machine_stat(NOPOWER)
+	var/datum/netrun_machine_service/research_client/client = console.get_netrun_machine_service("research.client")
+	TEST_ASSERT_EQUAL(client.live_authority(), shared, "The second live physical server must authorize requests while the first is offline")
+	var/mob/living/carbon/human/user = allocate(/mob/living/carbon/human, scene.source_spot)
+	TEST_ASSERT(console.research_node("comptech", user), "A live backup must admit native console research")
+	deadline = world.time + 5 SECONDS
+	while(!shared.researched_nodes["comptech"] && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(shared.researched_nodes["comptech"], "Native research must actually execute through the surviving live server")
+	TEST_ASSERT_EQUAL(shared.research_points[TECHWEB_POINT_TYPE_GENERIC], 5000, "A clustered research request must debit exactly once")
+	qdel(first)
+	TEST_ASSERT(!QDELETED(shared), "Destroying one linked physical server must preserve redundant research")
+	TEST_ASSERT_EQUAL(shared.research_owner_ref?.resolve(), second, "The remaining physical server must become the compatibility authority")
+	TEST_ASSERT_EQUAL(console.stored_research, shared, "Deleting one owner must not revoke the surviving physical authority")
+	qdel(second)
+	TEST_ASSERT(QDELETED(shared), "Destroying the last physical server must destroy shared research")
+	TEST_ASSERT(!console.stored_research && !netrun_atom_techweb(console) && !console.netrun_research_cache, "A client must not retain usable research after the last physical owner dies")
+	for(var/key in SSresearch.rnd_networks)
+		TEST_ASSERT(SSresearch.rnd_networks[key] != shared, "The global compatibility registry must not retain destroyed research")
+	TEST_ASSERT(SSresearch.science_tech != shared, "The station alias must not retain destroyed research")
+
+/// Restoring an old cluster owner cannot duplicate pushes or steal a reader back.
+/datum/unit_test/netrun_research_failover_subscription/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/first = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	var/obj/machinery/rnd/server/second = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	SEND_SIGNAL(second, COMSIG_ATOM_SET_TECHWEB, first.stored_research)
+	first.base_mining_income = list()
+	second.base_mining_income = list()
+	first.stored_research.next_income = list()
+	var/obj/machinery/computer/rdconsole/console = scene.machine(/obj/machinery/computer/rdconsole, scene.source_spot)
+	SEND_SIGNAL(console, COMSIG_ATOM_SET_TECHWEB, first.stored_research)
+	console.request_research_snapshot()
+	var/datum/netrun_machine_service/research_client/client = console.get_netrun_machine_service("research.client")
+	var/deadline = world.time + 5 SECONDS
+	while(!console.netrun_research_cache && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(console.netrun_research_cache, "Subscription failover needs a real initial snapshot")
+	var/datum/netrun_machine_service/research_server/original = client.subscription_ref?.resolve()
+	var/obj/machinery/rnd/server/original_host = original.host
+	original_host.set_machine_stat(NOPOWER)
+	TEST_ASSERT(client.request(), "The same authority must accept a new request through its surviving physical server")
+	deadline = world.time + 5 SECONDS
+	while(client.subscription_ref?.resolve() == original && world.time < deadline)
+		sleep(world.tick_lag)
+	var/datum/netrun_machine_service/research_server/current = client.subscription_ref?.resolve()
+	TEST_ASSERT(current && current != original, "A delivered failover response must select the new subscription owner")
+	original_host.set_machine_stat(0)
+	original_host.working = TRUE
+	var/list/designs_before = console.netrun_research_cache.researched_designs
+	var/list/duplicate_data = original.snapshot()
+	duplicate_data["generation"] = client.binding_generation
+	var/datum/netrun_machine_message/research/duplicate = allocate(/datum/netrun_machine_message/research, duplicate_data)
+	duplicate.source = original
+	TEST_ASSERT(client.receive(duplicate), "An equal-revision delayed push may be acknowledged without rebuilding presentation")
+	TEST_ASSERT_EQUAL(client.subscription_ref?.resolve(), current, "A delayed push from the restored owner must not steal the current subscription")
+	TEST_ASSERT_EQUAL(console.netrun_research_cache.researched_designs, designs_before, "An equal-revision push must not copy recipes or refresh the native cache")
+	// An equal-revision physical disk outcome is still a required transaction.
+	console.t_disk = allocate(/obj/item/disk/tech_disk, console)
+	first.stored_research.add_design_by_id("mmi", TRUE)
+	var/list/disk_data = current.snapshot()
+	disk_data["generation"] = client.binding_generation
+	disk_data["requested_operation"] = "snapshot"
+	var/datum/netrun_machine_message/research/updated = allocate(/datum/netrun_machine_message/research, disk_data)
+	updated.source = current
+	TEST_ASSERT(client.receive(updated), "The active owner must deliver the latest research state")
+	disk_data["requested_operation"] = "download_disk"
+	disk_data["disk"] = REF(console.t_disk)
+	var/datum/netrun_machine_message/research/disk_result = allocate(/datum/netrun_machine_message/research, disk_data)
+	disk_result.source = current
+	TEST_ASSERT(client.receive(disk_result), "An equal-revision physical disk outcome must still be processed")
+	TEST_ASSERT(console.t_disk.stored_research.researched_designs["mmi"], "Skipping duplicate telemetry must not discard disk writes")
+	if(original.publish_timer)
+		deltimer(original.publish_timer)
+		original.publish_timer = null
+	original.publish()
+	original.publish_batch(SSnetrun)
+	TEST_ASSERT(!original.subscribers[client.node.address], "The restored owner's next publication must prune a reader subscribed elsewhere")
+	TEST_ASSERT(current.subscribers[client.node.address], "Pruning stale ownership must retain the active subscription")
+
+/// A disabled owner must not produce points; both online linked servers contribute.
+/datum/unit_test/netrun_research_linked_mining/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/first = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	var/obj/machinery/rnd/server/second = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	SEND_SIGNAL(second, COMSIG_ATOM_SET_TECHWEB, first.stored_research)
+	TEST_ASSERT_EQUAL(first.stored_research, second.stored_research, "The mining test must use two explicitly linked servers")
+	var/datum/techweb/web = first.stored_research
+	web.research_points = list()
+	web.next_income = list()
+	var/list/first_rate = first.mine()
+	var/list/second_rate = second.mine()
+	var/list/previous_servers = SSresearch.servers
+	var/previous_last_income = SSresearch.last_income
+	var/previous_multiserver = SSresearch.multiserver_calculation
+	SSresearch.servers = list(first, second)
+	SSresearch.multiserver_calculation = TRUE
+	SSresearch.last_income = world.time - 1 SECONDS
+	SSresearch.fire()
+	var/combined = web.research_points[TECHWEB_POINT_TYPE_GENERIC]
+	var/expected = (first_rate[TECHWEB_POINT_TYPE_GENERIC] + second_rate[TECHWEB_POINT_TYPE_GENERIC]) * SSresearch.calculate_server_coefficient(2)
+	// Native set_machine_stat can leave working true; machine power still gates mining.
+	first.set_machine_stat(NOPOWER)
+	first.working = TRUE
+	web.research_points = list()
+	web.next_income = list()
+	SSresearch.last_income = world.time - 1 SECONDS
+	SSresearch.fire()
+	var/offline = web.research_points[TECHWEB_POINT_TYPE_GENERIC]
+	SSresearch.servers = previous_servers
+	SSresearch.last_income = previous_last_income
+	SSresearch.multiserver_calculation = previous_multiserver
+	TEST_ASSERT_EQUAL(combined, expected, "Both linked servers must contribute their real mining rate once with the existing diminishing return")
+	TEST_ASSERT_EQUAL(offline, second_rate[TECHWEB_POINT_TYPE_GENERIC] * SSresearch.calculate_server_coefficient(1), "An unpowered owner must contribute no points even if its working flag is stale")
+
+/// Failed binding must not delete physical memory or accept a non-authoritative cache.
+/datum/unit_test/netrun_research_cluster_binding_guard/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/first = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	var/obj/machinery/rnd/server/second = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	var/datum/techweb/original = second.stored_research
+	first.set_machine_stat(NOPOWER)
+	SEND_SIGNAL(second, COMSIG_ATOM_SET_TECHWEB, first.stored_research)
+	TEST_ASSERT_EQUAL(second.stored_research, original, "A disconnected target cannot acquire another server's physical memory")
+	var/datum/techweb/cache = allocate(/datum/techweb/netrun_snapshot)
+	SEND_SIGNAL(second, COMSIG_ATOM_SET_TECHWEB, cache)
+	TEST_ASSERT_EQUAL(second.stored_research, original, "A disposable cache cannot become a physical research authority")
+	SEND_SIGNAL(second, COMSIG_ATOM_SET_TECHWEB, null)
+	TEST_ASSERT_EQUAL(second.stored_research, original, "Clearing a selector must not orphan the server's physical database")
+
 /// An old reply cannot restore research after unbind/rebind to the same authority.
 /datum/unit_test/netrun_research_stale_reply/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
@@ -223,7 +386,10 @@
 /datum/unit_test/netrun_research_credit_source_quiet/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
 	var/obj/machinery/rnd/server/server = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	var/obj/machinery/rnd/server/replica = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	SEND_SIGNAL(replica, COMSIG_ATOM_SET_TECHWEB, server.stored_research)
 	server.base_mining_income = list()
+	replica.base_mining_income = list()
 	server.stored_research.research_points = list()
 	server.stored_research.next_income = list()
 	var/obj/machinery/power/tesla_coil/coil = scene.machine(/obj/machinery/power/tesla_coil, scene.source_spot)
@@ -233,8 +399,8 @@
 	var/deadline = world.time + 3 SECONDS
 	while((server.stored_research.next_income[TECHWEB_POINT_TYPE_GENERIC] + server.stored_research.research_points[TECHWEB_POINT_TYPE_GENERIC]) < 37 && world.time < deadline)
 		sleep(world.tick_lag)
-	TEST_ASSERT_EQUAL(server.stored_research.next_income[TECHWEB_POINT_TYPE_GENERIC] + server.stored_research.research_points[TECHWEB_POINT_TYPE_GENERIC], 37, "The credit must reach authoritative research exactly once")
 	sleep(0.5 SECONDS)
+	TEST_ASSERT_EQUAL(server.stored_research.next_income[TECHWEB_POINT_TYPE_GENERIC] + server.stored_research.research_points[TECHWEB_POINT_TYPE_GENERIC], 37, "Cold DNS discovery of two physical owners must credit the shared authority exactly once")
 	TEST_ASSERT(!client.snapshot_cache, "A credit-only source must not download a complete research cache")
 	var/datum/netrun_machine_service/research_server/service = server.get_netrun_machine_service("research.server")
 	TEST_ASSERT(!service.subscribers[client.node.address], "A credit-only source must not subscribe to full database pushes")
@@ -314,6 +480,66 @@
 	web.add_design_by_id("micro_mani")
 	TEST_ASSERT_EQUAL(web.netrun_research_revision, revision, "Re-adding a known starting recipe must not trigger database replication")
 
+/// A large subscriber population must update in bounded common-worker slices and drain.
+/datum/unit_test/netrun_research_fanout_drain/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/server = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	server.base_mining_income = list()
+	server.stored_research.next_income = list()
+	var/list/clients = list()
+	for(var/index in 1 to 64)
+		var/obj/machinery/computer/rdconsole/console = scene.machine(/obj/machinery/computer/rdconsole, scene.source_spot)
+		SEND_SIGNAL(console, COMSIG_ATOM_SET_TECHWEB, server.stored_research)
+		console.request_research_snapshot()
+		clients += console.get_netrun_machine_service("research.client")
+	var/deadline = world.time + 10 SECONDS
+	var/ready = 0
+	while(world.time < deadline)
+		ready = 0
+		for(var/datum/netrun_machine_service/research_client/client as anything in clients)
+			if(client.snapshot_revision >= 0)
+				ready++
+		if(ready == length(clients))
+			break
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(ready, 64, "All 64 real consoles must receive their first database through DNS and the transport")
+	var/datum/netrun_machine_service/research_server/service = server.get_netrun_machine_service("research.server")
+	TEST_ASSERT_EQUAL(length(service.subscribers), 64, "All real readers must hold a subscription before publication load begins")
+	// Stop producers, then measure the finite publication and its real delivery queue.
+	server.stored_research.add_point_type(TECHWEB_POINT_TYPE_GENERIC, 9, FALSE)
+	var/revision = server.stored_research.netrun_research_revision
+	if(service.publish_timer)
+		deltimer(service.publish_timer)
+		service.publish_timer = null
+	var/started = REALTIMEOFDAY
+	service.publish()
+	TEST_ASSERT(service.publish_addresses && !service.publish_data, "The timer must enqueue publication without building or broadcasting the database")
+	TEST_ASSERT(!service.publish_batch(SSnetrun), "One worker slice cannot finish a 64-reader publication")
+	TEST_ASSERT_EQUAL(service.publish_cursor, 5, "One publication slice must visit at most four readers")
+	var/pending = 0
+	for(var/datum/netrun_machine_packet/packet as anything in SSnetrun.get_machine_transport().packets)
+		if(packet.source == service)
+			pending++
+	TEST_ASSERT(pending <= 4, "The first slice must admit at most four research packets")
+	deadline = world.time + 10 SECONDS
+	while(world.time < deadline)
+		ready = 0
+		for(var/datum/netrun_machine_service/research_client/client as anything in clients)
+			if(client.snapshot_revision == revision)
+				ready++
+		pending = 0
+		for(var/datum/netrun_machine_packet/packet as anything in SSnetrun.get_machine_transport().packets)
+			if(packet.source == service)
+				pending++
+		if(ready == length(clients) && !pending && !service.publish_addresses)
+			break
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(ready, 64, "All 64 clients must receive the latest authoritative state")
+	TEST_ASSERT_EQUAL(pending, 0, "The research publication's actual transport queue must drain after producers stop")
+	TEST_ASSERT(!service.publish_addresses && !service.publish_data, "Completed publication must release its subscriber list and snapshot")
+	TEST_ASSERT(!SSnetrun.get_task_scheduler().by_key["research.publish:[REF(service)]"], "Completed publication must release its common scheduler continuation")
+	log_world("PERF: research fanout peers=64 batch=4 latest=[ready] pending=[pending] elapsed=[(REALTIMEOFDAY - started) * 100]ms")
+
 /// Archaeology sends a real tool request; the artifact is consumed only by the receiving authority.
 /datum/unit_test/netrun_research_artifact_request/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
@@ -325,10 +551,12 @@
 	var/obj/item/xenoarch/help/research/tool = allocate(/obj/item/xenoarch/help/research, user)
 	var/obj/item/ancientartifact/useless/artifact = allocate(/obj/item/ancientartifact/useless, scene.source_spot)
 	SEND_SIGNAL(tool, COMSIG_ATOM_SET_TECHWEB, server.stored_research)
-	TEST_ASSERT(tool.netrun_research_request("artifact", list("artifact" = REF(artifact)), user), "A real archaeology tool must submit its research to the selected physical server")
+	TEST_ASSERT(tool.netrun_research_request("artifact", list("artifact" = REF(artifact), "points" = 999999), user), "A real archaeology tool must submit its research to the selected physical server")
+	TEST_ASSERT(tool.netrun_research_request("artifact", list("artifact" = REF(artifact)), user), "A duplicate in-flight request must still leave artifact identity verification to the server")
 	TEST_ASSERT(!QDELETED(artifact), "Admitting the request must not consume the artifact before delivery")
 	var/deadline = world.time + 3 SECONDS
 	while(!QDELETED(artifact) && world.time < deadline)
 		sleep(world.tick_lag)
 	TEST_ASSERT(QDELETED(artifact), "The delivered request must consume the researched artifact once")
+	sleep(0.5 SECONDS)
 	TEST_ASSERT_EQUAL(server.stored_research.research_points[TECHWEB_POINT_TYPE_GENERIC] + server.stored_research.next_income[TECHWEB_POINT_TYPE_GENERIC], 4500, "The server must award the actual artifact's 4500 points exactly once")

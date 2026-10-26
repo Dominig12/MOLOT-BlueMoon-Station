@@ -20,7 +20,7 @@
 	TEST_ASSERT_EQUAL(scheduler.ready_deliveries, 1, "Promotion/coalescing must retain one ready delivery")
 	worker.next_fire = world.time + 10 SECONDS
 	worker.wake_ready_delivery()
-	TEST_ASSERT_EQUAL(worker.next_fire, world.time + world.tick_lag, "Ready I/O must not wait through the idle subsystem interval")
+	TEST_ASSERT_EQUAL(worker.next_fire, world.time, "Already ready I/O must not pay another tick before MC admission")
 	TEST_ASSERT_EQUAL(worker.wait, world.tick_lag, "A ready backlog must be served at tick cadence")
 	var/datum/netrun_task/task = scheduler.take()
 	qdel(task)
@@ -32,7 +32,7 @@
 	TEST_ASSERT_EQUAL(scheduler.ready_deliveries, 0, "Cancelled interactive packets must not keep the worker hot")
 	scheduler.enqueue("probe", target)
 	worker.refresh_delivery_interval()
-	TEST_ASSERT_EQUAL(worker.wait, NETRUN_DEFAULT_FIRE_INTERVAL, "Maintenance alone must not request packet cadence")
+	TEST_ASSERT_EQUAL(worker.wait, world.tick_lag, "Every admitted backlog needs bounded fast follow-up until drained")
 
 /// Admitted input must obey the same finite pass budget as other runnable work.
 /datum/unit_test/netrun_delivery_request_budget/Run()
@@ -124,6 +124,10 @@
 	message.user_ref = WEAKREF(actor)
 	var/datum/netrun_machine_packet/data/packet = new(scene.source, scene.target, message)
 	TEST_ASSERT(packet.send(), "A telemetry packet must acquire a real physical route")
+	TEST_ASSERT(packet.delivery_queued && !packet.timer_id, "Sub-tick local traffic must enter the shared asynchronous queue without a per-hop timer")
+	// Exercise the same owner with a genuine representable latency deadline too.
+	packet.cancel_delivery()
+	TEST_ASSERT(packet.schedule_delivery(5 SECONDS), "A delayed machine packet must retain cancellable admission")
 	var/owned_timer = packet.timer_id
 	deltimer(owned_timer)
 	packet.queue_delivery()
