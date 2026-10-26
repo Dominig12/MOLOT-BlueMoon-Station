@@ -82,6 +82,8 @@
 	var/list/forwarding_adjacency = list()
 	var/list/edges = list()
 	var/list/edge_lookup = list()
+	/// Stable edge id -> slot: replacing a leaf cable must not scan thousands of edges.
+	var/list/edge_positions = list()
 	var/dirty = TRUE
 	var/rebuilding = FALSE
 	var/structural_generation = 0
@@ -274,18 +276,29 @@
 		return FALSE
 	for(var/neighbor in neighbors)
 		var/list/edge = edge_lookup["[node.address]>[neighbor]"]
-		edges -= list(edge)
-		edge_lookup -= "[node.address]>[neighbor]"
-		edge_lookup -= "[neighbor]>[node.address]"
+		if(edge)
+			// Swap-delete in O(1). Graph-wide edge scans are unacceptable for mobile leaves.
+			var/slot = edge_positions[edge["id"]]
+			var/last_slot = length(edges)
+			if(slot && last_slot)
+				var/list/last_edge = edges[last_slot]
+				if(slot != last_slot)
+					edges[slot] = last_edge
+					edge_positions[last_edge["id"]] = slot
+				edges.len--
+			edge_positions -= edge["id"]
+			edge_lookup -= "[node.address]>[neighbor]"
+			edge_lookup -= "[neighbor]>[node.address]"
 		var/list/peers = adjacency[neighbor]
 		peers -= node.address
 	adjacency[node.address] = list()
 	if(node.bound_apc)
 		add_edge(node.address, node.bound_apc.address, "endpoint")
-	clear_route_tables()
-	revision++
+	// Only the leaf's predecessor changed. Keep the infrastructure graph and
+	// every unrelated viewer's cached routes instead of broadcasting a full rebuild.
+	var/previous_geometry = weight_revision
 	weight_revision++
-	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, revision)
+	rebind_leaf_route_tables(node, previous_geometry)
 	return TRUE
 
 /datum/netrun_topology/proc/neighbors(address, include_relays = TRUE)
@@ -353,6 +366,7 @@
 	var/list/edge = list("id" = "[kind]:[first]>[second]", "from" = first, "to" = second, "kind" = kind,
 		"latency" = edge_cost(first, second), "distance" = netrun_topology_distance(from_node.physical_turf(), to_node.physical_turf()))
 	edges += list(edge)
+	edge_positions[edge["id"]] = length(edges)
 	edge_lookup["[first]>[second]"] = edge
 	edge_lookup["[second]>[first]"] = edge
 
@@ -461,6 +475,7 @@
 	forwarding_adjacency = list()
 	edges = list()
 	edge_lookup = list()
+	edge_positions = list()
 	var/list/addresses = sort_list(SSnetrun.nodes_by_address.Copy())
 	// A carrier can move infrastructure without a MOVED signal on the nested machine.
 	// Refresh every infrastructure position before any endpoint consults the spatial index.
@@ -528,6 +543,7 @@
 	forwarding_adjacency.Cut()
 	edges.Cut()
 	edge_lookup.Cut()
+	edge_positions.Cut()
 	apcs_by_sector.Cut()
 	registered_apcs.Cut()
 	registered_relays.Cut()

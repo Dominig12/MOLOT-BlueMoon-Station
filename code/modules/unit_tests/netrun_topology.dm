@@ -574,3 +574,32 @@
 	node.reconcile_state()
 	TEST_ASSERT_EQUAL(graph.registered_apcs[node.address], node, "Offline APC stays physically registered")
 	TEST_ASSERT_EQUAL(graph.infrastructure_revision, revision, "Power failure is not a structural topology change")
+
+
+/// A leaf changing APC must not evict unrelated warm routing tables. 
+/datum/unit_test/netrun_topology_rebind_retains_other_routes/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/first_room = scene.room(/area/engineering/netrun_route_test)
+	var/area/second_room = scene.room(/area/medical/netrun_route_test)
+	var/turf/first_spot = scene.take(origin, first_room)
+	var/turf/second_spot = scene.take(locate(origin.x + 4, origin.y, origin.z), second_room)
+	var/obj/machinery/power/apc/first = scene.machine(/obj/machinery/power/apc, first_spot)
+	var/obj/machinery/power/apc/second = scene.machine(/obj/machinery/power/apc, second_spot)
+	var/obj/machinery/computer/netrun_terminal/client = scene.machine(/obj/machinery/computer/netrun_terminal, first_spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/first_node = first.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/second_node = second.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/client_node = client.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_path_tree/retained = graph.route_snapshot(first_node, TRUE)
+	TEST_ASSERT(retained.reached[client_node.address], "The initial APC must reach its leaf")
+	var/previous_revision = graph.route_revision
+	client.forceMove(second_spot)
+	client_node.join_network()
+	TEST_ASSERT_EQUAL(client_node.bound_apc, second_node, "The terminal must attach to its new APC")
+	TEST_ASSERT_EQUAL(graph.route_tables[first_node.address], retained, "A leaf move must not destroy unrelated APC source trees")
+	TEST_ASSERT_EQUAL(graph.route_revision, previous_revision, "An endpoint move must not solve another shortest path tree")
+	TEST_ASSERT_EQUAL(retained.previous[client_node.address], second_node.address, "Retained paths must point at the new APC")
+	TEST_ASSERT(retained.path_available(graph, client_node.address), "The retained route must be valid through the new APC")
+	TEST_ASSERT_NULL(graph.edge_between(client_node.address, first_node.address), "The old cable must be gone")
+	TEST_ASSERT_NOTNULL(graph.edge_between(client_node.address, second_node.address), "The new cable must exist")

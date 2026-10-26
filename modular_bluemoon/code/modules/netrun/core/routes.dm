@@ -303,6 +303,39 @@
 		table.geometry_revision = weight_revision
 		table.updated_at = world.time
 
+/// Relocating a terminal leaf never changes an APC-to-APC path. Repair just
+/// that terminal's predecessor in warm trees; the terminal's own source tree
+/// is rebuilt lazily, because its entire root has actually changed.
+/datum/netrun_topology/proc/rebind_leaf_route_tables(datum/component/netrun_node/node, previous_geometry)
+	var/address = node.address
+	var/list/neighbors = adjacency[address]
+	var/parent_address = length(neighbors) == 1 ? neighbors[1] : null
+	var/datum/component/netrun_node/parent = nodes[parent_address]
+	var/connected = !QDELETED(parent) && netrun_link_available(parent, node, TRUE)
+	var/edge_cost = connected ? cached_edge_cost(parent_address, address) : 0
+	for(var/source_address in route_tables)
+		var/datum/netrun_path_tree/table = route_tables[source_address]
+		if(table.geometry_revision != previous_geometry || table.transit_availability_revision != transit_availability_revision)
+			continue
+		if(source_address == address)
+			// Its APC changed, not just its cable length. Do not serve old source paths.
+			continue
+		if(connected && table.reached[parent_address])
+			table.reached[address] = TRUE
+			table.previous[address] = parent_address
+			table.costs[address] = table.costs[parent_address] + edge_cost
+			table.remote[address] = table.remote[parent_address]
+			if(node.network)
+				// The reachable parent is already a member of its APC's LAN.
+				table.reached_networks[node.network.id] = TRUE
+		else
+			table.reached -= address
+			table.previous -= address
+			table.costs -= address
+			table.remote -= address
+		table.geometry_revision = weight_revision
+		table.updated_at = world.time
+
 /// Borrowed snapshots must never be modified or qdel()ed by callers.
 /datum/netrun_topology/proc/route_snapshot(datum/component/netrun_node/start, borrow = FALSE)
 	reconcile_movement()

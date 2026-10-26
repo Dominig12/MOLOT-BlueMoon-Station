@@ -161,6 +161,18 @@
 	var/datum/netrun_machine_directory/entry = cached_directory(destination_id, recipient_tag)
 	if(entry)
 		return send_resolved(destination_id, message, recipient_tag, entry)
+	// An attached APC already participates in the authoritative infrastructure
+	// registry. Resolve exact service tags locally without DNS request/reply hops.
+	// Keep generic discovery on DNS for fan-out, failover and native telecomms.
+	if(!isnull(recipient_tag) && SSnetrun.get_machine_transport().is_ready())
+		var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+		var/list/targets = transport.lookup(src, destination_id, recipient_tag, FALSE)
+		if(length(targets))
+			var/admitted = FALSE
+			for(var/datum/netrun_machine_service/target as anything in targets)
+				admitted = send_to(target, message.copy()) || admitted
+			qdel(message)
+			return admitted
 	var/datum/netrun_machine_resolution/query = get_resolution(destination_id, recipient_tag)
 	if(!query)
 		message.failed("источник недоступен")
