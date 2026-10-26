@@ -62,8 +62,10 @@
 	var/processing_update = FALSE
 	/// Owned subscription list, including every statically matching provider's signals.
 	var/list/subscribed_state_signals
-	/// An installed nullspace organ receives physical movement from its native wearer.
+	/// Outermost movable carrier; physical containment never grants machine ownership.
 	var/atom/movable/physical_carrier
+	/// Every movable ancestor, nearest first. Nullspace organs start at their wearer.
+	var/list/physical_carriers
 
 /datum/component/netrun_node/Initialize(node_type, list/command_ids, security = 1, list/required_access, storage_capacity = 0)
 	if(!isatom(parent))
@@ -92,6 +94,7 @@
 	RegisterSignal(parent, subscribed_state_signals - availability_signals, PROC_REF(on_state_changed))
 	if(ismovable(parent))
 		RegisterSignal(parent, COMSIG_MOVABLE_MOVED, PROC_REF(on_moved))
+		RegisterSignal(parent, COMSIG_MOVABLE_ENTERED_NULLSPACE, PROC_REF(on_entered_nullspace))
 	refresh_physical_host()
 	var/atom/host = parent
 	host.ensure_netrun_machine_services(src)
@@ -99,7 +102,7 @@
 
 /datum/component/netrun_node/UnregisterFromParent()
 	clear_physical_carrier()
-	UnregisterSignal(parent, list(COMSIG_ATOM_EMP_ACT, COMSIG_MOVABLE_MOVED))
+	UnregisterSignal(parent, list(COMSIG_ATOM_EMP_ACT, COMSIG_MOVABLE_MOVED, COMSIG_MOVABLE_ENTERED_NULLSPACE))
 	UnregisterSignal(parent, subscribed_state_signals)
 	subscribed_state_signals = null
 
@@ -165,25 +168,70 @@
 	return host?.netrun_turf()
 
 /datum/component/netrun_node/proc/clear_physical_carrier()
-	if(physical_carrier)
-		UnregisterSignal(physical_carrier, COMSIG_MOVABLE_MOVED)
+	for(var/atom/movable/carrier as anything in physical_carriers)
+		UnregisterSignal(carrier, list(COMSIG_MOVABLE_MOVED, COMSIG_MOVABLE_ENTERED_NULLSPACE, COMSIG_PARENT_QDELETING))
+	physical_carriers = null
 	physical_carrier = null
 
-/// Called after native organ ownership changes, once Insert/Remove has finished.
-/datum/component/netrun_node/proc/refresh_physical_host()
+/// Watch ancestors rather than walking every carried item when its owner steps.
+/// Rebind only when containment/native ownership changes, never on ordinary walking.
+/datum/component/netrun_node/proc/rebind_physical_carriers()
 	var/atom/host = parent
-	var/atom/movable/carrier = host?.netrun_physical_host()
-	if(carrier == parent || !ismovable(carrier))
-		carrier = null
-	if(physical_carrier != carrier)
-		clear_physical_carrier()
-		physical_carrier = carrier
-		if(physical_carrier)
-			RegisterSignal(physical_carrier, COMSIG_MOVABLE_MOVED, PROC_REF(on_moved))
-	on_moved(parent)
+	var/atom/location = host?.netrun_physical_host()
+	var/list/next_carriers = list()
+	while(ismovable(location) && !QDELETED(location))
+		if(location != parent)
+			next_carriers += location
+		location = location.loc
+	for(var/atom/movable/carrier as anything in physical_carriers)
+		if(!(carrier in next_carriers))
+			UnregisterSignal(carrier, list(COMSIG_MOVABLE_MOVED, COMSIG_MOVABLE_ENTERED_NULLSPACE, COMSIG_PARENT_QDELETING))
+	for(var/atom/movable/carrier as anything in next_carriers)
+		if(!(carrier in physical_carriers))
+			RegisterSignal(carrier, COMSIG_MOVABLE_MOVED, PROC_REF(on_moved))
+			RegisterSignal(carrier, COMSIG_MOVABLE_ENTERED_NULLSPACE, PROC_REF(on_entered_nullspace))
+			RegisterSignal(carrier, COMSIG_PARENT_QDELETING, PROC_REF(on_carrier_deleted))
+	physical_carriers = length(next_carriers) ? next_carriers : null
+	physical_carrier = length(next_carriers) ? next_carriers[length(next_carriers)] : null
 
-/datum/component/netrun_node/proc/on_moved(datum/source)
+/// Native ownership can change without loc changing (installed organs and MODs).
+/datum/component/netrun_node/proc/refresh_physical_host()
+	rebind_physical_carriers()
+	queue_physical_update()
+
+/datum/component/netrun_node/proc/on_moved(atom/movable/source, atom/old_loc)
 	SIGNAL_HANDLER
+	// A turf-to-turf step retains all watched objects. An intermediate bag being
+	// handed to somebody else must replace the old outer subscriptions immediately.
+	if(old_loc != source.loc && (!isturf(old_loc) || !isturf(source.loc)))
+		rebind_physical_carriers()
+	queue_physical_update()
+
+/datum/component/netrun_node/proc/on_entered_nullspace()
+	SIGNAL_HANDLER
+	// Native moveToNullspace does not emit MOVED, including inventory descendants.
+	rebind_physical_carriers()
+	queue_physical_update()
+
+/datum/component/netrun_node/proc/on_carrier_deleted(atom/movable/source)
+	SIGNAL_HANDLER
+	var/index = physical_carriers?.Find(source)
+	if(!index)
+		return
+	// A deleting container still has its old loc. Keep only the live inner chain;
+	// spilling its contents will rebind it through their normal movement events.
+	for(var/slot in index to length(physical_carriers))
+		var/atom/movable/carrier = physical_carriers[slot]
+		UnregisterSignal(carrier, list(COMSIG_MOVABLE_MOVED, COMSIG_MOVABLE_ENTERED_NULLSPACE, COMSIG_PARENT_QDELETING))
+	physical_carriers.Cut(index)
+	physical_carrier = length(physical_carriers) ? physical_carriers[length(physical_carriers)] : null
+	if(!length(physical_carriers))
+		physical_carriers = null
+	queue_physical_update()
+
+/datum/component/netrun_node/proc/queue_physical_update()
+	if(QDELETED(src))
+		return
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_MOVED, src, topology_turf, physical_turf())
 	// Never scan bindings or repair every retained route inside the character's move.
 	// The existing node task coalesces several moves, and explicit route consumers

@@ -340,6 +340,7 @@
 #include "netrun_geographic.dm"
 #include "netrun_map_updates.dm"
 #include "netrun_map_workspace.dm"
+#include "netrun_carriers.dm"
 #include "netrun_photos.dm"
 #include "netrun_provider_status.dm"
 #include "netrun_providers.dm"
