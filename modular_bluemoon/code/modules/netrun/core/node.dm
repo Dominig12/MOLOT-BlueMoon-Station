@@ -135,6 +135,7 @@
 
 /datum/component/netrun_node/proc/join_network()
 	var/datum/netrun_topology/topology = SSnetrun.get_topology()
+	var/datum/component/netrun_node/previous_apc = bound_apc
 	topology.refresh_node(src)
 	pending_physical_update = FALSE
 	var/datum/netrun_network/new_net
@@ -146,22 +147,26 @@
 	else
 		new_net = netrun_fallback_network_for(physical_turf())
 	if(network == new_net)
+		if(previous_apc != bound_apc)
+			notify_changed(NETRUN_CHANGED_BINDING)
 		return
-	leave_network()
-	if(!new_net)
-		return
-	network = new_net
-	network.nodes += src
-	add_log("Подключение к [network.code].")
+	// Publish the completed transition once; observers must not rebuild against
+	// the old LAN or a temporary null network while this node is being rebound.
+	leave_network(FALSE)
+	if(new_net)
+		network = new_net
+		network.nodes += src
+		add_log("Подключение к [network.code].")
 	notify_changed(NETRUN_CHANGED_BINDING)
 
-/datum/component/netrun_node/proc/leave_network()
+/datum/component/netrun_node/proc/leave_network(announce = TRUE)
 	if(!network)
 		return
 	network.add_log("Узел [address] отключён.")
 	network.nodes -= src
 	network = null
-	notify_changed(NETRUN_CHANGED_BINDING)
+	if(announce)
+		notify_changed(NETRUN_CHANGED_BINDING)
 
 /datum/component/netrun_node/proc/physical_turf()
 	var/atom/host = parent

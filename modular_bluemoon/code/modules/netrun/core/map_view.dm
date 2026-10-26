@@ -30,6 +30,9 @@
 	var/list/node_indexes = list()
 	var/list/incident_edges = list()
 	var/list/shown_addresses = list()
+	var/list/shown_network_counts = list()
+	/// Access before a source move, including networks on floors outside the current view.
+	var/list/projected_network_levels = list()
 	var/list/revealed_addresses = list()
 	var/list/context
 	/// Authorization changes replace every UI baseline, including credentials lost by an operator.
@@ -86,6 +89,8 @@
 	node_indexes.Cut()
 	incident_edges.Cut()
 	shown_addresses.Cut()
+	shown_network_counts.Cut()
+	projected_network_levels.Cut()
 	revealed_addresses.Cut()
 	static_structure = null
 	wire_sessions.Cut()
@@ -134,8 +139,8 @@
 	owner?.invalidate_ui()
 	return TRUE
 
-/// A leaf changing its APC is repaired incrementally when both ends remain
-/// visible in the same LAN. Membership/permission changes fall back to rebuild().
+/// A leaf changing its APC is repaired incrementally while both ends and the
+/// gateway set remain visible. Permission changes fall back to rebuild().
 /datum/netrun_map_view/proc/on_node_changed(datum/source, datum/component/netrun_node/node, flags)
 	SIGNAL_HANDLER
 	if(flags & NETRUN_CHANGED_REMOVED)
@@ -180,7 +185,7 @@
 	// projection through the context diff - no periodic full pass is needed to catch it.
 	var/datum/component/netrun_node/source = owner.route_source()
 	var/list/current_context = list(owner.operator, source?.address, source?.is_online(), source?.network?.id, selected_address, waypoint_address, active_sector, active_z, owner.user_access(), owner.is_locked(), graph.transit_availability_revision)
-	if(!netrun_snapshot_equal(context, current_context))
+	if(!netrun_snapshot_equal(context, current_context) && !source_network_projection_unchanged(graph, source, current_context))
 		dirty = TRUE
 	context = current_context
 	var/list/current_security = list(owner.operator, owner.route_source()?.address, owner.user_access(), owner.is_locked(), authorization_revision)
@@ -199,6 +204,25 @@
 	// Readiness/stun can expire without changing the physical projection.
 	result["relay_destinations"] = relay_destinations(graph, owner.selected_node(), shown_addresses, node_entries)
 	return result
+
+/// Crossing departments need not replace the projection when both LAN grants stay
+/// identical and the old APC is still in the new source's forwarding component.
+/datum/netrun_map_view/proc/source_network_projection_unchanged(datum/netrun_topology/graph, datum/component/netrun_node/source, list/current_context)
+	if(!context || !snapshot || dirty || structure_dirty || snapshot["revision"] != graph.revision || context[4] == current_context[4])
+		return FALSE
+	var/list/without_network_change = current_context.Copy()
+	without_network_change[4] = context[4]
+	if(!netrun_snapshot_equal(context, without_network_change))
+		return FALSE
+	var/list/previous_source = node_entries[source?.address]
+	var/datum/component/netrun_node/old_apc = graph.nodes[previous_source?["uplink"]]
+	if(!old_apc || !old_apc.is_online() || !source?.is_online() || !source.bound_apc?.is_online() || !owner.can_route(old_apc))
+		return FALSE
+	var/datum/netrun_network/old_network = SSnetrun.networks[context[4]]
+	var/datum/netrun_network/new_network = source.network
+	if(!old_network || !new_network || isnull(projected_network_levels[old_network.id]) || isnull(projected_network_levels[new_network.id]))
+		return FALSE
+	return projected_network_levels[old_network.id] == owner.network_level(old_network) && projected_network_levels[new_network.id] == owner.network_level(new_network)
 
 /// Browsing a different sector never moves the runner or grants permissions.
 /datum/netrun_map_view/proc/select_sector(id, z)
@@ -239,6 +263,8 @@
 	var/list/next_static_edges = list()
 	node_indexes = list()
 	incident_edges = list()
+	shown_network_counts = list()
+	projected_network_levels = list()
 	var/reveal_all = owner.daemon_bonus("mapper")
 	for(var/address in graph.nodes)
 		var/datum/component/netrun_node/node = graph.nodes[address]
@@ -249,6 +275,8 @@
 			entry = node_entries[address]
 		next_nodes[address] = entry
 		permitted_nodes[address] = entry
+		if(node.network && isnull(projected_network_levels[node.network.id]))
+			projected_network_levels[node.network.id] = owner.network_level(node.network)
 		if(entry["sector"] && entry["z"])
 			var/list/levels = sector_levels[entry["sector"]]
 			if(!levels)
@@ -285,6 +313,7 @@
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(node.network)
 			networks[node.network.id] = node.network
+			shown_network_counts[node.network.id]++
 	var/list/edge_structure = list()
 	for(var/list/edge as anything in graph.edges)
 		if(!shown[edge["from"]] || !shown[edge["to"]])
@@ -364,6 +393,7 @@
 	var/list/prepared = list()
 	var/list/rewired_edges = list()
 	var/list/removed_edge_ids = list()
+	var/list/network_changes = list()
 	// Preflight visibility before mutating the retained snapshot: a late full rebuild must
 	// not lose earlier changes from the same batch or publish a partially updated baseline.
 	for(var/address in dirty_nodes)
@@ -391,12 +421,18 @@
 		if(previous["dynamic"] != entry["dynamic"])
 			rebuild(graph)
 			return
+		// Retain gateways only while both LANs remain represented in this view.
+		// Permission/visibility changes were checked above; source grants are checked in payload().
+		if(previous["network"] != entry["network"] && (shown_network_counts[previous["network"]] <= 1 || !shown_network_counts[entry["network"]]))
+			rebuild(graph)
+			return
+		if(previous["network"] != entry["network"])
+			network_changes[previous["network"]]--
+			network_changes[entry["network"]]++
 		if(previous["uplink"] != entry["uplink"])
-			// A new LAN changes gateways and possibly visibility of other nodes.
-			// The common case is a local APC-to-APC move within one LAN.
 			var/list/incident = incident_edges[address]
 			var/list/neighbors = graph.adjacency[address]
-			if(previous["network"] != entry["network"] || length(incident) != 1 || length(neighbors) != 1 || neighbors[1] != entry["uplink"] || !shown_addresses[entry["uplink"]])
+			if(length(incident) != 1 || length(neighbors) != 1 || neighbors[1] != entry["uplink"] || !shown_addresses[entry["uplink"]])
 				rebuild(graph)
 				return
 			var/index_old = incident[1]
@@ -408,12 +444,20 @@
 			var/old_parent = old_edge["from"] == address ? old_edge["to"] : old_edge["from"]
 			rewired_edges[address] = list("index" = index_old, "old_parent" = old_parent, "new_parent" = entry["uplink"], "edge" = new_edge)
 		prepared[address] = entry
+	// Several coalesced moves can remove a LAN's last visible markers together.
+	for(var/network_id in network_changes)
+		if(shown_network_counts[network_id] + network_changes[network_id] <= 0)
+			rebuild(graph)
+			return
 	for(var/address in prepared)
 		var/list/previous = node_entries[address]
 		var/list/entry = prepared[address]
 		var/index = node_indexes[address]
 		if(netrun_snapshot_equal(previous, entry))
 			continue
+		if(previous["network"] != entry["network"])
+			shown_network_counts[previous["network"]]--
+			shown_network_counts[entry["network"]]++
 		map_nodes[index] = entry
 		node_entries[address] = entry
 		node_updates += list(entry)

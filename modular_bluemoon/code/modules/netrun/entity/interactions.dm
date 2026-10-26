@@ -28,7 +28,21 @@
 		else if(istype(occupant, /datum/netrun_ice))
 			var/datum/netrun_ice/ice = occupant
 			entry["state"] = ice.is_stunned() ? "оглушён" : (ice.pending_program ? "готовит атаку" : (ice.enemy_ref?.resolve() ? "преследует" : (ice.kind == NETRUN_ICE_HUNTER ? "патрулирует" : "охраняет узел")))
+			entry["ice_kind"] = ice.kind
+			entry["threat"] = ice_contact_threat(ice, node)
 		. += list(entry)
+
+/// Describe the viewer's actual risk without granting access to undiscovered residents.
+/datum/netrun_console/proc/ice_contact_threat(datum/netrun_ice/ice, datum/component/netrun_node/node)
+	var/mob/camera/netrun_entity/entity = combat_self()
+	if(!istype(entity))
+		return "Атакует процессы без доступа ПОЛЬЗОВАТЕЛЯ. Трассирует активный взлом своего узла или ЛВС."
+	if(world.time < entity.combat_ignore_until)
+		var/remaining = CEILING((entity.combat_ignore_until - world.time) / (1 SECONDS), 0.1)
+		return "След скрыт ещё [remaining] с. Атака или оглушение ICE выдаст вас."
+	if(ice.is_intruder(entity, node))
+		return ice.enemy_ref?.resolve() == entity ? "ICE считает вас противником и атакует при встрече, даже с доступом ПОЛЬЗОВАТЕЛЯ." : "Опасный вход: ICE атакует ваш процесс. Ключ ЛВС разрешает переход, но не заменяет доступ ПОЛЬЗОВАТЕЛЯ."
+	return "Доступ ПОЛЬЗОВАТЕЛЯ позволяет пройти. Атака или оглушение ICE вызовет ответ. Взлом узла или ЛВС всё ещё вызывает трассировку."
 
 /// Reused at dispatch and delivery: a stale card cannot address an arbitrary mob REF.
 /datum/netrun_console/proc/entity_contact_denial(datum/component/netrun_node/node, mob/camera/netrun_entity/recipient, datum/netrun_path_tree/tree)

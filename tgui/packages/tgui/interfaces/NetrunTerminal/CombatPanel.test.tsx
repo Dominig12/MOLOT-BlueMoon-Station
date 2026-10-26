@@ -4,7 +4,7 @@ import { combineReducers, createStore, setGlobalStore } from 'common/redux';
 import { backendReducer, backendUpdate } from '../../backend';
 import { debugReducer } from '../../debug';
 import { CombatPanel, IncomingAttacks } from './CombatPanel';
-import { CombatState, CombatTarget } from './types';
+import { CombatState, CombatTarget, IncomingProgram } from './types';
 
 const enemy: CombatTarget = {
   ref: 'ice-1', name: 'ICE-SENTRY', kind: 'ice', hostile: true,
@@ -18,7 +18,7 @@ const strike = {
   needs_target: true, icon: 'bolt', ready_in: 0,
 };
 
-const setup = (combatOverrides: Partial<CombatState> = {}) => {
+const setup = (combatOverrides: Partial<CombatState> = {}, locked = 0) => {
   const topic = jest.fn();
   (global as any).Byond = { winset: () => {}, topic };
   const store = createStore(combineReducers({ backend: backendReducer, debug: debugReducer }));
@@ -30,7 +30,7 @@ const setup = (combatOverrides: Partial<CombatState> = {}) => {
   };
   store.dispatch(backendUpdate({
     config: { interface: 'NetrunTerminal' },
-    data: { combat, locked: 0, breach: null },
+    data: { combat, locked, breach: null },
   }));
   return { topic, store, combat };
 };
@@ -54,14 +54,14 @@ describe('Netrun combat contacts', () => {
       self: { integrity: 74, max_integrity: 100, stunned: false },
     });
     const panel = render(<CombatPanel />);
-    expect(panel.queryByText(/ICE-SENTRY готовит strike.exe · через/)).toBeNull();
+    expect(panel.queryByText(/ICE-SENTRY готовит strike.exe/)).toBeNull();
     const self = panel.getByText('Вы');
     expect(self).toBeTruthy();
     act(() => store.dispatch(backendUpdate({ data: { combat: {
       ...combat, incoming: [{ ...combat.incoming![0], remaining: 1.2 }],
     } } })));
     panel.rerender(<CombatPanel />);
-    expect(panel.queryByText(/ICE-SENTRY готовит strike.exe · через/)).toBeNull();
+    expect(panel.queryByText(/ICE-SENTRY готовит strike.exe/)).toBeNull();
     expect(panel.getByText('Вы')).toBeTruthy();
   });
 
@@ -70,6 +70,16 @@ describe('Netrun combat contacts', () => {
     const panel = render(<CombatPanel />);
     expect(panel.getByText('Ответный бой')).toBeTruthy();
     expect(panel.getByText('Сервер LAN:0002')).toBeTruthy();
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toEqual([{ uid: 'file-strike', target: 'ice-1' }]);
+  });
+
+  test('a lawful guard requires deliberate selection before it can be attacked', () => {
+    const { topic } = setup({ targets: [{ ...enemy, hostile: false }] });
+    const panel = render(<CombatPanel />);
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toHaveLength(0);
+    fireEvent.click(panel.getByText('ICE-SENTRY'));
     fireEvent.click(panel.getByText('strike'));
     expect(uses(topic)).toEqual([{ uid: 'file-strike', target: 'ice-1' }]);
   });
@@ -121,6 +131,7 @@ describe('Netrun combat contacts', () => {
       role: 'shield', needs_target: false, unavailable_reason: 'Нужна собственная сущность в сети.',
     }] });
     const panel = render(<CombatPanel />);
+    expect(panel.getByText('Нужна собственная сущность в сети.')).toBeTruthy();
     fireEvent.click(panel.getByText('barrier'));
     expect(uses(topic)).toHaveLength(0);
   });
@@ -143,5 +154,98 @@ describe('Netrun combat contacts', () => {
     expect(panel.getByRole('alert').textContent).toContain('ICE-SENTRY готовит trace.exe');
     fireEvent.click(panel.getByText('Открыть бой'));
     expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  test('shared launch recovery blocks attack and support until the server releases it', () => {
+    const { topic, store, combat } = setup({
+      action_ready_in: 0.5,
+      programs: [strike, { ...strike, uid: 'file-barrier', name: 'barrier.exe', role: 'shield', needs_target: false }],
+    });
+    const panel = render(<CombatPanel />);
+    expect(panel.getByRole('status').textContent).toContain('Общая пауза запуска: ещё 0.5 с.');
+    fireEvent.click(panel.getByText('strike'));
+    fireEvent.click(panel.getByText('barrier'));
+    expect(uses(topic)).toHaveLength(0);
+
+    act(() => store.dispatch(backendUpdate({ data: { combat: { ...combat, action_ready_in: 0 } } })));
+    expect(panel.queryByRole('status')).toBeNull();
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toEqual([{ uid: 'file-strike', target: 'ice-1' }]);
+  });
+
+  test('a program keeps its own cooldown after shared recovery expires', () => {
+    const { topic, store, combat } = setup({ action_ready_in: 0.1, programs: [{ ...strike, ready_in: 2 }] });
+    const panel = render(<CombatPanel />);
+    act(() => store.dispatch(backendUpdate({ data: { combat: { ...combat, action_ready_in: 0 } } })));
+    expect(panel.getByText('Перезарядка: ещё 2 с.')).toBeTruthy();
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toHaveLength(0);
+  });
+
+  test.each([
+    [true, 0, 'Вы оглушены: дождитесь окончания оглушения.'],
+    [false, 3, 'Терминал заблокирован: ещё 3 с.'],
+  ])('disabled programs explain stun=%s and lock=%s', (stunned, locked, reason) => {
+    const { topic } = setup({ self: { integrity: 100, max_integrity: 100, stunned } }, locked);
+    const panel = render(<CombatPanel />);
+    expect(panel.getByRole('status').textContent).toContain(reason);
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toHaveLength(0);
+  });
+
+  test.each([
+    ['attack', 16, '16 урона до щита', 'Включите щит, оглушите ICE или выйдите из узла.'],
+    ['stun', 25, '2.5 с оглушения', 'Оглушите ICE или выйдите из узла.'],
+    ['trace', 6, '+6% трассировки', 'Прервите взлом или оглушите ICE.'],
+  ])('compact warning shows the effect and counterplay for %s', (role, power, effect, advice) => {
+    setup({ incoming: [{ source: enemy.name, name: `${role}.exe`, role, power, remaining: 1.2 }] });
+    const open = jest.fn();
+    const panel = render(<IncomingAttacks compact onCombat={open} />);
+    expect(panel.getByRole('alert').textContent).toContain(`${effect} · через 1.2 с`);
+    expect(panel.getByText(advice)).toBeTruthy();
+    expect(open).not.toHaveBeenCalled();
+    if (role === 'stun') {
+      expect(panel.getByRole('alert').textContent).not.toContain('щит');
+    }
+    fireEvent.click(panel.getByText('Открыть бой'));
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  test('compact warning leads with the soonest impact and retains every threat in its tooltip', () => {
+    const incoming: IncomingProgram[] = [
+      { source: 'ICE-SENTRY', name: 'trace.exe', role: 'trace', power: 6, remaining: 3 },
+      { source: 'ICE-HUNTER', name: 'blackout.exe', role: 'stun', power: 20, remaining: 0.7 },
+    ];
+    setup({ incoming });
+    const panel = render(<IncomingAttacks compact onCombat={() => {}} />);
+    const alert = panel.getByRole('alert');
+    expect(alert.textContent).toContain('2 с оглушения · через 0.7 с · ICE-HUNTER готовит blackout.exe · угроз: 2');
+    expect(alert.textContent).not.toContain('ICE-SENTRY');
+    const tooltip = alert.querySelector('[title]')!.getAttribute('title');
+    expect(tooltip).toContain('ICE-SENTRY готовит trace.exe · +6% трассировки');
+    expect(tooltip).toContain('Щит не защищает от оглушения.');
+  });
+
+  test('detailed warnings distinguish damage, stun and trace effects', () => {
+    setup({ incoming: [
+      { source: enemy.name, name: 'strike.exe', role: 'attack', power: 14, remaining: 2 },
+      { source: enemy.name, name: 'blackout.exe', role: 'stun', power: 30, remaining: 1 },
+      { source: enemy.name, name: 'trace.exe', role: 'trace', power: 6, remaining: 3 },
+    ] });
+    const panel = render(<IncomingAttacks onCombat={() => {}} />);
+    const alert = panel.getByRole('alert');
+    expect(alert.textContent).toContain('strike.exe · 14 урона до щита');
+    expect(alert.textContent).toContain('blackout.exe · 3 с оглушения');
+    expect(alert.textContent).toContain('trace.exe · +6% трассировки');
+    expect(alert.textContent).toContain('Щит не защищает от оглушения.');
+    expect(alert.textContent).toContain('Щит не скрывает трассировку.');
+  });
+
+  test('a stun-only warning never recommends damage protection', () => {
+    setup({ incoming: [{ source: enemy.name, name: 'blackout.exe', role: 'stun', power: 20, remaining: 1 }] });
+    const panel = render(<IncomingAttacks onCombat={() => {}} />);
+    const alert = panel.getByRole('alert');
+    expect(alert.textContent).toContain('Оглушите ICE или выйдите из узла');
+    expect(alert.textContent).not.toContain('Щит снижает урон');
   });
 });

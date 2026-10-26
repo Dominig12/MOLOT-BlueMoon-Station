@@ -70,6 +70,8 @@ export type EntityContact = {
   self: boolean;
   can_signal: boolean;
   can_message: boolean;
+  threat?: string | null;
+  ice_kind?: 'sentry' | 'hunter';
   persona?: Persona;
 };
 
@@ -219,6 +221,8 @@ export type CombatState = {
   self: { integrity: number; max_integrity: number; stunned: boolean; shielded?: boolean } | null;
   targets: CombatTarget[];
   programs: CombatProgram[];
+  /** Shared launch recovery, in seconds rounded up by the server. */
+  action_ready_in?: number;
   incoming?: IncomingProgram[];
   loot?: NetFile[];
 };

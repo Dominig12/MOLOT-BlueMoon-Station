@@ -89,6 +89,8 @@
 	/// Weak sources replace the previous global scan of every ICE on every UI update.
 	var/list/observed_ice = list()
 	var/datum/weakref/observed_breach
+	/// Last visible opponents, for expiring status badges without rebuilding routes.
+	var/list/visible_status_sources = list()
 
 /datum/netrun_combat_context/New(datum/netrun_console/console)
 	src.console = console
@@ -103,6 +105,7 @@
 		if(ice)
 			UnregisterSignal(ice, list(COMSIG_NETRUN_COMBAT_CHANGED, COMSIG_NETRUN_ICE_NODE_CHANGED, COMSIG_PARENT_QDELETING))
 	observed_ice.Cut()
+	visible_status_sources.Cut()
 	console = null
 	return ..()
 
@@ -215,13 +218,19 @@
 		if(ice)
 			candidates |= ice
 	. = list()
+	visible_status_sources.Cut()
 	for(var/datum/target as anything in candidates)
 		if(QDELETED(target) || target == console.combat_self())
 			continue
 		var/datum/component/netrun_combatant/combatant = target.get_netrun_combatant()
 		if(!combatant)
 			continue
+		visible_status_sources += WEAKREF(target)
 		var/list/entry = combatant.ui_entry()
+		var/mob/camera/netrun_entity/viewer = console.combat_self()
+		if(istype(target, /datum/netrun_ice) && istype(viewer))
+			var/datum/netrun_ice/ice = target
+			entry["hostile"] = ice.is_intruder(viewer, ice.node, tree)
 		entry["unavailable_reason"] = target_denial(target, tree, node, TRUE)
 		. += list(entry)
 	if(owns_tree)
@@ -233,7 +242,7 @@
 		entry["name"] = file_name
 	entry["uid"] = uid
 	entry["builtin"] = builtin
-	entry["ready_in"] = max(0, round(((program_cd[program.id] || 0) - world.time) / (1 SECONDS), 0.1))
+	entry["ready_in"] = max(0, CEILING(((program_cd[program.id] || 0) - world.time) / (1 SECONDS), 0.1))
 	entry["unavailable_reason"] = !program.needs_target && !console.combat_self() ? "Нужна собственная сущность в сети." : null
 	return entry
 
@@ -280,6 +289,10 @@
 			return TRUE
 	if(console.workspace_view != "combat")
 		return FALSE
+	for(var/datum/weakref/reference as anything in visible_status_sources)
+		var/list/hp = netrun_combatant_integrity(reference.resolve())
+		if(hp?["stunned"] || hp?["shielded"])
+			return TRUE
 	if(next_program > world.time)
 		return TRUE
 	for(var/id in program_cd)
@@ -317,7 +330,8 @@
 	var/list/loot = console.salvage_payload(node, TRUE)
 	var/list/result = list("node" = node?.address, "node_name" = node?.get_name(),
 		"self" = hp ? list("integrity" = hp["cur"], "max_integrity" = hp["max"], "stunned" = hp["stunned"], "shielded" = hp["shielded"]) : null,
-		"targets" = target_entries, "programs" = programs(), "incoming" = incoming_entries, "loot" = loot)
+		"targets" = target_entries, "programs" = programs(), "incoming" = incoming_entries, "loot" = loot,
+		"action_ready_in" = max(0, CEILING((next_program - world.time) / (1 SECONDS), 0.1)))
 	if(owns_tree)
 		qdel(tree)
 	if(measuring)
@@ -327,7 +341,10 @@
 	return result
 
 /datum/netrun_combat_context/proc/use_program(uid, target_ref)
-	if(console.is_locked() || world.time < next_program)
+	if(console.is_locked())
+		return FALSE
+	if(world.time < next_program)
+		console.log_line("Предыдущая программа ещё выполняется: осталось [max(0, CEILING((next_program - world.time) / (1 SECONDS), 0.1))] с.", "bad")
 		return FALSE
 	var/builtin = findtext("[uid]", "builtin:") == 1
 	var/datum/netrun_file/file
@@ -370,6 +387,20 @@
 		return FALSE
 	next_program = world.time + 0.5 SECONDS
 	program_cd[program.id] = world.time + program.cooldown
+	// Attacking reveals the process again, including an otherwise authorized user.
+	// Rejected requests above must never spend the disengagement grace period.
+	if(program.role == NETRUN_PROGRAM_ATTACK || program.role == NETRUN_PROGRAM_STUN)
+		var/mob/camera/netrun_entity/entity = self
+		if(istype(entity))
+			var/was_ignored = world.time < entity.combat_ignore_until
+			entity.combat_ignore_until = 0
+			if(istype(target, /datum/netrun_ice))
+				var/datum/netrun_ice/ice = target
+				// Revealing an attack also ends this ICE's disengagement pause;
+				// individual program cooldowns still protect interrupted casts.
+				if(was_ignored)
+					ice.next_attack = min(ice.next_attack, world.time)
+				ice.register_enemy(console)
 	console.apply_program_effect(program, target, node, executable_name)
 	if(program.trace)
 		console.add_trace(program.trace)

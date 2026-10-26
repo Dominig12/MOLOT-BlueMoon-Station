@@ -954,7 +954,7 @@
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/source = route_source()
 	var/list/access = user_access()
-	. = list(operator, source?.address, source?.is_online(), graph.revision, graph.transit_availability_revision,
+	. = list(operator, source?.address, source?.network?.id, source?.is_online(), graph.revision, graph.transit_availability_revision,
 		map_view.authorization_revision, access.Copy(), is_locked(), intrusion.can_breach,
 		inventory.local_store?.revision, inventory.shard, inventory.shard?.file_store?.revision,
 		connection.wireless, connection.jack?.address, web_browsing(), ui_uplink_value,

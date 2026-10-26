@@ -82,6 +82,18 @@
 		deltimer(timer)
 	timer = addtimer(CALLBACK(src, PROC_REF(advance_route), generation), max(1, owner.next_hop - world.time), TIMER_STOPPABLE)
 
+/// Keys permit travel, but do not make an unauthorized process safe from ICE.
+/// Check each live step so a newly arrived patrol cannot be crossed on a stale route.
+/datum/netrun_entity_navigation/proc/threat_at(datum/component/netrun_node/next)
+	if(QDELETED(next) || !next.is_online() || !length(next.netrun_ice))
+		return null
+	var/datum/netrun_path_tree/tree = owner.console.make_path_tree()
+	for(var/datum/netrun_ice/ice as anything in next.netrun_ice)
+		if(!QDELETED(ice) && ice.is_intruder(owner, next, tree) && owner.can_enter(next, tree))
+			. = ice
+			break
+	qdel(tree)
+
 /datum/netrun_entity_navigation/proc/advance_route(expected_generation)
 	if(expected_generation != generation || QDELETED(owner) || !is_active())
 		return
@@ -94,6 +106,13 @@
 		schedule_step()
 		return
 	var/datum/component/netrun_node/next = SSnetrun.find_node(queue[1])
+	var/datum/netrun_ice/threat = threat_at(next)
+	if(threat)
+		var/message = "Автопроход остановлен перед [next.get_name()] ([next.address]): [threat.name] враждебен вашему процессу. Изучите узел; для боя войдите вручную."
+		cancel()
+		owner.console.log_line(message, "average")
+		to_chat(owner, span_warning(message))
+		return
 	if(!owner.hop(next, TRUE))
 		var/reason = owner.hop_denial(next)
 		cancel()

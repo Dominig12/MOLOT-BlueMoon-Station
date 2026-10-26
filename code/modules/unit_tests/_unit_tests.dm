@@ -336,6 +336,9 @@
 #include "modular_map_loader.dm" //SPLURT EDIT
 #include "netrun.dm"
 #include "netrun_combat.dm"
+#include "netrun_combat_fairness.dm"
+#include "netrun_ice_fairness.dm"
+#include "netrun_threats.dm"
 #include "netrun_inventory.dm"
 #include "netrun_geographic.dm"
 #include "netrun_map_updates.dm"

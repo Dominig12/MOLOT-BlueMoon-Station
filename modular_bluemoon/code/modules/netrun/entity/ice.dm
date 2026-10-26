@@ -26,6 +26,8 @@
 	var/next_attack = 0
 	var/datum/netrun_program/pending_program
 	var/datum/weakref/pending_target_ref
+	/// A cancelled breach cannot pass its old incoming trace on to a new attempt.
+	var/datum/weakref/pending_breach_ref
 	var/datum/weakref/enemy_ref
 	var/attack_at = 0
 	var/next_ai = 0
@@ -139,17 +141,24 @@
 	if(!pending_program)
 		return null
 	return list("name" = pending_program.name, "role" = pending_program.role,
-		"power" = pending_program.power, "remaining" = max(0, CEILING((attack_at - world.time) / (1 SECONDS), 0.1)))
+		"power" = pending_program.role == NETRUN_PROGRAM_ATTACK ? round(pending_program.power * damage_factor) : pending_program.power,
+		"remaining" = max(0, CEILING((attack_at - world.time) / (1 SECONDS), 0.1)))
 
 /datum/netrun_ice/proc/is_stunned()
 	return world.time < combat_stun_until
 
+/// A legal resident can still provoke ICE by attacking it, including with a stun.
+/datum/netrun_ice/proc/register_enemy(datum/netrun_console/attacker)
+	var/mob/camera/netrun_entity/enemy = attacker?.combat_self()
+	if(!istype(enemy) || QDELETED(enemy) || enemy.host_node != node)
+		return FALSE
+	enemy_ref = WEAKREF(enemy)
+	return TRUE
+
 /datum/netrun_ice/proc/apply_damage(amount, reason, datum/netrun_console/attacker)
 	if(QDELETED(src))
 		return
-	var/mob/camera/netrun_entity/enemy = attacker?.combat_self()
-	if(istype(enemy) && enemy.host_node == node)
-		enemy_ref = WEAKREF(enemy)
+	register_enemy(attacker)
 	if(world.time < combat_shield_until)
 		amount *= combat_shield_factor
 	integrity -= amount
@@ -166,8 +175,11 @@
 	reaction.wake()
 
 /datum/netrun_ice/proc/apply_shield(pct, duration)
+	var/new_factor = clamp(1 - pct / 100, 0.1, 1)
+	if(world.time < combat_shield_until && new_factor > combat_shield_factor)
+		return
 	combat_shield_until = world.time + duration
-	combat_shield_factor = clamp(1 - pct / 100, 0.1, 1)
+	combat_shield_factor = new_factor
 	SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
 
 /datum/netrun_ice/proc/apply_heal(amount)
@@ -300,19 +312,23 @@
 	if(!hunt())
 		patrol()
 
-/// Нарушитель в узле: сущность без легального доступа ПОЛЬЗОВАТЕЛЯ к узлу.
+/// May also inspect a destination before arrival; presence is checked by the caller.
+/datum/netrun_ice/proc/is_intruder(mob/camera/netrun_entity/entity, datum/component/netrun_node/where, datum/netrun_path_tree/tree)
+	if(!where)
+		where = node
+	if(!istype(entity) || QDELETED(entity) || QDELETED(where) || world.time < entity.combat_ignore_until)
+		return FALSE
+	return enemy_ref?.resolve() == entity || entity.console?.node_level(where, tree) < NETRUN_ACCESS_USER
+
+/// Нарушитель в узле: нелегальная сущность или тот, кто спровоцировал этот ICE.
 /datum/netrun_ice/proc/find_intruder(datum/component/netrun_node/where)
 	var/mob/camera/netrun_entity/enemy = enemy_ref?.resolve()
-	if(!QDELETED(enemy) && enemy.host_node == where && world.time >= enemy.combat_ignore_until)
+	if(enemy?.host_node == where && is_intruder(enemy, where))
 		return enemy
 	var/mob/camera/netrun_entity/best
 	var/best_integrity = INFINITY
 	for(var/mob/camera/netrun_entity/entity as anything in where?.entities)
-		if(QDELETED(entity))
-			continue
-		if(world.time < entity.combat_ignore_until)
-			continue
-		if(entity.console?.node_level(where) >= NETRUN_ACCESS_USER)
+		if(!is_intruder(entity, where))
 			continue
 		if(entity.integrity < best_integrity)
 			best = entity
@@ -322,6 +338,12 @@
 /datum/netrun_ice/proc/try_attack(mob/camera/netrun_entity/prey)
 	if(world.time < next_attack || QDELETED(prey))
 		return
+	// A damaged guard visibly raises its barrier before returning to its attacks.
+	if(integrity <= max_integrity * 0.75 && world.time >= combat_shield_until)
+		for(var/id in program_ids)
+			var/datum/netrun_program/program = SSnetrun.get_program(id)
+			if(program?.role == NETRUN_PROGRAM_SHIELD && begin_program(program, src))
+				return
 	for(var/id in program_ids)
 		var/datum/netrun_program/program = SSnetrun.get_program(id)
 		if(!program || world.time < (program_cd[id] || 0) || program.role == NETRUN_PROGRAM_TRACE)
@@ -341,25 +363,55 @@
 	var/datum/netrun_breach/breach = console?.intrusion.breach
 	return !QDELETED(console) && !console.is_locked() && breach && ((breach.target_kind == "network" && node?.network && breach.target_id == node.network.id) || (breach.target_kind != "network" && breach.target_id == node?.address))
 
-/datum/netrun_ice/proc/begin_program(datum/netrun_program/program, datum/target)
-	if(QDELETED(target) || !program || (program.role == NETRUN_PROGRAM_TRACE ? !valid_trace_target(target) : !netrun_combatant_in_node(target, node)))
+/// Recheck authority and presence at both ends of the telegraph, not just at acquisition.
+/datum/netrun_ice/proc/valid_program_target(datum/netrun_program/program, datum/target, fresh_access = FALSE)
+	if(!program || QDELETED(target))
 		return FALSE
-	if(pending_program || is_stunned() || !node?.is_online() || world.time < next_attack || !(program.id in program_ids) || world.time < (program_cd[program.id] || 0))
+	if(program.role == NETRUN_PROGRAM_TRACE)
+		if(!valid_trace_target(target))
+			return FALSE
+		if(!fresh_access)
+			return TRUE
+		var/datum/netrun_console/victim = target
+		var/datum/netrun_path_tree/tree = victim.make_path_tree()
+		. = victim.can_route(node, tree) && valid_trace_target(victim)
+		qdel(tree)
+		return
+	if(!program.needs_target)
+		return target == src
+	var/mob/camera/netrun_entity/entity = target
+	if(!istype(entity) || entity.host_node != node || world.time < entity.combat_ignore_until)
+		return FALSE
+	if(!fresh_access || enemy_ref?.resolve() == entity)
+		return is_intruder(entity, node)
+	var/datum/netrun_path_tree/tree = entity.console?.make_path_tree()
+	. = is_intruder(entity, node, tree)
+	qdel(tree)
+
+/datum/netrun_ice/proc/begin_program(datum/netrun_program/program, datum/target)
+	if(!program || pending_program || is_stunned() || !node?.is_online() || world.time < next_attack || !(program.id in program_ids) || world.time < (program_cd[program.id] || 0))
+		return FALSE
+	if(!valid_program_target(program, target, TRUE))
 		return FALSE
 	pending_program = program
 	pending_target_ref = WEAKREF(target)
-	attack_at = world.time + max(NETRUN_ICE_MIN_TELEGRAPH, program.windup)
+	var/telegraph = max(NETRUN_ICE_MIN_TELEGRAPH, program.windup)
+	attack_at = world.time + telegraph
 	program_cd[program.id] = attack_at + program.cooldown
 	var/datum/netrun_console/victim
 	if(istype(target, /mob/camera/netrun_entity))
 		var/mob/camera/netrun_entity/entity = target
 		victim = entity.console
-		to_chat(entity, span_userdanger("[name] готовит [program.name]: до срабатывания [program.windup / (1 SECONDS)] с! Щит, оглушение или переход помогут избежать атаки."))
+		var/counterplay = program.role == NETRUN_PROGRAM_STUN ? "Оглушение ICE или выход из узла сорвут оглушение." : "Щит снизит урон; оглушение ICE или выход из узла сорвут атаку."
+		to_chat(entity, span_userdanger("[name] готовит [program.name]: до срабатывания [telegraph / (1 SECONDS)] с! [counterplay]"))
 	else if(istype(target, /datum/netrun_console))
 		victim = target
+		if(program.role == NETRUN_PROGRAM_TRACE)
+			pending_breach_ref = WEAKREF(victim.intrusion.breach)
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_ICE_CAST_STARTED, src, victim)
 	SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
-	victim?.log_line("[name] готовит [program.name], срабатывание через [program.windup / (1 SECONDS)] с.", "bad")
+	var/trace_advice = program.role == NETRUN_PROGRAM_TRACE ? " Прервите взлом или оглушите ICE, чтобы сорвать трассировку." : ""
+	victim?.log_line("[name] готовит [program.name], срабатывание через [telegraph / (1 SECONDS)] с.[trace_advice]", "bad")
 	node.add_log("[name]: подготовка [program.name].")
 	reaction.schedule_at(attack_at)
 	victim?.finish_user_action()
@@ -370,6 +422,7 @@
 	var/had_program = !!pending_program
 	pending_program = null
 	pending_target_ref = null
+	pending_breach_ref = null
 	attack_at = 0
 	if(had_program)
 		SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
@@ -378,9 +431,14 @@
 	if(!pending_program)
 		return
 	var/datum/target = pending_target()
-	if(QDELETED(target) || (pending_program.role == NETRUN_PROGRAM_TRACE ? !valid_trace_target(target) : !netrun_combatant_in_node(target, node)))
+	if(is_stunned() || !node?.is_online() || !valid_program_target(pending_program, target, world.time >= attack_at))
 		cancel_program()
 		return
+	if(pending_program.role == NETRUN_PROGRAM_TRACE)
+		var/datum/netrun_console/victim = target
+		if(pending_breach_ref?.resolve() != victim.intrusion.breach)
+			cancel_program()
+			return
 	if(world.time < attack_at)
 		return
 	var/datum/netrun_program/program = pending_program

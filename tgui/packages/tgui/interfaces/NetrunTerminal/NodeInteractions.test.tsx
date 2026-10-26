@@ -106,4 +106,23 @@ describe('Node and process interactions', () => {
     expect(sent(topic, 'choose_entry')).toEqual([{}]);
     expect(panel.getAllByText('Выбрать узел подключения')).toHaveLength(1);
   });
+
+  test('ICE reconnaissance explains the kind and current risk before entering', () => {
+    const { store } = setup({ selected: { ...node, contacts: [{
+      ...contact, kind: 'ice', name: 'ICE-HUNTER', ice_kind: 'hunter',
+      state: 'патрулирует', can_signal: false, can_message: false,
+      threat: 'Опасный вход: ICE атакует ваш процесс.',
+    }] } });
+    const panel = render(<NodePanel />);
+    expect(panel.getByText(/ICE · охотник · патрулирует/)).toBeTruthy();
+    expect(panel.getByText('Опасный вход: ICE атакует ваш процесс.')).toBeTruthy();
+    act(() => store.dispatch(backendUpdate({ data: { selected: { ...node, contacts: [{
+      ...contact, kind: 'ice', name: 'ICE-SENTRY', ice_kind: 'sentry',
+      state: 'охраняет узел', can_signal: false, can_message: false,
+      threat: 'Доступ ПОЛЬЗОВАТЕЛЯ позволяет пройти.',
+    }] } } })));
+    expect(panel.getByText(/ICE · сторож · охраняет узел/)).toBeTruthy();
+    expect(panel.getByText('Доступ ПОЛЬЗОВАТЕЛЯ позволяет пройти.')).toBeTruthy();
+    expect(panel.queryByText('Опасный вход: ICE атакует ваш процесс.')).toBeNull();
+  });
 });

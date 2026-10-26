@@ -265,6 +265,11 @@
 /mob/camera/netrun_entity/proc/is_stunned()
 	return world.time < combat_stun_until
 
+/// Status changes wake the owner's UI and other sessions observing this process.
+/mob/camera/netrun_entity/proc/combat_changed()
+	console?.combat_context?.changed()
+	host_node?.notify_changed(NETRUN_CHANGED_OCCUPANTS)
+
 /mob/camera/netrun_entity/proc/apply_damage(amount, reason, datum/netrun_console/attacker)
 	if(world.time < combat_shield_until)
 		amount *= combat_shield_factor
@@ -272,14 +277,21 @@
 
 /mob/camera/netrun_entity/proc/apply_stun(duration)
 	combat_stun_until = max(combat_stun_until, world.time + duration)
+	combat_changed()
 	to_chat(src, span_userdanger("Ваш процесс оглушён!"))
 
 /mob/camera/netrun_entity/proc/apply_shield(pct, duration)
+	var/new_factor = clamp(1 - pct / 100, 0.1, 1)
+	// A weaker shield cannot replace or extend an active stronger one.
+	if(world.time < combat_shield_until && new_factor > combat_shield_factor)
+		return
 	combat_shield_until = world.time + duration
-	combat_shield_factor = clamp(1 - pct / 100, 0.1, 1)
+	combat_shield_factor = new_factor
+	combat_changed()
 
 /mob/camera/netrun_entity/proc/apply_heal(amount)
 	integrity = min(max_integrity, integrity + amount)
+	combat_changed()
 	to_chat(src, span_notice("Целостность восстановлена: [round(integrity)]/[max_integrity]."))
 
 // MARK: Урон
@@ -289,6 +301,7 @@
 		return
 	integrity -= amount
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_INTEGRITY, integrity, max_integrity, reason)
+	combat_changed()
 	to_chat(src, span_userdanger("Целостность нарушена[reason ? ": [reason]" : ""]! ([max(0, round(integrity))]/[max_integrity])"))
 	if(integrity <= 0)
 		dissolve()

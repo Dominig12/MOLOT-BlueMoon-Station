@@ -46,9 +46,10 @@ const ContactCard = (props: { contact: EntityContact; pending: boolean }) => {
       </Box>
       {!!contact.persona?.tagline && <Box className="netrun-contact-tagline">{contact.persona.tagline}</Box>}
       <Box color={THEME.muted} fontSize="11px">
-        {contact.kind === 'ice' ? 'ICE' : 'Сущность'} · {contact.state}
+        {contact.kind === 'ice' ? `ICE${contact.ice_kind === 'hunter' ? ' · охотник' : contact.ice_kind === 'sentry' ? ' · сторож' : ''}` : 'Сущность'} · {contact.state}
         {' · '}{contact.integrity}/{contact.max_integrity}
       </Box>
+      {!!contact.threat && <Box mt={0.5} color={THEME.warn} fontSize="11px">{contact.threat}</Box>}
       {!contact.self && contact.kind === 'entity' && (
         <Box mt={0.5}>
           <Button compact icon="satellite-dish" content="Послать сигнал"

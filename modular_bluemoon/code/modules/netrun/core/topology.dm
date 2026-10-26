@@ -287,7 +287,7 @@
 	if(previous != node.bound_apc)
 		if(!rebind_leaf(node))
 			invalidate()
-		node.notify_changed(NETRUN_CHANGED_BINDING)
+		// join_network publishes once after both the APC and LAN are current.
 
 /// Changing one endpoint's APC does not change the infrastructure mesh. Update
 /// its single edge directly rather than rebuilding every APC pair and endpoint.
