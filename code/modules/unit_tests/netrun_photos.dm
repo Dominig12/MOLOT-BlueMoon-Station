@@ -1,4 +1,19 @@
 /// Build a real, separately reserved floor scene; no renderer or visibility stubs.
+/datum/unit_test/netrun_photo_browser_export_single_frame/Run()
+	var/icon/animated = icon('icons/effects/camera_image_base.dmi', "")
+	var/icon/red = netrun_photo_color_icon("#ff0000")
+	var/icon/blue = netrun_photo_color_icon("#0000ff")
+	animated.Insert(red, "", SOUTH, 1)
+	animated.Insert(blue, "", SOUTH, 2)
+	var/datum/picture/picture = allocate(/datum/picture, "Export", null, animated)
+	// Keep the browser-visible bytes for PNG dimension/pixel inspection outside BYOND.
+	fdel("data/netrun-photo-export.base64")
+	text2file(picture.get_base64(), "data/netrun-photo-export.base64")
+	TEST_ASSERT_EQUAL(picture.get_base64(), icon2base64(icon(animated, dir = SOUTH, frame = 1)), "The export must select the first still frame")
+	var/previous = picture.get_base64()
+	picture.picture_image = blue
+	TEST_ASSERT_NOTEQUAL(picture.get_base64(), previous, "Replacing the picture must invalidate the browser export cache")
+
 /datum/unit_test/proc/netrun_photo_scene(side)
 	var/datum/turf_reservation/scene = SSmapping.RequestBlockReservation(side + 2, side + 2, border_type_override = /turf/closed/wall)
 	allocated += scene
@@ -12,6 +27,82 @@
 	var/icon/tile = icon('icons/effects/effects.dmi', "nothing")
 	tile.DrawBox(color, 1, 1, world.icon_size, world.icon_size)
 	return tile
+
+/// Read the actual PNG IHDR, independent of BYOND's per-frame icon.Width()/Height().
+/// A multi-frame DMI reports 32x32 to those methods even when its PNG is a 5x5 sheet.
+/datum/unit_test/proc/netrun_photo_png_dimensions(encoded)
+	if(!istext(encoded) || length(encoded) < 32)
+		return null
+	var/alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	var/list/header = list()
+	for(var/offset = 1; offset <= 29; offset += 4)
+		var/list/quartet = list()
+		for(var/index in 0 to 3)
+			var/value = findtextEx(alphabet, copytext(encoded, offset + index, offset + index + 1)) - 1
+			if(value < 0)
+				return null
+			quartet += value
+		header += (quartet[1] << 2) | (quartet[2] >> 4)
+		header += ((quartet[2] & 15) << 4) | (quartet[3] >> 2)
+		header += ((quartet[3] & 3) << 6) | quartet[4]
+	var/list/signature = list(137, 80, 78, 71, 13, 10, 26, 10)
+	for(var/index in 1 to length(signature))
+		if(header[index] != signature[index])
+			return null
+	if(header[13] != 73 || header[14] != 72 || header[15] != 68 || header[16] != 82)
+		return null
+	var/width = ((header[17] * 256 + header[18]) * 256 + header[19]) * 256 + header[20]
+	var/height = ((header[21] * 256 + header[22]) * 256 + header[23]) * 256 + header[24]
+	return list(width, height)
+
+/// An actual 24-frame scrubber appearance must never turn a scene into a sprite sheet.
+/datum/unit_test/netrun_photo_animated_scene_exports_one_png_frame/Run()
+	var/datum/turf_reservation/scene = netrun_photo_scene(3)
+	var/turf/center = locate(scene.bottom_left_coords[1] + 2, scene.bottom_left_coords[2] + 2, scene.bottom_left_coords[3])
+	var/list/turfs = list()
+	for(var/dy = -1 to 1)
+		for(var/dx = -1 to 1)
+			var/turf/T = locate(center.x + dx, center.y + dy, center.z)
+			T.icon = netrun_photo_color_icon(rgb(70 + (dx + 1) * 60, 70 + (dy + 1) * 60, 50))
+			T.icon_state = ""
+			T.color = null
+			T.overlays.Cut()
+			T.underlays.Cut()
+			turfs += T
+	var/obj/item/animated_atom = allocate(/obj/item, center)
+	animated_atom.icon = 'icons/obj/atmospherics/components/unary_devices.dmi'
+	animated_atom.icon_state = "scrub_on"
+	animated_atom.dir = SOUTH
+	animated_atom.pixel_x = 0
+	animated_atom.pixel_y = 0
+	var/icon/native_icon = icon(animated_atom.icon)
+	var/icon/animated_icon = icon(animated_atom.icon, animated_atom.icon_state, SOUTH)
+	TEST_ASSERT_NOTEQUAL(native_icon.GetPixel(12, 22, "scrub_on", SOUTH, 1), native_icon.GetPixel(12, 22, "scrub_on", SOUTH, 24), "The native fixture must contain genuinely different first and twenty-fourth frames")
+	var/list/fixture_dimensions = netrun_photo_png_dimensions(icon2base64(animated_icon))
+	TEST_ASSERT_NOTNULL(fixture_dimensions, "The native animation must export a valid PNG")
+	TEST_ASSERT(fixture_dimensions[1] > world.icon_size && fixture_dimensions[2] > world.icon_size, "The fixture must exercise a real multi-frame sprite sheet")
+	var/obj/item/camera/netrun_capture/capture = allocate(/obj/item/camera/netrun_capture, center)
+	var/datum/turf_reservation/clones = SSmapping.RequestBlockReservation(3, 3)
+	allocated += clones
+	var/side = 3 * world.icon_size
+	var/icon/rendered = capture.camera_get_icon(turfs, center, side, side, clones, 1, 1, 3, 3)
+	TEST_ASSERT_NOTNULL(rendered, "The real clone renderer must return the animated scene")
+	var/list/rendered_dimensions = netrun_photo_png_dimensions(icon2base64(rendered))
+	TEST_ASSERT_NOTNULL(rendered_dimensions, "The rendered scene must export a valid PNG")
+	TEST_ASSERT_EQUAL(rendered_dimensions[1], side, "The renderer must collapse animation before blending, rather than create multiple scene columns")
+	TEST_ASSERT_EQUAL(rendered_dimensions[2], side, "The renderer must export one scene row rather than an animation sheet")
+	TEST_ASSERT_EQUAL(rendered.GetPixel(world.icon_size + 12, world.icon_size + 22), native_icon.GetPixel(12, 22, "scrub_on", SOUTH, 1), "The single scene must contain the actual native appearance's first frame")
+	// Exercise the production capture and picture export as well as the renderer itself.
+	capture.captureimage(center, null, FALSE, 1, 1, turfs)
+	TEST_ASSERT_NOTNULL(capture.result, "Native capture must create a photograph")
+	var/encoded = capture.result.get_base64()
+	var/export_path = "data/netrun-photo-animated-scene.base64"
+	fdel(export_path)
+	text2file(encoded, export_path)
+	var/list/exported_dimensions = netrun_photo_png_dimensions(encoded)
+	TEST_ASSERT_NOTNULL(exported_dimensions, "The browser-visible photograph must be a valid PNG")
+	TEST_ASSERT_EQUAL(exported_dimensions[1], side, "The browser must receive the actual scene width, not the width of a sprite sheet")
+	TEST_ASSERT_EQUAL(exported_dimensions[2], side, "The browser must receive the actual scene height, not the height of a sprite sheet")
 
 /// Distinct real appearances must not share a recycled temporary appearance-ref cache slot.
 /datum/unit_test/netrun_photo_distinct_scene_pixels/Run()

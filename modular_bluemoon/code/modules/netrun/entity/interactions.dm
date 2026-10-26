@@ -90,6 +90,7 @@
 	message = text
 	sender_name = console.get_handle()
 	source_address = operation.from_address
+	operation.capture(list("recipient" = REF(recipient), "message" = text))
 
 /datum/netrun_request/entity_contact/Destroy()
 	recipient_ref = null

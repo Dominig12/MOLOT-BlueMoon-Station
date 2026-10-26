@@ -81,6 +81,7 @@ export type SelectedNode = NetNode & {
   interactions?: NodeInteraction[];
   contacts?: EntityContact[];
   logs?: string[];
+  packets?: NetPacketHeader[];
   files?: NetFile[];
   storage?: { used: number; capacity: number };
   lan?: {
@@ -244,9 +245,22 @@ export type NetOperation = {
   service?: string | null;
   phase: 'queued' | 'running' | 'completed' | 'rejected' | 'cancelled';
   reason?: string | null;
+  result?: string | null;
   started_at: number;
   updated_at: number;
   route: string[];
+};
+
+export type NetPacketHeader = {
+  id: string;
+  time: number;
+  phase: string;
+  kind: string;
+  from: string | null;
+  to: string | null;
+  service: string | null;
+  reason?: string | null;
+  headers?: Record<string, string | number | boolean> | null;
 };
 
 export type NetrunData = {

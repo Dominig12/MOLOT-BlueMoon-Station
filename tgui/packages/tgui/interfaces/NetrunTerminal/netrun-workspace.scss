@@ -706,6 +706,31 @@
   min-height: 1em;
 }
 
+/* File actions share square hit targets. Center the buttons themselves as well
+ * as their glyphs; inline buttons inside grid cells otherwise sit at the top. */
+.netrun-file-actions {
+  align-items: center;
+
+  > .Button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    flex: 0 0 24px;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    margin: 0;
+    padding: 0;
+    line-height: 1;
+
+    > .Icon {
+      margin: 0;
+      line-height: 1;
+    }
+  }
+}
+
 // Theme tokens reach existing panels, native widgets and the retained Pixi map.
 .netrun-shell {
   --net-good: #68dbb7;

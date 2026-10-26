@@ -91,7 +91,7 @@
 		if(cached)
 			img = cached[1]
 		else
-			img = getFlatIcon(A)
+			img = getFlatIcon(A, no_anim = TRUE)
 			if(img)
 				flat_icon_cache[appearance_key] = list(img, appearance_snapshot)
 		if(img)

@@ -177,12 +177,118 @@
 	var/list/publish_data
 	var/publish_cursor = 1
 	var/publish_again = FALSE
+	/// Startup joins are resumable and coalesced on the service, never on a task.
+	var/cluster_listening = FALSE
+	var/cluster_queued = FALSE
+	var/list/cluster_candidates
+	var/cluster_cursor = 1
+	var/cluster_again = FALSE
+	var/cluster_infrastructure = -1
+	var/cluster_transit = -1
+	var/cluster_backbone = -1
+	var/cluster_online
 
 /datum/netrun_machine_service/research_server/New(datum/component/netrun_node/node, atom/host_override)
 	..(node, host_override)
 	bind_research()
+	queue_cluster()
+
+/datum/netrun_machine_service/research_server/network_ready()
+	queue_cluster()
+
+/datum/netrun_machine_service/research_server/host_initialized()
+	. = ..()
+	queue_cluster()
+
+/datum/netrun_machine_service/research_server/proc/queue_cluster()
+	var/obj/machinery/rnd/server/server = host
+	if(QDELETED(server) || !server.netrun_mapped_server)
+		return
+	cluster_online = server.netrun_online()
+	if(!cluster_listening)
+		cluster_listening = TRUE
+		RegisterSignal(host, list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_MOVABLE_MOVED), PROC_REF(cluster_state_changed))
+		RegisterSignal(SSnetrun, list(COMSIG_NETRUN_TOPOLOGY_DIRTY, COMSIG_NETRUN_TOPOLOGY_CHANGED), PROC_REF(cluster_topology_changed))
+		RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(cluster_node_changed))
+	if(cluster_queued)
+		cluster_again = TRUE
+		return
+	cluster_queued = TRUE
+	SSnetrun.get_task_scheduler().enqueue("research.cluster", src, NETRUN_TASK_BACKGROUND)
+
+/datum/netrun_machine_service/research_server/proc/cluster_state_changed()
+	SIGNAL_HANDLER
+	queue_cluster()
+
+/datum/netrun_machine_service/research_server/proc/cluster_topology_changed()
+	SIGNAL_HANDLER
+	var/obj/machinery/rnd/server/server = host
+	if(QDELETED(server))
+		return
+	var/datum/netrun_topology/graph = SSnetrun.get_topology()
+	var/backbone = !!SSnetworks.station_network?.setting_disabled
+	if(cluster_infrastructure == graph.infrastructure_revision && cluster_transit == graph.transit_availability_revision && cluster_backbone == backbone && cluster_online == server.netrun_online())
+		return
+	cluster_infrastructure = graph.infrastructure_revision
+	cluster_transit = graph.transit_availability_revision
+	cluster_backbone = backbone
+	queue_cluster()
+
+/datum/netrun_machine_service/research_server/proc/cluster_node_changed(datum/source, datum/component/netrun_node/changed_node, flags)
+	SIGNAL_HANDLER
+	var/obj/machinery/rnd/server/server = host
+	if(changed_node == node && ((flags & NETRUN_CHANGED_BINDING) || cluster_online != server.netrun_online()))
+		queue_cluster()
+	else if(SSnetrun.get_topology().is_infrastructure(changed_node))
+		cluster_topology_changed()
+
+/datum/netrun_machine_service/research_server/proc/finish_cluster()
+	SSnetrun.task_scheduler?.cancel("research.cluster", src)
+	cluster_queued = FALSE
+	cluster_candidates = null
+	cluster_cursor = 1
+	cluster_again = FALSE
+
+/// One peer comparison and at most one merge per common-worker continuation.
+/datum/netrun_machine_service/research_server/proc/advance_cluster()
+	var/obj/machinery/rnd/server/server = host
+	if(QDELETED(server) || !server.netrun_mapped_server || !server.netrun_online())
+		finish_cluster()
+		return TRUE
+	if(!SSnetrun.get_machine_transport().is_ready())
+		return FALSE
+	if(!cluster_candidates)
+		cluster_candidates = SSresearch.servers.Copy()
+		cluster_cursor = 1
+		cluster_again = FALSE
+	if(cluster_cursor <= length(cluster_candidates))
+		var/obj/machinery/rnd/server/peer = cluster_candidates[cluster_cursor++]
+		if(peer != server && !QDELETED(peer) && peer.netrun_mapped_server && peer.stored_research != server.stored_research && peer.research_network_id() == server.research_network_id() && server.link_research_cluster(peer.stored_research))
+			finish_cluster()
+			return TRUE
+	if(cluster_cursor <= length(cluster_candidates))
+		return FALSE
+	if(cluster_again)
+		cluster_candidates = null
+		cluster_again = FALSE
+		return FALSE
+	finish_cluster()
+	return TRUE
+
+/datum/netrun_task/research_cluster
+	parent_type = /datum/netrun_task/continuation
+	kind = "research.cluster"
+
+/datum/netrun_task/research_cluster/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	var/datum/netrun_machine_service/research_server/service = target()
+	return service.advance_cluster()
 
 /datum/netrun_machine_service/research_server/Destroy()
+	finish_cluster()
+	if(cluster_listening)
+		UnregisterSignal(host, list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_MOVABLE_MOVED))
+		UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_TOPOLOGY_DIRTY, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_NODE_CHANGED))
+		cluster_listening = FALSE
 	if(publish_timer)
 		deltimer(publish_timer)
 	if(web)
@@ -420,6 +526,9 @@
 
 /datum/netrun_machine_service/research_client
 	service_id = "research.client"
+	start_when_ready = TRUE
+	// Binding is automatic; full database replication starts only when a native
+	// reader requests it. Point producers do not need a presentation cache.
 	var/wants_snapshots = FALSE
 	var/binding_generation = 0
 	var/datum/techweb/snapshot_cache
@@ -445,6 +554,11 @@
 	QDEL_NULL(snapshot_cache)
 	subscription_ref = null
 	return ..()
+
+/datum/netrun_machine_service/research_client/network_ready()
+	// Native cached consumers request their own presentation when binding changes.
+	// A producer such as a Tesla coil only needs the authority reference.
+	resolve_binding()
 
 /datum/netrun_machine_service/research_client/proc/binding_changed(datum/source, datum/techweb/new_web)
 	SIGNAL_HANDLER
@@ -472,7 +586,7 @@
 	return binding
 
 /datum/netrun_machine_service/research_client/proc/live_authority()
-	var/datum/techweb/binding = netrun_atom_techweb(host)
+	var/datum/techweb/binding = resolve_binding()
 	if(QDELETED(binding))
 		return null
 	for(var/key in binding.research_owner_refs)
@@ -514,11 +628,11 @@
 /// Full snapshots are returned only when the local revision differs.
 /datum/netrun_machine_service/research_client/proc/check_subscription()
 	resync_timer = null
-	var/datum/techweb/binding = wants_snapshots ? resolve_binding() : null
-	if(wants_snapshots && !binding && istype(host, /obj/machinery/mecha_part_fabricator))
+	var/datum/techweb/binding = resolve_binding()
+	if(!binding && istype(host, /obj/machinery/mecha_part_fabricator))
 		var/obj/machinery/mecha_part_fabricator/fabricator = host
 		fabricator.sync(TRUE, TRUE)
-	if(binding)
+	if(binding && wants_snapshots)
 		request("watch", extra = list("revision" = snapshot_binding == REF(binding) ? snapshot_revision : -1))
 	resync_timer = addtimer(CALLBACK(src, PROC_REF(check_subscription)), 30 SECONDS, TIMER_STOPPABLE | TIMER_DELETE_ME)
 

@@ -1,4 +1,47 @@
 /// Results are value snapshots. A late completion never borrows another action's nonce.
+/datum/unit_test/netrun_operation_packet_decode_and_feedback/Run()
+	var/datum/netrun_entity_contact_scene/scene = allocate(/datum/netrun_entity_contact_scene, run_loc_floor_bottom_left)
+	scene.authorize()
+	var/datum/netrun_packet_context/capture = allocate(/datum/netrun_packet_context, "machine", "Fixture", scene.source_node.address, scene.target_node.address, "fixture")
+	capture.capture(list("body" = "CAPTURED_CONTENT", "nested" = list(list("filter" = "oxygen"))))
+	capture.queued(list(scene.source_node.address, scene.target_node.address))
+	capture.receive(list(scene.source_node.address, scene.target_node.address))
+	capture.finish("completed")
+	TEST_ASSERT(!findtext(json_encode(scene.target_node.packet_headers_payload()), "CAPTURED_CONTENT"), "Ordinary headers must not include the packet body")
+	TEST_ASSERT(findtext(scene.target_node.decode_packet(capture.id), "CAPTURED_CONTENT"), "An explicitly decoded local packet must expose its captured body")
+	TEST_ASSERT(!findtext(scene.target_node.decode_packet("unknown"), "CAPTURED_CONTENT"), "An ID absent from this node's journal cannot read another capture")
+	TEST_ASSERT(scene.console.run_command(scene.target_node, "scan", "feedback-nonce"), "A native command must be queued")
+	var/datum/netrun_request/command/packet = netrun_operation_packet(scene.console, /datum/netrun_request/command)
+	var/id = packet.operation.id
+	packet.deliver()
+	var/list/outcome = netrun_operation_result(scene.console, id)
+	TEST_ASSERT(istext(outcome["result"]) && findtext(outcome["result"], scene.target_node.address), "The operations tab must receive the actual scan response")
+	scene.console.next_command = 0
+	TEST_ASSERT(!scene.console.run_command(scene.target_node, "packet_decrypt", "denied", capture.id), "Guest access must never admit packet decryption")
+	scene.console.next_command = 0
+	scene.console.access_session.node_access[scene.target_node.address] = NETRUN_ACCESS_ROOT
+	TEST_ASSERT(scene.console.run_command(scene.target_node, "packet_decrypt", "decode", capture.id), "ROOT must admit the selected packet as a routed request")
+	packet = netrun_operation_packet(scene.console, /datum/netrun_request/command)
+	id = packet.operation.id
+	packet.deliver()
+	outcome = netrun_operation_result(scene.console, id)
+	TEST_ASSERT(findtext(outcome["result"], "CAPTURED_CONTENT"), "Explicit ROOT decryption must return contents through the operations tab")
+	scene.console.next_command = 0
+	TEST_ASSERT(scene.console.run_command(scene.target_node, "packet_decrypt", "revoked", capture.id), "A second decode must retain its own immutable packet selection")
+	packet = netrun_operation_packet(scene.console, /datum/netrun_request/command)
+	id = packet.operation.id
+	scene.console.access_session.node_access -= scene.target_node.address
+	TEST_ASSERT(!packet.deliver(), "Revoked ROOT must prevent decoding when delivery finally executes")
+	outcome = netrun_operation_result(scene.console, id)
+	TEST_ASSERT(!outcome["result"], "A rejected decode must expose no body")
+	for(var/i in 1 to 270)
+		var/datum/netrun_packet_context/overflow = new("machine", "Overflow", "A", "B", "fixture")
+		overflow.capture(list("value" = i))
+		overflow.finish("completed")
+		qdel(overflow)
+	TEST_ASSERT_EQUAL(length(SSnetrun.packet_captures), 256, "Payload history must have a global memory cap")
+	TEST_ASSERT_NULL(SSnetrun.packet_captures[capture.id], "Old capture bodies must expire independently of metadata")
+
 /datum/unit_test/proc/netrun_operation_result(datum/netrun_console/console, id)
 	for(var/list/entry as anything in console.operations_payload())
 		if(entry["id"] == id)
@@ -38,6 +81,15 @@
 	TEST_ASSERT_EQUAL(result["nonce"], "original-nonce", "Completion must preserve the sender's explicit nonce")
 	TEST_ASSERT_EQUAL(result["phase"], "completed", "A duplicate settlement must not downgrade the completed result")
 	TEST_ASSERT_EQUAL(length(console.operations_payload()), 1, "Updating an operation must replace its value rather than append another history row")
+	var/list/session = list()
+	var/list/first_update = list()
+	console.append_operations_payload(first_update, session)
+	TEST_ASSERT(islist(first_update["operations"]), "A new viewer must receive its own operation history")
+	var/list/quiet_update = list()
+	console.append_operations_payload(quiet_update, session)
+	TEST_ASSERT(!("operations" in quiet_update), "Unchanged operations must not repeat response bodies on every map update")
+	var/list/refreshed = console.ui_static_data()
+	TEST_ASSERT_EQUAL(length(refreshed["operations"]), 1, "A full browser refresh must restore history even when its server cursor is unchanged")
 	qdel(console)
 	TEST_ASSERT_NULL(operation.console_ref.resolve(), "An operation must not retain its deleted console")
 	operation.finish("cancelled", "Ignored after completion")

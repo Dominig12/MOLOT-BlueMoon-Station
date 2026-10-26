@@ -137,9 +137,9 @@
 	var/obj/machinery/airalarm/alarm = host
 	var/tag = message.payload["tag"]
 	if(message.payload["device"] == "VP")
-		alarm.netrun_vent_info[tag] = deepCopyList(message.payload)
+		alarm.netrun_vent_info[tag] = netrun_copy_wire_value(message.payload)
 	else if(message.payload["device"] == "VS")
-		alarm.netrun_scrub_info[tag] = deepCopyList(message.payload)
+		alarm.netrun_scrub_info[tag] = netrun_copy_wire_value(message.payload)
 	else
 		return FALSE
 	SStgui.update_uis(alarm)
@@ -319,7 +319,7 @@
 	return ..() && istype(message, /datum/netrun_machine_message/atmos) && message.payload["sigtype"] == "command" && message.payload["tag"] == service_tag() && matches(message.source, service_tag())
 
 /datum/netrun_machine_service/atmos/device/receive(datum/netrun_machine_message/message)
-	var/list/data = deepCopyList(message.payload)
+	var/list/data = netrun_copy_wire_value(message.payload)
 	data["user"] = message.user_ref?.resolve()
 	var/datum/signal/signal = new(data)
 	var/obj/machinery/machine = host
@@ -419,7 +419,7 @@
 
 /datum/netrun_machine_service/atmos/vent_controller/receive(datum/netrun_machine_message/message)
 	var/obj/machinery/embedded_controller/controller = host
-	var/datum/signal/signal = new(deepCopyList(message.payload))
+	var/datum/signal/signal = new(netrun_copy_wire_value(message.payload))
 	controller.receive_signal(signal)
 	qdel(signal)
 	controller.updateDialog()
@@ -452,7 +452,7 @@
 	return source_tag == message.source.service_tag()
 
 /datum/netrun_machine_service/atmos/monitor/receive(datum/netrun_machine_message/message)
-	var/datum/signal/signal = new(deepCopyList(message.payload))
+	var/datum/signal/signal = new(netrun_copy_wire_value(message.payload))
 	var/obj/machinery/machine = host
 	machine.receive_signal(signal)
 	qdel(signal)
@@ -474,7 +474,7 @@
 	return ..() && istype(message, /datum/netrun_machine_message/atmos) && matches(message.source, null)
 
 /datum/netrun_machine_service/atmos/alert/receive(datum/netrun_machine_message/message)
-	var/datum/signal/signal = new(deepCopyList(message.payload))
+	var/datum/signal/signal = new(netrun_copy_wire_value(message.payload))
 	var/obj/machinery/machine = host
 	machine.receive_signal(signal)
 	qdel(signal)

@@ -35,6 +35,14 @@ test('independent delivery outcomes survive later actions and receipt never comp
   expect(panel.getByText('Операции (1)')).toBeTruthy();
 });
 
+test('completed requests expose and search the actual device response as plain text', () => {
+  const { panel } = setup([{ ...operation('response', 'completed'), result: '<packet>Температура: 293 K</packet>' }]);
+  expect(panel.getByText('<packet>Температура: 293 K</packet>')).toBeTruthy();
+  expect(panel.container.querySelector('packet')).toBeNull();
+  fireEvent.change(panel.getByLabelText('Поиск операций'), { target: { value: '293 K' } });
+  expect(panel.getByText('Команда response')).toBeTruthy();
+});
+
 test('the status row presents the server outcome and reason after delivery instead of inferring success from receipt', () => {
   const first = operation('1', 'queued');
   const { panel, update } = setup([first]);

@@ -373,7 +373,7 @@
 		return FALSE
 	return owner.node_level(node) >= NETRUN_ACCESS_GUEST || (node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)) || owner.daemon_bonus("mapper")
 
-/datum/netrun_console/proc/run_command(datum/component/netrun_node/node, command_id, input_nonce)
+/datum/netrun_console/proc/run_command(datum/component/netrun_node/node, command_id, input_nonce, packet_id)
 	var/datum/netrun_packet_context/operation = new("command", "Команда устройства",
 		route_source()?.address, node?.address, command_id, src, input_nonce)
 	if(world.time < next_command)
@@ -386,6 +386,8 @@
 	if(!command)
 		return reject_operation(operation, "Команда не найдена.")
 	operation.label = command.display_name(node, netrun_command_arg(command_id))
+	packet_id = command_id == "packet_decrypt" && istext(packet_id) ? copytext_char(packet_id, 1, 65) : null
+	operation.capture(list("command" = command_id, "packet_id" = packet_id))
 	if(is_locked())
 		log_line("Точка подключения заблокирована.", "bad")
 		return reject_operation(operation, "Точка подключения заблокирована.")
@@ -410,16 +412,16 @@
 	qdel(tree)
 	if(lat <= 0)
 		log_line("> [command_id] @ [node.address]")
-		var/datum/netrun_request/command/packet = new(src, node, command, command_id, node.network, operator, inventory.selected_file_uid || "none", operation)
+		var/datum/netrun_request/command/packet = new(src, node, command, command_id, node.network, operator, inventory.selected_file_uid || "none", operation, packet_id)
 		return packet.send(0, poll_route)
 	else
 		log_line("> [command_id] @ [node.address] (отправка, ~[lat * 100]мс)")
 		next_command = world.time + max(0.5 SECONDS, lat)
-		var/datum/netrun_request/command/packet = new(src, node, command, command_id, node.network, operator, inventory.selected_file_uid || "none", operation)
+		var/datum/netrun_request/command/packet = new(src, node, command, command_id, node.network, operator, inventory.selected_file_uid || "none", operation, packet_id)
 		return packet.send(lat, poll_route)
 
 /// Собственно выполнение команды - может вызываться с задержкой маршрута
-/datum/netrun_console/proc/do_command(datum/component/netrun_node/node, datum/netrun_command/command, command_id, illegal, datum/netrun_network/sent_network, mob/sender, file_uid, datum/netrun_packet_context/operation)
+/datum/netrun_console/proc/do_command(datum/component/netrun_node/node, datum/netrun_command/command, command_id, illegal, datum/netrun_network/sent_network, mob/sender, file_uid, datum/netrun_packet_context/operation, packet_id)
 	if(QDELETED(src) || QDELETED(node) || !command)
 		operation?.finish("cancelled", "Узел или сеанс удалён.")
 		return FALSE
@@ -444,7 +446,8 @@
 	illegal = legit_node_level(node, tree) < command.access
 	qdel(tree)
 	var/datum/netrun_request/request = new(file_uid)
-	var/result = world.PushUsr(operator, CALLBACK(command, TYPE_PROC_REF(/datum/netrun_command, execute), node, src, netrun_command_arg(command_id), request))
+	var/result = world.PushUsr(operator, CALLBACK(command, TYPE_PROC_REF(/datum/netrun_command, execute), node, src, packet_id || netrun_command_arg(command_id), request))
+	operation?.set_result(result)
 	qdel(request)
 	if(QDELETED(src) || QDELETED(node))
 		return !isnull(result)

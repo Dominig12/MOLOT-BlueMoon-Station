@@ -120,13 +120,15 @@
 	parent_type = /datum/netrun_request/delivery
 	var/datum/netrun_command/command
 	var/command_id
+	var/packet_id
 	operation_kind = "command"
 	operation_label = "Команда устройства"
 
-/datum/netrun_request/command/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/netrun_command/command, command_id, datum/netrun_network/sent_network, mob/sender, file_uid, datum/netrun_packet_context/context)
+/datum/netrun_request/command/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/netrun_command/command, command_id, datum/netrun_network/sent_network, mob/sender, file_uid, datum/netrun_packet_context/context, packet_id)
 	..(console, node, sent_network, sender, file_uid, context)
 	src.command = command
 	src.command_id = command_id
+	src.packet_id = packet_id
 
 /datum/netrun_request/command/Destroy()
 	command = null
@@ -134,7 +136,7 @@
 	return ..()
 
 /datum/netrun_request/command/execute()
-	return console.do_command(node, command, command_id, FALSE, sent_network, sender, file_uid, operation)
+	return console.do_command(node, command, command_id, FALSE, sent_network, sender, file_uid, operation, packet_id)
 
 /// Published native API actions share packet lifecycle with ordinary commands.
 /datum/netrun_request/remote
@@ -150,6 +152,7 @@
 	src.api = api
 	src.action = action
 	src.arguments = arguments ? arguments.Copy() : list()
+	operation.capture(list("action" = action, "arguments" = src.arguments))
 
 /datum/netrun_request/remote/Destroy()
 	api = null
@@ -192,6 +195,7 @@
 	node.network?.add_log("[console.log_source()] -> [node.address]: [entry["name"]]", illegal)
 	log_game("NETRUN API: [key_name(sender)] [action] -> [node.address] [AREACOORD(target)]")
 	console.log_line("[node.address]: запрос передан интерфейсу устройства.", "good")
+	operation.set_result("[entry["name"]]: запрос обработан интерфейсом устройства.")
 	if(illegal)
 		console.add_trace(6 * node.get_security())
 	return TRUE
@@ -208,6 +212,7 @@
 	..(console, node, sent_network, sender, null, context)
 	src.action = action
 	src.arguments = arguments ? arguments.Copy() : list()
+	operation.capture(list("action" = action, "arguments" = src.arguments))
 
 /datum/netrun_request/window/Destroy()
 	arguments = null
@@ -228,6 +233,7 @@
 	..(console, node, sent_network, sender, file_uid, context)
 	src.action = action
 	src.to_shard = to_shard
+	operation.capture(list("action" = action, "file_uid" = file_uid, "to_shard" = to_shard))
 
 /datum/netrun_request/file/execute()
 	return console.deliver_file_request(action, node, file_uid, to_shard, sent_network, sender, operation)

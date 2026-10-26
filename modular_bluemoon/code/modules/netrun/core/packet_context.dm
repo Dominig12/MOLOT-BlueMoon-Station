@@ -1,6 +1,39 @@
 /// A delivery owns its metadata. Consoles retain bounded value snapshots, never live packets.
 /datum/controller/subsystem/netrun
 	var/packet_context_serial = 0
+	/// One global ring, never one payload copy per routing hop or station node.
+	var/list/packet_captures = list()
+
+/// Bounded primitive wire preview. Datums, icons and native object references are not retained.
+/proc/netrun_packet_preview(value, list/budget, depth = 0)
+	if(budget[1]-- <= 0)
+		budget[2] = TRUE
+		return "<limit>"
+	if(islist(value))
+		if(depth >= 4)
+			budget[2] = TRUE
+			return "<depth limit>"
+		var/list/input = value
+		var/list/output = list()
+		if(length(input) > 32)
+			budget[2] = TRUE
+		for(var/i in 1 to min(length(input), 32))
+			if(budget[1] <= 0)
+				budget[2] = TRUE
+				break
+			var/key = input[i]
+			if(istext(key) && !isnull(input[key]))
+				output[copytext_char(key, 1, 129)] = netrun_packet_preview(input[key], budget, depth + 1)
+			else
+				output += list(netrun_packet_preview(key, budget, depth + 1))
+		return output
+	if(istext(value))
+		if(length_char(value) > 512)
+			budget[2] = TRUE
+		return copytext_char(value, 1, 513)
+	if(isnum(value) || isnull(value))
+		return value
+	return "<native value>"
 
 /datum/netrun_packet_context
 	var/id
@@ -13,6 +46,8 @@
 	var/service_id
 	var/phase = "queued"
 	var/reason
+	var/result
+	var/list/headers
 	var/started_at
 	var/updated_at
 	/// Replaced atomically; journal entries may share this immutable address snapshot.
@@ -36,6 +71,7 @@
 		console_ref = WEAKREF(console)
 	started_at = world.time
 	updated_at = world.time
+	headers = list("protocol" = "NETRUN/1", "content_type" = "application/netrun", "captured_chars" = 0)
 	publish()
 
 /datum/netrun_packet_context/Destroy()
@@ -48,8 +84,24 @@
 /datum/netrun_packet_context/proc/snapshot()
 	return list("id" = id, "operation_id" = operation_id, "nonce" = nonce, "kind" = kind,
 		"label" = label, "from" = from_address, "to" = to_address, "service" = service_id,
-		"phase" = phase, "reason" = reason, "started_at" = started_at, "updated_at" = updated_at,
+		"phase" = phase, "reason" = reason, "result" = result, "started_at" = started_at, "updated_at" = updated_at,
 		"route" = route.Copy())
+
+/datum/netrun_packet_context/proc/capture(list/payload)
+	if(!islist(payload))
+		return
+	var/list/budget = list(96, FALSE)
+	var/body = json_encode(netrun_packet_preview(payload, budget))
+	var/truncated = budget[2] || length_char(body) > 4096
+	body = copytext_char(body, 1, 4097)
+	// Shared immutable value. Only the explicit ROOT decode command reads this ring.
+	SSnetrun.packet_captures[id] = body
+	if(length(SSnetrun.packet_captures) > 256)
+		SSnetrun.packet_captures.Cut(1, length(SSnetrun.packet_captures) - 255)
+	headers = list("protocol" = "NETRUN/1", "content_type" = "application/json", "captured_chars" = length_char(body), "truncated" = truncated)
+
+/datum/netrun_packet_context/proc/set_result(text)
+	result = istext(text) ? copytext_char(text, 1, 4097) : null
 
 /datum/netrun_packet_context/proc/publish()
 	updated_at = world.time
@@ -105,7 +157,7 @@
 	var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
 	if(!QDELETED(node))
 		node.add_packet_log(id, packet_phase, kind, from_address, to_address, service_id,
-			failure_reason, operation_id, route)
+			failure_reason, operation_id, route, headers)
 
 /// A terminal outcome is immutable. Completion means handling, not a promised physical effect.
 /datum/netrun_packet_context/proc/finish(outcome, failure_reason, at_address)
@@ -115,6 +167,8 @@
 	phase = outcome
 	reason = istext(failure_reason) ? copytext_char(failure_reason, 1, 513) : null
 	if(outcome == "completed")
+		if(isnull(result))
+			result = "Запрос обработан получателем."
 		journal(at_address || to_address || from_address, "ACCEPT")
 	else if(outcome == "rejected")
 		journal(at_address || (received ? to_address : from_address), "REJECT", reason)
@@ -125,6 +179,7 @@
 
 /datum/netrun_console
 	var/list/operation_snapshots = list()
+	var/operation_revision = 0
 
 /datum/netrun_console/proc/record_operation(datum/netrun_packet_context/operation)
 	if(QDELETED(src))
@@ -137,7 +192,16 @@
 	operation_snapshots += list(operation.snapshot())
 	if(length(operation_snapshots) > 32)
 		operation_snapshots.Cut(1, length(operation_snapshots) - 31)
+	operation_revision++
 	invalidate_ui()
+
+/// Walking/map updates must not retransmit all previously completed response bodies.
+/datum/netrun_console/proc/append_operations_payload(list/data, list/session)
+	if(session && !isnull(session["operation_revision"]) && session["operation_revision"] == operation_revision)
+		return
+	data["operations"] = operations_payload()
+	if(session)
+		session["operation_revision"] = operation_revision
 
 /// operation_snapshots is an indexed list whose elements are themselves assoc lists.
 /// deepCopyList() on such a container would treat each element-list as an associative

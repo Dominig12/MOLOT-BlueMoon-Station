@@ -10,10 +10,25 @@
 /obj/machinery/rnd/server/netrun_online(remote = TRUE)
 	return working && !(machine_stat & (NOPOWER | BROKEN))
 
+/obj/machinery/rnd/server/proc/netrun_research_network_label()
+	var/network_label = research_network_id()
+	switch(network_label)
+		if(RND_NETWORK_STATION)
+			network_label = "Научная сеть Нанотрейзен ([RND_NETWORK_STATION])"
+		if(RND_NETWORK_SYNDICATE)
+			network_label = "Научная сеть Синдиката ([RND_NETWORK_SYNDICATE])"
+		if(RND_NETWORK_TARKON)
+			network_label = "Научная сеть Тарков ([RND_NETWORK_TARKON])"
+		if(RND_NETWORK_INTEQ)
+			network_label = "Научная сеть ИнтекЮ ([RND_NETWORK_INTEQ])"
+		if(RND_NETWORK_AUTO)
+			network_label = "Автономная сеть [server_id]"
+	return network_label
+
 /obj/machinery/rnd/server/netrun_status()
 	. = list()
 	. += "Состояние: [working ? "работает" : "простой"]"
-	. += "Сеть РнД: [network_id]"
+	. += "Сеть РнД: [netrun_research_network_label()]"
 	if(stored_research)
 		var/total = 0
 		for(var/point_type in stored_research.research_points)
@@ -33,7 +48,7 @@
 	var/obj/machinery/rnd/server/server = node.parent
 	if(!server.stored_research)
 		return "Техвеб не подключён."
-	var/list/lines = list("Сеть: [server.network_id]", "Открыто узлов: [length(server.stored_research.researched_nodes)]")
+	var/list/lines = list("Сеть: [server.netrun_research_network_label()]", "Открыто узлов: [length(server.stored_research.researched_nodes)]")
 	for(var/point_type in server.stored_research.research_points)
 		lines += "[point_type]: [round(server.stored_research.research_points[point_type])]"
 	return jointext(lines, "\n")
@@ -64,7 +79,7 @@
 	var/list/report = list()
 	for(var/point_type in stolen)
 		report += "[point_type]: [stolen[point_type]]"
-	var/datum/netrun_file/file = new("rnd_[server.server_id].dat", NETRUN_FILE_TEXT, "Выгрузка исследований с сервера [server.network_id]:\n[jointext(report, "\n")]", 2)
+	var/datum/netrun_file/file = new("rnd_[server.server_id].dat", NETRUN_FILE_TEXT, "Выгрузка исследований с сервера [server.netrun_research_network_label()]:\n[jointext(report, "\n")]", 2)
 	if(!console.store_file(file))
 		qdel(file)
 		return "Нет места в хранилище. Очки не списаны."

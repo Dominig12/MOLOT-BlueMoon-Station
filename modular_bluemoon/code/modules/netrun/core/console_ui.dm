@@ -215,12 +215,12 @@
 /datum/netrun_console/ui_static_data(mob/user)
 	if(user)
 		operator = user
-	return list("cli" = cli_payload(workspace_view == "terminal"), "networks" = network_catalog())
+	return list("cli" = cli_payload(workspace_view == "terminal"), "networks" = network_catalog(), "operations" = operations_payload())
 
 /datum/netrun_console/proc/build_ui_data(mob/user, datum/ui_source, list/session)
 	var/list/data = list()
 	data["input_ack"] = input_ack
-	data["operations"] = operations_payload()
+	append_operations_payload(data, session)
 	data["origin"] = origin
 	data["ui_theme"] = theme_id(user)
 	data["workspace_view"] = workspace_view
@@ -315,6 +315,7 @@
 				"can_breach" = intrusion.can_breach && lan_level < NETRUN_ACCESS_GUEST,
 			)
 		selected["logs"] = level >= NETRUN_ACCESS_USER ? node.logs.Copy() : list()
+		selected["packets"] = level >= NETRUN_ACCESS_USER ? node.packet_headers_payload() : list()
 		var/atom/A = node.parent
 		selected["status"] = level >= NETRUN_ACCESS_USER ? A.netrun_status() : list()
 		if(node.file_store && level >= NETRUN_ACCESS_USER)
@@ -638,7 +639,7 @@
 			window_act(params["address"], params["waction"], params, input_nonce)
 			return TRUE
 		if("command")
-			run_command(selected_node(), params["id"], input_nonce)
+			run_command(selected_node(), params["id"], input_nonce, params["packet_id"])
 			return TRUE
 		if("node_interact")
 			return node_interact(selected_node(), params["id"], ui.user)
@@ -872,6 +873,9 @@
 			. = TRUE
 	if(!.)
 		operation?.finish("rejected", "Файл не передан: файл или место хранения недоступны.")
+	else
+		var/list/results = list("download" = "Файл скачан.", "upload" = "Файл передан на устройство.", "delete" = "Файл удалён.", "read" = "Файл открыт для чтения.")
+		operation?.set_result(results[action])
 	return !!.
 
 /datum/netrun_console/proc/read_file(mob/user, uid, input_nonce)

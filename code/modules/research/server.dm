@@ -18,6 +18,8 @@
 
 	idle_power_usage = 500
 	var/datum/techweb/stored_research
+	/// Only mapped servers join their configured cluster automatically at bootstrap.
+	var/netrun_mapped_server = FALSE
 	var/network_id = RND_NETWORK_AUTO			//AUTO: станция — science_tech, иначе — автономная изолированная сеть (дефолт)
 	var/techweb_type = /datum/techweb/isolated	//Тип техвеба нестанционной сети (фракционные подтипы)
 	//Code for point mining here.
@@ -34,6 +36,7 @@
 	var/datum/looping_sound/server_alarm_small/alarmloop
 
 /obj/machinery/rnd/server/Initialize(mapload)
+	netrun_mapped_server = mapload
 	. = ..()
 	GLOB.rndservers_list += src
 	SSresearch.servers |= src
@@ -71,6 +74,12 @@
 		if(!working)
 			working = TRUE
 			alarmloop.stop()
+	// Native NTnet settings and temperature recovery have no change signal.
+	// Compare scalar generations/state after updating working; actual startup
+	// candidate scans and merges remain in the common worker.
+	if(netrun_mapped_server)
+		var/datum/netrun_machine_service/research_server/service = netrun_machine_services?["research.server"]
+		service?.cluster_topology_changed()
 
 /obj/machinery/rnd/server/examine() // BLUEMOON ADD
 	. = ..()

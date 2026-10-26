@@ -23,7 +23,7 @@ export const OperationsPanel = memo((props: { onLocate: (address: string) => voi
   const shown = useMemo(() => operations.filter((operation) => (
     (filter === 'all' || (filter === 'active' ? operationActive(operation)
       : operation.phase === 'rejected' || operation.phase === 'cancelled'))
-    && [operation.id, operation.operation_id, operation.label, operation.kind, operation.service, operation.from, operation.to, operation.reason]
+    && [operation.id, operation.operation_id, operation.label, operation.kind, operation.service, operation.from, operation.to, operation.reason, operation.result]
       .some((value) => typeof value === 'string' && value.toLowerCase().includes(query.trim().toLowerCase()))
   )).slice().reverse(), [operations, filter, query]);
   return (
@@ -57,6 +57,7 @@ export const OperationsPanel = memo((props: { onLocate: (address: string) => voi
                 <div><span>Откуда → куда</span><code>{operation.from || '—'} → {operation.to || '—'}</code></div>
                 <div><span>Время до последнего этапа</span><span>{Math.max(0, Math.round((operation.updated_at - operation.started_at) * 100))} мс</span></div>
                 {!!operation.reason && <Box color={state.color}>{operation.reason}</Box>}
+                {!!operation.result && <Box style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: '240px', overflowY: 'auto' }}>{operation.result}</Box>}
                 {!!operation.route?.length && <div><span>Маршрут</span><code>{operation.route.join(' → ')}</code></div>}
                 {!!operation.to && <Button compact role="button" icon="location-crosshairs" content="Показать узел"
                   onClick={() => props.onLocate(operation.to!)} />}

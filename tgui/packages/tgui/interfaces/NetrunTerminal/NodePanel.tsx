@@ -5,6 +5,7 @@ import { AutoBreachButton } from './AutoBreachButton';
 import { CommandList } from './CommandList';
 import { EntityContacts } from './EntityContacts';
 import { NodeInteractions } from './NodeInteractions';
+import { PacketJournal } from './PacketJournal';
 import {
   ACCESS_COLORS,
   ACCESS_NAMES,
@@ -297,6 +298,7 @@ const NodePanelView = () => {
           </div>
         </Box>
       )}
+      <PacketJournal packets={selected.packets} root={selected.access >= 3} disabled={pending || !!data.locked} />
       {!!selected.logs?.length && (
         <Box mt={1} p={1} style={{ background: THEME.bg, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: '160px', overflowY: 'auto' }}>
           <Box color={THEME.muted} mb={0.5}>Журнал узла</Box>
@@ -320,7 +322,7 @@ const RemoteFile = (props: { file: NetFile; root: boolean }) => {
         {file.name}
         <Box inline ml={1} color={THEME.muted}>[{file.size}]</Box>
       </Box>
-      <Box data-net-file-actions="remote" style={{ display: 'flex', flex: '0 0 auto', justifyContent: 'flex-end',
+      <Box className="netrun-file-actions" data-net-file-actions="remote" style={{ display: 'flex', flex: '0 0 auto', justifyContent: 'flex-end',
         flexWrap: 'nowrap', gap: '3px' }}>
         {file.kind === 'text' && (
           <Button compact icon="eye" tooltip="Прочитать" onClick={() => act('read', { uid: file.uid })} />

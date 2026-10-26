@@ -92,7 +92,7 @@
 	id = "packet_log"
 	name = "Журнал пакетов"
 	desc = "Отправка, пересылка, получение и отказы сетевых пакетов этого узла."
-	help = "Последние 100 записей: время, ID пакета, этап, тип, адреса и служба. SEND — отправка, FORWARD — пересылка, RECEIVE — получение, ACCEPT — принятие, REJECT/DROP — отказ с причиной. Содержимое сообщений не сохраняется."
+	help = "Последние 100 записей: время, ID, этап, адреса, служба и заголовки. SEND — отправка, FORWARD — пересылка, RECEIVE — получение, ACCEPT — принятие, REJECT/DROP — отказ. В карточке узла доступны заголовки последних 20 записей. Для содержимого нужен ROOT и расшифровка; общий буфер хранит 256 пакетов, до 4096 символов каждого."
 	access = NETRUN_ACCESS_USER
 	trace = 0
 	icon = "list"
@@ -100,6 +100,28 @@
 
 /datum/netrun_command/packet_log/execute(datum/component/netrun_node/node, datum/netrun_console/console)
 	return node.packet_log_text()
+
+/datum/netrun_command/packet_decrypt
+	id = "packet_decrypt"
+	name = "Расшифровать пакет"
+	desc = "Прочитать содержимое захваченного пакета из журнала узла."
+	help = "Выберите пакет в карточке узла. Нужен ROOT; маршрут и права перепроверяются при доставке. Большие и сложные пакеты показаны ограниченным фрагментом."
+	access = NETRUN_ACCESS_ROOT
+	trace = 4
+	icon = "unlock"
+	works_offline = TRUE
+
+/datum/netrun_command/packet_decrypt/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg)
+	if(!arg)
+		var/mob/sender = console.operator
+		var/list/ids = list()
+		for(var/list/entry as anything in node.packet_logs)
+			ids |= entry["id"]
+		arg = tgui_input_list(console.operator, "Выберите пакет", "Расшифровка", ids)
+		// Native input yields; recheck the current operator, route and permissions.
+		if(QDELETED(node) || QDELETED(console) || sender != console.operator || console.is_locked() || !console.can_route(node) || console.node_level(node) < NETRUN_ACCESS_ROOT)
+			return
+	return arg ? node.decode_packet(arg) : "Пакет не выбран."
 
 /datum/netrun_command/firmware
 	id = "firmware"

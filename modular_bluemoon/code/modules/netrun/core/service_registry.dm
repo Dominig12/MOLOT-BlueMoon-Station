@@ -46,6 +46,8 @@
 
 /datum/netrun_machine_service
 	var/service_id
+	/// Only adapters with startup work enter the readiness wave.
+	var/start_when_ready = FALSE
 	var/atom/host
 	var/datum/component/netrun_node/node
 	var/list/resolutions = list()
@@ -60,6 +62,7 @@
 	SSnetrun.get_machine_transport().register(src)
 
 /datum/netrun_machine_service/Destroy()
+	SSnetrun.task_scheduler?.cancel("service_initialize", src)
 	SSnetrun.get_machine_transport().unregister(src)
 	if(host)
 		UnregisterSignal(host, list(COMSIG_PARENT_QDELETING, COMSIG_ATOM_AFTER_SUCCESSFUL_INITIALIZE, COMSIG_ATOM_UPDATE_NAME, COMSIG_NETRUN_SERVICE_STATE_CHANGED, COMSIG_MODULAR_COMPUTER_FILE_STORE, COMSIG_MODULAR_COMPUTER_FILE_DELETE))
@@ -79,6 +82,10 @@
 /datum/netrun_machine_service/proc/host_initialized()
 	SIGNAL_HANDLER
 	SSnetrun.get_machine_transport().index_service(src)
+
+/// Domain startup which needs usable routes runs after the common readiness barrier.
+/datum/netrun_machine_service/proc/network_ready()
+	return
 
 /datum/netrun_machine_service/proc/service_key()
 	return "[REF(host)]:[service_id]"
@@ -159,6 +166,7 @@
 /// APC-attached services advertise in one registry; only data needs network delivery.
 /datum/netrun_machine_transport
 	var/list/services = list()
+	var/list/ready_services = list()
 	var/list/by_id = list()
 	var/list/by_tag = list()
 	var/list/waiting_resolutions = list()
@@ -172,6 +180,8 @@
 	var/bootstrap_complete = FALSE
 	var/list/bootstrap_services
 	var/bootstrap_cursor = 1
+	var/list/ready_service_keys
+	var/ready_service_cursor = 1
 	var/packet_serial = 0
 	var/list/service_revisions = list()
 	var/list/packets = list()
@@ -272,6 +282,7 @@
 		bootstrap_services = null
 		bootstrap_complete = TRUE
 		bootstrap_at = world.time
+		SSnetrun.get_task_scheduler().enqueue("service_ready", src, NETRUN_TASK_BACKGROUND)
 		wake_resolutions()
 	if(prewarm_revision != graph.revision || prewarm_infrastructure != graph.infrastructure_revision)
 		prewarm_roots.Cut()
@@ -306,6 +317,39 @@
 /datum/netrun_task/network_bootstrap/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
 	var/datum/netrun_machine_transport/transport = target()
 	return transport.advance_bootstrap(limits)
+
+/datum/netrun_task/service_ready
+	parent_type = /datum/netrun_task/continuation
+	kind = "service_ready"
+
+/datum/netrun_task/service_ready/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	var/datum/netrun_machine_transport/transport = target()
+	if(!transport.is_ready())
+		return FALSE
+	if(!transport.ready_service_keys)
+		transport.ready_service_keys = transport.ready_services.Copy()
+	var/stop = min(length(transport.ready_service_keys), transport.ready_service_cursor + 7)
+	while(transport.ready_service_cursor <= stop)
+		var/key = transport.ready_service_keys[transport.ready_service_cursor++]
+		var/datum/netrun_machine_service/service = transport.services[key]
+		if(!QDELETED(service))
+			service.network_ready()
+	if(transport.ready_service_cursor <= length(transport.ready_service_keys))
+		return FALSE
+	transport.ready_service_keys = null
+	return TRUE
+
+/// Services added by a later map/template load need the same readiness contract.
+/datum/netrun_task/service_initialize
+	parent_type = /datum/netrun_task/continuation
+	kind = "service_initialize"
+
+/datum/netrun_task/service_initialize/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	var/datum/netrun_machine_service/service = target()
+	if(!worker.get_machine_transport().is_ready())
+		return FALSE
+	service.network_ready()
+	return TRUE
 
 /datum/netrun_machine_transport/proc/network_changed(datum/source, datum/component/netrun_node/node, flags)
 	SIGNAL_HANDLER
@@ -366,6 +410,7 @@
 
 /datum/netrun_machine_transport/Destroy()
 	SSnetrun.task_scheduler?.cancel("network_bootstrap", src)
+	SSnetrun.task_scheduler?.cancel("service_ready", src)
 	SSnetrun.task_scheduler?.cancel("discovery_wake", src)
 	UnregisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED)
 	UnregisterSignal(SSatoms, COMSIG_SUBSYSTEM_POST_INITIALIZE)
@@ -375,6 +420,8 @@
 	wake_queries = null
 	wake_again = FALSE
 	bootstrap_services = null
+	ready_service_keys = null
+	ready_services.Cut()
 	QDEL_LIST(packets)
 	replaceable_packets.Cut()
 	clear_pair_routes()
@@ -382,6 +429,10 @@
 
 /datum/netrun_machine_transport/proc/register(datum/netrun_machine_service/service)
 	services[service.service_key()] = service
+	if(service.start_when_ready)
+		ready_services[service.service_key()] = service
+		if(bootstrap_complete)
+			SSnetrun.get_task_scheduler().enqueue("service_initialize", service, NETRUN_TASK_BACKGROUND)
 	var/list/bucket = by_id[service.service_id]
 	if(!bucket)
 		bucket = list()
@@ -414,6 +465,7 @@
 	service_revisions[service.service_id] = (service_revisions[service.service_id] || 0) + 1
 
 /datum/netrun_machine_transport/proc/unregister(datum/netrun_machine_service/service)
+	ready_services -= service.service_key()
 	services -= service.service_key()
 	var/list/bucket = by_id[service.service_id]
 	if(bucket)

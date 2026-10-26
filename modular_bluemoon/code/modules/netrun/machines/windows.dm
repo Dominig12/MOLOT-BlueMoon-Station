@@ -227,6 +227,7 @@
 	qdel(tree)
 	var/atom/A = node.parent
 	var/result = world.PushUsr(owner.operator, CALLBACK(A, TYPE_PROC_REF(/atom, netrun_window_act), owner, node, action, params))
+	operation?.set_result(result)
 	if(QDELETED(src) || QDELETED(owner) || QDELETED(node))
 		return TRUE
 	if(!isnull(result))

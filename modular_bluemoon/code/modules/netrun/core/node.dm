@@ -71,7 +71,7 @@
 	if(!isatom(parent))
 		return COMPONENT_INCOMPATIBLE
 	src.node_type = node_type
-	src.command_ids = list("scan", "ping", "node_log", "packet_log", "extract", "traceroute", "siphon", "spoof_log") | (command_ids || list())
+	src.command_ids = list("scan", "ping", "node_log", "packet_log", "packet_decrypt", "extract", "traceroute", "siphon", "spoof_log") | (command_ids || list())
 	base_security = security
 	src.required_access = required_access
 	// Firmware documentation is available even on endpoints without writable storage.
@@ -356,10 +356,10 @@
 		logs.Cut(1, length(logs) - NETRUN_MAX_LOG + 1)
 	notify_changed()
 
-/datum/component/netrun_node/proc/add_packet_log(packet_id, phase, kind, from_address, to_address, service_id, reason, operation_id, list/route)
+/datum/component/netrun_node/proc/add_packet_log(packet_id, phase, kind, from_address, to_address, service_id, reason, operation_id, list/route, list/headers)
 	packet_logs += list(list("id" = packet_id, "time" = world.time, "phase" = phase, "kind" = kind,
 		"from" = from_address, "to" = to_address, "service" = service_id, "reason" = reason,
-		"operation_id" = operation_id || packet_id, "route" = route))
+		"operation_id" = operation_id || packet_id, "route" = route, "headers" = headers))
 	if(length(packet_logs) > NETRUN_MAX_PACKET_LOG)
 		packet_logs.Cut(1, length(packet_logs) - NETRUN_MAX_PACKET_LOG + 1)
 	// Logging does not broadcast per packet or keep unrelated nodes in the hot lane.
@@ -370,7 +370,27 @@
 	var/list/lines = list()
 	for(var/list/entry as anything in packet_logs)
 		lines += "[round(entry["time"] / (1 SECONDS), 0.1)]s #[entry["id"]] [entry["phase"]] [entry["kind"]] [entry["from"]] -> [entry["to"]] ([entry["service"]])[entry["reason"] ? ": [entry["reason"]]" : ""]"
+		if(entry["headers"])
+			lines += "  [json_encode(entry["headers"])]"
 	return length(lines) ? jointext(lines, "\n") : "Журнал пакетов пуст."
+
+/datum/component/netrun_node/proc/packet_headers_payload()
+	var/list/output = list()
+	for(var/i = length(packet_logs); i >= max(1, length(packet_logs) - 19); i--)
+		var/list/entry = packet_logs[i]
+		var/list/header = entry.Copy()
+		// Long routes belong to delivery/operation diagnostics; do not repeat the
+		// full station path twenty times on every selected-node movement update.
+		header -= "route"
+		output += list(header)
+	return output
+
+/datum/component/netrun_node/proc/decode_packet(packet_id)
+	for(var/list/entry as anything in packet_logs)
+		if(entry["id"] == packet_id)
+			var/body = SSnetrun.packet_captures[packet_id]
+			return body ? "Пакет [packet_id]\n[json_encode(entry["headers"])]\n[body]" : "Содержимое пакета уже вытеснено из буфера захвата."
+	return "Пакет отсутствует в журнале этого узла."
 
 /// Все команды узла: базовые плюс зависящие от компонентов атома
 /datum/component/netrun_node/proc/all_command_ids()

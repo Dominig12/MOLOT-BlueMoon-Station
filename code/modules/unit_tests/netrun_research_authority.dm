@@ -1,4 +1,306 @@
-/// A newly available second-level node must survive the delivered research snapshot.
+/// The native mapped-atom pipeline must arm a console before its first UI/readiness callback.
+/datum/unit_test/netrun_research_native_mapped_console_startup/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/server = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	server.network_id = "native-mapped-console-fixture"
+	// Reproduce map loading: New defers initialization, then SSatoms performs
+	// Initialize and its real LateInitialize batch behind the closed barrier.
+	SSatoms.map_loader_begin()
+	var/obj/machinery/computer/rdconsole/console = new(scene.source_spot)
+	scene.owned += console
+	console.network_id = server.network_id
+	var/deferred = !(console.flags_1 & INITIALIZED_1)
+	SSatoms.initialized = INITIALIZATION_INNEW_MAPLOAD
+	SSatoms.InitializeAtoms(list(console))
+	SSatoms.map_loader_stop()
+	// Shared loader state is restored before assertions, including failure exits.
+	TEST_ASSERT(deferred && (console.flags_1 & INITIALIZED_1), "The fixture must use native deferred mapped initialization, never a direct LateInitialize call")
+	var/datum/component/techweb_holder/holder = console.GetComponent(/datum/component/techweb_holder)
+	TEST_ASSERT_NOTNULL(holder, "Native mapped LateInitialize must create the console's real techweb holder")
+	TEST_ASSERT(!holder.had_authority && !console.stored_research, "A closed native readiness barrier must defer initial authority binding")
+	var/datum/netrun_machine_service/research_client/client = console.get_netrun_machine_service("research.client")
+	TEST_ASSERT(!client.wants_snapshots && client.resync_timer, "A newly initialized mapped console must arm automatic binding without requesting a full database behind the closed barrier")
+	// Simulate expiration of its existing watch before the bulk ready wave reaches
+	// this client; no network_ready, binding signal or player interaction is used.
+	deltimer(client.resync_timer)
+	client.check_subscription()
+	TEST_ASSERT_EQUAL(console.stored_research, server.stored_research, "The first native watch must bind a mapped console once real routes are ready")
+	TEST_ASSERT(holder.had_authority, "Successful native selection must preserve the holder's authority-loss policy")
+	var/deadline = world.time + 5 SECONDS
+	while(!console.netrun_research_cache && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_NOTNULL(console.netrun_research_cache, "The untouched mapped console must receive its actual startup presentation snapshot")
+
+/// AUTO is a selector, never a blank player-facing network name.
+/datum/unit_test/netrun_research_server_network_status/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/server = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	TEST_ASSERT_EQUAL(server.network_id, RND_NETWORK_AUTO, "The fixture must retain the real empty AUTO selector")
+	var/network_line
+	for(var/line in server.netrun_status())
+		if(findtext(line, "Сеть РнД:"))
+			network_line = line
+	TEST_ASSERT(network_line && findtext(network_line, RND_NETWORK_STATION), "AUTO station servers must display the resolved scientific network, not an empty selector")
+	var/datum/netrun_command/report = SSnetrun.get_command("rnd_report")
+	TEST_ASSERT(findtext(report.execute(server.GetComponent(/datum/component/netrun_node)), server.netrun_research_network_label()), "The report and native card must use the same resolved network name")
+	server.network_id = RND_NETWORK_SYNDICATE
+	var/faction_named = FALSE
+	for(var/line in server.netrun_status())
+		if(findtext(line, "Сеть РнД:") && findtext(line, RND_NETWORK_SYNDICATE))
+			faction_named = TRUE
+	TEST_ASSERT(faction_named, "An explicit faction network must retain its configured identity in native status")
+
+/// Startup maps join compatible physical servers and bind native clients asynchronously.
+/datum/unit_test/netrun_research_automatic_startup/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/first = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	var/obj/machinery/rnd/server/second = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	first.netrun_mapped_server = TRUE
+	second.netrun_mapped_server = TRUE
+	first.network_id = "startup-fixture"
+	second.network_id = first.network_id
+	var/datum/netrun_machine_service/research_server/service = second.get_netrun_machine_service("research.server")
+	service.network_ready()
+	TEST_ASSERT_NOTEQUAL(second.stored_research, first.stored_research, "Readiness must enqueue the join instead of merging databases inline")
+	var/deadline = world.time + 5 SECONDS
+	while(second.stored_research != first.stored_research && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(second.stored_research, first.stored_research, "Reachable mapped servers in the same configured network must join at readiness")
+	var/obj/machinery/computer/rdconsole/console = scene.machine(/obj/machinery/computer/rdconsole, scene.source_spot)
+	console.network_id = first.network_id
+	var/datum/netrun_machine_service/research_client/client = console.get_netrun_machine_service("research.client")
+	client.network_ready()
+	TEST_ASSERT_EQUAL(console.stored_research, first.stored_research, "A startup console must bind without a manual techweb signal")
+	deadline = world.time + 5 SECONDS
+	while(!console.netrun_research_cache && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_NOTNULL(console.netrun_research_cache, "Automatic binding must deliver the native console's real presentation snapshot")
+	var/obj/machinery/rnd/server/independent = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	independent.network_id = first.network_id
+	var/datum/netrun_machine_service/research_server/independent_service = independent.get_netrun_machine_service("research.server")
+	independent_service.network_ready()
+	TEST_ASSERT_NOTEQUAL(independent.stored_research, first.stored_research, "Newly constructed servers must remain independent until explicitly linked")
+
+/// Point-producing clients bind automatically without becoming snapshot subscribers.
+/datum/unit_test/netrun_research_producer_snapshot_demand/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/server = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	var/obj/machinery/power/tesla_coil/coil = scene.machine(/obj/machinery/power/tesla_coil, scene.source_spot)
+	var/datum/netrun_machine_service/research_client/client = coil.get_netrun_machine_service("research.client")
+	var/datum/netrun_machine_service/research_server/authority = server.get_netrun_machine_service("research.server")
+	client.network_ready()
+	TEST_ASSERT_EQUAL(coil.linked_techweb, server.stored_research, "A native point producer must automatically bind to the reachable physical authority")
+	TEST_ASSERT(!client.wants_snapshots, "Binding a Tesla coil must not opt it into full presentation replication")
+	deltimer(client.resync_timer)
+	client.check_subscription()
+	TEST_ASSERT(!client.wants_snapshots && !client.snapshot_cache, "The ordinary binding timer must not create an unused producer cache")
+	TEST_ASSERT_EQUAL(length(client.resolutions), 0, "Binding and revision maintenance must create no snapshot discovery request for a producer")
+	TEST_ASSERT(!authority.subscribers[client.node.address], "A bound producer must not enter the server's publication fanout")
+	TEST_ASSERT(client.request(), "An explicit read must still admit a real research snapshot")
+	var/deadline = world.time + 5 SECONDS
+	while(!client.snapshot_cache && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_NOTNULL(client.snapshot_cache, "Explicit presentation demand must receive the actual server snapshot")
+	TEST_ASSERT(client.wants_snapshots && authority.subscribers[client.node.address], "Only explicit reading may turn the producer into a snapshot subscriber")
+
+/// An earlier mapped server can recover after its original readiness callback failed.
+/datum/unit_test/netrun_research_startup_client_retry/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/server = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	server.set_machine_stat(BROKEN)
+	var/obj/machinery/computer/rdconsole/console = scene.machine(/obj/machinery/computer/rdconsole, scene.source_spot)
+	var/datum/netrun_machine_service/research_client/client = console.get_netrun_machine_service("research.client")
+	client.network_ready()
+	TEST_ASSERT(!console.stored_research && client.resync_timer && !client.wants_snapshots, "Unavailable startup must keep the automatic binding timer armed without inventing an authority or requesting a full database")
+	server.set_machine_stat(0)
+	deltimer(client.resync_timer)
+	client.check_subscription()
+	TEST_ASSERT_EQUAL(console.stored_research, server.stored_research, "The ordinary revision watch must bind a never-connected console after power recovery")
+	var/deadline = world.time + 5 SECONDS
+	while(!console.netrun_research_cache && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_NOTNULL(console.netrun_research_cache, "Recovery must deliver a snapshot without opening the console or manually selecting a server")
+
+/datum/unit_test/netrun_research_startup_power_recovery/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/first = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	var/obj/machinery/rnd/server/second = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	first.netrun_mapped_server = TRUE
+	second.netrun_mapped_server = TRUE
+	first.network_id = "startup-power-fixture"
+	second.network_id = first.network_id
+	first.set_machine_stat(BROKEN)
+	var/datum/netrun_machine_service/research_server/first_service = first.get_netrun_machine_service("research.server")
+	var/datum/netrun_machine_service/research_server/second_service = second.get_netrun_machine_service("research.server")
+	first_service.network_ready()
+	second_service.network_ready()
+	var/deadline = world.time + 5 SECONDS
+	while((first_service.cluster_queued || second_service.cluster_queued) && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(!first_service.cluster_queued && !second_service.cluster_queued, "A failed startup wave must drain instead of polling an unavailable server forever")
+	TEST_ASSERT_NOTEQUAL(first.stored_research, second.stored_research, "An unavailable mapped server must not merge its database")
+	first.set_machine_stat(0)
+	TEST_ASSERT(first_service.cluster_queued, "Native power/stat restoration must enqueue the earlier server's fresh scan")
+	deadline = world.time + 5 SECONDS
+	while(first.stored_research != second.stored_research && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(first.stored_research, second.stored_research, "The earlier recovered server must be able to join a later mapped authority")
+	TEST_ASSERT_EQUAL(length(first.stored_research.research_owner_refs), 2, "Recovered mapped servers must retain both physical owners")
+	var/obj/machinery/rnd/server/temperature_peer = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	temperature_peer.netrun_mapped_server = TRUE
+	temperature_peer.network_id = first.network_id
+	temperature_peer.working = FALSE
+	var/datum/netrun_machine_service/research_server/temperature_service = temperature_peer.get_netrun_machine_service("research.server")
+	temperature_service.cluster_topology_changed()
+	temperature_service.advance_cluster()
+	TEST_ASSERT(!temperature_service.cluster_queued, "An unworking server must finish its unavailable startup wave")
+	temperature_peer.process()
+	TEST_ASSERT(temperature_peer.working && temperature_service.cluster_queued, "Native temperature recovery must detect its direct working assignment and queue startup immediately")
+	deadline = world.time + 5 SECONDS
+	while(temperature_peer.stored_research != first.stored_research && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(temperature_peer.stored_research, first.stored_research, "Temperature recovery must join the existing mapped authority without waiting for a node poll")
+
+/// Late service initialization and repeated notifications share one resumable scan.
+/datum/unit_test/netrun_research_startup_scan_bound/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/server = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	server.netrun_mapped_server = TRUE
+	server.network_id = "startup-scan-source"
+	for(var/i in 1 to 12)
+		var/obj/machinery/rnd/server/other = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+		other.netrun_mapped_server = TRUE
+		other.network_id = "startup-other-[i]"
+	var/datum/netrun_machine_service/research_server/service = server.get_netrun_machine_service("research.server")
+	// The common startup snapshot has already completed. A native lifecycle hook
+	// must still admit this late mapped service without a new global bootstrap.
+	service.host_initialized()
+	var/datum/netrun_task_scheduler/scheduler = SSnetrun.get_task_scheduler()
+	var/key = "research.cluster:[REF(service)]"
+	var/datum/netrun_task/original = scheduler.by_key[key]
+	TEST_ASSERT_NOTNULL(original, "A late mapped service must enqueue startup through its native initialization hook")
+	for(var/i in 1 to 32)
+		service.network_ready()
+	TEST_ASSERT_EQUAL(scheduler.by_key[key], original, "Readiness storms must retain one common-worker task")
+	TEST_ASSERT(!service.advance_cluster(), "One slice cannot scan all thirteen mapped candidates")
+	TEST_ASSERT_EQUAL(service.cluster_cursor, 2, "The first slice must compare exactly one candidate")
+	var/list/wave = service.cluster_candidates
+	// Tasks are disposable. Only the service may own continuation progress.
+	scheduler.cancel("research.cluster", service)
+	var/datum/netrun_task/research_cluster/task = allocate(/datum/netrun_task/research_cluster, "research.cluster", "scan-fixture", NETRUN_TASK_BACKGROUND, service)
+	task.execute(SSnetrun)
+	TEST_ASSERT_EQUAL(service.cluster_candidates, wave, "A recreated continuation must reuse its service-owned candidate wave")
+	TEST_ASSERT_EQUAL(service.cluster_cursor, 3, "A recreated continuation must advance by only one candidate")
+	var/steps = 0
+	while(service.cluster_queued && steps++ < 1000)
+		var/before = service.cluster_cursor
+		if(service.advance_cluster())
+			break
+		TEST_ASSERT(service.cluster_cursor <= before + 1, "Every continuation slice must perform at most one peer comparison")
+	TEST_ASSERT(!service.cluster_queued, "A finite unmatched wave must drain its task and scan state")
+	TEST_ASSERT_NULL(service.cluster_candidates, "Completed startup must release its candidate references")
+	TEST_ASSERT_EQUAL(length(server.stored_research.research_owner_refs), 1, "Different configured networks must remain isolated throughout startup")
+	service.network_ready()
+	qdel(server)
+	TEST_ASSERT_NULL(scheduler.by_key[key], "Physical server deletion must cancel its queued startup continuation")
+	TEST_ASSERT_NULL(service.cluster_candidates, "Server deletion must release an unfinished candidate wave")
+	TEST_ASSERT(!service.cluster_listening, "Server deletion must release its power and global topology listeners")
+
+/// Already formed startup clusters must unite after a real relay recovers.
+/datum/unit_test/netrun_research_startup_partition_recovery/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/list/levels = multiz_gravity_test_levels()
+	scene.mark_station(levels[1])
+	var/area/remote_room = scene.room(/area/netrun_route_test)
+	var/turf/remote_spot = scene.take(locate(80, 80, levels[1]), remote_room, TRUE)
+	scene.machine(/obj/machinery/power/apc, scene.take(locate(81, 80, levels[1]), remote_room, TRUE))
+	var/obj/machinery/ntnet_relay/local_relay = scene.machine(/obj/machinery/ntnet_relay, scene.source_spot)
+	var/obj/machinery/ntnet_relay/remote_relay = scene.machine(/obj/machinery/ntnet_relay, scene.take(locate(82, 80, levels[1]), remote_room, TRUE))
+	remote_relay.set_machine_stat(BROKEN)
+	SSnetworks.station_network.setting_disabled = FALSE
+	var/list/local_servers = list()
+	var/list/remote_servers = list()
+	for(var/i in 1 to 2)
+		var/obj/machinery/rnd/server/local = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+		var/obj/machinery/rnd/server/remote = scene.machine(/obj/machinery/rnd/server, remote_spot)
+		local.netrun_mapped_server = TRUE
+		remote.netrun_mapped_server = TRUE
+		local.network_id = "startup-partition-fixture"
+		remote.network_id = local.network_id
+		local_servers += local
+		remote_servers += remote
+	SSnetrun.ensure_topology()
+	for(var/obj/machinery/rnd/server/member as anything in local_servers + remote_servers)
+		var/datum/netrun_machine_service/research_server/service = member.get_netrun_machine_service("research.server")
+		service.network_ready()
+	var/obj/machinery/rnd/server/first_local = local_servers[1]
+	var/obj/machinery/rnd/server/second_local = local_servers[2]
+	var/obj/machinery/rnd/server/first_remote = remote_servers[1]
+	var/obj/machinery/rnd/server/second_remote = remote_servers[2]
+	var/deadline = world.time + 5 SECONDS
+	while((first_local.stored_research != second_local.stored_research || first_remote.stored_research != second_remote.stored_research) && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(first_local.stored_research, second_local.stored_research, "The local partition must first form its real two-owner startup cluster")
+	TEST_ASSERT_EQUAL(first_remote.stored_research, second_remote.stored_research, "The remote partition must first form its real two-owner startup cluster")
+	TEST_ASSERT_NOTEQUAL(first_local.stored_research, first_remote.stored_research, "A broken inter-sector relay must isolate the two configured clusters")
+	TEST_ASSERT(local_relay.is_operational(), "The source relay must remain operational while the remote relay is unavailable")
+	remote_relay.set_machine_stat(0)
+	deadline = world.time + 5 SECONDS
+	while(first_local.stored_research != first_remote.stored_research && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(first_local.stored_research, first_remote.stored_research, "Relay recovery must join previously formed startup clusters without manual rebind")
+	TEST_ASSERT_EQUAL(length(first_local.stored_research.research_owner_refs), 4, "The recovered authority must retain all four physical owners")
+	var/datum/techweb/authority = first_local.stored_research
+	var/deadline_drain = world.time + 5 SECONDS
+	var/pending = TRUE
+	while(pending && world.time < deadline_drain)
+		pending = FALSE
+		for(var/obj/machinery/rnd/server/member as anything in local_servers + remote_servers)
+			var/datum/netrun_machine_service/research_server/service = member.get_netrun_machine_service("research.server")
+			pending = pending || service.cluster_queued
+		if(pending)
+			sleep(world.tick_lag)
+	TEST_ASSERT(!pending, "Self-generated merge notifications must not keep startup waves running forever")
+	TEST_ASSERT_EQUAL(first_local.stored_research, authority, "Draining startup waves must not repeatedly replace the merged authority")
+
+/// The native global NTnet toggle changes no relay stat and emits no node signal.
+/datum/unit_test/netrun_research_startup_backbone_recovery/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/list/levels = multiz_gravity_test_levels()
+	scene.mark_station(levels[1])
+	var/area/remote_room = scene.room(/area/netrun_route_test)
+	var/turf/remote_spot = scene.take(locate(80, 80, levels[1]), remote_room, TRUE)
+	scene.machine(/obj/machinery/power/apc, scene.take(locate(81, 80, levels[1]), remote_room, TRUE))
+	scene.machine(/obj/machinery/ntnet_relay, scene.source_spot)
+	scene.machine(/obj/machinery/ntnet_relay, scene.take(locate(82, 80, levels[1]), remote_room, TRUE))
+	var/obj/machinery/rnd/server/first = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	var/obj/machinery/rnd/server/second = scene.machine(/obj/machinery/rnd/server, remote_spot)
+	first.netrun_mapped_server = TRUE
+	second.netrun_mapped_server = TRUE
+	first.network_id = "startup-backbone-fixture"
+	second.network_id = first.network_id
+	SSnetworks.station_network.setting_disabled = TRUE
+	SSnetrun.ensure_topology()
+	var/datum/netrun_machine_service/research_server/first_service = first.get_netrun_machine_service("research.server")
+	var/datum/netrun_machine_service/research_server/second_service = second.get_netrun_machine_service("research.server")
+	first_service.network_ready()
+	second_service.network_ready()
+	var/deadline = world.time + 5 SECONDS
+	while((first_service.cluster_queued || second_service.cluster_queued) && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(!first_service.cluster_queued && !second_service.cluster_queued, "A disabled backbone must let the failed finite startup waves drain")
+	TEST_ASSERT_NOTEQUAL(first.stored_research, second.stored_research, "Disabled NTnet must keep the two real sectors' mapped servers apart")
+	SSnetworks.station_network.setting_disabled = FALSE
+	// Use the native processing seam, without manually announcing topology or
+	// re-running readiness. The hook only queues the domain continuation.
+	first.process()
+	TEST_ASSERT(first_service.cluster_queued, "Native server processing must detect a silent backbone setting change")
+	TEST_ASSERT_NOTEQUAL(first.stored_research, second.stored_research, "The scalar-signature fallback must never merge synchronously inside machine processing")
+	deadline = world.time + 5 SECONDS
+	while(first.stored_research != second.stored_research && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(first.stored_research, second.stored_research, "Silent NTnet restoration must eventually unite reachable mapped authorities")
+
 /datum/unit_test/netrun_research_prerequisite_chain/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
 	var/obj/machinery/rnd/server/server = scene.machine(/obj/machinery/rnd/server, scene.target_spot)

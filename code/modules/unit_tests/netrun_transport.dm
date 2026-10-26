@@ -1,4 +1,52 @@
 /// Real machine components and timers exercise discovery and delivery together.
+/datum/netrun_machine_service/readiness_fixture
+	service_id = "transport.readiness"
+	start_when_ready = TRUE
+	var/ready_calls = 0
+
+/datum/netrun_machine_service/readiness_fixture/network_ready()
+	ready_calls++
+
+/datum/unit_test/netrun_transport_late_service_readiness/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/datum/netrun_machine_service/readiness_fixture/service = allocate(/datum/netrun_machine_service/readiness_fixture, scene.source.node)
+	TEST_ASSERT_EQUAL(service.ready_calls, 0, "Registration must not call domain startup inline")
+	TEST_ASSERT_EQUAL(transport.ready_services[service.service_key()], service, "Only opted-in startup adapters must enter the readiness index")
+	TEST_ASSERT(!(scene.source.service_key() in transport.ready_services), "Ordinary data services must not occupy the startup work list")
+	var/deadline = world.time + 5 SECONDS
+	while(!service.ready_calls && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(service.ready_calls, 1, "A service registered after bootstrap must receive asynchronous readiness once")
+	var/key = service.service_key()
+	var/task_key = "service_initialize:[REF(service)]"
+	SSnetrun.get_task_scheduler().enqueue("service_initialize", service, NETRUN_TASK_BACKGROUND)
+	qdel(service)
+	TEST_ASSERT_NULL(SSnetrun.get_task_scheduler().by_key[task_key], "Service deletion must cancel its pending readiness task")
+	TEST_ASSERT_NULL(transport.ready_services[key], "Service deletion must release the readiness index entry")
+
+/datum/unit_test/netrun_transport_scrubber_filter_shape/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/airalarm/alarm = scene.machine(/obj/machinery/airalarm, scene.source_spot)
+	var/obj/machinery/atmospherics/components/unary/vent_scrubber/scrubber = scene.machine(/obj/machinery/atmospherics/components/unary/vent_scrubber, scene.target_spot)
+	scrubber.broadcast_status()
+	var/deadline = world.time + 5 SECONDS
+	while(!alarm.netrun_scrub_info[scrubber.id_tag] && world.time < deadline)
+		sleep(world.tick_lag)
+	var/list/status = alarm.netrun_scrub_info[scrubber.id_tag]
+	TEST_ASSERT_NOTNULL(status, "The native scrubber must register with its actual alarm")
+	var/list/filters = status["filter_types"]
+	TEST_ASSERT(length(filters), "Telemetry must retain native filter options")
+	var/encoded = json_encode(filters)
+	TEST_ASSERT_EQUAL(copytext(encoded, 1, 2), "\[", "The client must receive a JSON filter array, not an object")
+	var/list/first = filters[1]
+	TEST_ASSERT(first["gas_id"] && first["gas_name"], "Each filter must retain its native identity")
+	var/list/copy = netrun_copy_wire_value(status)
+	var/list/copied_filters = copy["filter_types"]
+	var/list/copied_first = copied_filters[1]
+	copied_first["gas_name"] = "CHANGED"
+	TEST_ASSERT_NOTEQUAL(first["gas_name"], "CHANGED", "Transport copies must not alias native filter records")
+
 /obj/machinery/netrun_server/transport_fixture/netrun_machine_service_types()
 	return ..() + list(/datum/netrun_machine_service/transport_fixture)
 
@@ -293,6 +341,27 @@
 		if(missing)
 			sleep(1 SECONDS)
 	log_world("NETRUN MAP startup: map=[SSmapping.config.map_name] apcs_online=[online_apcs] ready=[transport.is_ready()] bootstrap=[transport.bootstrap_complete] controllers=[length(transport.by_id["atmos.controller"])] devices=[length(transport.by_id["atmos.device"])] rnd_devices=[length(research_devices)] rnd_missing=[missing] packets=[length(transport.packets)] queued=[transport.queued_messages]")
+	var/demanding_clients = 0
+	var/list/client_types = list()
+	for(var/datum/netrun_machine_service/research_client/client as anything in transport.by_id["research.client"])
+		var/key = "[client.host.type]"
+		client_types[key] = (client_types[key] || 0) + 1
+		demanding_clients += !!client.wants_snapshots
+	var/subscribers = 0
+	for(var/datum/netrun_machine_service/research_server/server as anything in transport.by_id["research.server"])
+		subscribers += length(server.subscribers)
+	var/list/packet_kinds = list()
+	for(var/datum/netrun_machine_packet/data/packet as anything in transport.packets)
+		var/key = "[packet.source.service_id]>[packet.recipient.service_id]:[packet.message.payload["operation"] || packet.message.payload["sigtype"]]"
+		packet_kinds[key] = (packet_kinds[key] || 0) + 1
+	var/datum/netrun_task_scheduler/scheduler = SSnetrun.get_task_scheduler()
+	var/list/pending_kinds = list()
+	for(var/key in scheduler.by_key)
+		var/datum/netrun_task/task = scheduler.by_key[key]
+		pending_kinds[task.kind] = (pending_kinds[task.kind] || 0) + 1
+	log_world("NETRUN MAP research demand: clients=[length(transport.by_id["research.client"])] demanding=[demanding_clients] subscribers=[subscribers] ready_index=[length(transport.ready_services)] types=[json_encode(client_types)]")
+	log_world("NETRUN MAP queued work: packets=[json_encode(packet_kinds)] tasks=[json_encode(pending_kinds)] coalesced=[transport.coalesced_packets] peak_pending=[scheduler.peak_pending]")
+	log_world("NETRUN MAP worker profile: [scheduler.profile_summary()]")
 	for(var/datum/netrun_machine_service/atmos/device/device as anything in research_devices)
 		var/datum/netrun_machine_service/atmos/controller/controller = research_alarm.get_netrun_machine_service("atmos.controller")
 		log_world("NETRUN MAP device: type=[device.host.type] tag=[device.service_tag()] frequency=[device.control_frequency()] controller_frequency=[controller.control_frequency()] same_area=[get_base_area(device.host) == get_base_area(research_alarm)] matches=[controller.matches(device, null)] registered=[device.registration_complete()] retries=[device.registration_attempts] queries=[length(device.resolutions)] area_index=[device.registration_area == controller.registration_area]")
@@ -332,6 +401,50 @@
 	log_world("NETRUN MAP discovery drained: waiting=[length(transport.waiting_resolutions)] queued=[transport.queued_messages] packets=[length(transport.packets)]")
 	TEST_ASSERT_EQUAL(length(transport.waiting_resolutions), 0, "Finished map/shuttle loading must not strand startup discovery waiters")
 	TEST_ASSERT_EQUAL(transport.queued_messages, 0, "Released startup queries must also drain their original messages through the worker")
+	// Exercise real mapped research startup without sending a manual binding signal.
+	var/obj/machinery/rnd/server/station_server
+	var/cluster_members = 0
+	for(var/obj/machinery/rnd/server/server as anything in SSresearch.servers)
+		if(!server.netrun_mapped_server || !server.netrun_online() || server.research_network_id() != RND_NETWORK_STATION)
+			continue
+		if(!station_server)
+			station_server = server
+		log_world("NETRUN MAP research server: server=[server.server_id] area=[get_area(server)] web=[REF(server.stored_research)] mapped=[server.netrun_mapped_server] online=[server.netrun_online()] reachable=[netrun_research_route_available(station_server, server)]")
+		if(netrun_research_route_available(station_server, server))
+			TEST_ASSERT_EQUAL(server.stored_research, station_server.stored_research, "Reachable mapped station servers must already share one cluster")
+			cluster_members++
+	TEST_ASSERT(cluster_members > 1, "The production map must exercise a real multi-server startup cluster")
+	var/consoles = 0
+	for(var/datum/netrun_machine_service/research_client/client as anything in transport.by_id["research.client"])
+		var/turf/client_turf = get_turf(client.host)
+		if(!istype(client.host, /obj/machinery/computer/rdconsole) || !client_turf || !is_station_level(client_turf.z))
+			continue
+		var/obj/machinery/computer/rdconsole/console = client.host
+		if(!client.resolve_node()?.is_online() || console.network_id != RND_NETWORK_AUTO || !netrun_research_route_available(console, station_server))
+			continue
+		var/datum/component/techweb_holder/holder = console.GetComponent(/datum/component/techweb_holder)
+		log_world("NETRUN MAP research console: type=[console.type] area=[get_area(console)] native_web=[REF(console.stored_research)] holder=[REF(holder)] holder_web=[REF(holder?.linked_techweb)] had_authority=[holder?.had_authority] wants=[client.wants_snapshots] generation=[client.binding_generation] ready_cursor=[transport.ready_service_cursor] ready_pending=[length(transport.ready_service_keys)]")
+		TEST_ASSERT_EQUAL(console.stored_research, station_server.stored_research, "A real mapped console must bind automatically before its first player interaction")
+		TEST_ASSERT_NOTNULL(console.netrun_research_cache, "Mapped consoles must receive a startup research snapshot")
+		consoles++
+	TEST_ASSERT(consoles, "The production map must exercise at least one powered R&D console")
+	log_world("NETRUN MAP research startup: clustered_servers=[cluster_members] consoles=[consoles]")
+	for(var/datum/netrun_machine_service/atmos/device/device as anything in research_devices)
+		if(istype(device.host, /obj/machinery/atmospherics/components/unary/vent_scrubber))
+			var/list/status = research_alarm.netrun_scrub_info[device.service_tag()]
+			TEST_ASSERT_EQUAL(copytext(json_encode(status["filter_types"]), 1, 2), "\[", "Real mapped scrubber filter telemetry must reach the client as an array")
+	// Save an actual station camera frame for visual inspection, rather than a mockup.
+	for(var/obj/machinery/camera/camera in GLOB.cameranet.cameras)
+		if(get_base_area(camera) != get_base_area(research_alarm) || !camera.can_use())
+			continue
+		var/obj/item/camera/netrun_capture/capture = allocate(/obj/item/camera/netrun_capture, get_turf(camera))
+		capture.captureimage(camera, null, FALSE, 4, 4, camera.get_visible_turfs().Copy())
+		TEST_ASSERT_NOTNULL(capture.result, "The real R&D camera must produce a photograph")
+		fcopy(icon(capture.result.picture_image, dir = SOUTH, frame = 1), "data/netrun-peace-photo.png")
+		fdel("data/netrun-peace-photo.base64")
+		text2file(capture.result.get_base64(), "data/netrun-peace-photo.base64")
+		qdel(capture.result)
+		break
 
 /// Isolate readiness notifications from incidental APC signals in a busy test world.
 /datum/netrun_machine_transport/readiness_fixture
@@ -430,6 +543,29 @@
 	return count
 
 /// Resolved destinations must not bypass backpressure for replaceable telemetry.
+/datum/unit_test/netrun_transport_capture_admission/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_machine_packet/data/rejected = new(null, scene.target, new /datum/netrun_machine_message(list("value" = "unsent")))
+	var/rejected_id = rejected.operation.id
+	TEST_ASSERT_NULL(SSnetrun.packet_captures[rejected_id], "Constructing a packet must not eagerly serialize an unsent body")
+	TEST_ASSERT(!rejected.send(), "A missing source must fail route admission")
+	TEST_ASSERT_NULL(SSnetrun.packet_captures[rejected_id], "An unadmitted packet must not occupy the global capture buffer")
+	TEST_ASSERT(scene.source.send_to(scene.target, new /datum/netrun_machine_message/transport_fixture/queue_snapshot(list("value" = "stable"))), "A real replaceable snapshot must be admitted")
+	var/datum/netrun_machine_packet/data/admitted
+	for(var/datum/netrun_machine_packet/data/packet as anything in SSnetrun.get_machine_transport().packets)
+		if(packet.source == scene.source && packet.recipient == scene.target)
+			admitted = packet
+	var/id = admitted.operation.id
+	var/list/headers = admitted.operation.headers
+	admitted.deliver()
+	TEST_ASSERT(findtext(SSnetrun.packet_captures[id], "stable"), "An admitted snapshot must retain its body for explicit inspection")
+	var/accepted = FALSE
+	for(var/list/entry as anything in scene.target.node.packet_logs)
+		if(entry["id"] == id && entry["phase"] == "ACCEPT")
+			accepted = TRUE
+			TEST_ASSERT_EQUAL(entry["headers"], headers, "Unchanged telemetry must reuse its immutable capture instead of serializing it again at delivery")
+	TEST_ASSERT(accepted, "The real snapshot must complete its normal delivery")
+
 /datum/unit_test/netrun_transport_replaceable_burst/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
 	var/list/outcomes = list()
@@ -442,6 +578,7 @@
 			latest = packet
 	TEST_ASSERT_EQUAL(latest.message.payload["value"], 256, "The retained packet must carry the producer's latest snapshot")
 	var/replacement_key = latest.replacement_key
+	var/capture_id = latest.operation.id
 	TEST_ASSERT(replacement_key, "A replaceable delivery must own its bounded coalescing index")
 	if(latest.timer_id)
 		deltimer(latest.timer_id)
@@ -452,6 +589,8 @@
 	TEST_ASSERT_EQUAL(latest.message.payload["value"], 512, "Ready-but-unexecuted state must remain replaceable")
 	TEST_ASSERT(netrun_wait_delivery(outcomes), "The retained latest snapshot must actually be delivered")
 	TEST_ASSERT_EQUAL(scene.target.received, 1, "Superseded states must not execute the recipient repeatedly")
+	var/list/captured = json_decode(SSnetrun.packet_captures[capture_id])
+	TEST_ASSERT_EQUAL(captured["value"], 512, "Inspection must show the coalesced body actually delivered, not an obsolete admitted snapshot")
 	TEST_ASSERT_EQUAL(scene.pending_packets(), 0, "Delivered snapshots must release packet capacity")
 	TEST_ASSERT_NULL(SSnetrun.get_machine_transport().replaceable_packets[replacement_key], "Completion must release the coalescing index as well as packet capacity")
 

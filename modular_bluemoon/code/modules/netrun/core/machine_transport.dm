@@ -1,5 +1,20 @@
 /// Wire message values and asynchronous, revalidated data delivery.
 /// Every message is owned by its delivery. Payload lists never alias native state.
+/// Preserve indexed sublists as array elements, not associative keys with null values.
+/// The generic deepCopyList helper changes their JSON shape (notably scrubber filters).
+/proc/netrun_copy_wire_value(value)
+	if(!islist(value))
+		return value
+	var/list/input = value
+	var/list/output = input.Copy()
+	for(var/i in 1 to length(input))
+		var/key = input[i]
+		if(islist(key))
+			output[i] = netrun_copy_wire_value(key)
+		else if(!isnum(key) && islist(input[key]))
+			output[key] = netrun_copy_wire_value(input[key])
+	return output
+
 /datum/netrun_machine_message
 	var/list/payload
 	var/datum/netrun_machine_service/source
@@ -8,7 +23,7 @@
 	var/correlation_id
 
 /datum/netrun_machine_message/New(list/payload)
-	src.payload = payload ? deepCopyList(payload) : list()
+	src.payload = payload ? netrun_copy_wire_value(payload) : list()
 
 /datum/netrun_machine_message/Destroy()
 	payload = null
@@ -19,7 +34,7 @@
 
 /datum/netrun_machine_message/proc/copy()
 	var/datum/netrun_machine_message/result = new type()
-	result.payload = deepCopyList(payload)
+	result.payload = netrun_copy_wire_value(payload)
 	result.user_ref = user_ref
 	result.correlation_id = correlation_id
 	return result
@@ -59,6 +74,7 @@
 			message.correlation_id = previous.operation.operation_id
 			qdel(previous.message)
 			previous.message = message
+			previous.capture_dirty = TRUE
 			coalesced_packets++
 			return TRUE
 	var/datum/netrun_machine_packet/data/packet = new(source, target, message)
@@ -122,6 +138,9 @@
 	recipient = null
 	return ..()
 
+/datum/netrun_machine_packet/proc/capture_payload()
+	return
+
 /datum/netrun_machine_packet/proc/send()
 	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
 	if(finishing || delivery_queued || timer_id || (src in transport.packets))
@@ -134,6 +153,8 @@
 		qdel(route)
 		fail("нет сетевого маршрута")
 		return FALSE
+	// Rejected admissions/routes must not serialize a payload that never left.
+	capture_payload()
 	transport.packets |= src
 	operation.queued(route.hops)
 	var/mob/user = interest_user()
@@ -175,6 +196,7 @@
 	finishing = TRUE
 	SSnetrun.get_machine_transport().trace_delivery(src)
 	destination_address = route.hops[length(route.hops)]
+	capture_payload()
 	operation.running()
 	operation.receive(route.hops)
 	SSnetrun.get_machine_transport().record_flow(source, recipient, kind, route.hops)
@@ -204,6 +226,7 @@
 	var/datum/netrun_machine_message/message
 	var/recipient_tag
 	var/replacement_key
+	var/capture_dirty = TRUE
 
 /datum/netrun_machine_packet/data/New(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient, datum/netrun_machine_message/message)
 	..(source, recipient, message.correlation_id)
@@ -212,6 +235,12 @@
 	message.recipient = recipient
 	message.correlation_id = operation.operation_id
 	recipient_tag = recipient?.service_tag()
+
+/datum/netrun_machine_packet/data/capture_payload()
+	if(!capture_dirty)
+		return
+	operation.capture(message.payload)
+	capture_dirty = FALSE
 
 /datum/netrun_machine_packet/data/Destroy()
 	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()

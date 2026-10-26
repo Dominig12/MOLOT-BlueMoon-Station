@@ -17,14 +17,14 @@ const StoragePanelView = () => {
       <div className="netrun-files-layout">
         <div className="netrun-files-catalog">
           <Box bold mb={1} color={THEME.text}>Локальные файлы</Box>
-          <FileList files={storage.files} canUpload={canUpload} />
+          <FileList files={storage.files} canUpload={canUpload} source="local" />
           {!!shard && (
             <Box mt={2}>
               <Box color={THEME.muted} mb={0.5}>
                 <Icon name="sd-card" mr={1} />
                 {shard.name} {shard.used}/{shard.capacity}
               </Box>
-              <FileList files={shard.files} canUpload={canUpload} />
+              <FileList files={shard.files} canUpload={canUpload} source="shard" />
             </Box>
           )}
         </div>
@@ -37,16 +37,17 @@ const StoragePanelView = () => {
   );
 };
 
-const FileList = (props: { files: NetFile[]; canUpload: boolean }) => {
+const FileList = (props: { files: NetFile[]; canUpload: boolean; source: 'local' | 'shard' }) => {
   const { act } = useBackend<NetrunData>([]);
   if (!props.files.length) {
     return <Box color={THEME.muted}>Пусто.</Box>;
   }
   return (
-    <div data-net-files="local" style={{ maxHeight: '25vh', minHeight: 0, overflowY: 'auto' }}>
+    <div data-net-files={props.source} style={{ maxHeight: '25vh', minHeight: 0, overflowY: 'auto' }}>
       {props.files.map((file) => (
         <Box
           key={file.uid}
+          data-net-file-row={props.source}
           mb={0.5}
           p={0.5}
           style={{
@@ -68,16 +69,18 @@ const FileList = (props: { files: NetFile[]; canUpload: boolean }) => {
               {fileFormat(file.name, file.kind)} · {file.size}
             </Box>
           </Box>
-          <div data-net-file-actions="local" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 24px)', gridAutoRows: '24px', gap: '3px' }}>
-          <div>{file.kind === 'text' && (
-            <Button compact icon="eye" tooltip="Открыть" onClick={(e) => { e.stopPropagation(); act('read', { uid: file.uid }); }} />
-          )}
-          </div>
-          <div>{props.canUpload && (
-            <Button compact icon="upload" tooltip="Загрузить на узел" onClick={(e) => { e.stopPropagation(); act('upload', { uid: file.uid }); }} />
-          )}
-          </div>
-          <Button compact icon="trash" color="transparent" tooltip="Удалить" onClick={(e) => { e.stopPropagation(); act('delete_local', { uid: file.uid }); }} />
+          <div className="netrun-file-actions" data-net-file-actions={props.source}
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 24px)', gridAutoRows: '24px', gap: '3px' }}>
+            {file.kind === 'text' && (
+              <Button compact icon="eye" tooltip="Открыть" style={{ gridColumn: 1 }}
+                onClick={(e) => { e.stopPropagation(); act('read', { uid: file.uid }); }} />
+            )}
+            {props.canUpload && (
+              <Button compact icon="upload" tooltip="Загрузить на узел" style={{ gridColumn: 2 }}
+                onClick={(e) => { e.stopPropagation(); act('upload', { uid: file.uid }); }} />
+            )}
+            <Button compact icon="trash" color="transparent" tooltip="Удалить" style={{ gridColumn: 3 }}
+              onClick={(e) => { e.stopPropagation(); act('delete_local', { uid: file.uid }); }} />
           </div>
         </Box>
       ))}
