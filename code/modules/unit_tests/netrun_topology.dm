@@ -112,6 +112,30 @@
 	SSnetrun.ensure_topology()
 	TEST_ASSERT_EQUAL(client_node.uplink_node(), remote_node, "Crossing sectors must rebind even when the root area instance is unchanged")
 
+/// Canonical edges retain one identity when callers repeat/reverse the same cable.
+/datum/unit_test/netrun_topology_edge_uniqueness/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_topology/graph = allocate(/datum/netrun_topology)
+	var/obj/item/first_host = allocate(/obj/item, origin)
+	var/obj/item/second_host = allocate(/obj/item, get_step(origin, NORTH))
+	var/datum/component/netrun_node/first = first_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/component/netrun_node/second = second_host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	graph.nodes[first.address] = first
+	graph.nodes[second.address] = second
+	graph.adjacency[first.address] = list()
+	graph.adjacency[second.address] = list()
+	graph.add_edge(second.address, first.address, "endpoint")
+	var/list/edge = graph.edge_between(first.address, second.address)
+	var/list/ordered = sort_list(list(first.address, second.address))
+	TEST_ASSERT_EQUAL(edge["from"], ordered[1], "The allocation-free canonical order must match the existing text comparator")
+	TEST_ASSERT_EQUAL(edge["to"], ordered[2], "Canonical edge targets must retain ascending address order")
+	graph.add_edge(first.address, second.address, "apc")
+	graph.add_edge(second.address, first.address, "endpoint")
+	TEST_ASSERT_EQUAL(length(graph.edges), 1, "Reversed and repeated cables must not duplicate the edge")
+	TEST_ASSERT_EQUAL(graph.edge_between(second.address, first.address), edge, "Both lookup directions must retain the same original edge object")
+	TEST_ASSERT_EQUAL(length(graph.adjacency[first.address]), 1, "Duplicate detection must not append repeated neighbors")
+	TEST_ASSERT_EQUAL(edge["latency"], graph.edge_cost(first.address, second.address), "Reusing the physical distance must preserve live routing cost")
+
 /// The sector backbone unions two nearest neighbors and bridges disconnected groups.
 /datum/unit_test/netrun_topology_apc_tree/Run()
 	var/turf/origin = run_loc_floor_bottom_left

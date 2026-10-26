@@ -89,16 +89,23 @@
 	var/structural_generation = 0
 	var/datum/netrun_apc_prebuild/apc_prebuild
 	var/revision = 0
+	/// Last complete publication's CPU phases, without retaining nodes or snapshots.
+	var/list/last_rebuild_costs = list()
+	var/list/peak_rebuild_costs = list()
+	var/peak_rebuild_ms = 0
 	var/deferred_bindings = FALSE
 	var/infrastructure_revision = 0
 	var/indexed_revision = -1
 	var/list/apcs_by_sector = list()
+	/// Physical sector + supplied base area. Native APCs always outrank foreign ones.
+	var/list/apcs_by_area = list()
 	var/list/relay_addresses = list()
 	var/list/registered_apcs = list()
 	var/list/registered_relays = list()
 	/// Coalesced leaf geometry changes, shared by node workers and route snapshots.
 	var/list/moved_nodes = list()
 	var/indexed_infrastructure_visits = 0
+	var/nearest_apc_visits = 0
 	var/list/nearest_by_turf = list()
 	/// Moving an endpoint updates route costs without replacing its structural parent.
 	var/weight_revision = 0
@@ -172,6 +179,7 @@
 	if(indexed_revision == infrastructure_revision)
 		return
 	apcs_by_sector = list()
+	apcs_by_area = list()
 	relay_addresses = list()
 	// Work scales with infrastructure, not the count of endpoints.
 	for(var/address in sort_list(registered_apcs.Copy()))
@@ -187,6 +195,12 @@
 			sector_apcs = list()
 			apcs_by_sector[sector] = sector_apcs
 		sector_apcs += address
+		var/area_key = "[sector]:[REF(apc_area(node))]"
+		var/list/area_apcs = apcs_by_area[area_key]
+		if(!area_apcs)
+			area_apcs = list()
+			apcs_by_area[area_key] = area_apcs
+		area_apcs += address
 	for(var/address in sort_list(registered_relays.Copy()))
 		var/datum/component/netrun_node/node = registered_relays[address]
 		if(QDELETED(node) || QDELETED(node.parent))
@@ -207,12 +221,16 @@
 	var/cache_key = "[sector]:[REF(root_area)]:[position.x],[position.y],[position.z]"
 	if(cache_key in nearest_by_turf)
 		return nearest_by_turf[cache_key]
-	var/list/candidates = apcs_by_sector[sector]
+	// A room's native APC wins regardless of distance. Avoid scanning every APC
+	// in the sector for every uncached endpoint turf during startup and rebuilds.
+	var/list/native_candidates = apcs_by_area["[sector]:[REF(root_area)]"]
+	var/list/candidates = length(native_candidates) ? native_candidates : apcs_by_sector[sector]
 	var/datum/component/netrun_node/best
 	var/best_distance = INFINITY
 	var/best_native = FALSE
 	// The index is address-sorted, so equal distances have a total, stable tie-break.
 	for(var/address in candidates)
+		nearest_apc_visits++
 		var/datum/component/netrun_node/candidate = SSnetrun.nodes_by_address[address]
 		if(QDELETED(candidate) || netrun_sector_for(candidate.physical_turf()) != sector)
 			continue
@@ -242,7 +260,10 @@
 	// The endpoint stays on its APC while its geographic cable length changes.
 	if(!is_infrastructure(node) && node.topology_turf != position)
 		node.topology_turf = position
-		refresh_node_weights(node)
+		// A dirty graph is an old published snapshot. Background membership
+		// preparation must not change its edges before the replacement commits.
+		if(!dirty && !rebuilding)
+			refresh_node_weights(node)
 		node.notify_changed(NETRUN_CHANGED_STATE)
 	if(is_infrastructure(node) && (node.topology_turf != position || (node.binding_checked && node.binding_sector != sector)))
 		node.topology_turf = position
@@ -324,12 +345,14 @@
 		var/list/pair = sort_list(list(first, second))
 		return list("id" = "relay:[pair[1]]>[pair[2]]", "from" = pair[1], "to" = pair[2], "kind" = "relay", "latency" = NETRUN_RELAY_LATENCY)
 
-/datum/netrun_topology/proc/edge_cost(first, second)
+/datum/netrun_topology/proc/edge_cost(first, second, distance)
 	if(netrun_quantum_link(nodes[first], nodes[second]))
 		return NETRUN_RELAY_LATENCY
-	var/datum/component/netrun_node/from_node = nodes[first]
-	var/datum/component/netrun_node/to_node = nodes[second]
-	return max(1, CEILING(netrun_topology_distance(from_node?.physical_turf(), to_node?.physical_turf()) / NETRUN_LINK_TILES_PER_DS, 1))
+	if(isnull(distance))
+		var/datum/component/netrun_node/from_node = nodes[first]
+		var/datum/component/netrun_node/to_node = nodes[second]
+		distance = netrun_topology_distance(from_node?.physical_turf(), to_node?.physical_turf())
+	return max(1, CEILING(distance / NETRUN_LINK_TILES_PER_DS, 1))
 
 /datum/netrun_topology/proc/refresh_node_weights(datum/component/netrun_node/node)
 	var/changed = FALSE
@@ -354,19 +377,22 @@
 /datum/netrun_topology/proc/add_edge(first, second, kind)
 	if(!first || !second || first == second || !nodes[first] || !nodes[second])
 		return
-	var/list/pair = sort_list(list(first, second))
-	first = pair[1]
-	second = pair[2]
-	var/list/first_neighbors = adjacency[first]
-	if(second in first_neighbors)
+	if(edge_lookup["[first]>[second]"])
 		return
+	// Match cmp_text_asc without allocating and sorting a pair for every cable.
+	if(sorttext(second, first) > 0)
+		var/swap = first
+		first = second
+		second = swap
+	var/list/first_neighbors = adjacency[first]
 	first_neighbors += second
 	var/list/second_neighbors = adjacency[second]
 	second_neighbors += first
 	var/datum/component/netrun_node/from_node = nodes[first]
 	var/datum/component/netrun_node/to_node = nodes[second]
+	var/distance = netrun_topology_distance(from_node.physical_turf(), to_node.physical_turf())
 	var/list/edge = list("id" = "[kind]:[first]>[second]", "from" = first, "to" = second, "kind" = kind,
-		"latency" = edge_cost(first, second), "distance" = netrun_topology_distance(from_node.physical_turf(), to_node.physical_turf()))
+		"latency" = edge_cost(first, second, distance), "distance" = distance)
 	edges += list(edge)
 	edge_positions[edge["id"]] = length(edges)
 	edge_lookup["[first]>[second]"] = edge
@@ -462,6 +488,11 @@
 	if(!apc_prebuild.advance(max_operations))
 		return FALSE
 	if(apc_prebuild.valid_inputs())
+		if(!apc_prebuild.advance_bindings(min(max_operations, 16)))
+			return FALSE
+		if(!apc_prebuild?.valid_inputs())
+			QDEL_NULL(apc_prebuild)
+			return !dirty
 		rebuild()
 	else
 		QDEL_NULL(apc_prebuild)
@@ -471,6 +502,8 @@
 	if(rebuilding)
 		return
 	rebuilding = TRUE
+	last_rebuild_costs = list()
+	var/phase_started = TICK_USAGE
 	clear_route_tables()
 	nodes = list()
 	adjacency = list()
@@ -478,7 +511,11 @@
 	edges = list()
 	edge_lookup = list()
 	edge_positions = list()
-	var/list/addresses = sort_list(SSnetrun.nodes_by_address.Copy())
+	// Registry order is stable during this publication. Only APC candidate and
+	// adjacency ordering affect routing tie-breaks; sorting every leaf is wasted.
+	var/list/addresses = SSnetrun.nodes_by_address.Copy()
+	last_rebuild_costs["reset"] = max(0, TICK_DELTA_TO_MS(TICK_USAGE - phase_started))
+	phase_started = TICK_USAGE
 	// A carrier can move infrastructure without a MOVED signal on the nested machine.
 	// Refresh every infrastructure position before any endpoint consults the spatial index.
 	var/moved_infrastructure = FALSE
@@ -492,6 +529,8 @@
 			moved_infrastructure = TRUE
 	if(moved_infrastructure)
 		infrastructure_changed()
+	last_rebuild_costs["infrastructure"] = max(0, TICK_DELTA_TO_MS(TICK_USAGE - phase_started))
+	phase_started = TICK_USAGE
 	// This only refreshes bindings and LANs; neither path calls ensure_topology().
 	for(var/address in addresses)
 		var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
@@ -501,12 +540,16 @@
 		nodes[address] = node
 		adjacency[address] = list()
 	index_infrastructure()
+	last_rebuild_costs["bindings"] = max(0, TICK_DELTA_TO_MS(TICK_USAGE - phase_started))
+	phase_started = TICK_USAGE
 	// Every endpoint has one physical cable to its APC, including personal nodes.
 	for(var/address in nodes)
 		var/datum/component/netrun_node/node = nodes[address]
 		if(!node.bound_apc)
 			continue
 		add_edge(address, node.bound_apc.address, "endpoint")
+	last_rebuild_costs["endpoint_edges"] = max(0, TICK_DELTA_TO_MS(TICK_USAGE - phase_started))
+	phase_started = TICK_USAGE
 	// Precomputed candidates are optional; forced routing requests still rebuild immediately.
 	var/datum/netrun_apc_prebuild/prepared = apc_prebuild
 	var/valid_prebuild = prepared?.completed && prepared.valid_inputs()
@@ -518,9 +561,12 @@
 				add_edge(pair["from"], pair["to"], "apc")
 		else
 			connect_apcs(apcs_by_sector[sector])
+	last_rebuild_costs["apc_edges"] = max(0, TICK_DELTA_TO_MS(TICK_USAGE - phase_started))
+	phase_started = TICK_USAGE
 	// Relay-to-relay transitions are an implicit uniform-cost bucket.
 	for(var/address in adjacency)
-		adjacency[address] = sort_list(adjacency[address])
+		if(length(adjacency[address]) > 1)
+			adjacency[address] = sort_list(adjacency[address])
 		if(!is_infrastructure(nodes[address]) && length(adjacency[address]) <= 1)
 			continue
 		var/list/forwarders = list()
@@ -528,6 +574,8 @@
 			if(is_infrastructure(nodes[neighbor]) || length(adjacency[neighbor]) > 1)
 				forwarders += neighbor
 		forwarding_adjacency[address] = forwarders
+	last_rebuild_costs["forwarding"] = max(0, TICK_DELTA_TO_MS(TICK_USAGE - phase_started))
+	phase_started = TICK_USAGE
 	dirty = FALSE
 	revision++
 	weight_revision++
@@ -535,6 +583,13 @@
 	rebuilding = FALSE
 	QDEL_NULL(apc_prebuild)
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, revision)
+	last_rebuild_costs["notification"] = max(0, TICK_DELTA_TO_MS(TICK_USAGE - phase_started))
+	var/total_cost = 0
+	for(var/phase in last_rebuild_costs)
+		total_cost += last_rebuild_costs[phase]
+	if(total_cost > peak_rebuild_ms)
+		peak_rebuild_ms = total_cost
+		peak_rebuild_costs = last_rebuild_costs
 
 /datum/netrun_topology/Destroy()
 	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_REGISTERED, COMSIG_NETRUN_NODE_UNREGISTERED, COMSIG_NETRUN_NODE_MOVED))
@@ -548,6 +603,7 @@
 	edge_lookup.Cut()
 	edge_positions.Cut()
 	apcs_by_sector.Cut()
+	apcs_by_area.Cut()
 	registered_apcs.Cut()
 	registered_relays.Cut()
 	moved_nodes.Cut()

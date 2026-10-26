@@ -18,6 +18,40 @@
 	SSnetrun.ensure_topology()
 	TEST_ASSERT_EQUAL(node.bound_apc, native_node, "A newly installed closer APC must preserve an established attachment")
 
+/// Native lookup scales with the supplied room, with the same deterministic fallback.
+/datum/unit_test/netrun_geographic_native_apc_index/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/local_room = scene.room(/area/medical/netrun_route_test)
+	var/area/foreign_room = scene.room(/area/engineering/netrun_route_test)
+	scene.take(origin, local_room)
+	var/turf/close_spot = scene.take(get_step(origin, NORTH), foreign_room)
+	var/obj/machinery/power/apc/foreign = scene.machine(/obj/machinery/power/apc, close_spot)
+	for(var/i in 1 to 48)
+		scene.machine(/obj/machinery/power/apc, scene.take(locate(origin.x + 4, origin.y + 4, origin.z), foreign_room))
+	// APCs can be physically mounted outside the area they actually supply.
+	var/obj/machinery/power/apc/first = scene.machine(/obj/machinery/power/apc, scene.take(locate(origin.x + 8, origin.y, origin.z), foreign_room))
+	var/obj/machinery/power/apc/second = scene.machine(/obj/machinery/power/apc, scene.take(locate(origin.x, origin.y + 8, origin.z), foreign_room))
+	first.area = local_room
+	second.area = local_room
+	var/datum/component/netrun_node/first_node = first.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/second_node = second.GetComponent(/datum/component/netrun_node)
+	var/list/ordered = sort_list(list(first_node.address, second_node.address))
+	var/datum/netrun_topology/graph = allocate(/datum/netrun_topology)
+	var/visits = graph.nearest_apc_visits
+	TEST_ASSERT_EQUAL(graph.nearest_apc(origin), SSnetrun.nodes_by_address[ordered[1]], "Equal native distances must retain the address tie-break")
+	TEST_ASSERT_EQUAL(graph.nearest_apc_visits - visits, 2, "A native room lookup must inspect only its two APCs, not all sector APCs")
+	visits = graph.nearest_apc_visits
+	graph.nearest_apc(origin)
+	TEST_ASSERT_EQUAL(graph.nearest_apc_visits, visits, "A repeated turf lookup must use the existing nearest cache")
+	var/turf/near_first = scene.take(get_step(origin, EAST), local_room)
+	TEST_ASSERT_EQUAL(graph.nearest_apc(near_first), first_node, "Different native distances must still select the physically nearest native APC")
+	qdel(first)
+	TEST_ASSERT_EQUAL(graph.nearest_apc(near_first), second_node, "Removing a native APC must invalidate the index and cached winner")
+	qdel(second)
+	var/datum/component/netrun_node/foreign_node = foreign.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT_EQUAL(graph.nearest_apc(origin), foreign_node, "Losing every native APC must restore the nearest foreign-sector fallback")
+
 /// Two nearest-neighbor clusters receive only their shortest connecting bridge.
 /datum/unit_test/netrun_geographic_apc_bridges/Run()
 	var/turf/origin = run_loc_floor_bottom_left

@@ -29,6 +29,13 @@
 	var/pair_i = 1
 	var/completed = FALSE
 	var/comparisons = 0
+	/// Binding warm-up is separate from speculative APC edge construction.
+	var/list/binding_apcs
+	var/list/binding_nodes
+	var/binding_apc_cursor = 1
+	var/binding_node_cursor = 1
+	var/bindings_completed = FALSE
+	var/binding_operations = 0
 
 /datum/netrun_apc_prebuild/New(datum/netrun_topology/owner)
 	. = ..()
@@ -204,10 +211,49 @@
 				return TRUE
 	return completed
 
+/// Warm live membership in bounded slices; published graph arrays stay untouched.
+/// APC LANs must be current before any endpoint reuses its bound APC's network.
+/datum/netrun_apc_prebuild/proc/advance_bindings(max_operations = NETRUN_DEFAULT_APC_PREBUILD_OPERATIONS)
+	if(QDELETED(graph) || !graph.dirty || generation != graph.infrastructure_revision || !completed || SSatoms.initialized != INITIALIZATION_INNEW_REGULAR)
+		return FALSE
+	if(bindings_completed)
+		return TRUE
+	if(!binding_nodes)
+		binding_apcs = graph.registered_apcs.Copy()
+		binding_nodes = SSnetrun.nodes_by_address.Copy()
+	var/operations = 0
+	while(operations < max_operations)
+		var/datum/component/netrun_node/node
+		var/address
+		if(binding_apc_cursor <= length(binding_apcs))
+			address = binding_apcs[binding_apc_cursor++]
+			node = binding_apcs[address]
+		else if(binding_node_cursor <= length(binding_nodes))
+			address = binding_nodes[binding_node_cursor++]
+			node = binding_nodes[address]
+			if(node?.node_type == NETRUN_NODE_APC)
+				node = null
+		else
+			break
+		operations++
+		binding_operations++
+		if(!QDELETED(node) && !QDELETED(node.parent) && SSnetrun.nodes_by_address[address] == node)
+			node.join_network()
+		// A live binding signal may force publication or invalidate infrastructure.
+		if(QDELETED(graph) || !graph.dirty || generation != graph.infrastructure_revision)
+			return FALSE
+	if(binding_apc_cursor > length(binding_apcs) && binding_node_cursor > length(binding_nodes))
+		bindings_completed = TRUE
+		binding_apcs = null
+		binding_nodes = null
+	return bindings_completed
+
 /datum/netrun_apc_prebuild/Destroy()
 	QDEL_NULL(bridges)
 	QDEL_NULL(active_scan)
 	QDEL_NULL(spatial)
+	binding_apcs = null
+	binding_nodes = null
 	graph = null
 	return ..()
 

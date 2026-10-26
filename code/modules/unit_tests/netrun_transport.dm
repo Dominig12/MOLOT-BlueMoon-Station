@@ -362,6 +362,7 @@
 	log_world("NETRUN MAP research demand: clients=[length(transport.by_id["research.client"])] demanding=[demanding_clients] subscribers=[subscribers] ready_index=[length(transport.ready_services)] types=[json_encode(client_types)]")
 	log_world("NETRUN MAP queued work: packets=[json_encode(packet_kinds)] tasks=[json_encode(pending_kinds)] coalesced=[transport.coalesced_packets] peak_pending=[scheduler.peak_pending]")
 	log_world("NETRUN MAP worker profile: [scheduler.profile_summary()]")
+	log_world("NETRUN MAP graph publication: nodes=[length(graph.nodes)] edges=[length(graph.edges)] peak_ms=[graph.peak_rebuild_ms] phases_ms=[json_encode(graph.peak_rebuild_costs)] nearest_visits=[graph.nearest_apc_visits]")
 	for(var/datum/netrun_machine_service/atmos/device/device as anything in research_devices)
 		var/datum/netrun_machine_service/atmos/controller/controller = research_alarm.get_netrun_machine_service("atmos.controller")
 		log_world("NETRUN MAP device: type=[device.host.type] tag=[device.service_tag()] frequency=[device.control_frequency()] controller_frequency=[controller.control_frequency()] same_area=[get_base_area(device.host) == get_base_area(research_alarm)] matches=[controller.matches(device, null)] registered=[device.registration_complete()] retries=[device.registration_attempts] queries=[length(device.resolutions)] area_index=[device.registration_area == controller.registration_area]")
