@@ -24,6 +24,7 @@
 
 /// Неизменяемые параметры конкретного пакета, отдельные от текущего выбора интерфейса.
 /datum/netrun_request
+	parent_type = /datum/netrun_delivery
 	var/file_uid
 
 /datum/netrun_request/New(file_uid)

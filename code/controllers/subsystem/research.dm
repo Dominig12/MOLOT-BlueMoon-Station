@@ -342,14 +342,16 @@ SUBSYSTEM_DEF(research)
 
 /datum/controller/subsystem/research/fire()
 	var/list/techwebs_income = list()	//экземпляр техвеба = биткойны сети в секунду
+	var/list/server_counts = list()
 	if(multiserver_calculation)
 		for(var/obj/machinery/rnd/server/miner in servers)
-			if(!miner.working)
+			if(!miner.netrun_online())
 				continue
 			var/datum/techweb/mining_web = miner.stored_research
 			if(!mining_web)
 				continue	//сервер без подключённой сети (изолированная РНД) очков не приносит
 			var/list/mining_result = miner.mine()	//SLAVE AWAY, SLAVE.
+			server_counts[mining_web]++
 			if(!techwebs_income[mining_web])
 				techwebs_income[mining_web] = list()
 			for(var/i in mining_result)
@@ -357,17 +359,13 @@ SUBSYSTEM_DEF(research)
 				techwebs_income[mining_web][i] = cummulative ? cummulative + mining_result[i] : mining_result[i]
 		//BLUEMOON CHANGE: убывающая отдача теперь считается ПО СЕТЯМ, а не по всей ферме
 		for(var/datum/techweb/mining_web as anything in techwebs_income)
-			var/server_count = 0
-			for(var/obj/machinery/rnd/server/miner in servers)
-				if(miner.working && miner.stored_research == mining_web)
-					server_count++
-			var/eff = calculate_server_coefficient(server_count)
+			var/eff = calculate_server_coefficient(server_counts[mining_web])
 			if(eff)
 				for(var/i in techwebs_income[mining_web])
 					techwebs_income[mining_web][i] *= eff
 	else
 		for(var/obj/machinery/rnd/server/miner in servers)
-			if(miner.working && miner.stored_research && !techwebs_income[miner.stored_research])
+			if(miner.netrun_online() && miner.stored_research && !techwebs_income[miner.stored_research])
 				techwebs_income[miner.stored_research] = single_server_income.Copy()
 	if (!isnull(last_income))
 		var/income_time_difference = world.time - last_income

@@ -351,6 +351,10 @@
 	graph.route_used[source_node.address] = world.time - 3 SECONDS
 	graph.route_refresh_at = world.time
 	graph.refresh_route_tables()
+	TEST_ASSERT_NOTNULL(graph.route_tables[source_node.address], "A recently used map must retain its tree through brief UI inactivity")
+	graph.route_used[source_node.address] = world.time - NETRUN_DEFAULT_ROUTE_EXPIRY_INTERVAL - world.tick_lag
+	graph.route_refresh_at = world.time
+	graph.refresh_route_tables()
 	TEST_ASSERT_NULL(graph.route_tables[source_node.address], "An inactive map's routing table must expire instead of doing BFS forever")
 
 /// Nested targets need no movement signal: the subsystem's membership poll

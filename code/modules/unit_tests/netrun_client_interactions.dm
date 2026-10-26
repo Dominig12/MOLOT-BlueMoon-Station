@@ -189,6 +189,45 @@
 	TEST_ASSERT_EQUAL(scene.user.mind?.current, scene.user, "Route loss must restore the body instead of stranding a process")
 	TEST_ASSERT_EQUAL(scene.user.getOrganLoss(ORGAN_SLOT_BRAIN), 20, "Route loss must cause a single native brain injury")
 
+/// Transit deletion wakes a dedicated return-link check before ordinary resident/UI work.
+/datum/unit_test/netrun_implant_emergency_transit_deletion/Run()
+	var/datum/netrun_client_scene/scene = allocate(/datum/netrun_client_scene, run_loc_floor_bottom_left)
+	scene.authorize()
+	TEST_ASSERT(scene.implant.complete_dive(scene.target_node, scene.user), "The transit-deletion fixture must admit its diver")
+	var/mob/camera/netrun_entity/entity = scene.implant.console.dive_ref?.resolve()
+	var/datum/netrun_dive_link/link = entity.dive_link
+	var/datum/mind/mind = entity.mind
+	var/key = "dive_link:[REF(link)]"
+	qdel(scene.apc)
+	TEST_ASSERT(SSnetrun.get_task_scheduler().by_key[key], "Deleting a watched transit APC must queue an immediate coalesced return-link check")
+	TEST_ASSERT(SSnetrun.next_fire <= world.time + world.tick_lag, "Return-link loss must wake the worker on its next tick")
+	var/deadline = world.time + 1 SECONDS
+	while(!QDELETED(entity) && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(QDELETED(entity), "A broken transit route must eject the diver without a manual link poll")
+	TEST_ASSERT_EQUAL(mind.current, scene.user, "Transit deletion must return the original mind")
+	TEST_ASSERT_EQUAL(scene.user.getOrganLoss(ORGAN_SLOT_BRAIN), 20, "Transit deletion must apply its emergency injury exactly once")
+	TEST_ASSERT_NULL(SSnetrun.get_task_scheduler().by_key[key], "Returning must release the pending link check")
+
+/// Several route events own one task, and a voluntary return cancels it safely.
+/datum/unit_test/netrun_implant_link_check_coalescing/Run()
+	var/datum/netrun_client_scene/scene = allocate(/datum/netrun_client_scene, run_loc_floor_bottom_left)
+	scene.authorize()
+	TEST_ASSERT(scene.implant.complete_dive(scene.target_node, scene.user), "The link-check fixture must admit its diver")
+	var/mob/camera/netrun_entity/entity = scene.implant.console.dive_ref?.resolve()
+	var/datum/netrun_dive_link/link = entity.dive_link
+	var/key = "dive_link:[REF(link)]"
+	var/datum/netrun_task/first
+	for(var/i in 1 to 32)
+		link.queue_link_check()
+		var/datum/netrun_task/pending = SSnetrun.get_task_scheduler().by_key[key]
+		if(!first)
+			first = pending
+		TEST_ASSERT_EQUAL(pending, first, "Repeated return-link events must retain a single pending task")
+	entity.return_to_body()
+	TEST_ASSERT_NULL(SSnetrun.get_task_scheduler().by_key[key], "A voluntary return must cancel its pending route check")
+	TEST_ASSERT_EQUAL(scene.user.getOrganLoss(ORGAN_SLOT_BRAIN), 0, "Cancelled checks must not convert a voluntary exit into an emergency injury")
+
 /datum/unit_test/netrun_implant_emergency_entry_deletion/Run()
 	var/datum/netrun_client_scene/scene = allocate(/datum/netrun_client_scene, run_loc_floor_bottom_left)
 	scene.authorize()

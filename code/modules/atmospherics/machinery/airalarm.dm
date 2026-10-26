@@ -818,8 +818,11 @@ GLOBAL_LIST_INIT(air_alarm_modes, init_air_alarm_modes())
 
 /obj/machinery/airalarm/proc/set_frequency(new_frequency)
 	SSradio.remove_object(src, frequency)
+	var/old_frequency = frequency
 	frequency = new_frequency
 	radio_connection = SSradio.add_object(src, frequency, RADIO_TO_AIRALARM)
+	if(old_frequency != frequency)
+		SEND_SIGNAL(src, COMSIG_NETRUN_SERVICE_STATE_CHANGED)
 
 /obj/machinery/airalarm/proc/send_signal(target, list/command, mob/user)
 	var/list/data = command.Copy()

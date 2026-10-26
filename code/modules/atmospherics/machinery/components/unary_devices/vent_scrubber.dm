@@ -108,8 +108,11 @@
 
 /obj/machinery/atmospherics/components/unary/vent_scrubber/proc/set_frequency(new_frequency)
 	SSradio.remove_object(src, frequency)
+	var/old_frequency = frequency
 	frequency = new_frequency
 	radio_connection = SSradio.add_object(src, frequency, radio_filter_in)
+	if(old_frequency != frequency)
+		SEND_SIGNAL(src, COMSIG_NETRUN_SERVICE_STATE_CHANGED)
 
 /obj/machinery/atmospherics/components/unary/vent_scrubber/proc/broadcast_status()
 	register_in_area()

@@ -41,6 +41,7 @@
 /datum/netrun_map_view/netrun_performance_test
 	var/rebuilds = 0
 	var/serialized_nodes = 0
+	var/list/projected_by_address = list()
 
 /datum/netrun_map_view/netrun_performance_test/rebuild(datum/netrun_topology/graph)
 	rebuilds++
@@ -48,6 +49,7 @@
 
 /datum/netrun_map_view/netrun_performance_test/project_entry(datum/component/netrun_node/node, neighbor_count)
 	serialized_nodes++
+	projected_by_address[node.address]++
 	return ..()
 
 /// Walking a carried terminal must update its marker, not rebuild every permitted endpoint.
@@ -86,6 +88,106 @@
 	TEST_ASSERT_EQUAL(view.static_revision, paint, "Carried endpoint movement must retain the stationary Pixi canvas")
 	TEST_ASSERT_EQUAL(graph.revision, graph_revision, "A moving leaf must retain the structural topology")
 	TEST_ASSERT_EQUAL(graph.route_tables[source.address], table, "Movement must reuse the retained source tree")
+
+/// Many simultaneous moving viewers must keep stationary projection work out of the hot path.
+/datum/unit_test/netrun_map_station_motion_load/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	for(var/turf/spot as anything in block(origin, locate(origin.x + 8, origin.y + 2, origin.z)))
+		scene.take(spot, room)
+	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, get_step(origin, NORTH))
+	var/list/fixture_nodes = list(apc.GetComponent(/datum/component/netrun_node))
+	var/list/stationary_nodes = list()
+	for(var/i in 1 to 2000)
+		var/obj/item/device = allocate(/obj/item, locate(origin.x + i % 8, origin.y + 2, origin.z))
+		var/datum/component/netrun_node/node = device.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+		fixture_nodes += node
+		stationary_nodes += node
+		if(!(i % 100))
+			CHECK_TICK
+	var/list/carriers = list()
+	var/list/consoles = list()
+	var/list/builds = list()
+	var/list/entries = list()
+	var/list/address_entries = list()
+	for(var/i in 1 to 8)
+		var/mob/living/carbon/human/carrier = allocate(/mob/living/carbon/human, origin)
+		var/obj/item/netrun_deck/deck = allocate(/obj/item/netrun_deck, carrier)
+		fixture_nodes += deck.GetComponent(/datum/component/netrun_node)
+		carriers += carrier
+		var/datum/netrun_console/console = deck.console
+		qdel(console.map_view)
+		var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+		console.map_view = view
+		console.workspace_view = "map"
+		consoles += console
+	SSnetrun.ensure_topology()
+	// Initialization queues the first native status reconciliation. Complete that
+	// separate workload before measuring movement so a CHECK_TICK cannot make it
+	// look as if the first motion changed every stationary fixture's occupancy.
+	var/settle_ms = 0
+	for(var/datum/component/netrun_node/node as anything in fixture_nodes)
+		var/started = TICK_USAGE
+		node.join_network()
+		node.reconcile_state()
+		node.publish_changes()
+		settle_ms += max(0, TICK_DELTA_TO_MS(TICK_USAGE - started))
+		CHECK_TICK
+	var/warm_ms = 0
+	for(var/datum/netrun_console/console as anything in consoles)
+		var/started = TICK_USAGE
+		console.ui_data(null)
+		warm_ms += max(0, TICK_DELTA_TO_MS(TICK_USAGE - started))
+		var/datum/netrun_map_view/netrun_performance_test/view = console.map_view
+		builds[console] = view.rebuilds
+		entries[console] = view.serialized_nodes
+		address_entries[console] = view.projected_by_address.Copy()
+		CHECK_TICK
+	for(var/datum/netrun_console/console as anything in consoles)
+		console.ui_data(null)
+		var/datum/netrun_map_view/netrun_performance_test/view = console.map_view
+		log_world("NETRUN LOAD movement warmup: viewer=[consoles.Find(console)] initial_projected=[entries[console]] quiet_projected=[view.serialized_nodes - entries[console]] rebuilds=[view.rebuilds - builds[console]] dirty=[length(view.dirty_nodes)]")
+		TEST_ASSERT_EQUAL(view.serialized_nodes, entries[console], "A settled stationary fixture must have a quiet projection before measuring movement")
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/revision = graph.revision
+	var/elapsed_ms = 0
+	var/peak_poll_ms = 0
+	var/move_ms = 0
+	var/peak_move_ms = 0
+	for(var/step in 1 to 24)
+		var/move_started = TICK_USAGE
+		for(var/mob/living/carbon/human/carrier as anything in carriers)
+			carrier.forceMove(locate(origin.x + step % 2, origin.y, origin.z))
+		var/move_cost_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - move_started))
+		move_ms += move_cost_ms
+		peak_move_ms = max(peak_move_ms, move_cost_ms)
+		for(var/datum/netrun_console/console as anything in consoles)
+			var/started = TICK_USAGE
+			console.ui_data(null)
+			var/cost_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - started))
+			elapsed_ms += cost_ms
+			peak_poll_ms = max(peak_poll_ms, cost_ms)
+		CHECK_TICK
+	var/projected = 0
+	var/stationary_projected = 0
+	for(var/datum/netrun_console/console as anything in consoles)
+		var/datum/netrun_map_view/netrun_performance_test/view = console.map_view
+		var/changed = view.serialized_nodes - entries[console]
+		var/static_changed = 0
+		var/list/baseline = address_entries[console]
+		for(var/datum/component/netrun_node/node as anything in stationary_nodes)
+			static_changed += view.projected_by_address[node.address] - baseline[node.address]
+		log_world("NETRUN LOAD movement observations: viewer=[consoles.Find(console)] projected=[changed] stationary_projected=[static_changed] full_rebuilds=[view.rebuilds - builds[console]]")
+		projected += changed
+		stationary_projected += static_changed
+	log_world("NETRUN LOAD movement: stationary=2000 carriers=8 steps=24 ui_polls=192 projected=[projected] stationary_projected=[stationary_projected] settle_cpu_ms=[round(settle_ms, 0.01)] warm_cpu_ms=[round(warm_ms, 0.01)] move_cpu_ms=[round(move_ms, 0.01)] peak_move_ms=[round(peak_move_ms, 0.01)] poll_cpu_ms=[round(elapsed_ms, 0.01)] peak_poll_ms=[round(peak_poll_ms, 0.01)]")
+	for(var/datum/netrun_console/console as anything in consoles)
+		var/datum/netrun_map_view/netrun_performance_test/view = console.map_view
+		TEST_ASSERT_EQUAL(view.rebuilds, builds[console], "Concurrent carried endpoints must retain all eight complete map projections")
+		TEST_ASSERT(view.serialized_nodes - entries[console] <= 8 * 24, "Projection work must depend on moving endpoints, not the two thousand stationary devices")
+	TEST_ASSERT_EQUAL(stationary_projected, 0, "Repeated movement must never reproject the two thousand unchanged devices")
+	TEST_ASSERT_EQUAL(graph.revision, revision, "Repeated same-area player movement must not rebuild station topology")
 
 /// A movement signal must not measure cables, scan APCs or walk active route tables inline.
 /datum/unit_test/netrun_movement_queues_binding/Run()

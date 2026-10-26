@@ -27,7 +27,9 @@
 		allowed = relay.broadcasting
 	if(!allowed)
 		return FALSE
-	return isnull(frequency) || !length(relay.freq_listening) || (frequency in relay.freq_listening)
+	// Native relay_information() filters both endpoints. The overlay must not
+	// bypass a configured hub's channel filter merely because its relay listens.
+	return isnull(frequency) || ((!length(from_machine.freq_listening) || (frequency in from_machine.freq_listening)) && (!length(to_machine.freq_listening) || (frequency in to_machine.freq_listening)))
 
 /// Revalidate every native bridge even when the physical graph has not changed:
 /// telecomms links, direction and listening frequencies still have legacy setters.

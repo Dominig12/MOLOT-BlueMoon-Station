@@ -57,11 +57,8 @@
 	if(!do_after(user, 100, target = src))
 		to_chat(user, "You must stand still to analyze.")
 		return
-	var/datum/techweb/web = find_rnd_network_for_object(src)
-	if(web)
-		web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = 7500))
-		to_chat(user, "You successfully researched the artifact. You have gained 7500 research points.")
-		qdel(src)
+	if(!W.netrun_research_request("artifact", list("artifact" = REF(src)), user))
+		to_chat(user, span_warning("Нет связи с исследовательским сервером. Артефакт сохранён."))
 	return TRUE
 
 /datum/export/alienartifact

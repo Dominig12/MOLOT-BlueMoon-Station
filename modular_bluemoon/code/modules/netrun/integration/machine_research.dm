@@ -1,5 +1,84 @@
 /// Research information is copied only by delivered machine packets. A holder's
 /// logical techweb selects its server; it never replaces physical routing/DNS.
+
+/datum/techweb/proc/has_research_owner(obj/machinery/rnd/server/server)
+	var/datum/weakref/reference = research_owner_refs[REF(server)]
+	return !QDELETED(server) && reference?.resolve() == server
+
+/datum/techweb/proc/add_research_owner(obj/machinery/rnd/server/server)
+	research_owner_refs[REF(server)] = WEAKREF(server)
+	if(QDELETED(research_owner_ref?.resolve()))
+		research_owner_ref = WEAKREF(server)
+
+/datum/techweb/proc/remove_research_owner(obj/machinery/rnd/server/server)
+	research_owner_refs -= REF(server)
+	research_owner_ref = null
+	for(var/key in research_owner_refs.Copy())
+		var/datum/weakref/reference = research_owner_refs[key]
+		var/obj/machinery/rnd/server/remaining = reference?.resolve()
+		if(QDELETED(remaining) || remaining.stored_research != src)
+			research_owner_refs -= key
+		else if(!research_owner_ref)
+			research_owner_ref = reference
+	if(!length(research_owner_refs))
+		qdel(src)
+
+/// An explicit binding merges physical server groups, never a presentation cache.
+/// A group is one shared database: partitions do not create divergent replicas.
+/obj/machinery/rnd/server/proc/link_research_cluster(datum/techweb/target)
+	var/datum/techweb/previous = stored_research
+	if(QDELETED(target) || QDELETED(previous) || target == previous || !length(target.research_owner_refs))
+		return FALSE
+	var/datum/netrun_machine_service/research_server/source_service = get_netrun_machine_service("research.server")
+	var/reachable = FALSE
+	for(var/key in target.research_owner_refs)
+		var/datum/weakref/reference = target.research_owner_refs[key]
+		var/obj/machinery/rnd/server/peer = reference?.resolve()
+		if(!QDELETED(peer) && peer.netrun_online() && source_service.can_reach(peer.get_netrun_machine_service("research.server"), FALSE))
+			reachable = TRUE
+			break
+	if(!reachable)
+		return FALSE
+	// Merge sets directly: replaying research_node would pay science bounties twice.
+	for(var/field in list("researched_nodes", "researched_designs", "custom_designs", "visible_nodes", "available_nodes", "discovered_mutations", "synthesized_gases"))
+		target.vars[field] |= previous.vars[field]
+	target.hidden_nodes &= previous.hidden_nodes
+	for(var/field in list("research_points", "next_income", "last_bitcoins"))
+		var/list/incoming = previous.vars[field]
+		var/list/balance = target.vars[field]
+		for(var/point_type in incoming)
+			balance[point_type] += incoming[point_type]
+	for(var/field in list("boosted_nodes", "deconstructed_items"))
+		var/list/incoming = previous.vars[field]
+		var/list/known = target.vars[field]
+		for(var/id in incoming)
+			if(!islist(incoming[id]))
+				continue
+			if(!islist(known[id]))
+				known[id] = list()
+			for(var/point_type in incoming[id])
+				known[id][point_type] = max(known[id][point_type], incoming[id][point_type])
+	for(var/key in previous.largest_values)
+		target.largest_values[key] = max(target.largest_values[key], previous.largest_values[key])
+	target.problem_computer_charges = min(target.get_problem_computer_charges(), previous.get_problem_computer_charges())
+	target.problem_computer_last_charge_time = max(target.problem_computer_last_charge_time, previous.problem_computer_last_charge_time)
+	target.research_logs += previous.research_logs
+	var/list/affected = target.researched_nodes | target.visible_nodes | target.available_nodes
+	for(var/id in affected)
+		target.update_node_status(SSresearch.techweb_node_by_id(id), FALSE)
+	previous.research_successor_ref = WEAKREF(target)
+	for(var/key in previous.research_owner_refs)
+		var/datum/weakref/reference = previous.research_owner_refs[key]
+		var/obj/machinery/rnd/server/member = reference?.resolve()
+		if(QDELETED(member))
+			continue
+		target.add_research_owner(member)
+		SEND_SIGNAL(member, COMSIG_ATOM_SET_TECHWEB, target)
+	previous.research_owner_refs.Cut()
+	qdel(previous)
+	target.netrun_research_changed()
+	SSresearch.refresh_research_authorities()
+	return TRUE
 /atom/netrun_machine_service_types()
 	. = ..()
 	if(GetComponent(/datum/component/techweb_holder) && !istype(src, /obj/machinery/rnd/server))
@@ -13,7 +92,7 @@
 	var/datum/component/netrun_node/server_node = server.netrun_machine_service_node()
 	if(!source_node || !server_node)
 		return FALSE
-	var/datum/netrun_machine_service/research_client/client = source.get_netrun_machine_service("research.client")
+	var/datum/netrun_machine_service/client = source.get_netrun_machine_service(istype(source, /obj/machinery/rnd/server) ? "research.server" : "research.client")
 	var/datum/netrun_machine_service/research_server/authority = server.get_netrun_machine_service("research.server")
 	if(!client || !authority || !SSnetrun.get_machine_transport().is_ready())
 		return FALSE
@@ -94,6 +173,10 @@
 	var/datum/techweb/web
 	var/list/subscribers = list()
 	var/publish_timer
+	var/list/publish_addresses
+	var/list/publish_data
+	var/publish_cursor = 1
+	var/publish_again = FALSE
 
 /datum/netrun_machine_service/research_server/New(datum/component/netrun_node/node, atom/host_override)
 	..(node, host_override)
@@ -104,6 +187,9 @@
 		deltimer(publish_timer)
 	if(web)
 		UnregisterSignal(web, COMSIG_NETRUN_RESEARCH_CHANGED)
+	SSnetrun.get_task_scheduler().cancel("research.publish", src)
+	publish_addresses = null
+	publish_data = null
 	web = null
 	subscribers.Cut()
 	return ..()
@@ -112,7 +198,7 @@
 	var/obj/machinery/rnd/server/server = host
 	return server.stored_research ? REF(server.stored_research) : null
 
-/// Each physical server has a distinct authority; another server cannot answer for it.
+/// Explicitly linked physical servers may answer for the same authority.
 /datum/netrun_machine_service/research_server/matches(datum/netrun_machine_service/source_service, recipient_tag)
 	return ..() && research_peer(source_service)
 
@@ -124,6 +210,9 @@
 		UnregisterSignal(web, COMSIG_NETRUN_RESEARCH_CHANGED)
 	web = server.stored_research
 	subscribers.Cut()
+	publish_addresses = null
+	publish_data = null
+	publish_again = FALSE
 	if(web)
 		RegisterSignal(web, COMSIG_NETRUN_RESEARCH_CHANGED, PROC_REF(on_research_changed))
 
@@ -147,22 +236,62 @@
 /datum/netrun_machine_service/research_server/proc/publish()
 	publish_timer = null
 	bind_research()
-	if(!web)
+	if(!web || !length(subscribers))
 		return
-	var/list/data = snapshot()
-	for(var/address in subscribers.Copy())
+	if(publish_addresses)
+		publish_again = TRUE
+		return
+	publish_addresses = subscribers.Copy()
+	publish_cursor = 1
+	SSnetrun.get_task_scheduler().enqueue("research.publish", src, NETRUN_TASK_BACKGROUND)
+
+/// All fanout runs under the common worker budget, with at most four peers per task.
+/datum/netrun_machine_service/research_server/proc/publish_batch(datum/controller/subsystem/netrun/worker)
+	if(QDELETED(web) || !publish_addresses)
+		return TRUE
+	if(!publish_data)
+		publish_data = snapshot()
+	var/stop = min(length(publish_addresses), publish_cursor + 3)
+	while(publish_cursor <= stop)
+		var/address = publish_addresses[publish_cursor++]
 		var/list/subscription = subscribers[address]
+		if(!subscription)
+			continue
 		var/datum/weakref/reference = subscription["client"]
-		var/datum/netrun_machine_service/client = reference?.resolve()
-		if(QDELETED(client) || !research_peer(client) || client:binding_generation != subscription["generation"])
+		var/datum/netrun_machine_service/research_client/client = reference?.resolve()
+		if(QDELETED(client) || !research_peer(client) || client.binding_generation != subscription["generation"])
 			subscribers -= address
 			continue
-		data["generation"] = subscription["generation"]
+		var/datum/netrun_machine_service/research_server/current = client.subscription_ref?.resolve()
+		if(!QDELETED(current) && current != src)
+			subscribers -= address
+			continue
+		if(subscription["revision"] == publish_data["revision"])
+			continue
+		publish_data["generation"] = subscription["generation"]
 		// Message construction already owns a deep copy of its payload.
-		send_to(client, new /datum/netrun_machine_message/research(data))
+		if(send_to(client, new /datum/netrun_machine_message/research(publish_data)))
+			subscription["revision"] = publish_data["revision"]
+	if(publish_cursor <= length(publish_addresses))
+		return FALSE
+	else
+		publish_addresses = null
+		publish_data = null
+		if(publish_again)
+			publish_again = FALSE
+			publish()
+	return TRUE
+
+/datum/netrun_task/research_publish
+	parent_type = /datum/netrun_task/continuation
+	kind = "research.publish"
+
+/datum/netrun_task/research_publish/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	var/datum/netrun_machine_service/research_server/service = target()
+	return service.publish_batch(worker)
 
 /datum/netrun_machine_service/research_server/proc/research_peer(datum/netrun_machine_service/peer)
-	return peer?.service_id == "research.client" && !QDELETED(web) && web.research_owner_ref?.resolve() == host && netrun_atom_techweb(peer.host) == web
+	return peer?.service_id == "research.client" && !QDELETED(web) && web.has_research_owner(host) && netrun_atom_techweb(peer.host) == web
 
 /datum/netrun_machine_service/research_server/accepts(datum/netrun_machine_message/message)
 	bind_research()
@@ -174,7 +303,7 @@
 		return FALSE
 	var/operation = message.payload["operation"]
 	if(operation in list("snapshot", "watch"))
-		subscribers[message.source.node.address] = list("client" = WEAKREF(message.source), "generation" = message.payload["generation"])
+		subscribers[message.source.node.address] = list("client" = WEAKREF(message.source), "generation" = message.payload["generation"], "revision" = web.netrun_research_revision)
 	var/success = TRUE
 	if(operation == "watch")
 		if(message.payload["revision"] == web.netrun_research_revision)
@@ -188,6 +317,20 @@
 	if(operation == "credit")
 		web.add_point_list(message.payload["points"])
 		// Delivery already has an outcome; credit-only telemetry needs no database reply.
+		return TRUE
+	if(operation == "artifact")
+		var/obj/item/xenoarch/help/research/tool = message.source.host
+		var/mob/living/user = message.user_ref?.resolve()
+		var/obj/item/artifact = locate(message.payload["artifact"])
+		if(!istype(tool) || !istype(user) || QDELETED(artifact) || !(tool in user.contents) || user.incapacitated() || !user.Adjacent(artifact))
+			return FALSE
+		var/points = artifact.netrun_artifact_research_points()
+		if(!points)
+			return FALSE
+		// Identity and value come from the real artifact; duplicated packets cannot replay it.
+		qdel(artifact)
+		web.add_point_type(TECHWEB_POINT_TYPE_GENERIC, points)
+		to_chat(user, span_notice("Артефакт исследован: получено [points] очков исследований."))
 		return TRUE
 	if(operation == "explosion")
 		var/obj/machinery/doppler_array/research/sensor = message.source.host
@@ -330,11 +473,19 @@
 
 /datum/netrun_machine_service/research_client/proc/live_authority()
 	var/datum/techweb/binding = netrun_atom_techweb(host)
-	var/obj/machinery/rnd/server/owner = binding?.research_owner_ref?.resolve()
-	if(QDELETED(owner) || !owner.netrun_online())
+	if(QDELETED(binding))
 		return null
-	var/datum/netrun_machine_service/research_server/server = owner.get_netrun_machine_service("research.server")
-	return can_reach(server) ? binding : null
+	for(var/key in binding.research_owner_refs)
+		var/datum/weakref/reference = binding.research_owner_refs[key]
+		var/obj/machinery/rnd/server/owner = reference?.resolve()
+		if(!QDELETED(owner) && owner.netrun_online() && can_reach(owner.get_netrun_machine_service("research.server")))
+			return binding
+	return null
+
+/// A shared authority is unicast: broadcasting mutations would credit/debit it twice.
+/datum/netrun_machine_service/research_client/resolve(destination_id, recipient_tag, datum/netrun_machine_directory/entry)
+	var/list/targets = ..()
+	return destination_id == "research.server" && length(targets) ? list(targets[1]) : targets
 
 /// One design request yields one grant; no retry can replay native resource consumption.
 /datum/netrun_machine_service/research_client/proc/request_design(design_id, datum/callback/complete)
@@ -392,7 +543,7 @@
 
 /datum/netrun_machine_service/research_client/accepts(datum/netrun_machine_message/message)
 	var/datum/techweb/binding = netrun_atom_techweb(host)
-	return !QDELETED(binding) && message.source?.service_id == "research.server" && binding.research_owner_ref?.resolve() == message.source.host && netrun_atom_techweb(message.source.host) == binding && message.payload["binding"] == REF(binding) && message.payload["generation"] == binding_generation
+	return !QDELETED(binding) && message.source?.service_id == "research.server" && binding.has_research_owner(message.source.host) && netrun_atom_techweb(message.source.host) == binding && message.payload["binding"] == REF(binding) && message.payload["generation"] == binding_generation
 
 /datum/netrun_machine_service/research_client/receive(datum/netrun_machine_message/message)
 	if(!accepts(message))
@@ -417,6 +568,11 @@
 		var/obj/machinery/computer/rdconsole/console = host
 		if(istype(console))
 			console.receive_research_disk_snapshot(data)
+		return TRUE
+	// A restored cluster member can still have a queued copy of the last push.
+	// Bare equal-revision state changes neither the current subscription nor caches.
+	// Explicit action/disk outcomes retain their processing even at the same revision.
+	if(snapshot_binding == data["binding"] && snapshot_revision == data["revision"] && !data["requested_operation"])
 		return TRUE
 	snapshot_binding = data["binding"]
 	snapshot_revision = data["revision"]
@@ -545,3 +701,23 @@
 /obj/machinery/mecha_part_fabricator/LateInitialize()
 	. = ..()
 	sync(TRUE, TRUE)
+
+/obj/item/xenoarch/help/research/Initialize(mapload)
+	. = ..()
+	AddComponent(/datum/component/techweb_holder)
+
+/// The server computes the reward; callers cannot supply an arbitrary point value.
+/obj/item/proc/netrun_artifact_research_points()
+	return 0
+
+/obj/item/ancientartifact/useless/netrun_artifact_research_points()
+	return 4500
+
+/obj/item/ancientartifact/faunafossil/netrun_artifact_research_points()
+	return 9000
+
+/obj/item/ancientartifact/florafossil/netrun_artifact_research_points()
+	return 9000
+
+/obj/item/alienartifact/netrun_artifact_research_points()
+	return 7500

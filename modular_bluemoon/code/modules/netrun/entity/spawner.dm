@@ -153,6 +153,10 @@
 			for(var/turf/open/floor/T in A)
 				if(!is_station_level(T.z) || T.density || T.is_blocked_turf(TRUE))
 					continue
+				// Wall/floor machinery need not be dense. A mapped air alarm or vent
+				// still owns its tile and must not acquire a server on top of it.
+				if(locate(/obj/machinery) in T)
+					continue
 				candidates += T
 		if(length(candidates))
 			return pick(candidates)

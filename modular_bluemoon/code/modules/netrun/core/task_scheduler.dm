@@ -33,6 +33,21 @@
 /datum/netrun_task/proc/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
 	return FALSE
 
+/// Bounded maintenance shares one continuation contract. A subtype advances one
+/// finite slice and returns TRUE when finished; queue ownership/fairness stay here.
+/datum/netrun_task/continuation
+
+/datum/netrun_task/continuation/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	var/datum/work = target()
+	if(QDELETED(work))
+		return FALSE
+	if(!advance(worker, limits || worker.get_execution_limits()) && !QDELETED(work))
+		worker.get_task_scheduler().enqueue(kind, work, priority, interactive)
+	return TRUE
+
+/datum/netrun_task/continuation/proc/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
+	return TRUE
+
 /// A queue never contains cancelled tasks or obsolete priority entries.
 /datum/netrun_task_queue
 	var/datum/netrun_task/first
@@ -173,18 +188,15 @@
 
 /// Bounded upstream topology preparation stays behind its own task implementation.
 /datum/netrun_task/apc_prebuild
+	parent_type = /datum/netrun_task/continuation
 	kind = "apc_prebuild"
 
-/datum/netrun_task/apc_prebuild/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
-	if(!limits)
-		limits = worker.get_execution_limits()
+/datum/netrun_task/apc_prebuild/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
 	var/datum/netrun_topology/graph = target()
-	if(QDELETED(graph) || !graph.dirty)
-		return FALSE
+	if(!graph.dirty)
+		return TRUE
 	worker.apc_prebuild_steps++
-	if(!graph.advance_apc_prebuild(limits.apc_operations) && graph.dirty)
-		worker.get_task_scheduler().enqueue(kind, graph, NETRUN_TASK_BACKGROUND)
-	return TRUE
+	return graph.advance_apc_prebuild(limits.apc_operations) || !graph.dirty
 
 /// Aggregate statistics without keeping references to processed objects.
 /datum/netrun_task_profile

@@ -1,5 +1,7 @@
 /// A dive owns the body link and its subscriptions, independently of resident movement and vision.
 /datum/netrun_dive_link
+	parent_type = /datum/netrun_delivery
+	delivery_kind = "dive_link"
 	var/mob/camera/netrun_entity/owner
 	var/mob/living/carbon/body
 	var/entry_address
@@ -44,6 +46,7 @@
 	check_link(0)
 
 /datum/netrun_dive_link/proc/release_body()
+	cancel_delivery()
 	if(body)
 		UnregisterSignal(body, list(COMSIG_MOB_APPLY_DAMAGE, COMSIG_LIVING_DEATH, COMSIG_PARENT_QDELETING, COMSIG_MOVABLE_MOVED))
 	var/datum/netrun_console/implant/client = entry_client_ref?.resolve()
@@ -61,6 +64,11 @@
 /datum/netrun_dive_link/proc/on_node_changed(datum/source, datum/component/netrun_node/old_node, datum/component/netrun_node/new_node)
 	SIGNAL_HANDLER
 	track_route(new_node)
+	if(body && new_node)
+		// Subscribe to the new host immediately; the worker replaces this superset
+		// with the precise physical return path after the residency change settles.
+		watch_nodes(watched_nodes | list(new_node))
+		queue_link_check()
 
 /datum/netrun_dive_link/proc/track_route(datum/component/netrun_node/node)
 	if(!body || !node?.address)
@@ -117,19 +125,42 @@
 		RegisterSignal(node, COMSIG_PARENT_QDELETING, PROC_REF(on_link_node_deleted))
 		RegisterSignal(node, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(on_link_node_changed))
 
-/datum/netrun_dive_link/proc/on_link_node_changed(datum/source)
+/datum/netrun_dive_link/proc/on_link_node_changed(datum/source, datum/component/netrun_node/changed_node, flags)
 	SIGNAL_HANDLER
 	var/datum/component/netrun_node/node = source
-	if(!node.is_online())
-		check_link(0)
+	if((flags & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED)) || !node.is_online())
+		queue_link_check()
 
 /datum/netrun_dive_link/proc/on_link_node_deleted(datum/source)
 	SIGNAL_HANDLER
 	var/datum/component/netrun_node/node = source
 	if(node.address == entry_address)
 		emergency_return("Точка входа в сеть уничтожена!")
-	// Transit deletion is reconciled at the next resident tick, after graph removal;
-	// an intact alternative physical route can still carry the body link.
+	else
+		// The queued check runs after graph removal. An intact alternative path
+		// may still carry the link; no full resident/UI population cycle is needed.
+		queue_link_check()
+
+/datum/netrun_dive_link/proc/queue_link_check()
+	return queue_delivery()
+
+/datum/netrun_dive_link/can_queue_delivery()
+	return body && !returning && !checking
+
+/datum/netrun_dive_link/delivery_priority()
+	return NETRUN_TASK_CRITICAL
+
+/datum/netrun_dive_link/delivery_interactive()
+	return TRUE
+
+/datum/netrun_dive_link/deliver()
+	cancel_delivery()
+	check_link(0)
+	return TRUE
+
+/datum/netrun_task/dive_link
+	parent_type = /datum/netrun_task/delivery
+	kind = "dive_link"
 
 /datum/netrun_dive_link/proc/process_tick(delta)
 	if(!body)

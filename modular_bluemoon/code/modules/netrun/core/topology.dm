@@ -55,10 +55,24 @@
 
 /datum/netrun_topology/proc/on_node_moved(datum/source, datum/component/netrun_node/node, turf/old_turf, turf/new_turf)
 	SIGNAL_HANDLER
-	if(QDELETED(node) || !is_infrastructure(node) || old_turf == new_turf)
+	if(QDELETED(node) || old_turf == new_turf)
+		return
+	if(!is_infrastructure(node))
+		moved_nodes[node] = TRUE
 		return
 	node.topology_turf = new_turf
 	infrastructure_changed()
+
+/// Explicit full route snapshots need current destination costs even before the
+/// next worker pass. Reconcile only moved leaves, never scan stationary endpoints.
+/datum/netrun_topology/proc/reconcile_movement()
+	if(rebuilding || !length(moved_nodes))
+		return
+	var/list/pending = moved_nodes
+	moved_nodes = list()
+	for(var/datum/component/netrun_node/node as anything in pending)
+		if(!QDELETED(node))
+			node.join_network()
 
 /// Cached structural graph. Online state is deliberately absent: routing validates it live.
 /datum/netrun_topology
@@ -80,6 +94,8 @@
 	var/list/relay_addresses = list()
 	var/list/registered_apcs = list()
 	var/list/registered_relays = list()
+	/// Coalesced leaf geometry changes, shared by node workers and route snapshots.
+	var/list/moved_nodes = list()
 	var/indexed_infrastructure_visits = 0
 	var/list/nearest_by_turf = list()
 	/// Moving an endpoint updates route costs without replacing its structural parent.
@@ -107,6 +123,7 @@
 
 /// Drop strong cache references immediately; an unopened map must not retain deleted nodes.
 /datum/netrun_topology/proc/forget_node(datum/component/netrun_node/node)
+	moved_nodes -= node
 	if(!node)
 		return
 	nodes -= node.address
@@ -207,6 +224,7 @@
 /// Re-evaluate only a changed binding context, a lost APC, or a formerly empty sector.
 /// Existing valid bindings survive added nearer APCs and ordinary movement within their root area.
 /datum/netrun_topology/proc/refresh_node(datum/component/netrun_node/node)
+	moved_nodes -= node
 	if(QDELETED(node) || QDELETED(node.parent))
 		return
 	var/turf/position = node.physical_turf()
@@ -513,6 +531,7 @@
 	apcs_by_sector.Cut()
 	registered_apcs.Cut()
 	registered_relays.Cut()
+	moved_nodes.Cut()
 	relay_addresses.Cut()
 	nearest_by_turf.Cut()
 	return ..()
