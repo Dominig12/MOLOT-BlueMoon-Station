@@ -3,7 +3,7 @@
 	display_name = "Сетевая инфраструктура"
 	description = "Проводные терминалы, серверы данных и инструменты для работы с локальными сетями станции."
 	prereq_ids = list("comptech", "datatheory")
-	design_ids = list("netrun_terminal", "netrun_server", "netrun_dns", "netrun_shard", "netrun_deck", "netrun_daemon_buffer", "netrun_daemon_autobreach")
+	design_ids = list("netrun_terminal", "netrun_server", "netrun_shard", "netrun_deck", "netrun_daemon_buffer", "netrun_daemon_autobreach")
 	research_costs = list(TECHWEB_POINT_TYPE_GENERIC = 2000)
 
 /datum/techweb_node/netrunning_neural

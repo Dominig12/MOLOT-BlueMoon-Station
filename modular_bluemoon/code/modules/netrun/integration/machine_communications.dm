@@ -251,7 +251,7 @@
 	to_chat(user, span_notice("Сообщение поставлено в сетевую очередь."))
 	return TRUE
 
-/// These external side effects happen only after DNS and packet delivery.
+/// These external side effects happen only after APC discovery and packet delivery.
 /obj/machinery/computer/communications/proc/deliver_netrun_outbound(list/data, mob/user)
 	var/text = data["text"]
 	if(!istext(text) || !length(text) || length(text) > MAX_MESSAGE_LEN)

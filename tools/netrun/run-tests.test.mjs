@@ -93,6 +93,22 @@ test('a failed compiler cannot be overridden by a superficially successful repor
   assert.equal(fs.existsSync(suite.lockFile), false);
 });
 
+test('full-map run quotes the DM map define and verifies only its fresh profile report', async (context) => {
+  const { root, write } = fixture(context);
+  write('data/logs/ci-full-map/unit_tests.json', JSON.stringify({ [sampleName]: { status: 0 } }));
+  write('data/logs/ci-hermetic/unit_tests.json', JSON.stringify({ [sampleName]: { status: 0 } }));
+  const suite = new NetrunTestSuite(root, async (executable, args) => {
+    assert.equal(executable, process.execPath);
+    assert.deepEqual(args.slice(1), ['dm-test', '--unit-test-profile=full-map', '--test-list=tmp/netrun-tests.txt', '--define=FORCE_MAP "_maps/peacesyndicatestation.json"']);
+    assert.equal(fs.existsSync(path.join(root, 'data/logs/ci-full-map/unit_tests.json')), false);
+    write('data/logs/ci-full-map/unit_tests.json', JSON.stringify({ [sampleName]: { status: 0 } }));
+  });
+  await suite.runDm([sampleName], { map: '_maps/peacesyndicatestation.json' });
+  suite.execute = async () => {};
+  await assert.rejects(suite.runDm([sampleName], { map: '_maps/peacesyndicatestation.json' }), /did not write a fresh/);
+  assert.equal(fs.existsSync(suite.lockFile), false);
+});
+
 test('concurrent runner detection preserves the existing owner lock', async (context) => {
   const { root, write } = fixture(context);
   write('tmp/netrun-tests.lock', 'existing owner');
@@ -126,4 +142,10 @@ test('list works from a different working directory and bad CLI arguments fail b
   const empty = spawnSync(process.execPath, [runner, '--list', '--filter=no_such_netrun_test_123456'], { cwd: os.tmpdir(), encoding: 'utf8' });
   assert.equal(empty.status, 1);
   assert.match(empty.stderr, /No Netrun tests matched/);
+  const mapList = spawnSync(process.execPath, [runner, '--list', '--peace-map'], { cwd: os.tmpdir(), encoding: 'utf8' });
+  assert.equal(mapList.status, 0, mapList.stderr);
+  assert.equal(mapList.stdout.trim(), '/datum/unit_test/atmos_netrun_roundstart_registration');
+  const mixed = spawnSync(process.execPath, [runner, '--peace-map', '--frontend'], { cwd: os.tmpdir(), encoding: 'utf8' });
+  assert.equal(mixed.status, 1);
+  assert.match(mixed.stderr, /cannot combine/);
 });

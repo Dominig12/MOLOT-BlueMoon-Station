@@ -116,6 +116,52 @@
 /datum/netrun_machine_message/transport_fixture/queue_snapshot/coalescing_key()
 	return "replaceable-status"
 
+/datum/netrun_machine_service/transport_fixture
+	var/resolve_calls = 0
+
+/datum/netrun_machine_service/transport_fixture/resolve(destination_id, recipient_tag)
+	resolve_calls++
+	return ..()
+
+/// Command bursts share one lookup and yield admission before consuming the batch.
+/datum/unit_test/netrun_delivery_discovery_burst_slices/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/list/outcomes = list()
+	for(var/i in 1 to 17)
+		TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list("value" = i), outcomes), scene.target.service_tag()), "A finite command burst must be admitted")
+	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|[scene.target.service_tag()]"]
+	TEST_ASSERT_EQUAL(scene.source.resolve_calls, 0, "Sending a burst must not resolve synchronously")
+	query.deliver()
+	TEST_ASSERT(!QDELETED(query) && length(query.queued), "The first slice must retain the undispatched burst")
+	TEST_ASSERT(scene.pending_packets() > 0 && scene.pending_packets() <= 8, "One discovery slice must bound packet admission")
+	TEST_ASSERT_EQUAL(scene.source.resolve_calls, 1, "One burst must use one recipient lookup")
+	var/deadline = world.time + 5 SECONDS
+	while(outcomes["delivered"] != 17 && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(outcomes["delivered"], 17, "Every original command must execute exactly once after later slices")
+	TEST_ASSERT(!outcomes["failed"], "Yielding a valid burst must not lose commands")
+	TEST_ASSERT_EQUAL(scene.source.resolve_calls, 1, "Continuation slices must reuse the original recipient lookup")
+	TEST_ASSERT(QDELETED(query), "A drained burst must release its lookup and scheduler task")
+
+/// Source teardown must cancel later slices as well as already admitted packets.
+/datum/unit_test/netrun_delivery_discovery_burst_source_deleted/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/queued_before = transport.queued_messages
+	var/list/outcomes = list()
+	for(var/i in 1 to 17)
+		scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list(), outcomes), scene.target.service_tag())
+	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|[scene.target.service_tag()]"]
+	query.deliver()
+	var/key = "service_discovery:[REF(query)]"
+	TEST_ASSERT(SSnetrun.get_task_scheduler().by_key[key], "A partial burst must own a continuation")
+	qdel(scene.source)
+	TEST_ASSERT(QDELETED(query), "Source deletion must immediately cancel an active continuation")
+	TEST_ASSERT_NULL(SSnetrun.task_scheduler.by_key[key], "Source deletion must remove the continuation task")
+	TEST_ASSERT_EQUAL(transport.queued_messages, queued_before, "Cancelling a partial burst must release all owned message capacity")
+	TEST_ASSERT_EQUAL(outcomes["failed"], 17, "Every unicast command must fail once across pending and already admitted work")
+	TEST_ASSERT_EQUAL(scene.target.received, 0, "Deleted-source commands must never reach the recipient")
+
 /// Telemetry is ordinary background work even when its native message identifies an actor.
 /datum/unit_test/netrun_delivery_machine_lane_and_cleanup/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
@@ -172,76 +218,164 @@
 	TEST_ASSERT(!packet.send(), "A packet without a physical route must fail admission")
 	TEST_ASSERT(findtext(outcomes["reason"], "маршрута"), "Route failure must remain distinguishable from backpressure")
 
-/// Losing the first resolver must switch discovery, preserving one original data delivery.
-/datum/unit_test/netrun_delivery_dns_query_failover/Run()
+/// Every addressed send must wait for the same budgeted service-discovery task.
+/datum/unit_test/netrun_delivery_discovery_admission/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
-	var/obj/machinery/netrun_server/dns/backup = scene.machine(/obj/machinery/netrun_server/dns, scene.dns_spot)
 	var/list/outcomes = list()
-	TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list("value" = "failover"), outcomes), scene.target.service_tag()), "Cold discovery must admit the original command")
+	TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list("value" = "queued", "reply" = TRUE), outcomes), scene.target.service_tag()), "Addressed discovery must admit the original command")
 	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|[scene.target.service_tag()]"]
-	var/old_generation = query.attempt_generation
-	var/datum/netrun_machine_service/first_resolver = query.resolver
-	var/datum/netrun_machine_packet/dns_query/first = query.active_packet_ref.resolve()
-	first.fail("fixture first DNS lost")
-	TEST_ASSERT(!QDELETED(query), "A reachable untried resolver must preserve discovery")
-	TEST_ASSERT(!query.is_current(old_generation), "Retiring the failed attempt must invalidate its callbacks immediately")
-	query.finish(old_generation)
-	query.answer(old_generation)
-	TEST_ASSERT(!length(scene.source.directory), "Stale query/reply callbacks must not install an obsolete directory")
-	var/delivered = netrun_wait_delivery(outcomes)
-	TEST_ASSERT(delivered, "Backup DNS must deliver the original queued message: [outcomes["reason"]]; source journal [json_encode(scene.source.node.packet_logs)]; backup journal [json_encode(backup.GetComponent(/datum/component/netrun_node):packet_logs)]")
-	TEST_ASSERT_EQUAL(scene.target.received, 1, "Resolver failover must execute data exactly once")
-	TEST_ASSERT_EQUAL(outcomes["delivered"], 1, "Failover must acknowledge the original command once")
-	TEST_ASSERT(!outcomes["failed"], "A recoverable DNS attempt must not fail its queued command")
-	var/datum/netrun_machine_directory/entry = scene.source.directory["transport.fixture|[scene.target.service_tag()]"]
-	TEST_ASSERT(entry.resolver_ref.resolve() != first_resolver, "The completed cache must identify the backup that actually replied")
-	TEST_ASSERT(backup, "The backup fixture must remain physically present")
+	TEST_ASSERT(!QDELETED(query), "The original command must own one pending service lookup")
+	TEST_ASSERT(SSnetrun.get_task_scheduler().by_key["service_discovery:[REF(query)]"], "Service lookup must use the existing worker queue")
+	TEST_ASSERT_EQUAL(scene.pending_packets(), 0, "Admission must not allocate routed data packets outside the worker")
+	TEST_ASSERT_EQUAL(scene.target.received, 0, "Admission must not call the recipient inline")
+	TEST_ASSERT(netrun_wait_delivery(outcomes), "The worker must deliver the original queued command")
+	TEST_ASSERT_EQUAL(scene.target.received, 1, "Queued discovery must execute the command exactly once")
+	TEST_ASSERT_EQUAL(outcomes["delivered"], 1, "Queued discovery must acknowledge the original command once")
+	TEST_ASSERT(!outcomes["failed"], "A valid APC route must not fail the queued command")
+	var/deadline = world.time + 1 SECONDS
+	while(!scene.source.received && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(scene.source.last_payload?["answer"], "queued", "The real reply must return through data delivery")
 
-/// Failure after the DNS query is handled must retry discovery, not replay a data command.
-/datum/unit_test/netrun_delivery_dns_reply_failover/Run()
+/// A cable lost before lookup fails finally; restoring it requires a fresh command.
+/datum/unit_test/netrun_delivery_discovery_apc_unavailable/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
-	scene.machine(/obj/machinery/netrun_server/dns, scene.dns_spot)
 	var/list/outcomes = list()
+	TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list("value" = "lost"), outcomes), scene.target.service_tag()), "A command must be admitted while its APC is available")
+	scene.apc.set_machine_stat(BROKEN)
+	TEST_ASSERT(!netrun_wait_delivery(outcomes), "Unavailable APC routing must reject the pending lookup")
+	TEST_ASSERT_EQUAL(outcomes["failed"], 1, "An unavailable route must report one final failure")
+	TEST_ASSERT_EQUAL(scene.target.received, 0, "There is no native receive fallback after an APC failure")
+	TEST_ASSERT_EQUAL(length(scene.source.resolutions), 0, "Final route failure must release the pending lookup")
+	scene.apc.set_machine_stat(0)
+	var/list/recovered = list()
+	TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list("value" = "fresh"), recovered), scene.target.service_tag()), "A restored APC must admit a fresh command")
+	TEST_ASSERT(netrun_wait_delivery(recovered), "The fresh command must use the restored physical route")
+	TEST_ASSERT_EQUAL(scene.target.received, 1, "Route restoration must not replay the failed earlier command")
+	TEST_ASSERT_EQUAL(scene.target.last_payload["value"], "fresh", "Only the newly submitted command may execute")
+	TEST_ASSERT_EQUAL(outcomes["failed"], 1, "Later restoration must not change the previous terminal outcome")
+
+/// Loading waiters own their command until completion or explicit cancellation.
+/datum/unit_test/netrun_delivery_discovery_loading_cancel/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/list/outcomes = list()
+	SSatoms.map_loader_begin()
 	scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list(), outcomes), scene.target.service_tag())
 	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|[scene.target.service_tag()]"]
-	var/datum/netrun_machine_packet/dns_query/first = query.active_packet_ref.resolve()
-	first.deliver()
-	var/datum/netrun_machine_packet/dns_reply/reply = query.active_packet_ref.resolve()
-	TEST_ASSERT(istype(reply) && !QDELETED(reply), "The real query must produce an independently routed DNS reply")
-	reply.fail("fixture reply lost")
-	TEST_ASSERT(netrun_wait_delivery(outcomes), "Losing the first reply must recover through another resolver")
-	TEST_ASSERT_EQUAL(scene.target.received, 1, "A reply retry must not duplicate the eventual data command")
-	TEST_ASSERT(!outcomes["failed"] && outcomes["delivered"] == 1, "The caller must see exactly one successful terminal outcome")
+	var/key = "service_discovery:[REF(query)]"
+	var/was_pending = !QDELETED(query) && !outcomes["failed"] && !outcomes["delivered"]
+	qdel(query)
+	SSatoms.map_loader_stop()
+	TEST_ASSERT(was_pending, "A loading request must wait without receiving a premature failure")
+	TEST_ASSERT_EQUAL(outcomes["failed"], 1, "Cancelling a loading lookup must fail its queued command once")
+	TEST_ASSERT_EQUAL(scene.target.received, 0, "A cancelled loading lookup must not send data")
+	TEST_ASSERT_EQUAL(length(scene.source.resolutions), 0, "Cancellation must release the coalesced source lookup")
+	TEST_ASSERT_NULL(SSnetrun.get_task_scheduler().by_key[key], "Cancellation must remove its admitted discovery task")
 
-/// Watchdogs and total deadlines are bounded even when obsolete timer callbacks arrive.
-/datum/unit_test/netrun_delivery_dns_watchdog_bounds/Run()
+/// An indexed recipient identity is revalidated by the worker, never cached past replacement.
+/datum/unit_test/netrun_delivery_service_tag_revocation/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
-	scene.machine(/obj/machinery/netrun_server/dns, scene.dns_spot)
+	var/original_tag = scene.target.service_tag()
 	var/list/outcomes = list()
-	scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list(), outcomes), scene.target.service_tag())
-	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|[scene.target.service_tag()]"]
-	var/generation = query.attempt_generation
-	var/datum/netrun_machine_packet/dns_query/first = query.active_packet_ref.resolve()
-	query.attempt_expired(generation)
-	TEST_ASSERT(QDELETED(first), "An expired attempt must cancel its owned in-flight packet")
-	var/retry_generation = query.attempt_generation
-	query.attempt_expired(generation)
-	TEST_ASSERT_EQUAL(query.attempt_generation, retry_generation, "A stale watchdog must not consume another attempt")
-	query.deadline = world.time
-	query.begin()
-	TEST_ASSERT(QDELETED(query), "The shared discovery deadline must prevent another resolver attempt")
-	TEST_ASSERT_EQUAL(outcomes["failed"], 1, "An expired resolution must fail its queued message once")
-	TEST_ASSERT_EQUAL(scene.target.received, 0, "An expired discovery must not send data")
-	TEST_ASSERT_EQUAL(length(scene.source.resolutions), 0, "Deadline failure must release the coalesced query")
+	TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list(), outcomes), original_tag), "The old indexed identity must be admitted before replacement")
+	scene.receiver.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list(), 3)
+	var/current_tag = scene.target.service_tag()
+	TEST_ASSERT(current_tag != original_tag, "Replacing the physical component must retire its former address")
+	TEST_ASSERT(!netrun_wait_delivery(outcomes), "The worker must reject a recipient identity revoked before lookup")
+	TEST_ASSERT_EQUAL(outcomes["failed"], 1, "A revoked recipient identity must report one terminal failure")
+	TEST_ASSERT_EQUAL(scene.target.received, 0, "An old identity cannot silently target the replacement")
+	var/list/current = list()
+	TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list(), current), current_tag), "The actual replacement identity must accept a fresh request")
+	TEST_ASSERT(netrun_wait_delivery(current), "The indexed replacement must be reachable through its real APC")
+	TEST_ASSERT_EQUAL(scene.target.received, 1, "Only the fresh identity's command may execute")
 
-/datum/unit_test/netrun_delivery_dns_attempt_limit/Run()
+/// Deleting the sender also owns and cancels its admitted discovery operation.
+/datum/unit_test/netrun_delivery_discovery_source_deleted/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
-	scene.machine(/obj/machinery/netrun_server/dns, scene.dns_spot)
 	var/list/outcomes = list()
-	scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list(), outcomes), scene.target.service_tag())
+	TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list(), outcomes), scene.target.service_tag()), "Source deletion needs a real admitted lookup")
 	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|[scene.target.service_tag()]"]
-	query.attempts = NETRUN_DNS_MAX_ATTEMPTS
-	query.retry("fixture attempt limit", query.attempt_generation)
-	TEST_ASSERT(QDELETED(query), "Even a reachable backup must not bypass the maximum attempts")
-	TEST_ASSERT_EQUAL(outcomes["failed"], 1, "Attempt exhaustion must report one terminal failure")
-	TEST_ASSERT_EQUAL(scene.target.received, 0, "Attempt exhaustion must not execute queued data")
+	var/key = "service_discovery:[REF(query)]"
+	qdel(scene.sender)
+	TEST_ASSERT(QDELETED(query), "Deleting the physical source must destroy its admitted lookup")
+	TEST_ASSERT_EQUAL(outcomes["failed"], 1, "Source deletion must settle its queued message once")
+	TEST_ASSERT_EQUAL(scene.target.received, 0, "A deleted sender cannot execute a queued command")
+	TEST_ASSERT_NULL(SSnetrun.get_task_scheduler().by_key[key], "Source deletion must release its discovery scheduler entry")
+
+/// Observe domain matching rather than relying on elapsed time for area scoping.
+/datum/netrun_machine_service/atmos/controller/discovery_scope_fixture
+	var/match_checks = 0
+
+/datum/netrun_machine_service/atmos/controller/discovery_scope_fixture/matches(datum/netrun_machine_service/source_service, recipient_tag)
+	match_checks++
+	return ..()
+
+/obj/machinery/airalarm/discovery_scope_fixture/netrun_machine_service_types()
+	. = ..()
+	. -= /datum/netrun_machine_service/atmos/controller
+	. += /datum/netrun_machine_service/atmos/controller/discovery_scope_fixture
+
+/// One vent registers natively without matching every air alarm on the station.
+/datum/unit_test/netrun_delivery_atmos_area_candidates/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/airalarm/discovery_scope_fixture/alarm = scene.machine(/obj/machinery/airalarm/discovery_scope_fixture, scene.source_spot)
+	var/obj/machinery/atmospherics/components/unary/vent_pump/vent = scene.machine(/obj/machinery/atmospherics/components/unary/vent_pump, scene.target_spot)
+	var/obj/machinery/atmospherics/components/unary/outlet_injector/injector = scene.machine(/obj/machinery/atmospherics/components/unary/outlet_injector, scene.target_spot)
+	var/datum/netrun_machine_service/atmos/controller/discovery_scope_fixture/local_controller = alarm.get_netrun_machine_service("atmos.controller")
+	var/datum/netrun_machine_service/atmos/device/device = vent.get_netrun_machine_service("atmos.device")
+	var/datum/netrun_machine_service/atmos/device/injector/injector_service = injector.get_netrun_machine_service("atmos.device")
+	var/list/levels = multiz_gravity_test_levels()
+	scene.mark_station(levels[1])
+	var/list/unrelated = list()
+	var/turf/other_spot
+	var/datum/netrun_machine_service/atmos/controller/discovery_scope_fixture/other_controller
+	for(var/i in 1 to 64)
+		var/area/room = scene.room(/area/netrun_route_test)
+		var/turf/spot = scene.take(locate(80 + (i - 1) % 8, 80 + round((i - 1) / 8), levels[1]), room, TRUE)
+		var/obj/machinery/airalarm/discovery_scope_fixture/other_alarm = scene.machine(/obj/machinery/airalarm/discovery_scope_fixture, spot)
+		var/datum/netrun_machine_service/atmos/controller/discovery_scope_fixture/controller = other_alarm.get_netrun_machine_service("atmos.controller")
+		unrelated += controller
+		if(i == 1)
+			other_spot = spot
+			other_controller = controller
+	SSnetrun.ensure_topology()
+	for(var/datum/netrun_machine_service/atmos/controller/discovery_scope_fixture/controller as anything in unrelated)
+		controller.match_checks = 0
+	local_controller.match_checks = 0
+	// Native initialization may already have delivered the first broadcast.
+	// Require a new real delivery after resetting the observations.
+	alarm.netrun_vent_info.Cut()
+	vent.broadcast_status()
+	var/deadline = world.time + 5 SECONDS
+	while(!alarm.netrun_vent_info[vent.id_tag] && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(alarm.netrun_vent_info[vent.id_tag], "The real vent status must register with its own native air alarm")
+	TEST_ASSERT(local_controller.match_checks > 0, "The local controller must still run native channel and area authorization")
+	var/datum/weakref/ack = device.acknowledged_controllers[REF(local_controller)]
+	TEST_ASSERT_EQUAL(ack?.resolve(), local_controller, "Successful native delivery must acknowledge the actual local controller")
+	for(var/datum/netrun_machine_service/atmos/controller/discovery_scope_fixture/controller as anything in unrelated)
+		TEST_ASSERT_EQUAL(controller.match_checks, 0, "A status lookup must not call matches on any of the 64 unrelated area controllers")
+	var/list/candidates = local_controller.discovery_candidates("atmos.device", null)
+	TEST_ASSERT((device in candidates) && (injector_service in candidates), "The shared area index must include both registering vents and command-only injectors")
+	injector.forceMove(other_spot)
+	candidates = local_controller.discovery_candidates("atmos.device", null)
+	TEST_ASSERT(!(injector_service in candidates), "Moving a command-only device must remove it from its old area's candidates")
+	candidates = other_controller.discovery_candidates("atmos.device", null)
+	TEST_ASSERT(injector_service in candidates, "Moving a command-only device must index it in its actual new area")
+	qdel(injector)
+	TEST_ASSERT(!(injector_service in candidates), "Device deletion must remove the borrowed area's candidate entry")
+	var/old_controller_key = REF(local_controller)
+	qdel(alarm)
+	alarm = scene.machine(/obj/machinery/airalarm/discovery_scope_fixture, scene.source_spot)
+	local_controller = alarm.get_netrun_machine_service("atmos.controller")
+	candidates = device.discovery_candidates("atmos.controller", null)
+	TEST_ASSERT_EQUAL(length(candidates), 1, "Replacing an air alarm must leave exactly one live local discovery candidate")
+	TEST_ASSERT(local_controller in candidates, "A fresh lookup must discover the replacement air alarm")
+	vent.broadcast_status()
+	deadline = world.time + 5 SECONDS
+	while(!alarm.netrun_vent_info[vent.id_tag] && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(alarm.netrun_vent_info[vent.id_tag], "The replacement controller must receive actual native registration")
+	TEST_ASSERT(!device.acknowledged_controllers[old_controller_key], "A deleted controller must not retain a registration acknowledgement")
+	ack = device.acknowledged_controllers[REF(local_controller)]
+	TEST_ASSERT_EQUAL(ack?.resolve(), local_controller, "Registration must acknowledge the replacement's service identity")

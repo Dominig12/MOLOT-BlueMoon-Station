@@ -113,26 +113,10 @@
 	get_machine_transport().prepare_network()
 	SSticker.OnRoundstart(CALLBACK(src, PROC_REF(spawn_roundstart_servers)))
 
-/datum/controller/subsystem/netrun/proc/ensure_station_dns()
-	var/dns_present = FALSE
-	for(var/datum/netrun_machine_service/service as anything in get_machine_transport().by_id["dns"])
-		var/turf/resolver_turf = get_turf(service.host)
-		if(resolver_turf && is_station_level(resolver_turf.z))
-			dns_present = TRUE
-			break
-	if(!dns_present)
-		var/turf/dns_spot = find_server_spot()
-		if(dns_spot)
-			var/obj/machinery/netrun_server/dns/resolver = new(dns_spot)
-			log_game("NETRUN: DNS-сервер в [AREACOORD(resolver)]")
-		else
-			log_game("NETRUN: DNS не создан — не найдено места на станции.")
-
 /datum/controller/subsystem/netrun/proc/spawn_roundstart_servers()
 	if(roundstart_servers_created)
 		return
 	roundstart_servers_created = TRUE
-	ensure_station_dns()
 	for(var/i in 1 to roundstart_seeds)
 		var/turf/spot = find_server_spot()
 		if(!spot)

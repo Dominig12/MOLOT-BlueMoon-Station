@@ -5,10 +5,12 @@
 	var/turf/remote_spot
 	var/obj/machinery/power/apc/remote_apc
 	var/original_cache_limit
+	var/original_infrastructure_limit
 
 /datum/netrun_routing_cache_scene/New(turf/origin)
 	..(origin)
 	original_cache_limit = SSnetrun.get_machine_transport().route_cache_limit
+	original_infrastructure_limit = SSnetrun.get_topology().infrastructure_route_limit
 	remote_room = room(/area/netrun_route_test)
 	remote_spot = take(locate(origin.x + 4, origin.y + 2, origin.z), remote_room)
 	var/turf/power_spot = take(get_step(remote_spot, SOUTH), remote_room)
@@ -18,6 +20,7 @@
 
 /datum/netrun_routing_cache_scene/Destroy()
 	SSnetrun.get_machine_transport().route_cache_limit = original_cache_limit
+	SSnetrun.get_topology().infrastructure_route_limit = original_infrastructure_limit
 	remote_apc = null
 	remote_spot = null
 	remote_room = null
@@ -29,7 +32,7 @@
 	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
 	TEST_ASSERT(transport.borrowed_path(scene.source, scene.target), "The real machines must have a physical path")
 	var/built = transport.path_builds
-	var/trees = transport.tree_builds
+	var/trees = SSnetrun.get_topology().infrastructure_tree_builds
 	var/hits = transport.path_cache_hits
 	for(var/i in 1 to 40)
 		TEST_ASSERT(transport.reachable(scene.source, scene.target), "A warm reachability lookup must remain usable")
@@ -37,7 +40,7 @@
 		TEST_ASSERT(owned, "Packet delivery must receive an owned route from the same warm path")
 		qdel(owned)
 	TEST_ASSERT_EQUAL(transport.path_builds, built, "Repeated discovery and delivery must not reconstruct the same physical path")
-	TEST_ASSERT_EQUAL(transport.tree_builds, trees, "Repeated queries must not solve another shortest-path tree")
+	TEST_ASSERT_EQUAL(SSnetrun.get_topology().infrastructure_tree_builds, trees, "Repeated queries must not solve another shortest-path tree")
 	TEST_ASSERT(transport.path_cache_hits >= hits + 80, "Both reachability and route acquisition must hit the warm cache")
 
 /// Machine routing trees retain only forwarding infrastructure, not every destination device.
@@ -49,13 +52,84 @@
 	TEST_ASSERT(transport.borrowed_path(scene.source, scene.target), "The two physical APCs must communicate")
 	var/datum/component/netrun_node/source_apc = scene.apc.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/target_apc = scene.remote_apc.GetComponent(/datum/component/netrun_node)
-	var/datum/netrun_path_tree/tree = transport.route_trees[source_apc.address]
+	var/datum/netrun_path_tree/tree = SSnetrun.get_topology().infrastructure_route_trees[source_apc.address]
 	TEST_ASSERT(tree, "The source APC must retain its reusable infrastructure tree")
 	TEST_ASSERT(tree.reached[target_apc.address], "The infrastructure tree must include the destination APC")
 	TEST_ASSERT(!tree.reached[scene.source.node.address] && !tree.reached[scene.target.node.address], "Ordinary endpoints must not occupy every APC's retained tree")
-	var/datum/component/netrun_node/dns_node = scene.dns.GetComponent(/datum/component/netrun_node)
-	TEST_ASSERT(!tree.reached[dns_node.address], "A DNS endpoint is a destination, not forwarding infrastructure")
+	var/datum/component/netrun_node/legacy_node = scene.dns.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT(!tree.reached[legacy_node.address], "A legacy information endpoint is a destination, not forwarding infrastructure")
 	TEST_ASSERT_EQUAL(tree.neighbor_visits, 2, "Solving two APCs must visit only their two directed edges, regardless of endpoint population")
+
+/// Separate transport consumers borrow one physical graph cache without owning it.
+/datum/unit_test/netrun_routing_cache_physical_owner/Run()
+	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_machine_transport/primary = SSnetrun.get_machine_transport()
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/root = scene.apc.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_path_tree/tree = primary.path_tree(graph, root)
+	TEST_ASSERT_EQUAL(graph.infrastructure_route_trees[root.address], tree, "The physical graph must own the borrowed tree")
+	var/builds = graph.infrastructure_tree_builds
+	var/datum/netrun_machine_transport/other = allocate(/datum/netrun_machine_transport)
+	TEST_ASSERT_EQUAL(other.path_tree(graph, root), tree, "A second transport must borrow the identical physical tree")
+	TEST_ASSERT_EQUAL(graph.infrastructure_tree_builds, builds, "A second consumer must not solve or copy another infrastructure tree")
+	TEST_ASSERT_EQUAL(other.tree_builds, 0, "The adapter diagnostic must count only solves caused by its own calls")
+	qdel(other)
+	TEST_ASSERT(!QDELETED(tree), "Destroying a transport consumer must not delete the graph's shared cache")
+	TEST_ASSERT_EQUAL(graph.infrastructure_route_trees[root.address], tree, "The physical owner must retain the tree after consumer teardown")
+	qdel(scene.apc)
+	TEST_ASSERT(QDELETED(tree), "Deleting the physical root must immediately release its graph-owned routing tree")
+	TEST_ASSERT_NULL(graph.infrastructure_route_trees[root.address], "A deleted physical root must not remain in the shared cache")
+
+/// Graph-owned cache bounds and access order apply even to requests in the same tick.
+/datum/unit_test/netrun_routing_cache_infrastructure_bound/Run()
+	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/power/apc/third = scene.machine(/obj/machinery/power/apc, scene.target_spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	graph.infrastructure_route_limit = 2
+	var/datum/component/netrun_node/first_root = scene.apc.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/second_root = scene.remote_apc.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/third_root = third.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_path_tree/first = graph.borrow_infrastructure_tree(first_root)
+	var/datum/netrun_path_tree/second = graph.borrow_infrastructure_tree(second_root)
+	TEST_ASSERT_EQUAL(graph.borrow_infrastructure_tree(first_root), first, "A hit must retain and refresh the first physical tree")
+	var/datum/netrun_path_tree/newest = graph.borrow_infrastructure_tree(third_root)
+	TEST_ASSERT_EQUAL(length(graph.infrastructure_route_trees), 2, "The shared graph cache must respect its configured root bound")
+	TEST_ASSERT(QDELETED(second) && !QDELETED(first) && !QDELETED(newest), "The least recently used root must be evicted even when all accesses share world.time")
+	graph.infrastructure_route_limit = 1
+	TEST_ASSERT_EQUAL(graph.borrow_infrastructure_tree(first_root), first, "Lowering the bound must preserve the root being borrowed")
+	TEST_ASSERT_EQUAL(length(graph.infrastructure_route_trees), 1, "A cache hit must also apply a lowered physical cache bound")
+	TEST_ASSERT(QDELETED(newest), "Trimming a lowered bound must release evicted tree datums")
+
+/// Rebinding a remote leaf cannot invent reachability of the LAN it just left.
+/datum/unit_test/netrun_routing_cache_rebind_network_index/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/local_room = scene.room(/area/medical/netrun_route_test)
+	var/area/remote_room = scene.room(/area/engineering/netrun_route_test)
+	var/turf/local_spot = scene.take(origin, local_room)
+	var/turf/local_power = scene.take(get_step(origin, NORTH), local_room)
+	var/list/levels = multiz_gravity_test_levels()
+	scene.mark_station(levels[1])
+	var/turf/remote_spot = scene.take(locate(80, 80, levels[1]), remote_room, TRUE)
+	var/turf/remote_power = scene.take(locate(81, 80, levels[1]), remote_room, TRUE)
+	scene.machine(/obj/machinery/power/apc, local_power)
+	scene.machine(/obj/machinery/power/apc, remote_power)
+	var/obj/machinery/computer/netrun_terminal/terminal = scene.machine(/obj/machinery/computer/netrun_terminal, local_spot)
+	var/obj/machinery/computer/netrun_terminal/mobile = scene.machine(/obj/machinery/computer/netrun_terminal, remote_spot)
+	SSnetworks.station_network.setting_disabled = TRUE
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/source = terminal.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/leaf = mobile.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_network/old_network = leaf.network
+	var/datum/netrun_path_tree/retained = graph.route_snapshot(source, TRUE)
+	TEST_ASSERT(!retained.reached_networks[old_network.id] && !retained.reached[leaf.address], "The original remote LAN and its endpoint must be physically unreachable")
+	mobile.forceMove(local_spot)
+	leaf.join_network()
+	TEST_ASSERT(leaf.network != old_network, "The relocated endpoint must actually leave the old LAN")
+	TEST_ASSERT_EQUAL(graph.route_tables[source.address], retained, "A remote leaf's rebind must preserve the source's warm tree")
+	TEST_ASSERT(retained.reached[leaf.address], "The relocated endpoint must join the reachable local tree")
+	TEST_ASSERT(!retained.reached_networks[old_network.id], "The old unreachable LAN must not be added through the leaf's stale pre-join network field")
+	TEST_ASSERT(!terminal.console.can_reach(old_network, retained), "Network authorization must not observe phantom old-LAN reachability")
 
 /// Moving or rebooting an unrelated leaf must not invalidate the shared infrastructure work.
 /datum/unit_test/netrun_routing_cache_unrelated_leaf/Run()
@@ -67,11 +141,11 @@
 	var/turf/far_spot = scene.take(locate(x, scene.source_spot.y, scene.source_spot.z), local_room, TRUE)
 	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
 	TEST_ASSERT(transport.borrowed_path(scene.source, scene.target), "Warm the two-APC route after creating the unrelated endpoint")
-	var/trees = transport.tree_builds
+	var/trees = SSnetrun.get_topology().infrastructure_tree_builds
 	var/paths = transport.path_builds
 	unrelated.set_machine_stat(BROKEN)
 	TEST_ASSERT(transport.borrowed_path(scene.source, scene.target), "Another device's power loss must not cut the working route")
-	TEST_ASSERT_EQUAL(transport.tree_builds, trees, "Leaf availability must not rebuild infrastructure trees")
+	TEST_ASSERT_EQUAL(SSnetrun.get_topology().infrastructure_tree_builds, trees, "Leaf availability must not rebuild infrastructure trees")
 	unrelated.set_machine_stat(0)
 	var/datum/netrun_topology/graph = SSnetrun.get_topology()
 	var/weights = graph.weight_revision
@@ -85,7 +159,7 @@
 	scheduler.cancel("node", moved_node)
 	TEST_ASSERT(graph.weight_revision > weights, "The deferred node worker must update the moved cable's routing cost")
 	TEST_ASSERT(transport.borrowed_path(scene.source, scene.target), "The original pair must remain reachable after unrelated cable movement")
-	TEST_ASSERT_EQUAL(transport.tree_builds, trees, "An unrelated cable cost must not rerun infrastructure Dijkstra")
+	TEST_ASSERT_EQUAL(SSnetrun.get_topology().infrastructure_tree_builds, trees, "An unrelated cable cost must not rerun infrastructure Dijkstra")
 	TEST_ASSERT_EQUAL(transport.path_builds, paths, "An unchanged source/destination pair must retain its materialized path")
 
 /// A carried device has no child MOVED signal; route lookup must refresh its actual attachment.
@@ -100,7 +174,7 @@
 	var/datum/netrun_route/before = transport.route(scene.source, target)
 	allocated += before
 	TEST_ASSERT(before, "The carried PDA must initially share the sender's APC")
-	var/trees = transport.tree_builds
+	var/trees = SSnetrun.get_topology().infrastructure_tree_builds
 	var/area/original_area = target.node.binding_area
 	carrier.forceMove(scene.remote_spot)
 	TEST_ASSERT_EQUAL(target.node.binding_area, original_area, "Moving only the carrier must not emit a child movement signal")
@@ -112,7 +186,7 @@
 	TEST_ASSERT(remote_node.address in after.hops, "The new cached route must actually cross the destination APC")
 	TEST_ASSERT_NOTEQUAL(json_encode(after.hops), json_encode(before.hops), "A previous pair-cache entry must not keep the old cable")
 	TEST_ASSERT(after.latency > before.latency, "The new APC edge must contribute to the carried target's latency")
-	TEST_ASSERT_EQUAL(transport.tree_builds, trees, "Rebinding one leaf must not rebuild the unchanged infrastructure mesh")
+	TEST_ASSERT_EQUAL(SSnetrun.get_topology().infrastructure_tree_builds, trees, "Rebinding one leaf must not rebuild the unchanged infrastructure mesh")
 
 /// Live availability checks must reject and recover within the same tick, including warm pairs.
 /datum/unit_test/netrun_routing_cache_power_recovery/Run()

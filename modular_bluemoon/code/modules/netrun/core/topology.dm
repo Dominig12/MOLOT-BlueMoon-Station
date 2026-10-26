@@ -120,6 +120,7 @@
 
 /datum/netrun_topology/proc/infrastructure_changed()
 	infrastructure_revision++
+	clear_infrastructure_routes()
 	nearest_by_turf.Cut()
 	invalidate()
 
@@ -128,6 +129,7 @@
 	moved_nodes -= node
 	if(!node)
 		return
+	forget_infrastructure_route(node.address)
 	nodes -= node.address
 	adjacency -= node.address
 	forwarding_adjacency -= node.address
@@ -538,6 +540,7 @@
 	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_REGISTERED, COMSIG_NETRUN_NODE_UNREGISTERED, COMSIG_NETRUN_NODE_MOVED))
 	QDEL_NULL(apc_prebuild)
 	clear_route_tables(TRUE)
+	clear_infrastructure_routes()
 	nodes.Cut()
 	adjacency.Cut()
 	forwarding_adjacency.Cut()

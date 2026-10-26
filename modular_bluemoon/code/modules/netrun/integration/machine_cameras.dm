@@ -31,8 +31,6 @@
 	var/datum/weakref/pending_user
 	var/turf/pending_location
 	var/datum/netrun_machine_service/camera/active_feed
-	/// Previously discovered peers remain usable while their DNS entry is renewed.
-	var/list/known_cameras = list()
 
 /datum/netrun_machine_service/camera_viewer/proc/allows_camera(obj/machinery/camera/camera)
 	return FALSE
@@ -65,23 +63,13 @@
 	return FALSE
 
 /datum/netrun_machine_service/camera_viewer/proc/feed_available()
-	if(QDELETED(active_feed) || !allows_camera(active_feed.host) || !can_reach(active_feed, FALSE))
+	if(QDELETED(active_feed) || !allows_camera(active_feed.host) || !can_reach(active_feed))
 		return FALSE
 	var/obj/machinery/camera/camera = active_feed.host
 	return camera.can_use()
 
 /datum/netrun_machine_service/camera_viewer/proc/camera_catalog(replace = FALSE)
-	var/list/resolved = resolve("camera.stream")
-	if(replace || length(resolved))
-		known_cameras.Cut()
-		for(var/datum/netrun_machine_service/camera/endpoint as anything in resolved)
-			known_cameras += WEAKREF(endpoint)
-	var/list/result = list()
-	for(var/datum/weakref/camera_ref as anything in known_cameras)
-		var/datum/netrun_machine_service/camera/endpoint = camera_ref.resolve()
-		if(!QDELETED(endpoint) && allows_camera(endpoint.host) && can_reach(endpoint, FALSE))
-			result += endpoint
-	return result
+	return resolve("camera.stream")
 
 /datum/netrun_machine_service/camera_viewer/accepts(datum/netrun_machine_message/message)
 	return ..() && istype(message, /datum/netrun_machine_message/camera_feed) && istype(message.source, /datum/netrun_machine_service/camera) && message.payload["sequence"] == request_sequence && pending_tag == message.source.service_tag() && allows_camera(message.source.host)
@@ -89,14 +77,6 @@
 /datum/netrun_machine_service/camera_viewer/receive(datum/netrun_machine_message/message)
 	active_feed = message.source
 	return show_feed(message.source.host)
-
-/datum/netrun_machine_service/camera_viewer/directory_ready(destination_id, recipient_tag)
-	if(destination_id == "camera.stream")
-		if(isnull(recipient_tag))
-			camera_catalog(TRUE)
-		host.update_static_data_for_all_viewers()
-		SStgui.update_uis(host)
-	return ..()
 
 /datum/netrun_machine_service/camera_viewer/security
 
@@ -211,16 +191,7 @@
 		var/datum/netrun_machine_service/camera_viewer/service = get_netrun_machine_service("camera.viewer")
 		service.request_feed(fallback_camera.c_tag, user)
 		return
-	to_chat(user, span_notice("Поиск доступных сетевых камер..."))
-	var/datum/netrun_machine_service/camera_viewer/service = get_netrun_machine_service("camera.viewer")
-	service.pending_user = WEAKREF(user)
-
-/datum/netrun_machine_service/camera_viewer/advanced/directory_ready(destination_id, recipient_tag)
-	. = ..()
-	var/obj/machinery/computer/camera_advanced/console = host
-	var/mob/living/user = pending_user?.resolve()
-	if(destination_id == "camera.stream" && !recipient_tag && user && user.machine == console && !console.current_user && console.can_interact(user))
-		INVOKE_ASYNC(console, TYPE_PROC_REF(/obj/machinery/computer/camera_advanced, netrun_connect_camera), user)
+	to_chat(user, span_notice("В доступной сети APC не обнаружено работающих камер."))
 
 /mob/camera/aiEye/remote
 	/// Extra denial masks keep the global camera chunk cache from leaking other networks.

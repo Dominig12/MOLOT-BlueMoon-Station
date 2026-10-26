@@ -1,7 +1,7 @@
 /// Telecomms keeps its link/frequency policy; each machine hop uses the shared transport.
 
-/// Only these contracts carry communications. DNS inherits the request's policy;
-/// the DNS service identifier itself never grants a general route through telecomms.
+/// Only these contracts carry communications. APC discovery checks this policy;
+/// ordinary service identifiers never grant a general route through telecomms.
 /proc/netrun_communication_policy(datum/netrun_machine_service/source, destination_id)
 	var/static/list/identifiers = list("telecomms.origin", "telecomms.receiver", "telecomms.relay", "pda.messenger", "communications.gateway", "communications.console")
 	return (source?.service_id in identifiers) && (destination_id in identifiers)
@@ -375,7 +375,7 @@
 	transmission?.release_packet(reason)
 
 /datum/netrun_machine_message/telecomms/Destroy()
-	// DNS fanout consumes an original after retaining its copies; disposal is not failure.
+	// Service fanout consumes an original after retaining its copies; disposal is not failure.
 	// Real cancellation calls failed(reason) before the transport disposes the message.
 	settle()
 	if(signal)

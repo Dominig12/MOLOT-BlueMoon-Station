@@ -138,8 +138,10 @@ export class NetrunTestSuite {
     }
   }
 
-  async runDm(selected) {
+  async runDm(selected, { map } = {}) {
     this.requireSelection(selected, '');
+    const profile = map ? 'full-map' : 'hermetic';
+    const resultsFile = map ? path.join(this.root, 'data/logs/ci-full-map/unit_tests.json') : this.resultsFile;
     fs.mkdirSync(path.dirname(this.selectionFile), { recursive: true });
     let lock;
     try {
@@ -154,17 +156,18 @@ export class NetrunTestSuite {
       fs.writeFileSync(lock, `${process.pid}\n`);
       fs.writeFileSync(this.selectionFile, `${selected.join('\n')}\n`);
       // A cached successful report must never make a failed/no-op run look green.
-      fs.rmSync(this.resultsFile, { force: true });
+      fs.rmSync(resultsFile, { force: true });
       await this.execute(process.execPath, [
         path.join(this.root, 'tools/build/build.js'),
         'dm-test',
-        '--unit-test-profile=hermetic',
+        `--unit-test-profile=${profile}`,
         '--test-list=tmp/netrun-tests.txt',
+        ...(map ? [`--define=FORCE_MAP ${JSON.stringify(map)}`] : []),
       ], this.root);
-      if (!fs.existsSync(this.resultsFile)) {
-        throw new Error('The test world did not write a fresh data/logs/ci-hermetic/unit_tests.json.');
+      if (!fs.existsSync(resultsFile)) {
+        throw new Error(`The test world did not write a fresh ${path.relative(this.root, resultsFile)}.`);
       }
-      this.validateResults(JSON.parse(fs.readFileSync(this.resultsFile, 'utf8')), selected);
+      this.validateResults(JSON.parse(fs.readFileSync(resultsFile, 'utf8')), selected);
     } finally {
       fs.closeSync(lock);
       fs.rmSync(this.lockFile, { force: true });
@@ -191,17 +194,20 @@ export class NetrunTestSuite {
 export async function main(args = process.argv.slice(2)) {
   let list = false;
   let frontend = false;
+  let peaceMap = false;
   let filter = '';
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (arg === '--help' || arg === '-h') {
-      console.log('Usage: node tools/netrun/run-tests.mjs [--list] [--filter substring] [--frontend]\nDefault: compile and run every included Netrun DM test in the hermetic profile.\n--frontend selects the NetrunTerminal Jest suite instead; --list only prints selected tests.');
+      console.log('Usage: node tools/netrun/run-tests.mjs [--list] [--filter substring] [--frontend | --peace-map]\nDefault: compile and run every included Netrun DM test in the hermetic profile.\n--frontend selects NetrunTerminal Jest; --peace-map checks atmosphere startup on the real Peace Syndicate Station.\n--list only prints selected tests.');
       return;
     }
     if (arg === '--list') {
       list = true;
     } else if (arg === '--frontend') {
       frontend = true;
+    } else if (arg === '--peace-map') {
+      peaceMap = true;
     } else if (arg === '--filter') {
       if (!args[index + 1] || args[index + 1].startsWith('--')) {
         throw new Error('--filter requires a nonempty substring.');
@@ -216,14 +222,18 @@ export async function main(args = process.argv.slice(2)) {
       throw new Error(`Unknown argument '${arg}'. Use --help.`);
     }
   }
+  if (peaceMap && (frontend || filter)) {
+    throw new Error('--peace-map selects its own full-map regression and cannot combine with --frontend or --filter.');
+  }
   const suite = new NetrunTestSuite();
-  const selected = frontend ? suite.discoverFrontend(filter) : suite.discoverDm(filter);
+  const selected = peaceMap ? ['/datum/unit_test/atmos_netrun_roundstart_registration']
+    : frontend ? suite.discoverFrontend(filter) : suite.discoverDm(filter);
   if (list) {
     console.log(selected.join('\n'));
     return;
   }
   console.log(`Running ${selected.length} Netrun ${frontend ? 'Jest files' : 'DM tests'}...`);
-  await (frontend ? suite.runFrontend(selected) : suite.runDm(selected));
+  await (frontend ? suite.runFrontend(selected) : suite.runDm(selected, peaceMap ? { map: '_maps/peacesyndicatestation.json' } : {}));
   console.log(`PASS: all ${selected.length} selected Netrun ${frontend ? 'Jest files' : 'DM tests'}.`);
 }
 

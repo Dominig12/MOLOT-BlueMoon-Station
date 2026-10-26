@@ -26,9 +26,11 @@
 	var/datum/netrun_machine_service/service = get_netrun_machine_service(source_id)
 	if(!service)
 		return FALSE
-	var/list/wire_data = deepCopyList(data)
+	// Message construction already owns a deep copy; strip actor provenance
+	// from that copy without cloning every atmosphere payload twice.
+	var/datum/netrun_machine_message/atmos/message = new(data)
+	var/list/wire_data = message.payload
 	wire_data -= "user"
-	var/datum/netrun_machine_message/atmos/message = new(wire_data)
 	if(destination_id == "atmos.controller" && wire_data["sigtype"] == "status" && istype(service, /datum/netrun_machine_service/atmos/device))
 		var/datum/netrun_machine_service/atmos/device/device = service
 		device.refresh_registration()
@@ -123,6 +125,11 @@
 /datum/netrun_machine_service/atmos/controller/matches(datum/netrun_machine_service/source_service, recipient_tag)
 	return ..() && istype(source_service, /datum/netrun_machine_service/atmos/device) && same_channel(source_service) && get_base_area(host) == get_base_area(source_service.host)
 
+/datum/netrun_machine_service/atmos/controller/discovery_candidates(destination_id, recipient_tag)
+	if(destination_id == "atmos.device" && isnull(recipient_tag))
+		return SSnetrun.get_machine_transport().atmos_devices_by_area[REF(get_base_area(host))]
+	return ..()
+
 /datum/netrun_machine_service/atmos/controller/accepts(datum/netrun_machine_message/message)
 	return ..() && istype(message, /datum/netrun_machine_message/atmos) && message.payload["sigtype"] == "status" && message.payload["tag"] == message.source.service_tag() && matches(message.source, null)
 
@@ -157,17 +164,16 @@
 
 /datum/netrun_machine_service/atmos/device/New(datum/component/netrun_node/node, atom/host_override)
 	..(node, host_override)
-	if(!registration_required())
-		return
 	refresh_registration()
 	RegisterSignal(host, list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_MOVABLE_MOVED), PROC_REF(registration_changed))
-	arm_registration(5 SECONDS + rand(0, 2 SECONDS))
+	if(registration_required())
+		arm_registration(5 SECONDS + rand(0, 2 SECONDS))
 
 /datum/netrun_machine_service/atmos/device/Destroy()
 	SSnetrun.task_scheduler?.cancel("atmos_registration", src)
 	if(registration_timer)
 		deltimer(registration_timer)
-	if(host && registration_required())
+	if(host)
 		UnregisterSignal(host, list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_MOVABLE_MOVED))
 	unindex_registration(SSnetrun.get_machine_transport().atmos_devices_by_area)
 	acknowledged_controllers.Cut()
@@ -175,7 +181,7 @@
 
 /datum/netrun_machine_service/atmos/device/host_initialized()
 	. = ..()
-	if(registration_required() && refresh_registration())
+	if(refresh_registration() && registration_required())
 		registration_attempts = 0
 		arm_registration(world.tick_lag)
 
@@ -183,9 +189,11 @@
 	return istype(host, /obj/machinery/atmospherics/components/unary/vent_pump) || istype(host, /obj/machinery/atmospherics/components/unary/vent_scrubber)
 
 /datum/netrun_machine_service/atmos/device/proc/refresh_registration()
-	if(!registration_required())
-		return FALSE
+	// All device types belong to the native area index, including pumps/injectors
+	// which accept commands but do not participate in air-alarm registration.
 	var/changed = index_registration(SSnetrun.get_machine_transport().atmos_devices_by_area)
+	if(!registration_required())
+		return changed
 	if(changed || registration_tag != service_tag() || registration_frequency != control_frequency())
 		registration_tag = service_tag()
 		registration_frequency = control_frequency()
@@ -228,7 +236,7 @@
 
 /datum/netrun_machine_service/atmos/device/proc/arm_registration(delay)
 	if(isnull(delay))
-		// A long DNS/cable outage must not permanently strand an otherwise live
+		// A long APC/cable outage must not permanently strand an otherwise live
 		// device. Keep probing slowly after the initial fast retry window.
 		delay = registration_attempts >= NETRUN_ATMOS_REGISTRATION_MAX_ATTEMPTS ? 30 SECONDS : 5 SECONDS
 	if(!registration_required() || QDELETED(src) || (registration_timer && registration_at <= world.time + delay))
@@ -267,7 +275,7 @@
 		// We cannot emit right now (offline or unconfigured). Our own power/config signals
 		// will re-arm us once we can, so there is no point spinning in the meantime.
 		return
-	// New controllers invalidate the DNS revision, including cached negatives.
+	// Controller registration uses the live APC service registry.
 	// Do not resend statuses to an absent or entirely powered-down area.
 	registration_attempts = min(registration_attempts + 1, NETRUN_ATMOS_REGISTRATION_MAX_ATTEMPTS)
 	var/obj/machinery/atmospherics/components/unary/device = host
@@ -301,6 +309,11 @@
 		var/obj/machinery/embedded_controller/radio/simple_vent_controller/controller = source_service.host
 		return service_tag() == controller.airpump_tag
 	return FALSE
+
+/datum/netrun_machine_service/atmos/device/discovery_candidates(destination_id, recipient_tag)
+	if(destination_id == "atmos.controller" && isnull(recipient_tag))
+		return SSnetrun.get_machine_transport().atmos_controllers_by_area[REF(get_base_area(host))]
+	return ..()
 
 /datum/netrun_machine_service/atmos/device/accepts(datum/netrun_machine_message/message)
 	return ..() && istype(message, /datum/netrun_machine_message/atmos) && message.payload["sigtype"] == "command" && message.payload["tag"] == service_tag() && matches(message.source, service_tag())
@@ -414,7 +427,6 @@
 
 /datum/netrun_machine_service/atmos/monitor
 	service_id = "atmos.monitor"
-	var/datum/weakref/reconnect_user
 
 /datum/netrun_machine_service/atmos/monitor/control_frequency()
 	var/obj/machinery/computer/atmos_control/monitor = host
@@ -447,19 +459,6 @@
 	SStgui.update_uis(host)
 	SEND_SIGNAL(host, COMSIG_NETRUN_SERVICE_STATE_CHANGED)
 	return TRUE
-
-/datum/netrun_machine_service/atmos/monitor/directory_ready(destination_id, recipient_tag)
-	if(destination_id == "atmos.device")
-		var/obj/machinery/computer/atmos_control/tank/tank = host
-		if(istype(tank))
-			if(recipient_tag)
-				tank.netrun_poll_device(recipient_tag)
-			else if(reconnect_user)
-				var/mob/user = reconnect_user.resolve()
-				reconnect_user = null
-				if(user && tank.can_interact(user))
-					INVOKE_ASYNC(tank, TYPE_PROC_REF(/obj/machinery/computer/atmos_control/tank, reconnect), user)
-	return ..()
 
 /datum/netrun_machine_service/atmos/alert
 	service_id = "atmos.alert"

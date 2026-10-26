@@ -52,7 +52,7 @@
 	radio = new /obj/item/radio/borg(src)
 	if(!scrambledcodes && !builtInCamera)
 		builtInCamera = new (src)
-		builtInCamera.c_tag = real_name
+		builtInCamera.set_camera_tag(real_name)
 		builtInCamera.network = list("ss13")
 		builtInCamera.internal_light = FALSE
 		if(wires.is_cut(WIRE_CAMERA))
@@ -212,7 +212,7 @@
 	real_name = changed_name
 	name = real_name
 	if(!QDELETED(builtInCamera))
-		builtInCamera.c_tag = real_name	//update the camera name too
+		builtInCamera.set_camera_tag(real_name)	//update the camera name too
 	if(aiPDA && !shell)
 		aiPDA.imprint_id(real_name, aiPDA.saved_job)
 	if(modularInterface)
@@ -1004,7 +1004,7 @@
 	if(oldname != real_name)
 		notify_ai(RENAME, oldname, newname)
 	if(!QDELETED(builtInCamera))
-		builtInCamera.c_tag = real_name
+		builtInCamera.set_camera_tag(real_name)
 	if(aiPDA && !shell)
 		aiPDA.imprint_id(newname, aiPDA.saved_job)
 	custom_name = newname
@@ -1159,7 +1159,7 @@
 	real_name = name
 	GLOB.available_ai_shells |= src
 	if(!QDELETED(builtInCamera))
-		builtInCamera.c_tag = real_name //update the camera name too
+		builtInCamera.set_camera_tag(real_name) //update the camera name too
 	diag_hud_set_aishell()
 	notify_ai(AI_SHELL)
 
@@ -1179,7 +1179,7 @@
 	name = "Unformatted Cyborg-[ident]"
 	real_name = name
 	if(!QDELETED(builtInCamera))
-		builtInCamera.c_tag = real_name
+		builtInCamera.set_camera_tag(real_name)
 	diag_hud_set_aishell()
 
 /**
@@ -1192,7 +1192,7 @@
 	real_name = "[AI.real_name] [designation] Shell-[ident]"
 	name = real_name
 	if(!QDELETED(builtInCamera))
-		builtInCamera.c_tag = real_name	//update the camera name too
+		builtInCamera.set_camera_tag(real_name)	//update the camera name too
 	mainframe = AI
 	deployed = TRUE
 	set_connected_ai(mainframe)
@@ -1267,7 +1267,7 @@
 	if(radio) //Return radio to normal
 		radio.recalculateChannels()
 	if(!QDELETED(builtInCamera))
-		builtInCamera.c_tag = real_name	//update the camera name too
+		builtInCamera.set_camera_tag(real_name)	//update the camera name too
 	diag_hud_set_aishell()
 	mainframe.diag_hud_set_deployed()
 	if(mainframe.laws)
@@ -1351,7 +1351,7 @@
 		return
 
 	builtInCamera = new (src)
-	builtInCamera.c_tag = real_name
+	builtInCamera.set_camera_tag(real_name)
 	builtInCamera.network = list("ss13")
 	builtInCamera.internal_light = FALSE
 

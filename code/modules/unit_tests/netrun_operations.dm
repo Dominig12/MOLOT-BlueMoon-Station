@@ -176,24 +176,23 @@
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
 	var/list/outcomes = list()
 	TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list("value" = "SECRET_MACHINE_PAYLOAD", "reply" = TRUE), outcomes), scene.target.service_tag()), "Cold discovery must admit the machine exchange")
-	TEST_ASSERT(netrun_wait_delivery(outcomes), "The real DNS and data exchange must complete")
+	TEST_ASSERT(netrun_wait_delivery(outcomes), "The APC-discovered data exchange must complete")
 	var/deadline = world.time + 1 SECONDS
 	while(!scene.source.received && world.time < deadline)
 		sleep(world.tick_lag)
 	TEST_ASSERT_EQUAL(scene.source.received, 1, "The actual reply must return before checking correlation")
 	var/operation_id
 	var/list/packet_ids = list()
-	var/saw_dns = FALSE
 	var/saw_data = FALSE
-	for(var/datum/component/netrun_node/node as anything in list(scene.source.node, scene.target.node, scene.dns.GetComponent(/datum/component/netrun_node)))
+	for(var/datum/component/netrun_node/node as anything in list(scene.source.node, scene.target.node))
 		for(var/list/entry as anything in node.packet_logs)
 			if(entry["phase"] != "SEND")
 				continue
 			if(!operation_id)
 				operation_id = entry["operation_id"]
-			TEST_ASSERT_EQUAL(entry["operation_id"], operation_id, "DNS query, answer, data and reply must share a logical correlation id")
+			TEST_ASSERT_EQUAL(entry["operation_id"], operation_id, "Discovery, data and reply must share a logical correlation id")
 			packet_ids |= entry["id"]
-			saw_dns ||= entry["kind"] == "dns"
+			TEST_ASSERT(entry["kind"] != "dns", "APC discovery must not create DNS wire packets")
 			saw_data ||= entry["kind"] == "machine"
 		TEST_ASSERT(!findtext(json_encode(node.packet_logs), "SECRET_MACHINE_PAYLOAD"), "Machine payloads must never leak into journals")
-	TEST_ASSERT(saw_dns && saw_data && length(packet_ids) >= 4, "The correlation must cover distinct real DNS and data packets")
+	TEST_ASSERT(saw_data && length(packet_ids) == 2, "One request/reply must use exactly two real data packets")

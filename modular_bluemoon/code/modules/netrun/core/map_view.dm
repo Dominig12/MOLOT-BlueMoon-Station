@@ -179,7 +179,7 @@
 	// Access is included so a credential change (an ID picked up or dropped) refreshes the
 	// projection through the context diff - no periodic full pass is needed to catch it.
 	var/datum/component/netrun_node/source = owner.route_source()
-	var/list/current_context = list(owner.operator, source?.address, source?.is_online(), selected_address, waypoint_address, active_sector, active_z, owner.user_access(), owner.is_locked(), graph.transit_availability_revision)
+	var/list/current_context = list(owner.operator, source?.address, source?.is_online(), source?.network?.id, selected_address, waypoint_address, active_sector, active_z, owner.user_access(), owner.is_locked(), graph.transit_availability_revision)
 	if(!netrun_snapshot_equal(context, current_context))
 		dirty = TRUE
 	context = current_context
@@ -373,6 +373,11 @@
 		if(QDELETED(node))
 			continue
 		var/turf/position = node.physical_turf()
+		// Known offscreen nodes still contribute to the sector catalog. A move
+		// across floors/LANs must revoke that catalog, even while another floor is viewed.
+		if(previous && !index && (previous["sector"] != node.binding_sector || previous["z"] != position?.z || previous["network"] != node.network?.id))
+			rebuild(graph)
+			return
 		var/now_shown = node.binding_sector == active_sector && position?.z == active_z && owner.can_route(node) && (owner.daemon_bonus("mapper") || (address in revealed_addresses) || owner.node_visible(node))
 		// Floor changes and a personal endpoint changing owner can change visibility
 		// without changing its APC attachment. Ordinary same-floor motion stays local.

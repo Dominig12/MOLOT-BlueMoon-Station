@@ -8,7 +8,8 @@ const { performance } = require('perf_hooks');
 const root = path.resolve(__dirname, '../..');
 const sourcePath = 'tgui/packages/tgui/interfaces/NetrunTerminal/graphLayout.ts';
 const source = fs.readFileSync(path.join(root, sourcePath), 'utf8');
-const baseline = execFileSync('git', ['show', `HEAD:${sourcePath}`], { cwd: root, encoding: 'utf8' });
+const baselineRef = process.argv[2] || 'HEAD';
+const baseline = execFileSync('git', ['show', `${baselineRef}:${sourcePath}`], { cwd: root, encoding: 'utf8' });
 
 function load(code) {
   const transformed = babel.transformSync(code, { filename: 'graphLayout.ts', configFile: false, babelrc: false,
@@ -43,6 +44,6 @@ function run(library, count, movers, iterations = 120) {
 const before = load(baseline), after = load(source);
 for (const [nodes, movers] of [[6000, 3], [6000, 64], [20000, 128]]) {
   const previous = run(before, nodes, movers), current = run(after, nodes, movers);
-  console.log(JSON.stringify({ nodes, movers, iterations: 120, baseline: previous, current,
+  console.log(JSON.stringify({ nodes, movers, iterations: 120, baseline_ref: baselineRef, baseline: previous, current,
     mean_speedup: previous.mean_ms / current.mean_ms }));
 }

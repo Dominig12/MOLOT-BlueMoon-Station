@@ -130,3 +130,121 @@
 	source.console.map_view.follow_source()
 	data = source.console.ui_data(null)
 	TEST_ASSERT(netrun_map_has_node(data, local_node.address), "Return to source must restore the source sector")
+
+/// An offscreen source changing departments must replace the remote floor's permissions.
+/datum/unit_test/netrun_map_remote_floor_source_lan/Run()
+	var/list/levels = multiz_gravity_test_levels()
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, levels[1])
+	scene.mark_station(levels[2])
+	var/area/lower_engineering = scene.room(/area/engineering/netrun_route_test)
+	var/area/lower_medical = scene.room(/area/medical/netrun_route_test)
+	var/area/upper_engineering = scene.room(/area/engineering/netrun_route_test)
+	var/area/upper_medical = scene.room(/area/medical/netrun_route_test)
+	var/turf/source_spot = scene.take(locate(80, 80, levels[1]), lower_engineering, TRUE)
+	var/turf/destination = scene.take(locate(84, 80, levels[1]), lower_medical, TRUE)
+	var/turf/engineering_spot = scene.take(locate(80, 80, levels[2]), upper_engineering, TRUE)
+	var/turf/medical_spot = scene.take(locate(84, 80, levels[2]), upper_medical, TRUE)
+	scene.machine(/obj/machinery/power/apc, scene.take(locate(81, 80, levels[1]), lower_engineering, TRUE))
+	scene.machine(/obj/machinery/power/apc, scene.take(locate(85, 80, levels[1]), lower_medical, TRUE))
+	scene.machine(/obj/machinery/power/apc, scene.take(locate(81, 80, levels[2]), upper_engineering, TRUE))
+	scene.machine(/obj/machinery/power/apc, scene.take(locate(85, 80, levels[2]), upper_medical, TRUE))
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, source_spot)
+	var/obj/item/engineering_device = new(engineering_spot)
+	var/obj/item/medical_device = new(medical_spot)
+	scene.owned += engineering_device
+	scene.owned += medical_device
+	var/datum/component/netrun_node/engineering_node = engineering_device.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/component/netrun_node/medical_node = medical_device.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	SSnetworks.station_network.setting_disabled = TRUE
+	// Every endpoint and APC exists before warming; no delayed construction may
+	// cause a topology rebuild which would mask missing context invalidation.
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_network/old_network = source_node.network
+	var/datum/netrun_console/console = source.console
+	qdel(console.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+	console.map_view = view
+	console.workspace_view = "map"
+	console.ui_data(null)
+	TEST_ASSERT(view.select_sector(engineering_node.binding_sector, levels[2]), "The linked remote floor must already be disclosed by its APCs")
+	var/list/data = console.ui_data(null)
+	TEST_ASSERT_EQUAL(view.active_z, levels[2], "The baseline must browse the upper floor while the source remains downstairs")
+	TEST_ASSERT(!view.shown_addresses[source_node.address], "The moving source must start outside the displayed projection")
+	TEST_ASSERT(netrun_map_has_node(data, engineering_node.address), "The original home LAN must disclose its upper-floor endpoint")
+	TEST_ASSERT(!netrun_map_has_node(data, medical_node.address), "The protected medical endpoint must initially be hidden")
+	var/revision = graph.revision
+	var/builds = view.rebuilds
+	var/address = source_node.address
+	source.forceMove(destination)
+	source_node.join_network()
+	source_node.publish_changes()
+	TEST_ASSERT(source_node.network != old_network, "The physical move must actually change the source LAN")
+	TEST_ASSERT_EQUAL(source_node.address, address, "The context change must retain the source's address")
+	TEST_ASSERT_EQUAL(graph.revision, revision, "A leaf rebind must retain the warm topology revision")
+	data = console.ui_data(null)
+	TEST_ASSERT_EQUAL(view.active_z, levels[2], "Changing departments downstairs must preserve the browsed remote floor")
+	TEST_ASSERT(!netrun_map_has_node(data, engineering_node.address), "Losing the offscreen source's home LAN must revoke its remote private endpoint")
+	TEST_ASSERT(netrun_map_has_node(data, medical_node.address), "The new home LAN must disclose its remote private endpoint on the next poll")
+	TEST_ASSERT(view.rebuilds > builds, "A changed offscreen source LAN must replace the permission projection")
+	TEST_ASSERT_EQUAL(graph.revision, revision, "Permission refresh must not depend on a full physical graph rebuild")
+
+/proc/netrun_map_has_floor(list/data, sector_id, z)
+	var/list/map = data["map"]
+	for(var/list/sector as anything in map["sectors"])
+		if(sector["id"] == sector_id)
+			return z in sector["levels"]
+	return FALSE
+
+/// A permitted offscreen endpoint can add a floor without changing the physical mesh.
+/datum/unit_test/netrun_map_offscreen_floor_catalog/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/list/levels = multiz_gravity_test_levels()
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	scene.mark_station(levels[1])
+	scene.mark_station(levels[2])
+	var/area/local_room = scene.room(/area/netrun_route_test)
+	var/area/remote_room = scene.room(/area/netrun_route_test)
+	scene.take(origin, local_room)
+	scene.machine(/obj/machinery/power/apc, scene.take(get_step(origin, NORTH), local_room))
+	scene.machine(/obj/machinery/ntnet_relay, scene.take(locate(origin.x, origin.y + 2, origin.z), local_room))
+	var/turf/remote_spot = scene.take(locate(80, 80, levels[1]), remote_room, TRUE)
+	var/turf/destination = scene.take(locate(80, 80, levels[2]), remote_room, TRUE)
+	scene.machine(/obj/machinery/power/apc, scene.take(locate(81, 80, levels[1]), remote_room, TRUE))
+	scene.machine(/obj/machinery/ntnet_relay, scene.take(locate(82, 80, levels[1]), remote_room, TRUE))
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/obj/item/mobile = new(remote_spot)
+	scene.owned += mobile
+	var/datum/component/netrun_node/leaf = mobile.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	SSnetworks.station_network.setting_disabled = FALSE
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/netrun_console/console = source.console
+	qdel(console.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+	console.map_view = view
+	console.workspace_view = "map"
+	var/list/data = console.ui_data(null)
+	var/remote_sector = leaf.binding_sector
+	var/local_sector = view.active_sector
+	TEST_ASSERT(local_sector != remote_sector, "The baseline must display a different sector from the moving endpoint")
+	TEST_ASSERT(view.node_entries[leaf.address] && !view.shown_addresses[leaf.address], "The remote endpoint must be permitted but offscreen before it moves")
+	TEST_ASSERT(netrun_map_has_floor(data, remote_sector, levels[1]), "The baseline catalog must contain the endpoint's old floor")
+	TEST_ASSERT(!netrun_map_has_floor(data, remote_sector, levels[2]), "No permitted endpoint may disclose the destination floor before movement")
+	var/revision = graph.revision
+	var/builds = view.rebuilds
+	var/datum/component/netrun_node/original_apc = leaf.bound_apc
+	var/datum/netrun_network/original_network = leaf.network
+	mobile.forceMove(destination)
+	leaf.join_network()
+	leaf.publish_changes()
+	TEST_ASSERT_EQUAL(leaf.bound_apc, original_apc, "The mobile endpoint must retain its APC within the same linked area")
+	TEST_ASSERT_EQUAL(leaf.network, original_network, "A floor change must keep the original authorization domain")
+	TEST_ASSERT_EQUAL(graph.revision, revision, "The offscreen floor move must retain the cached physical topology")
+	data = console.ui_data(null)
+	TEST_ASSERT_EQUAL(view.active_sector, local_sector, "An offscreen move must preserve the user's viewed sector")
+	TEST_ASSERT(!view.shown_addresses[leaf.address], "Updating the catalog must not draw offscreen nodes in the local projection")
+	var/list/entry = view.node_entries[leaf.address]
+	TEST_ASSERT_EQUAL(entry["z"], levels[2], "Offscreen permitted metadata must move to the actual floor")
+	TEST_ASSERT(netrun_map_has_floor(data, remote_sector, levels[2]), "The new floor must become browsable on the next poll")
+	TEST_ASSERT(view.rebuilds > builds, "Offscreen floor membership changes must rebuild the catalog")
+	TEST_ASSERT_EQUAL(graph.revision, revision, "The catalog repair must not rely on a physical topology rebuild")

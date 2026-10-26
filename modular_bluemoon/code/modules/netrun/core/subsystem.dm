@@ -307,7 +307,7 @@ SUBSYSTEM_DEF(netrun)
 /// Timers admit ready I/O to the existing MC worker, never execute it themselves.
 /datum/controller/subsystem/netrun/proc/wake_ready_delivery()
 	wait = world.tick_lag
-	// Already runnable work must not pay another artificial tick at each DNS or
+	// Already runnable work must not pay another artificial tick at each discovery or
 	// telecomms hop. MC still owns dispatch and the shared finite pass budget.
 	next_fire = min(next_fire, world.time)
 

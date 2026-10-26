@@ -300,11 +300,8 @@ GLOBAL_LIST_EMPTY(atmos_air_controllers)
 	var/datum/netrun_machine_service/atmos/monitor/service = get_netrun_machine_service("atmos.monitor")
 	var/list/devices = service?.resolve("atmos.device")
 	if(!length(devices))
-		if(service)
-			service.reconnect_user = WEAKREF(user)
-		to_chat(user, span_notice("Поиск сетевых атмосферных устройств..."))
+		to_chat(user, span_notice("В доступной сети APC не обнаружено атмосферных устройств."))
 		return
-	service.reconnect_user = null
 	var/list/IO = list()
 	for(var/datum/netrun_machine_service/atmos/device/device as anything in devices)
 		var/device_tag = device.service_tag()

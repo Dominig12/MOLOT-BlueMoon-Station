@@ -1,0 +1,142 @@
+/// One bounded, coalesced local registry lookup per source/service/tag. Discovery
+/// never creates wire packets or per-client directory replicas. APC topology is
+/// authoritative, while the ordinary data packet revalidates the path at delivery.
+/datum/netrun_machine_resolution
+	parent_type = /datum/netrun_delivery
+	delivery_kind = "service_discovery"
+	var/datum/netrun_machine_service/source
+	var/destination_id
+	var/recipient_tag
+	var/query_key
+	var/list/queued = list()
+	var/completed = FALSE
+	var/failure_reason = "Обнаружение службы отменено"
+	var/operation_id
+	var/list/resolved_targets
+	var/target_cursor = 1
+	var/message_attempted = FALSE
+
+/datum/netrun_machine_resolution/New(datum/netrun_machine_service/source, destination_id, recipient_tag)
+	src.source = source
+	src.destination_id = destination_id
+	src.recipient_tag = recipient_tag
+	query_key = "[destination_id]|[recipient_tag]"
+	operation_id = "discovery-[++SSnetrun.get_machine_transport().packet_serial]"
+	RegisterSignal(source, COMSIG_PARENT_QDELETING, PROC_REF(source_deleted))
+
+/datum/netrun_machine_resolution/proc/source_deleted()
+	SIGNAL_HANDLER
+	failure_reason = "Источник службы удалён"
+	qdel(src)
+
+/datum/netrun_machine_resolution/Destroy()
+	cancel_delivery()
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	transport.waiting_resolutions -= src
+	if(source?.resolutions[query_key] == src)
+		source.resolutions -= query_key
+	transport.queued_messages -= length(queued)
+	var/list/abandoned = queued
+	queued = list()
+	var/already_dispatched = message_attempted
+	for(var/datum/netrun_machine_message/message as anything in abandoned)
+		// Copies already admitted for the head message own their own outcomes.
+		if(!already_dispatched)
+			message.failed(failure_reason)
+		qdel(message)
+		already_dispatched = FALSE
+	resolved_targets = null
+	if(source)
+		UnregisterSignal(source, COMSIG_PARENT_QDELETING)
+	source = null
+	return ..()
+
+/datum/netrun_machine_resolution/proc/enqueue(datum/netrun_machine_message/message)
+	if(!message.correlation_id)
+		message.correlation_id = operation_id
+	var/key = message.coalescing_key()
+	if(!completed && !isnull(key))
+		for(var/index in 1 to length(queued))
+			var/datum/netrun_machine_message/previous = queued[index]
+			if(previous.coalescing_key() == key)
+				queued[index] = message
+				qdel(previous)
+				return TRUE
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	if(completed || length(queued) >= 64 || transport.queued_messages >= 4096)
+		message.failed("Очередь обнаружения служб заполнена")
+		qdel(message)
+		return FALSE
+	queued += message
+	transport.queued_messages++
+	return TRUE
+
+/datum/netrun_machine_resolution/proc/begin()
+	if(QDELETED(src) || completed)
+		return
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	if(!transport.is_ready())
+		transport.waiting_resolutions[src] = TRUE
+		return
+	transport.waiting_resolutions -= src
+	queue_delivery()
+
+/datum/netrun_machine_resolution/delivery_priority()
+	return NETRUN_TASK_NORMAL
+
+/datum/netrun_machine_resolution/can_queue_delivery()
+	return !completed || length(queued)
+
+/datum/netrun_machine_resolution/deliver()
+	set waitfor = FALSE
+	cancel_delivery()
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	if(!completed && !transport.is_ready())
+		transport.waiting_resolutions[src] = TRUE
+		return FALSE
+	if(QDELETED(source) || QDELETED(source.host))
+		failure_reason = "Источник службы удалён"
+		qdel(src)
+		return FALSE
+	if(!completed)
+		completed = TRUE
+		// Resolve once for the whole admitted burst. Remove this generation before
+		// callbacks, so newly submitted commands own a separate lookup.
+		if(source.resolutions[query_key] == src)
+			source.resolutions -= query_key
+		resolved_targets = source.resolve(destination_id, recipient_tag)
+	// Bound both command bursts and broadcast fanout. Originals remain owned and
+	// counted until consumed; every copied packet still validates its live path.
+	var/work = 0
+	while(length(queued) && work++ < 8)
+		if(QDELETED(source))
+			failure_reason = "Источник службы удалён"
+			qdel(src)
+			return FALSE
+		var/datum/netrun_machine_message/message = queued[1]
+		if(target_cursor <= length(resolved_targets))
+			var/datum/netrun_machine_service/target = resolved_targets[target_cursor++]
+			if(!QDELETED(target) && target.matches(source, recipient_tag))
+				message_attempted = TRUE
+				source.send_to(target, message.copy())
+				if(QDELETED(src))
+					return FALSE
+			continue
+		queued.Cut(1, 2)
+		transport.queued_messages--
+		if(!message_attempted)
+			message.failed("Служба недоступна по сети APC")
+		qdel(message)
+		if(QDELETED(src))
+			return FALSE
+		target_cursor = 1
+		message_attempted = FALSE
+	if(length(queued))
+		queue_delivery()
+		return FALSE
+	qdel(src)
+	return TRUE
+
+/datum/netrun_task/service_discovery
+	parent_type = /datum/netrun_task/delivery
+	kind = "service_discovery"

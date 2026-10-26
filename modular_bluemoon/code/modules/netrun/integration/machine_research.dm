@@ -1,5 +1,5 @@
 /// Research information is copied only by delivered machine packets. A holder's
-/// logical techweb selects its server; it never replaces physical routing/DNS.
+/// logical techweb selects its server; it never replaces physical APC routing.
 
 /datum/techweb/proc/has_research_owner(obj/machinery/rnd/server/server)
 	var/datum/weakref/reference = research_owner_refs[REF(server)]
@@ -34,7 +34,7 @@
 	for(var/key in target.research_owner_refs)
 		var/datum/weakref/reference = target.research_owner_refs[key]
 		var/obj/machinery/rnd/server/peer = reference?.resolve()
-		if(!QDELETED(peer) && peer.netrun_online() && source_service.can_reach(peer.get_netrun_machine_service("research.server"), FALSE))
+		if(!QDELETED(peer) && peer.netrun_online() && source_service.can_reach(peer.get_netrun_machine_service("research.server")))
 			reachable = TRUE
 			break
 	if(!reachable)
@@ -84,7 +84,7 @@
 	if(GetComponent(/datum/component/techweb_holder) && !istype(src, /obj/machinery/rnd/server))
 		. |= /datum/netrun_machine_service/research_client
 
-/// Selection may inspect physical connectivity; data still travels through DNS and packets.
+/// Selection may inspect physical connectivity; data still travels through the APC registry and data packets.
 /proc/netrun_research_route_available(atom/source, obj/machinery/rnd/server/server)
 	if(QDELETED(source) || QDELETED(server) || !server.netrun_online())
 		return FALSE
@@ -96,7 +96,7 @@
 	var/datum/netrun_machine_service/research_server/authority = server.get_netrun_machine_service("research.server")
 	if(!client || !authority || !SSnetrun.get_machine_transport().is_ready())
 		return FALSE
-	return client.can_reach(authority, FALSE)
+	return client.can_reach(authority)
 
 /// Revalidate grants at the native resource/technology boundary, including route loss.
 /proc/netrun_research_authorizes(atom/source, datum/techweb/web, design_id)
@@ -478,13 +478,12 @@
 	for(var/key in binding.research_owner_refs)
 		var/datum/weakref/reference = binding.research_owner_refs[key]
 		var/obj/machinery/rnd/server/owner = reference?.resolve()
-		if(!QDELETED(owner) && owner.netrun_online() && can_reach(owner.get_netrun_machine_service("research.server"), FALSE))
+		if(!QDELETED(owner) && owner.netrun_online() && can_reach(owner.get_netrun_machine_service("research.server")))
 			return binding
 	return null
 
 /// A shared authority is unicast: broadcasting mutations would credit/debit it twice.
-/datum/netrun_machine_service/research_client/resolve(destination_id, recipient_tag, datum/netrun_machine_directory/entry)
-	var/list/targets = ..()
+/datum/netrun_machine_service/research_client/select_targets(destination_id, list/targets)
 	return destination_id == "research.server" && length(targets) ? list(targets[1]) : targets
 
 /// One design request yields one grant; no retry can replay native resource consumption.

@@ -87,17 +87,17 @@
 	observations = null
 	return ..()
 
-/// A readiness timer must never synchronously retry an entire station's DNS backlog.
-/datum/unit_test/netrun_execution_dns_wake_slices/Run()
+/// A readiness timer must never synchronously retry an entire station's service-discovery backlog.
+/datum/unit_test/netrun_execution_discovery_wake_slices/Run()
 	var/datum/netrun_machine_transport/transport = allocate(/datum/netrun_machine_transport)
 	var/list/samples = list("begun" = 0)
 	for(var/id in 1 to 17)
 		transport.waiting_resolutions += allocate(/datum/netrun_machine_resolution/netrun_wake_probe, transport, samples, id)
 	transport.resume_resolutions()
 	TEST_ASSERT_EQUAL(samples["begun"], 0, "The readiness timer callback must only admit work, never call query.begin inline")
-	var/key = "dns_wake:[REF(transport)]"
+	var/key = "discovery_wake:[REF(transport)]"
 	var/datum/netrun_task_scheduler/live = SSnetrun.get_task_scheduler()
-	TEST_ASSERT(live.by_key[key], "Ready DNS retry work must enter the existing shared scheduler")
+	TEST_ASSERT(live.by_key[key], "Ready service-discovery work must enter the existing shared scheduler")
 	for(var/notification in 1 to 32)
 		transport.wake_resolutions()
 	TEST_ASSERT(!transport.wake_timer, "Readiness notifications during an admitted wake must not create more timers")
@@ -108,12 +108,12 @@
 	worker.task_budget_ms = NETRUN_EXECUTION_MAX_BUDGET_MS
 	worker.task_max_per_pass = 1
 	worker.next_task_population = INFINITY
-	live.cancel("dns_wake", transport)
+	live.cancel("discovery_wake", transport)
 	var/datum/netrun_task_scheduler/scheduler = worker.get_task_scheduler()
-	scheduler.enqueue("dns_wake", transport, NETRUN_TASK_BACKGROUND)
+	scheduler.enqueue("discovery_wake", transport, NETRUN_TASK_BACKGROUND)
 	worker.run_pass()
 	TEST_ASSERT_EQUAL(samples["begun"], 8, "The first readiness worker slice must begin at most eight queries")
-	TEST_ASSERT_EQUAL(scheduler.pending(), 1, "An incomplete DNS wake must retain one continuation")
+	TEST_ASSERT_EQUAL(scheduler.pending(), 1, "An incomplete discovery wake must retain one continuation")
 	transport.waiting_resolutions += allocate(/datum/netrun_machine_resolution/netrun_wake_probe, transport, samples, 18)
 	for(var/notification in 1 to 32)
 		transport.wake_resolutions()
@@ -131,7 +131,7 @@
 	TEST_ASSERT(!live.by_key[key] && !transport.wake_timer, "Draining an isolated continuation must not leave hidden work in the live scheduler")
 
 /// Destroying a transport must cancel both readiness timers and already admitted waves.
-/datum/unit_test/netrun_execution_dns_wake_cleanup/Run()
+/datum/unit_test/netrun_execution_discovery_wake_cleanup/Run()
 	var/list/samples = list("begun" = 0)
 	var/datum/netrun_machine_transport/delayed = allocate(/datum/netrun_machine_transport)
 	delayed.waiting_resolutions += allocate(/datum/netrun_machine_resolution/netrun_wake_probe, delayed, samples, 1)
@@ -143,7 +143,7 @@
 	var/datum/netrun_machine_transport/ready = allocate(/datum/netrun_machine_transport)
 	ready.waiting_resolutions += allocate(/datum/netrun_machine_resolution/netrun_wake_probe, ready, samples, 2)
 	ready.resume_resolutions()
-	var/key = "dns_wake:[REF(ready)]"
+	var/key = "discovery_wake:[REF(ready)]"
 	TEST_ASSERT(SSnetrun.get_task_scheduler().by_key[key], "The cleanup test needs a real admitted readiness continuation")
 	qdel(ready)
 	TEST_ASSERT_NULL(SSnetrun.task_scheduler.by_key[key], "Destroying the transport must cancel its readiness continuation")

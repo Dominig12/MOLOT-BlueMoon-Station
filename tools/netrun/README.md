@@ -8,6 +8,7 @@ node tools/netrun/run-tests.mjs
 node tools/netrun/run-tests.mjs --filter scheduler
 node tools/netrun/run-tests.mjs --filter execution
 node tools/netrun/run-tests.mjs --filter interaction
+node tools/netrun/run-tests.mjs --peace-map
 ```
 
 Runner находит `netrun_*` тесты с `Run()` только в файлах `netrun*.dm`,
@@ -17,6 +18,13 @@ Runner находит `netrun_*` тесты с `Run()` только в файл�
 ошибка сборки, отсутствие отчёта, пропущенный тест, SKIPPED или FAIL дают exit 1.
 Production `_compile_options.dm` не меняется. Для нестандартного расположения
 BYOND задайте `DM_EXE`: штатный build runner ищет DreamDaemon рядом с компилятором.
+
+`--peace-map` отдельно загружает настоящую «Мирную Синдикат Станцию» через
+`full-map` и проверяет стартовую регистрацию R&D и всех питаемых доступных
+вентиляций/скрубберов с совместимой тревогой. Частоты и состояние машин тест
+не подменяет; устройства без контроллера в своём отсеке не считаются ошибкой
+регистрации. Отчёт: `data/logs/ci-full-map/unit_tests.json`. Команда использует
+тот же замок запуска и отвергает старый, отсутствующий или пропущенный результат.
 
 `execution` проверяет изменяемые лимиты подсистемы, CPU-бюджет и справедливость
 очередей; `interaction` — немедленный ответ, токен receipt, допуск TGUI и отличие

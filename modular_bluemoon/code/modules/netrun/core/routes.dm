@@ -203,6 +203,51 @@
 	var/route_revision = 0
 	var/route_refresh_at = -INFINITY
 	var/forwarding_checked_at = -INFINITY
+	/// The physical graph alone owns reusable APC/forwarder trees. Consumers borrow.
+	var/list/infrastructure_route_trees = list()
+	var/list/infrastructure_route_used = list()
+	var/infrastructure_route_limit = 512
+	var/infrastructure_route_serial = 0
+	var/infrastructure_tree_builds = 0
+
+/datum/netrun_topology/proc/forget_infrastructure_route(address)
+	qdel(infrastructure_route_trees[address])
+	infrastructure_route_trees -= address
+	infrastructure_route_used -= address
+
+/datum/netrun_topology/proc/clear_infrastructure_routes()
+	for(var/address in infrastructure_route_trees)
+		qdel(infrastructure_route_trees[address])
+	infrastructure_route_trees.Cut()
+	infrastructure_route_used.Cut()
+
+/datum/netrun_topology/proc/trim_infrastructure_routes(limit)
+	while(length(infrastructure_route_trees) > limit)
+		var/oldest
+		for(var/address in infrastructure_route_trees)
+			if(!oldest || infrastructure_route_used[address] < infrastructure_route_used[oldest])
+				oldest = address
+		forget_infrastructure_route(oldest)
+
+/// Shared physical reachability contains no service registry, viewer or authority state.
+/// Leaf attachment/cost changes are composed by callers and do not invalidate this tree.
+/datum/netrun_topology/proc/borrow_infrastructure_tree(datum/component/netrun_node/root, availability_reconciled = FALSE)
+	if(QDELETED(root) || nodes[root.address] != root)
+		return null
+	if(!availability_reconciled)
+		reconcile_availability()
+	var/limit = max(1, infrastructure_route_limit)
+	var/datum/netrun_path_tree/tree = infrastructure_route_trees[root.address]
+	if(!tree || tree.graph_ref?.resolve() != src || tree.source != root || tree.geometry_revision != infrastructure_revision || tree.transit_availability_revision != transit_availability_revision || tree.source_online != root.is_online())
+		reconcile_availability(TRUE)
+		forget_infrastructure_route(root.address)
+		trim_infrastructure_routes(limit - 1)
+		tree = new(src, root, TRUE)
+		infrastructure_route_trees[root.address] = tree
+		infrastructure_tree_builds++
+	infrastructure_route_used[root.address] = ++infrastructure_route_serial
+	trim_infrastructure_routes(limit)
+	return tree
 
 /datum/netrun_topology/proc/clear_route_tables(release_sources = FALSE)
 	for(var/address in route_tables)
@@ -325,9 +370,8 @@
 			table.previous[address] = parent_address
 			table.costs[address] = table.costs[parent_address] + edge_cost
 			table.remote[address] = table.remote[parent_address]
-			if(node.network)
-				// The reachable parent is already a member of its APC's LAN.
-				table.reached_networks[node.network.id] = TRUE
+			// The parent's LAN is already indexed. node.network still names its old
+			// LAN until join_network finishes, so adding it would invent reachability.
 		else
 			table.reached -= address
 			table.previous -= address
