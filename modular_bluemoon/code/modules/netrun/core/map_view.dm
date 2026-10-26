@@ -134,11 +134,11 @@
 	owner?.invalidate_ui()
 	return TRUE
 
-/// A single node's status change updates just that node in place; binding and removal are
-/// structural (they move edges and membership) and need a full projection rebuild.
+/// A leaf changing its APC is repaired incrementally when both ends remain
+/// visible in the same LAN. Membership/permission changes fall back to rebuild().
 /datum/netrun_map_view/proc/on_node_changed(datum/source, datum/component/netrun_node/node, flags)
 	SIGNAL_HANDLER
-	if(flags & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED))
+	if(flags & NETRUN_CHANGED_REMOVED)
 		structure_dirty = TRUE
 	else if(node)
 		dirty_nodes[node.address] = TRUE
@@ -362,6 +362,8 @@
 	var/geometry_changed = FALSE
 	var/list/changed_edges = list()
 	var/list/prepared = list()
+	var/list/rewired_edges = list()
+	var/list/removed_edge_ids = list()
 	// Preflight visibility before mutating the retained snapshot: a late full rebuild must
 	// not lose earlier changes from the same batch or publish a partially updated baseline.
 	for(var/address in dirty_nodes)
@@ -384,6 +386,22 @@
 		if(previous["dynamic"] != entry["dynamic"])
 			rebuild(graph)
 			return
+		if(previous["uplink"] != entry["uplink"])
+			// A new LAN changes gateways and possibly visibility of other nodes.
+			// The common case is a local APC-to-APC move within one LAN.
+			var/list/incident = incident_edges[address]
+			var/list/neighbors = graph.adjacency[address]
+			if(previous["network"] != entry["network"] || length(incident) != 1 || length(neighbors) != 1 || neighbors[1] != entry["uplink"] || !shown_addresses[entry["uplink"]])
+				rebuild(graph)
+				return
+			var/index_old = incident[1]
+			var/list/old_edge = map_edges[index_old]
+			var/list/new_edge = graph.edge_between(address, entry["uplink"])
+			if(!old_edge || !new_edge || (old_edge["from"] != address && old_edge["to"] != address))
+				rebuild(graph)
+				return
+			var/old_parent = old_edge["from"] == address ? old_edge["to"] : old_edge["from"]
+			rewired_edges[address] = list("index" = index_old, "old_parent" = old_parent, "new_parent" = entry["uplink"], "edge" = new_edge)
 		prepared[address] = entry
 	for(var/address in prepared)
 		var/list/previous = node_entries[address]
@@ -406,10 +424,40 @@
 				static_changed = TRUE
 		for(var/edge_index in incident_edges[address])
 			changed_edges["[edge_index]"] = edge_index
+	// Swap the retained edge in place so all other edges keep their client indices.
+	// The wire journal emits one removal and one upsert, not a full graph payload.
+	for(var/address in rewired_edges)
+		var/list/rewire = rewired_edges[address]
+		var/index = rewire["index"]
+		var/list/previous_edge = map_edges[index]
+		var/list/entry = rewire["edge"].Copy()
+		entry["online"] = netrun_link_available(graph.nodes[entry["from"]], graph.nodes[entry["to"]])
+		var/old_id = previous_edge["id"]
+		var/new_id = entry["id"]
+		map_edges[index] = entry
+		edge_entries -= old_id
+		edge_entries[new_id] = entry
+		structure[4][index] = new_id
+		var/list/old_incident = incident_edges[rewire["old_parent"]]
+		old_incident -= index
+		var/list/new_incident = incident_edges[rewire["new_parent"]]
+		new_incident += index
+		if(paint_edges[old_id])
+			paint_edges -= old_id
+			paint_edges[new_id] = entry.Copy()
+			static_changed = TRUE
+		removed_edge_ids += old_id
+		edge_updates += list(entry)
+		geometry_changed = TRUE
+		bumped = TRUE
 	for(var/key in changed_edges)
 		var/index = changed_edges[key]
 		var/list/previous = map_edges[index]
-		var/list/entry = graph.edge_between(previous["from"], previous["to"]).Copy()
+		var/list/current_edge = graph.edge_between(previous["from"], previous["to"])
+		if(!current_edge)
+			rebuild(graph)
+			return
+		var/list/entry = current_edge.Copy()
 		entry["online"] = netrun_link_available(graph.nodes[entry["from"]], graph.nodes[entry["to"]])
 		if(netrun_snapshot_equal(previous, entry))
 			continue
@@ -427,7 +475,7 @@
 		snapshot["structure_revision"] = ++structure_revision
 	if(static_changed)
 		snapshot["static_revision"] = ++static_revision
-	record_wire_delta(previous_revision, node_updates, edge_updates, list(), list())
+	record_wire_delta(previous_revision, node_updates, edge_updates, list(), removed_edge_ids)
 
 /// One serialization seam makes incremental work measurable without constructing fake topology.
 /datum/netrun_map_view/proc/project_entry(datum/component/netrun_node/node, neighbor_count)

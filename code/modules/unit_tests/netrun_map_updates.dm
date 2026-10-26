@@ -441,3 +441,36 @@
 	console.ui_dirty = FALSE
 	SSnetrun.post_event("trace", null, "test-event")
 	TEST_ASSERT(!console.ui_dirty, "Suspended maps do not receive network event signals")
+
+/// Switching between APCs in one department must update one retained edge.
+/datum/unit_test/netrun_map_apc_rebind_incremental/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/first_room = scene.room(/area/engineering/netrun_route_test)
+	var/area/second_room = scene.room(/area/engineering/netrun_route_test)
+	var/turf/source_spot = scene.take(origin, first_room)
+	var/turf/target_spot = scene.take(get_step(origin, EAST), first_room)
+	var/turf/destination = scene.take(locate(origin.x + 4, origin.y, origin.z), second_room)
+	var/turf/first_apc_spot = scene.take(get_step(origin, NORTH), first_room)
+	var/turf/second_apc_spot = scene.take(locate(origin.x + 5, origin.y, origin.z), second_room)
+	scene.machine(/obj/machinery/power/apc, first_apc_spot)
+	var/obj/machinery/power/apc/second = scene.machine(/obj/machinery/power/apc, second_apc_spot)
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, source_spot)
+	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, target_spot)
+	var/datum/netrun_console/console = source.console
+	qdel(console.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+	console.map_view = view
+	console.workspace_view = "map"
+	SSnetrun.ensure_topology()
+	var/list/map = console.ui_data(null)["map"]
+	var/builds = view.rebuilds
+	var/datum/component/netrun_node/node = target.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/second_node = second.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT(netrun_map_has_node(list("map" = map), node.address), "The target must be present before moving")
+	target.forceMove(destination)
+	node.join_network()
+	TEST_ASSERT_EQUAL(node.bound_apc, second_node, "The leaf must change its APC")
+	map = console.ui_data(null)["map"]
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "An APC-to-APC move within one LAN must avoid rebuilding the entire viewer map")
+	TEST_ASSERT(netrun_map_has_node(list("map" = map), node.address), "The moved leaf must remain visible")

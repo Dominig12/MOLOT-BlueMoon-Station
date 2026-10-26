@@ -560,3 +560,28 @@
 	TEST_ASSERT(QDELETED(artifact), "The delivered request must consume the researched artifact once")
 	sleep(0.5 SECONDS)
 	TEST_ASSERT_EQUAL(server.stored_research.research_points[TECHWEB_POINT_TYPE_GENERIC] + server.stored_research.next_income[TECHWEB_POINT_TYPE_GENERIC], 4500, "The server must award the actual artifact's 4500 points exactly once")
+
+/// Direct, addressed research discovery must not require a populated DNS cache.
+/datum/unit_test/netrun_research_direct_route_without_dns_cache/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/server = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	var/obj/machinery/computer/rdconsole/console = scene.machine(/obj/machinery/computer/rdconsole, scene.source_spot)
+	SEND_SIGNAL(console, COMSIG_ATOM_SET_TECHWEB, server.stored_research)
+	server.base_mining_income = list()
+	server.stored_research.research_points = list(TECHWEB_POINT_TYPE_GENERIC = 10000)
+	var/datum/netrun_machine_service/research_client/client = console.get_netrun_machine_service("research.client")
+	console.request_research_snapshot()
+	var/deadline = world.time + 3 SECONDS
+	while(!console.netrun_research_cache && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(console.netrun_research_cache, "The addressed server must deliver a snapshot")
+	for(var/key in client.directory)
+		qdel(client.directory[key])
+	client.directory.Cut()
+	TEST_ASSERT_EQUAL(client.live_authority(), server.stored_research, "A physical owner must authorize research without a DNS directory entry")
+	var/mob/living/carbon/human/user = allocate(/mob/living/carbon/human, scene.source_spot)
+	TEST_ASSERT(console.research_node("datatheory", user), "An addressed research mutation must enter the network without DNS")
+	deadline = world.time + 3 SECONDS
+	while(!server.stored_research.researched_nodes["datatheory"] && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(server.stored_research.researched_nodes["datatheory"], "Research must complete after direct discovery")

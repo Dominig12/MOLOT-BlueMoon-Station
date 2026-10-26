@@ -478,7 +478,7 @@
 	for(var/key in binding.research_owner_refs)
 		var/datum/weakref/reference = binding.research_owner_refs[key]
 		var/obj/machinery/rnd/server/owner = reference?.resolve()
-		if(!QDELETED(owner) && owner.netrun_online() && can_reach(owner.get_netrun_machine_service("research.server")))
+		if(!QDELETED(owner) && owner.netrun_online() && can_reach(owner.get_netrun_machine_service("research.server"), FALSE))
 			return binding
 	return null
 
