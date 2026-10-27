@@ -81,7 +81,7 @@
 		"pda_color", "pda_style", "pda_skin", "pda_ringtone", "pda_theme", "silicon_lawset", "jumpsuit_style",
 		"features", "skin_tone", "use_custom_skin_tone", "eye_type", "split_eye_colors", "left_eye_color", "right_eye_color",
 		"hair_style", "hair_color", "facial_hair_style", "facial_hair_color", "grad_style", "grad_color",
-		"modified_limbs", "chosen_limb_id", "body_weight", "scars_list", "bgstate",
+		"modified_limbs", "organ_mods", "implant_mods", "chosen_limb_id", "body_weight", "scars_list", "bgstate",
 		"custom_speech_verb", "custom_speech_verb_ru", "custom_tongue", "custom_laugh", "language",
 		"bark_id", "bark_speed", "bark_pitch", "bark_variance", "enable_personal_chat_color", "personal_chat_color",
 		"loadout_slot", "loadout_enabled", "loadout_data", "all_quirks", "antag_opt_in_level",
@@ -158,7 +158,7 @@
 	if(positive_count > MAX_QUIRKS)
 		return "В пресете больше [MAX_QUIRKS] положительных квирков."
 	if(quirk_balance(quirks) < 0)
-		return "Для этих квирков не хватает баланса при текущем весе и протезах персонажа."
+		return "Для этих квирков не хватает баланса при текущем весе, протезах и модификациях персонажа."
 	var/points = available_gear_points(user)
 	var/list/seen_gear = list()
 	for(var/raw_entry in preset["loadout"])
@@ -654,16 +654,6 @@
 	data["speciesList"] = species_names
 	data["customSpecies"] = prefs.custom_species
 	data["advancedColors"] = (prefs.features["color_scheme"] == ADVANCED_CHARACTER_COLORING)
-
-	var/list/limbs = list()
-	for(var/limb in prefs.modified_limbs)
-		var/list/entry = prefs.modified_limbs[limb]
-		var/list/row = list("name" = limb, "kind" = entry[1])
-		if(length(entry) > 1)
-			row["extra"] = entry[2]
-		limbs += list(row)
-	data["modifiedLimbs"] = limbs
-
 
 	data["useSkintones"] = !!species.use_skintones
 	data["skinTone"] = prefs.skin_tone
@@ -2655,6 +2645,7 @@
 		return
 
 	prefs.pref_species = new newtype()
+	prefs.drop_locked_body_mods()
 	prefs.custom_species = null
 	if(!prefs.parent?.can_have_part("mam_body_markings"))
 		prefs.features["mam_body_markings"] = list()
@@ -2747,31 +2738,102 @@
 	prefs.body_weight = new_weight
 	preview_dirty = TRUE
 
-/datum/character_setup/proc/apply_limb_modification()
-	var/limb_type = tgui_input_list(usr, "Choose the limb to modify:", "Character Preference", LOADOUT_ALLOWED_LIMB_TARGETS)
-	if(!limb_type)
+/datum/character_setup/proc/set_limb_modification(list/params)
+	var/zone = "[params["zone"]]"
+	if(!(zone in LOADOUT_ALLOWED_LIMB_TARGETS))
 		return
-	var/modification_type = tgui_input_list(usr, "Choose the modification to the limb:", "Character Preference", LOADOUT_LIMBS)
-	if(!modification_type)
-		return
-
-	if(modification_type == LOADOUT_LIMB_PROSTHETIC)
-		var/prosthetic_type = tgui_input_list(usr, "Choose the type of prosthetic", "Character Preference", (list("prosthetic") + GLOB.prosthetic_limb_types))
-		if(!prosthetic_type)
+	var/value = "[params["value"]]"
+	var/kind
+	var/brand
+	if(value in LOADOUT_LIMBS)
+		kind = value
+	else if(value == "prosthetic" || (value in GLOB.prosthetic_limb_types))
+		var/list/current = prefs.modified_limbs[zone]
+		if(!islist(current) || current[1] != LOADOUT_LIMB_PROSTHETIC)
 			return
-		var/number_of_prosthetics = 0
-		for(var/modified_limb in prefs.modified_limbs)
-			if(prefs.modified_limbs[modified_limb][1] == LOADOUT_LIMB_PROSTHETIC && modified_limb != limb_type)
-				number_of_prosthetics += 1
-		if(number_of_prosthetics >= MAXIMUM_LOADOUT_PROSTHETICS)
-			to_chat(usr, "<span class='danger'>You can only have up to two prosthetic limbs!</span>")
-			return
-		prefs.modified_limbs[limb_type] = list(modification_type, prosthetic_type)
-	else if(modification_type == LOADOUT_LIMB_NORMAL)
-		prefs.modified_limbs -= limb_type
+		brand = value
+		kind = LOADOUT_LIMB_PROSTHETIC
 	else
-		prefs.modified_limbs[limb_type] = list(modification_type)
+		return
+	var/old_bonus = 0
+	var/list/current_entry = prefs.modified_limbs[zone]
+	if(islist(current_entry) && length(current_entry))
+		if(current_entry[1] == LOADOUT_LIMB_PROSTHETIC)
+			old_bonus = 1
+		else if(current_entry[1] == LOADOUT_LIMB_AMPUTATED)
+			old_bonus = 2
+	var/new_bonus = 0
+	if(kind == LOADOUT_LIMB_PROSTHETIC)
+		new_bonus = 1
+	else if(kind == LOADOUT_LIMB_AMPUTATED)
+		new_bonus = 2
+	if(new_bonus < old_bonus && quirk_balance() - old_bonus + new_bonus < 0)
+		to_chat(usr, span_warning("Изменение этой конечности увёло бы баланс в минус!"))
+		return
+	if(kind == LOADOUT_LIMB_NORMAL)
+		prefs.modified_limbs -= zone
+		preview_dirty = TRUE
+		return
+	if(kind == LOADOUT_LIMB_PROSTHETIC)
+		if(!brand)
+			var/list/previous = prefs.modified_limbs[zone]
+			if(islist(previous) && length(previous) > 1)
+				brand = previous[2]
+		if(brand != "prosthetic" && !(brand in GLOB.prosthetic_limb_types))
+			brand = "prosthetic"
+		var/prosthetic_count = 0
+		for(var/modified_limb in prefs.modified_limbs)
+			if(prefs.modified_limbs[modified_limb][1] == LOADOUT_LIMB_PROSTHETIC && modified_limb != zone)
+				prosthetic_count++
+		if(prosthetic_count >= MAXIMUM_LOADOUT_PROSTHETICS)
+			to_chat(usr, span_danger("Нельзя иметь больше [MAXIMUM_LOADOUT_PROSTHETICS] протезов!"))
+			return
+		prefs.modified_limbs[zone] = list(kind, brand)
+	else
+		prefs.modified_limbs[zone] = list(kind)
 	preview_dirty = TRUE
+
+/datum/character_setup/proc/set_organ_modification(list/params)
+	var/mob/user = prefs.parent?.mob
+	if(!user)
+		return
+	var/slot = "[params["slot"]]"
+	var/list/option = prefs.body_mod_organ_option(slot, "[params["value"]]")
+	if(!option)
+		return
+	if(prefs.body_mod_organ_locked(slot))
+		to_chat(user, span_warning("Вид этого персонажа не позволяет заменить этот орган."))
+		return
+	var/old_cost = 0
+	var/list/old_option = prefs.body_mod_organ_option(slot, prefs.organ_mods[slot])
+	if(old_option)
+		old_cost = old_option["cost"]
+	if(isnull(option["path"]))
+		prefs.organ_mods -= slot
+		return
+	if(quirk_balance() + old_cost - option["cost"] < 0)
+		to_chat(user, span_warning("Недостаточно баланса: нужно ещё [option["cost"] - quirk_balance() - old_cost] очков квирков."))
+		return
+	prefs.organ_mods[slot] = option["id"]
+
+/datum/character_setup/proc/toggle_body_implant(list/params)
+	var/mob/user = prefs.parent?.mob
+	if(!user)
+		return
+	var/implant_id = "[params["id"]]"
+	var/list/option = prefs.body_mod_implant_option(implant_id)
+	if(!option)
+		return
+	if(prefs.implant_mods[implant_id])
+		if(quirk_balance() + option["cost"] < 0)
+			to_chat(user, span_warning("Возврат этого импланта увёл бы баланс в минус!"))
+			return
+		prefs.implant_mods -= implant_id
+		return
+	if(quirk_balance() - option["cost"] < 0)
+		to_chat(user, span_warning("Недостаточно баланса для этого импланта!"))
+		return
+	prefs.implant_mods[implant_id] = TRUE
 
 /datum/character_setup/proc/build_options_static()
 	if(options_cache)
@@ -2857,6 +2919,8 @@
 			data["loadout"] = build_loadout_data(user)
 		if(QUIRKS_CHAR_TAB)
 			data["quirksTab"] = build_quirks_data()
+		if(MODIFICATIONS_CHAR_TAB)
+			data["modsTab"] = build_modifications_data()
 
 	if(prefs.character_settings_tab == GENERAL_CHAR_TAB || prefs.character_settings_tab == APPEARANCE_CHAR_TAB)
 		data["appearance"] = build_appearance_data(user, prefs.character_settings_tab == APPEARANCE_CHAR_TAB)
@@ -2891,6 +2955,7 @@
 		list("id" = BACKGROUND_CHAR_TAB, "label" = "Прошлое", "icon" = "book"),
 		list("id" = APPEARANCE_CHAR_TAB, "label" = "Внешность", "icon" = "palette"),
 		list("id" = MARKINGS_CHAR_TAB, "label" = "Маркинги", "icon" = "highlighter"),
+		list("id" = MODIFICATIONS_CHAR_TAB, "label" = "Модификации", "icon" = "robot"),
 		list("id" = SPEECH_CHAR_TAB, "label" = "Речь", "icon" = "comment"),
 		list("id" = QUIRKS_CHAR_TAB, "label" = "Особенности", "icon" = "brain"),
 		list("id" = LOADOUT_CHAR_TAB, "label" = "Экипировка", "icon" = "tshirt"),
@@ -2969,9 +3034,13 @@
 			continue
 		balance -= initial(quirk_datum.value)
 	for(var/modification in prefs.modified_limbs)
-		if(prefs.modified_limbs[modification][1] == LOADOUT_LIMB_PROSTHETIC)
+		var/limb_kind = prefs.modified_limbs[modification][1]
+		if(limb_kind == LOADOUT_LIMB_PROSTHETIC)
 			balance += 1
+		else if(limb_kind == LOADOUT_LIMB_AMPUTATED)
+			balance += 2
 	balance -= prefs.mob_size_name_to_quirk_cost(prefs.body_weight)
+	balance -= prefs.body_mods_cost()
 	return balance
 
 /datum/character_setup/proc/quirk_lock_reason(quirk_name, datum/quirk/quirk_datum, list/selected_quirks)
@@ -3082,6 +3151,73 @@
 	data["items"] = rows
 	return data
 
+/datum/character_setup/proc/build_modifications_data()
+	var/list/data = list()
+	data["balance"] = quirk_balance()
+
+	var/list/limbs = list()
+	var/prosthetic_count = 0
+	var/amputation_count = 0
+	for(var/zone in LOADOUT_ALLOWED_LIMB_TARGETS)
+		var/list/entry = prefs.modified_limbs[zone]
+		var/list/row = list("zone" = zone, "kind" = LOADOUT_LIMB_NORMAL)
+		if(islist(entry) && length(entry))
+			row["kind"] = entry[1]
+			if(length(entry) > 1)
+				row["brand"] = entry[2]
+		if(row["kind"] == LOADOUT_LIMB_PROSTHETIC)
+			prosthetic_count++
+		else if(row["kind"] == LOADOUT_LIMB_AMPUTATED)
+			amputation_count++
+		limbs += list(row)
+	data["limbs"] = limbs
+	data["limbKinds"] = LOADOUT_LIMBS
+	data["limbBrands"] = list("prosthetic") + GLOB.prosthetic_limb_types
+	data["prostheticCount"] = prosthetic_count
+	data["amputationCount"] = amputation_count
+	data["limbBonus"] = prosthetic_count + amputation_count * 2
+	data["maxProsthetics"] = MAXIMUM_LOADOUT_PROSTHETICS
+
+	var/list/groups = list()
+	for(var/list/group in GLOB.body_mod_organ_groups)
+		var/slot = group["slot"]
+		var/locked = prefs.body_mod_organ_locked(slot)
+		var/selected = null
+		var/stored = prefs.organ_mods[slot]
+		if(stored)
+			selected = stored
+		else
+			for(var/list/default_option in group["options"])
+				if(isnull(default_option["path"]))
+					selected = default_option["id"]
+					break
+		var/list/options = list()
+		for(var/list/option in group["options"])
+			options += list(list("id" = option["id"], "label" = option["label"], "cost" = option["cost"]))
+		var/list/group_row = list(
+			"slot" = slot,
+			"label" = group["label"],
+			"options" = options,
+			"selected" = selected,
+			"locked" = locked,
+		)
+		if(locked)
+			group_row["lockReason"] = "Вид этого персонажа не позволяет заменить этот орган."
+		groups += list(group_row)
+	data["organs"] = groups
+
+	var/list/implants = list()
+	for(var/list/option in GLOB.body_mod_implants)
+		implants += list(list(
+			"id" = option["id"],
+			"label" = option["label"],
+			"desc" = option["desc"],
+			"cost" = option["cost"],
+			"selected" = !!prefs.implant_mods[option["id"]],
+		))
+	data["implants"] = implants
+	return data
+
 /datum/character_setup/proc/quirk_select_category(list/params)
 	var/next = "[params["value"]]"
 	if(!(next in list(QUIRK_POSITIVE, QUIRK_NEGATIVE, QUIRK_NEUTRAL)))
@@ -3126,6 +3262,9 @@
 	if(quirk_balance() < 0)
 		prefs.body_weight = NAME_WEIGHT_NORMAL
 		preview_dirty = TRUE
+		if(quirk_balance() < 0)
+			prefs.organ_mods = list()
+			prefs.implant_mods = list()
 
 /datum/character_setup/proc/quirk_set_phobia(list/params)
 	var/next = "[params["value"]]"
@@ -3471,7 +3610,7 @@
 
 		if("set_tab")
 			var/new_tab = num_param(params["tab"])
-			if(isnull(new_tab) || new_tab < GENERAL_CHAR_TAB || new_tab > QUIRKS_CHAR_TAB)
+			if(isnull(new_tab) || new_tab < GENERAL_CHAR_TAB || new_tab > MODIFICATIONS_CHAR_TAB)
 				return
 			prefs.character_settings_tab = new_tab
 			return TRUE
@@ -4194,8 +4333,16 @@
 			prefs.open_hair_style_picker(usr, hair_tab)
 			return TRUE
 
-		if("modify_limbs")
-			apply_limb_modification()
+		if("set_limb")
+			set_limb_modification(params)
+			return TRUE
+
+		if("set_organ")
+			set_organ_modification(params)
+			return TRUE
+
+		if("toggle_implant")
+			toggle_body_implant(params)
 			return TRUE
 
 		if("clear_scars")

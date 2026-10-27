@@ -1701,6 +1701,22 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 	else
 		modified_limbs = list()
 
+	var/organmodstr
+	S["organ_mods"] >> organmodstr
+	if(length(organmodstr))
+		organ_mods = safe_json_decode(organmodstr)
+	else
+		organ_mods = list()
+
+	var/implantmodstr
+	S["implant_mods"] >> implantmodstr
+	if(length(implantmodstr))
+		implant_mods = safe_json_decode(implantmodstr)
+	else
+		implant_mods = list()
+	sanitize_body_mods()
+	drop_locked_body_mods()
+
 	var/tcgcardstr
 	S["tcg_cards"] >> tcgcardstr
 	if(length(tcgcardstr))
@@ -1758,6 +1774,7 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 
 	//Quirks
 	S["all_quirks"] >> all_quirks
+	migrate_legacy_body_mods()
 
 	S["language"] >> language
 
@@ -2703,6 +2720,10 @@ SAVEFILE UPDATING/VERSIONING - 'Simplified', or rather, more coder-friendly ~Car
 	WRITE_FILE(S["scars5"]						, scars_list["5"])
 	if(islist(modified_limbs))
 		WRITE_FILE(S["modified_limbs"]				, safe_json_encode(modified_limbs))
+	if(islist(organ_mods))
+		WRITE_FILE(S["organ_mods"]					, safe_json_encode(organ_mods))
+	if(islist(implant_mods))
+		WRITE_FILE(S["implant_mods"]				, safe_json_encode(implant_mods))
 	WRITE_FILE(S["chosen_limb_id"],   chosen_limb_id)
 	//SPLURT EDIT BEGIN
 	WRITE_FILE(S["virile"], virility)
