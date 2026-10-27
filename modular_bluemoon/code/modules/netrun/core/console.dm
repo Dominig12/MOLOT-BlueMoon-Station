@@ -197,7 +197,9 @@
 	var/datum/netrun_path_tree/tree = owner.path_tree()
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	. = FALSE
-	for(var/address in tree.reached)
+	for(var/address in graph.relay_addresses)
+		if(!tree.reached[address])
+			continue
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(!istype(node?.parent, /obj/machinery/ntnet_relay) || !node.is_online())
 			continue

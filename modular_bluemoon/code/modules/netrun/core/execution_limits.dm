@@ -14,6 +14,8 @@
 	var/task_cost_smoothing = NETRUN_DEFAULT_TASK_COST_SMOOTHING
 	var/task_population_interval = NETRUN_DEFAULT_TASK_POPULATION_INTERVAL
 	var/apc_prebuild_operations = NETRUN_DEFAULT_APC_PREBUILD_OPERATIONS
+	var/ui_route_operations = NETRUN_DEFAULT_UI_ROUTE_OPERATIONS
+	var/map_projection_operations = NETRUN_DEFAULT_MAP_PROJECTION_OPERATIONS
 	var/route_refresh_interval = NETRUN_DEFAULT_ROUTE_REFRESH_INTERVAL
 	var/route_expiry_interval = NETRUN_DEFAULT_ROUTE_EXPIRY_INTERVAL
 	var/ui_refresh_interval = NETRUN_DEFAULT_UI_REFRESH_INTERVAL
@@ -54,6 +56,8 @@
 	var/cost_smoothing = NETRUN_DEFAULT_TASK_COST_SMOOTHING
 	var/population_interval = NETRUN_DEFAULT_TASK_POPULATION_INTERVAL
 	var/apc_operations = NETRUN_DEFAULT_APC_PREBUILD_OPERATIONS
+	var/route_operations = NETRUN_DEFAULT_UI_ROUTE_OPERATIONS
+	var/map_projection_operations = NETRUN_DEFAULT_MAP_PROJECTION_OPERATIONS
 	var/route_refresh_interval = NETRUN_DEFAULT_ROUTE_REFRESH_INTERVAL
 	var/route_expiry_interval = NETRUN_DEFAULT_ROUTE_EXPIRY_INTERVAL
 	var/ui_refresh_interval = NETRUN_DEFAULT_UI_REFRESH_INTERVAL
@@ -88,6 +92,8 @@
 	cost_smoothing = bounded(worker.task_cost_smoothing, NETRUN_DEFAULT_TASK_COST_SMOOTHING, 0, 1)
 	population_interval = interval(worker.task_population_interval, NETRUN_DEFAULT_TASK_POPULATION_INTERVAL)
 	apc_operations = bounded(worker.apc_prebuild_operations, NETRUN_DEFAULT_APC_PREBUILD_OPERATIONS, 1, NETRUN_EXECUTION_MAX_PREBUILD_OPERATIONS, TRUE)
+	route_operations = bounded(worker.ui_route_operations, NETRUN_DEFAULT_UI_ROUTE_OPERATIONS, 1, NETRUN_EXECUTION_MAX_PREBUILD_OPERATIONS, TRUE)
+	map_projection_operations = bounded(worker.map_projection_operations, NETRUN_DEFAULT_MAP_PROJECTION_OPERATIONS, 1, NETRUN_EXECUTION_MAX_PREBUILD_OPERATIONS, TRUE)
 	route_refresh_interval = interval(worker.route_refresh_interval, NETRUN_DEFAULT_ROUTE_REFRESH_INTERVAL)
 	route_expiry_interval = interval(worker.route_expiry_interval, NETRUN_DEFAULT_ROUTE_EXPIRY_INTERVAL)
 	ui_refresh_interval = interval(worker.ui_refresh_interval, NETRUN_DEFAULT_UI_REFRESH_INTERVAL)

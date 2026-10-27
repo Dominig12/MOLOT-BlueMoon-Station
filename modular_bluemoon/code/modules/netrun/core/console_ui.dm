@@ -24,6 +24,7 @@
 
 /datum/netrun_console/proc/stop_ui_observation()
 	map_view?.suspend()
+	SSnetrun.topology?.cancel_ui_routes(src)
 	if(ui_observing)
 		UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_NETWORK_CHANGED, COMSIG_NETRUN_CHAT_CHANGED))
 	ui_observing = FALSE
@@ -215,7 +216,19 @@
 /datum/netrun_console/ui_static_data(mob/user)
 	if(user)
 		operator = user
-	return list("cli" = cli_payload(workspace_view == "terminal"), "networks" = network_catalog(), "operations" = operations_payload())
+	// Opening or refreshing a browser must use the same incremental discovery as
+	// ordinary polls, rather than entering the synchronous gameplay route solver.
+	var/owns_routes = !ui_routes
+	if(owns_routes)
+		ui_routes = acquire_ui_routes()
+	var/list/data = list("cli" = cli_payload(workspace_view == "terminal"), "networks" = network_catalog(), "operations" = operations_payload())
+	if(owns_routes)
+		if(ui_routes_borrowed)
+			ui_routes = null
+			ui_routes_borrowed = FALSE
+		else
+			QDEL_NULL(ui_routes)
+	return data
 
 /datum/netrun_console/proc/build_ui_data(mob/user, datum/ui_source, list/session)
 	var/list/data = list()
@@ -955,6 +968,7 @@
 	var/datum/component/netrun_node/source = route_source()
 	var/list/access = user_access()
 	. = list(operator, source?.address, source?.network?.id, source?.is_online(), graph.revision, graph.transit_availability_revision,
+		ui_routes_pending, ui_routes?.revision,
 		map_view.authorization_revision, access.Copy(), is_locked(), intrusion.can_breach,
 		inventory.local_store?.revision, inventory.shard, inventory.shard?.file_store?.revision,
 		connection.wireless, connection.jack?.address, web_browsing(), ui_uplink_value,

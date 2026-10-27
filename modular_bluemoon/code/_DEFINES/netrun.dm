@@ -57,6 +57,8 @@
 #define NETRUN_DEFAULT_TASK_COST_SMOOTHING 0.15
 #define NETRUN_DEFAULT_TASK_POPULATION_INTERVAL (1 SECONDS)
 #define NETRUN_DEFAULT_APC_PREBUILD_OPERATIONS 96
+#define NETRUN_DEFAULT_UI_ROUTE_OPERATIONS 128
+#define NETRUN_DEFAULT_MAP_PROJECTION_OPERATIONS 64
 /// Fast registration attempts before slow backoff while a compatible controller is online.
 /// Controller/device signals (power, move, config) restart the fast retry window.
 #define NETRUN_ATMOS_REGISTRATION_MAX_ATTEMPTS 10

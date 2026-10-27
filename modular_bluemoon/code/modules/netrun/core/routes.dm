@@ -45,8 +45,19 @@
 	/// Number of heap candidates; terminal destinations must not add heap work.
 	var/frontier_insertions = 0
 	var/neighbor_visits = 0
+	/// A UI solve retains its cursor, including high-fanout APC neighbors, between ticks.
+	var/solve_complete = TRUE
+	var/list/settled = list()
+	var/relays_expanded = FALSE
+	var/working_address
+	var/list/working_neighbors
+	var/neighbor_cursor = 1
+	var/relay_cursor = 1
+	var/relay_expansion_checked = FALSE
+	var/solve_source_parent
+	var/solve_source_cost
 
-/datum/netrun_path_tree/New(datum/netrun_topology/graph, datum/component/netrun_node/start, infrastructure_only = FALSE)
+/datum/netrun_path_tree/New(datum/netrun_topology/graph, datum/component/netrun_node/start, infrastructure_only = FALSE, deferred = FALSE)
 	source = start
 	if(graph)
 		graph_ref = WEAKREF(graph)
@@ -57,12 +68,72 @@
 	source_online = !QDELETED(start) && start.is_online()
 	if(QDELETED(start) || !graph.nodes[start.address])
 		return
-	var/list/settled = list()
-	var/relays_expanded = FALSE
+	var/list/source_neighbors = graph.adjacency[start.address]
+	if(!graph.is_infrastructure(start) && length(source_neighbors) == 1)
+		solve_source_parent = source_neighbors[1]
+		solve_source_cost = graph.cached_edge_cost(start.address, solve_source_parent)
 	reached[start.address] = TRUE
 	costs[start.address] = 0
 	push_candidate(start.address, 0)
-	while(length(frontier_addresses))
+	solve_complete = FALSE
+	if(!deferred)
+		while(!advance(128))
+			continue
+
+/// One heap pop, one physical neighbor or one relay candidate consumes one operation.
+/// In particular, a station APC with thousands of leaves cannot monopolize a tick.
+/datum/netrun_path_tree/proc/advance(max_operations)
+	if(solve_complete)
+		return TRUE
+	var/datum/netrun_topology/graph = graph_ref?.resolve()
+	if(QDELETED(graph))
+		return FALSE
+	for(var/operation in 1 to max(1, max_operations))
+		if(working_address)
+			var/datum/component/netrun_node/current = graph.nodes[working_address]
+			if(neighbor_cursor <= length(working_neighbors))
+				var/neighbor = working_neighbors[neighbor_cursor++]
+				neighbor_visits++
+				var/datum/component/netrun_node/next = graph.nodes[neighbor]
+				if(settled[neighbor] || QDELETED(next) || !graph.edge_lookup["[working_address]>[neighbor]"] || !netrun_link_available(current, next, TRUE))
+					continue
+				// A degree-one destination is final when its sole parent settles.
+				var/transit = graph.is_infrastructure(next) || length(graph.adjacency[neighbor]) > 1
+				if(infrastructure_only && !transit)
+					continue
+				var/cable_cost = working_address == source?.address && neighbor == solve_source_parent ? solve_source_cost : graph.cached_edge_cost(working_address, neighbor)
+				relax(neighbor, working_address, costs[working_address] + cable_cost, remote[working_address], transit)
+				if(!transit && next.network)
+					reached_networks[next.network.id] = TRUE
+				continue
+			if(!relay_expansion_checked)
+				relay_expansion_checked = TRUE
+				// The cheapest settled relay expands the virtual uniform-cost bucket once.
+				if(!relays_expanded && graph.is_relay(current))
+					var/obj/machinery/ntnet_relay/relay = current.parent
+					if(relay.is_operational() && !SSnetworks.station_network.setting_disabled)
+						relays_expanded = TRUE
+						relay_cursor = 1
+						continue
+				relay_cursor = length(graph.relay_addresses) + 1
+			if(relay_cursor <= length(graph.relay_addresses))
+				var/relay_address = graph.relay_addresses[relay_cursor++]
+				if(relay_address == working_address || settled[relay_address])
+					continue
+				var/datum/component/netrun_node/next = graph.nodes[relay_address]
+				if(netrun_link_available(current, next, TRUE))
+					relax(relay_address, working_address, costs[working_address] + NETRUN_RELAY_LATENCY, TRUE)
+				continue
+			working_address = null
+			working_neighbors = null
+			continue
+		if(!length(frontier_addresses))
+			frontier_addresses.Cut()
+			frontier_costs.Cut()
+			settled.Cut()
+			network_index_ready = TRUE
+			solve_complete = TRUE
+			return TRUE
 		var/address = pop_candidate()
 		if(settled[address] || popped_cost != costs[address])
 			continue
@@ -70,41 +141,16 @@
 		var/datum/component/netrun_node/current = graph.nodes[address]
 		if(current?.network)
 			reached_networks[current.network.id] = TRUE
-		// Offline destinations are leaves: they cannot forward traffic.
+		// Offline destinations remain visible but never propagate the search.
 		if(QDELETED(current) || !current.is_online())
 			continue
+		working_address = address
 		var/list/neighbors = infrastructure_only ? graph.forwarding_neighbors(address) : graph.neighbors(address, FALSE)
-		for(var/neighbor in neighbors)
-			neighbor_visits++
-			var/datum/component/netrun_node/next = graph.nodes[neighbor]
-			if(settled[neighbor] || QDELETED(next) || !netrun_link_available(current, next, TRUE))
-				continue
-			// Ordinary endpoints have exactly one cable and cannot be transit. Their
-			// shortest path is final when this sole parent settles: skip a heap visit.
-			var/transit = graph.is_infrastructure(next) || length(graph.adjacency[neighbor]) > 1
-			if(infrastructure_only && !transit)
-				continue
-			relax(neighbor, address, costs[address] + graph.cached_edge_cost(address, neighbor), remote[address], transit)
-			if(!transit && next.network)
-				reached_networks[next.network.id] = TRUE
-		// Every operational relay can reach every other relay at the same cost.
-		// The cheapest settled entry expands this virtual bucket exactly once.
-		if(relays_expanded || !graph.is_relay(current))
-			continue
-		var/obj/machinery/ntnet_relay/relay = current.parent
-		if(!relay.is_operational() || SSnetworks.station_network.setting_disabled)
-			continue
-		relays_expanded = TRUE
-		for(var/relay_address in graph.relay_addresses)
-			if(relay_address == address || settled[relay_address])
-				continue
-			var/datum/component/netrun_node/next = graph.nodes[relay_address]
-			if(!netrun_link_available(current, next, TRUE))
-				continue
-			relax(relay_address, address, costs[address] + NETRUN_RELAY_LATENCY, TRUE)
-	frontier_addresses.Cut()
-	frontier_costs.Cut()
-	network_index_ready = TRUE
+		// Rebinding another leaf may remove an earlier slot between slices.
+		working_neighbors = neighbors.Copy()
+		neighbor_cursor = 1
+		relay_expansion_checked = FALSE
+	return FALSE
 
 /datum/netrun_path_tree/proc/relax(address, from_address, cost, quantum, enqueue = TRUE)
 	if(!isnull(costs[address]) && costs[address] <= cost)
@@ -209,6 +255,107 @@
 	var/infrastructure_route_limit = 512
 	var/infrastructure_route_serial = 0
 	var/infrastructure_tree_builds = 0
+	/// Partial UI trees are private until complete; gameplay never borrows these jobs.
+	var/list/ui_route_jobs = list()
+	var/list/ui_route_waiters = list()
+	var/ui_route_advanced_at = -INFINITY
+
+/datum/netrun_topology/proc/clear_ui_route_jobs()
+	SSnetrun.task_scheduler?.cancel("ui_routes", src)
+	for(var/address in ui_route_jobs)
+		qdel(ui_route_jobs[address])
+	ui_route_jobs.Cut()
+	ui_route_waiters.Cut()
+
+/// A closed console, or one that moved to another source, leaves no abandoned solve.
+/datum/netrun_topology/proc/cancel_ui_routes(datum/netrun_console/console, keep_address = null)
+	if(!console)
+		return
+	var/console_ref = REF(console)
+	for(var/address in ui_route_waiters.Copy())
+		if(address == keep_address)
+			continue
+		var/list/waiters = ui_route_waiters[address]
+		waiters -= console_ref
+		for(var/key in waiters.Copy())
+			var/datum/weakref/waiter = waiters[key]
+			if(QDELETED(waiter?.resolve()))
+				waiters -= key
+		if(length(waiters))
+			continue
+		ui_route_waiters -= address
+		qdel(ui_route_jobs[address])
+		ui_route_jobs -= address
+
+/// UI consumers wait for a bounded solve instead of paying for Dijkstra in ui_data().
+/datum/netrun_topology/proc/request_ui_routes(datum/component/netrun_node/start, datum/netrun_console/console)
+	cancel_ui_routes(console, start?.address)
+	if(QDELETED(start) || nodes[start.address] != start)
+		return null
+	route_used[start.address] = world.time
+	reconcile_availability()
+	var/datum/netrun_path_tree/table = route_tables[start.address]
+	if(!dirty && table && table.geometry_revision == weight_revision && table.transit_availability_revision == transit_availability_revision && table.source_online == start.is_online())
+		return table
+	var/list/waiters = ui_route_waiters[start.address]
+	if(!waiters)
+		waiters = list()
+		ui_route_waiters[start.address] = waiters
+	if(!QDELETED(console))
+		waiters[REF(console)] = WEAKREF(console)
+	if(!ui_route_jobs[start.address])
+		ui_route_jobs[start.address] = new /datum/netrun_path_tree(src, start, FALSE, TRUE)
+	SSnetrun.get_task_scheduler().enqueue("ui_routes", src, NETRUN_TASK_BACKGROUND)
+	SSnetrun.wake_ready_delivery()
+	return null
+
+/// The scheduler also yields between ticks; this guard covers independent callers.
+/datum/netrun_topology/proc/advance_ui_routes(max_operations)
+	if(!length(ui_route_jobs))
+		return TRUE
+	if(ui_route_advanced_at == world.time)
+		return FALSE
+	ui_route_advanced_at = world.time
+	if(dirty || rebuilding)
+		return FALSE
+	reconcile_availability()
+	var/address = ui_route_jobs[1]
+	var/datum/netrun_path_tree/tree = ui_route_jobs[address]
+	var/datum/component/netrun_node/start = tree.source
+	if(QDELETED(start) || nodes[address] != start)
+		qdel(tree)
+		ui_route_jobs -= address
+		ui_route_waiters -= address
+		return !length(ui_route_jobs)
+	if(tree.geometry_revision != weight_revision || tree.transit_availability_revision != transit_availability_revision || tree.source_online != start.is_online())
+		qdel(tree)
+		tree = new(src, start, FALSE, TRUE)
+		ui_route_jobs[address] = tree
+	if(!tree.advance(max_operations))
+		// Round-robin multiple terminal sources without giving one graph extra CPU.
+		ui_route_jobs -= address
+		ui_route_jobs[address] = tree
+		return FALSE
+	tree.revision = ++route_revision
+	tree.updated_at = world.time
+	qdel(route_tables[address])
+	route_tables[address] = tree
+	ui_route_jobs -= address
+	notify_ui_route_waiters(address)
+	return !length(ui_route_jobs)
+
+/datum/netrun_topology/proc/notify_ui_route_waiters(address)
+	var/list/waiters = ui_route_waiters[address]
+	ui_route_waiters -= address
+	for(var/key in waiters)
+		var/datum/weakref/waiter = waiters[key]
+		var/datum/netrun_console/console = waiter?.resolve()
+		if(QDELETED(console))
+			continue
+		console.invalidate_projection_caches()
+		console.ui_uplink_refresh = -INFINITY
+		console.map_view?.invalidate(FALSE)
+		console.invalidate_ui()
 
 /datum/netrun_topology/proc/forget_infrastructure_route(address)
 	qdel(infrastructure_route_trees[address])
@@ -250,6 +397,7 @@
 	return tree
 
 /datum/netrun_topology/proc/clear_route_tables(release_sources = FALSE)
+	clear_ui_route_jobs()
 	for(var/address in route_tables)
 		qdel(route_tables[address])
 	route_tables.Cut()
@@ -264,6 +412,10 @@
 	table.updated_at = world.time
 	qdel(route_tables[start.address])
 	route_tables[start.address] = table
+	// An authoritative request may finish before its pending UI continuation.
+	qdel(ui_route_jobs[start.address])
+	ui_route_jobs -= start.address
+	notify_ui_route_waiters(start.address)
 	return table
 
 /// Unsigned native relay toggles and backbone settings have no common change signal.
@@ -338,15 +490,23 @@
 	var/cost = cached_edge_cost(address, parent_address)
 	for(var/source_address in route_tables)
 		var/datum/netrun_path_tree/table = route_tables[source_address]
-		if(table.geometry_revision != previous_geometry || table.transit_availability_revision != transit_availability_revision)
-			continue
-		if(table.source?.address == address)
-			table.source_cost_offset += delta
-		else if(table.reached[address] && table.previous[address] == parent_address)
-			// Both values omit the same optional source prefix.
-			table.costs[address] = table.costs[parent_address] + cost
-		table.geometry_revision = weight_revision
-		table.updated_at = world.time
+		reweight_leaf_table(table, address, parent_address, delta, cost, previous_geometry)
+	for(var/source_address in ui_route_jobs)
+		var/datum/netrun_path_tree/table = ui_route_jobs[source_address]
+		reweight_leaf_table(table, address, parent_address, delta, cost, previous_geometry)
+
+/// A partial tree freezes its source cable when it starts; an ordinary step can
+/// therefore shift the shared prefix even before that first edge has been visited.
+/datum/netrun_topology/proc/reweight_leaf_table(datum/netrun_path_tree/table, address, parent_address, delta, cost, previous_geometry)
+	if(table.geometry_revision != previous_geometry || table.transit_availability_revision != transit_availability_revision)
+		return
+	if(table.source?.address == address)
+		table.source_cost_offset += delta
+	else if(table.reached[address] && table.previous[address] == parent_address)
+		// Both values omit the same optional source prefix.
+		table.costs[address] = table.costs[parent_address] + cost
+	table.geometry_revision = weight_revision
+	table.updated_at = world.time
 
 /// Relocating a terminal leaf never changes an APC-to-APC path. Repair just
 /// that terminal's predecessor in warm trees; the terminal's own source tree
@@ -360,25 +520,31 @@
 	var/edge_cost = connected ? cached_edge_cost(parent_address, address) : 0
 	for(var/source_address in route_tables)
 		var/datum/netrun_path_tree/table = route_tables[source_address]
-		if(table.geometry_revision != previous_geometry || table.transit_availability_revision != transit_availability_revision)
-			continue
-		if(source_address == address)
-			// Its APC changed, not just its cable length. Do not serve old source paths.
-			continue
-		if(connected && table.reached[parent_address])
-			table.reached[address] = TRUE
-			table.previous[address] = parent_address
-			table.costs[address] = table.costs[parent_address] + edge_cost
-			table.remote[address] = table.remote[parent_address]
-			// The parent's LAN is already indexed. node.network still names its old
-			// LAN until join_network finishes, so adding it would invent reachability.
-		else
-			table.reached -= address
-			table.previous -= address
-			table.costs -= address
-			table.remote -= address
-		table.geometry_revision = weight_revision
-		table.updated_at = world.time
+		rebind_leaf_table(table, address, parent_address, connected, edge_cost, previous_geometry)
+	for(var/source_address in ui_route_jobs)
+		var/datum/netrun_path_tree/table = ui_route_jobs[source_address]
+		rebind_leaf_table(table, address, parent_address, connected, edge_cost, previous_geometry)
+
+/datum/netrun_topology/proc/rebind_leaf_table(datum/netrun_path_tree/table, address, parent_address, connected, edge_cost, previous_geometry)
+	if(table.geometry_revision != previous_geometry || table.transit_availability_revision != transit_availability_revision)
+		return
+	if(table.source?.address == address)
+		// Its APC changed, not just its cable length. Restart this source's pending solve.
+		return
+	if(connected && table.reached[parent_address] && (table.solve_complete || table.settled[parent_address]))
+		table.reached[address] = TRUE
+		table.previous[address] = parent_address
+		table.costs[address] = table.costs[parent_address] + edge_cost
+		table.remote[address] = table.remote[parent_address]
+		// node.network names its old LAN until join_network finishes. The parent
+		// already supplies the correct LAN index once it has settled.
+	else
+		table.reached -= address
+		table.previous -= address
+		table.costs -= address
+		table.remote -= address
+	table.geometry_revision = weight_revision
+	table.updated_at = world.time
 
 /// Borrowed snapshots must never be modified or qdel()ed by callers.
 /datum/netrun_topology/proc/route_snapshot(datum/component/netrun_node/start, borrow = FALSE)
@@ -472,21 +638,36 @@
 /datum/netrun_console/proc/acquire_ui_routes()
 	return connection.acquire_ui_routes()
 
+/datum/netrun_console
+	/// Consumers pause projection while a new source's private solve is still running.
+	var/ui_routes_pending = FALSE
+
 /datum/netrun_connection/proc/acquire_ui_routes()
+	owner.ui_routes_pending = FALSE
 	var/turf/here = owner.physical_turf()
-	// Same predicate as make_path_tree/watch_target: only this case rewrites the tree in place.
-	if(wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z))))
-		owner.ui_routes_borrowed = FALSE
-		return owner.make_path_tree(TRUE)
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/start = owner.physical_route_source()
 	graph = SSnetrun.ensure_topology()
-	var/datum/netrun_path_tree/borrowed = graph.route_snapshot(start, TRUE)
+	// Outside the wireless zone only loopback is admitted; no graph solve is needed.
+	var/loopback_only = wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z)))
+	if(loopback_only)
+		graph.cancel_ui_routes(owner)
+	var/datum/netrun_path_tree/borrowed = loopback_only ? null : graph.request_ui_routes(start, owner)
 	if(borrowed)
 		owner.ui_routes_borrowed = TRUE
 		return borrowed
 	owner.ui_routes_borrowed = FALSE
-	return new /datum/netrun_path_tree
+	owner.ui_routes_pending = !loopback_only && !QDELETED(start) && graph.nodes[start.address] == start
+	var/datum/netrun_path_tree/provisional = new
+	provisional.network_index_ready = TRUE
+	if(!QDELETED(start) && graph.nodes[start.address] == start && (!loopback_only || start == netrun_find_node(owner.host)))
+		provisional.source = start
+		provisional.source_online = start.is_online()
+		provisional.reached[start.address] = TRUE
+		provisional.costs[start.address] = 0
+		if(start.network)
+			provisional.reached_networks[start.network.id] = TRUE
+	return provisional
 
 /datum/netrun_console/proc/release_path_tree(datum/netrun_path_tree/tree)
 	return connection.release_path_tree(tree)
