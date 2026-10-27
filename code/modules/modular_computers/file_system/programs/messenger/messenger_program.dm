@@ -941,6 +941,8 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 	netrun_delivery_error = FALSE
 	netrun_delivery_status = "Сообщение ожидает сетевой доставки."
 	SStgui.update_uis(computer)
+	if(SSnetworks.ntnet_debug_global_signal)
+		return transmission.deliver_directly() > 0
 	return signal.send_to_receivers() > 0
 
 /// Success effects run once after transport has delivered to at least one recipient.

@@ -529,6 +529,12 @@
 	while(!transport.is_ready() && world.time < deadline)
 		sleep(1 SECONDS)
 	TEST_ASSERT(transport.is_ready(), "Station atmosphere registration requires the startup network readiness barrier")
+	// Large stations finish the startup wave (service readiness, deferred discovery,
+	// queued messages) under the shared worker budget well after the barrier opens.
+	// Measure registration from the settled network, not from the first readiness tick.
+	deadline = world.time + 120 SECONDS
+	while(startup_pending(transport) && world.time < deadline)
+		sleep(1 SECONDS)
 	var/list/pairs = list()
 	var/online_matches = 0
 	for(var/datum/netrun_machine_service/atmos/device/device as anything in transport.by_id["atmos.device"])
@@ -545,7 +551,8 @@
 	TEST_ASSERT(!online_matches || length(pairs), "Powered matching atmosphere devices and alarms must have at least one usable station route")
 	if(!length(pairs))
 		return
-	deadline = world.time + 30 SECONDS
+	// A device past its fast retry budget probes every 30 seconds; cover one full cycle.
+	deadline = world.time + 60 SECONDS
 	var/missing = length(pairs)
 	while(missing && world.time < deadline)
 		missing = 0
@@ -559,6 +566,16 @@
 		if(missing)
 			sleep(1 SECONDS)
 	TEST_ASSERT_EQUAL(missing, 0, "Every reachable mapped atmosphere device must register with its compatible alarm ([length(pairs)] eligible pairs)")
+
+/datum/unit_test/atmos_netrun_station_registration/proc/startup_pending(datum/netrun_machine_transport/transport)
+	if(length(transport.waiting_resolutions) || transport.queued_messages || transport.ready_service_keys)
+		return TRUE
+	var/datum/netrun_task_scheduler/scheduler = SSnetrun.get_task_scheduler()
+	for(var/key in scheduler.by_key)
+		var/datum/netrun_task/task = scheduler.by_key[key]
+		if(task.kind == "service_ready")
+			return TRUE
+	return FALSE
 
 /// Isolate readiness notifications from incidental APC signals in a busy test world.
 /datum/netrun_machine_transport/readiness_fixture

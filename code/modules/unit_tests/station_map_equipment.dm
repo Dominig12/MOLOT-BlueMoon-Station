@@ -268,6 +268,10 @@
 	// waits for the shared readiness barrier, discovery, and the server's reply.
 	var/deadline = world.time + 60 SECONDS
 	while(length(pending) && world.time < deadline)
+		// Исследования отдаёт только работающий сервер: перегретый или обесточенный
+		// сервер станции (как Computer Core CogStation без охлаждения) синхронизировать нечем.
+		if(!robotics_station_server_online())
+			return
 		for(var/obj/machinery/mecha_part_fabricator/fabricator as anything in pending.Copy())
 			var/datum/netrun_machine_service/research_client/client = fabricator.get_netrun_machine_service("research.client")
 			var/datum/techweb/authority = client?.live_authority()
@@ -281,6 +285,12 @@
 		var/datum/component/netrun_node/node = client?.resolve_node()
 		unsynced += "([fabricator.x],[fabricator.y],[fabricator.z]) online=[node?.is_online()] bound=[!!netrun_atom_techweb(fabricator)] revision=[client?.snapshot_revision]"
 	TEST_ASSERT(!length(unsynced), "Фабрикаторы робототехники не получили исследования от доступного R&D-сервера: [unsynced.Join(", ")]")
+
+/datum/unit_test/robotics_fabricators_sync_research/proc/robotics_station_server_online()
+	for(var/obj/machinery/rnd/server/server as anything in SSresearch.servers)
+		if(!QDELETED(server) && server.research_network_id() == RND_NETWORK_STATION && server.netrun_online())
+			return TRUE
+	return FALSE
 
 /// В науке портированных карт с начала раунда есть пластик для Problem Computer.
 /datum/unit_test/ported_map_science_plastic

@@ -81,10 +81,6 @@ jobs:
           done
       - name: Lint and test TGUI
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
-        # Node 24.15+ reads CommonJS from Yarn's zip loader with an incomplete
-        # require object on Linux; Jest and ESLint need native module loading.
-        env:
-          YARN_NODE_LINKER: node-modules
         run: tools/build/build --ci lint
       - name: Test Python tools
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}

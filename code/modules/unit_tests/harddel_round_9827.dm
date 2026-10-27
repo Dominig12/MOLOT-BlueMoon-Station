@@ -10,22 +10,26 @@
 /datum/unit_test/harddel_9827_base/Run()
 	return
 
-/// Deleted queued atoms, including hard-delete null slots, must not block smoothing.
+/// Удалённый атом в очереди сглаживания и пустой слот от hard delete не должны ронять
+/// обход SSicon_smooth и оседать в deferred. Работает на штатной подсистеме:
+/// второй экземпляр через new подменил бы глобальный SSicon_smooth и удалил настоящий.
 /datum/unit_test/icon_smoothing_deleted_queue_entries/Run()
-	var/datum/controller/subsystem/icon_smooth/smoothing = allocate(/datum/controller/subsystem/icon_smooth)
 	var/obj/live = allocate(/obj)
 	var/obj/deleted = allocate(/obj)
 	live.smooth = SMOOTH_QUEUED
 	deleted.smooth = SMOOTH_QUEUED
 	qdel(deleted)
-	smoothing.smooth_queue = list(live, deleted, null)
-	smoothing.can_fire = TRUE
+	SSicon_smooth.smooth_queue += live
+	SSicon_smooth.smooth_queue += deleted
+	SSicon_smooth.smooth_queue.len++
+	SSicon_smooth.can_fire = TRUE
 	for(var/i in 1 to 8)
-		if(!length(smoothing.smooth_queue) && !length(smoothing.deferred))
+		if(!(live.smooth & SMOOTH_QUEUED))
 			break
-		smoothing.fire()
-	TEST_ASSERT(!length(smoothing.smooth_queue) && !length(smoothing.deferred), "Deleted and null queue entries must not be deferred forever")
-	TEST_ASSERT(!(live.smooth & SMOOTH_QUEUED), "Valid smoothing work must still run after a deleted queue entry")
+		SSicon_smooth.fire()
+	TEST_ASSERT(!(live.smooth & SMOOTH_QUEUED), "Живой атом очереди должен сгладиться после удалённых записей")
+	TEST_ASSERT(!(deleted in SSicon_smooth.deferred), "Удалённый атом не должен откладываться навсегда")
+	TEST_ASSERT(!(null in SSicon_smooth.deferred), "Пустой слот hard delete не должен откладываться навсегда")
 
 /// Модкит переносит детали донора в новый ствол макросом TRANSFER_ATOM_VAR.
 /// Макрос делал qdel(TARGET.VAR) и НЕ обнулял поле, поэтому при доноре без

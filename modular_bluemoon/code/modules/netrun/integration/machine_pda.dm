@@ -162,6 +162,22 @@
 		app.viewing_messages_of = REF(chat)
 	SStgui.update_uis(app.computer)
 
+/// Отладочный глобальный сигнал NTnet (verb администратора) доставляет мимо telecomms и сети APC, как до netrun.
+/datum/netrun_telecomms_transmission/pda/proc/deliver_directly()
+	dispatching++
+	for(var/datum/computer_file/program/messenger/app as anything in signal.data["targets"])
+		if(QDELETED(app) || received_by[REF(app)] || !app.receive_message(signal))
+			continue
+		received_by[REF(app)] = TRUE
+		recipient_delivered(app)
+	if(length(received_by))
+		signal.mark_done()
+	else
+		failure_reason = "Ни один адресат не принял сообщение."
+	. = length(received_by)
+	dispatching--
+	check_finished()
+
 /datum/netrun_telecomms_transmission/pda/player_actor()
 	return actor?.resolve()
 
