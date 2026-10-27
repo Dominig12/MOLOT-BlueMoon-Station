@@ -509,7 +509,7 @@
 /atom/proc/netrun_on_illegal(datum/netrun_console/console, datum/component/netrun_node/node)
 	return
 
-/// Объект может навязать конкретную мини-игру взлома ("matrix" / "sequence"); null - по умолчанию.
+/// Explicit manual protocol (matrix / sequence / memory / routing); null uses device selection.
 /atom/proc/netrun_breach_minigame()
 	return null
 

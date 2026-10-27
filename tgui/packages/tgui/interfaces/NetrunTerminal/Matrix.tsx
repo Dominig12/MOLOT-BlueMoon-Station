@@ -225,9 +225,15 @@ const ChallengeCell = memo((props: {
   const marker = memory ? shownOrder : cell.exit ? exitLabel : cell.checkpoint ? checkpointLabel : cell.entry ? 'ВХОД' : null;
   const highlighted = !!shownOrder || cell.current;
   const color = cell.wall ? THEME.muted : cell.done ? THEME.good : highlighted || clickable ? THEME.text : '#91a8bc';
+  const cellLabel = [
+    `${clickable ? 'Выбрать ячейку' : 'Ячейка'} ${index + 1}`,
+    memory ? `код ${cell.code ?? ''}` : cell.wall ? 'стена' : 'проход',
+    marker ? memory ? `шаг ${marker}` : marker : null,
+    cell.current ? 'текущая позиция' : cell.done ? 'пройдена' : null,
+  ].filter(Boolean).join(', ');
   return (
     <td role={clickable ? 'button' : undefined} tabIndex={clickable ? 0 : -1}
-      aria-label={clickable ? `Выбрать ячейку ${index + 1}` : undefined}
+      aria-label={cellLabel}
       onClick={clickable ? () => onPick(index) : undefined}
       onKeyDown={(event) => {
         if (clickable && (event.key === 'Enter' || event.key === ' ')) {

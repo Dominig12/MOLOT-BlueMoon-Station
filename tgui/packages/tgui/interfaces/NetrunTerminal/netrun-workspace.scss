@@ -559,13 +559,13 @@
 .netrun-files-catalog [data-net-files="local"] { max-height: 56vh !important; }
 .netrun-files-preview textarea { min-height: 170px; padding: 9px; border-radius: 7px; }
 .netrun-files-preview .Input { min-height: 30px; }
-.netrun-combat-panel { padding: 14px !important; min-height: 0; overflow: hidden; }
+.netrun-combat-panel { padding: 14px !important; min-height: 0; overflow-x: hidden; overflow-y: auto; }
 .netrun-combat-content {
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
-  min-height: 0;
+  min-height: 290px;
   max-width: 1050px;
   margin: 0 auto;
 }

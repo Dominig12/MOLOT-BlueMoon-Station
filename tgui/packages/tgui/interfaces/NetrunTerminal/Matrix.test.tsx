@@ -50,7 +50,7 @@ describe('Additional Netrun breach games', () => {
     }} />);
     expect(within(grid).queryByText('1')).toBeNull();
     expect(within(grid).getAllByRole('button')).toHaveLength(4);
-    fireEvent.keyDown(within(grid).getByRole('button', { name: 'Выбрать ячейку 3' }), { key: 'Enter' });
+    fireEvent.keyDown(within(grid).getByRole('button', { name: 'Выбрать ячейку 3, код 55' }), { key: 'Enter' });
     expect(picks(topic)).toEqual([{ index: 3 }]);
   });
 
@@ -81,7 +81,7 @@ describe('Additional Netrun breach games', () => {
     expect(within(grid).getAllByRole('button')).toHaveLength(1);
     fireEvent.click(within(grid).getByText('■'));
     expect(picks(topic)).toHaveLength(0);
-    fireEvent.click(within(grid).getByRole('button', { name: 'Выбрать ячейку 3' }));
+    fireEvent.click(within(grid).getByRole('button', { name: 'Выбрать ячейку 3, проход, USER' }));
     expect(picks(topic)).toEqual([{ index: 3 }]);
   });
 
