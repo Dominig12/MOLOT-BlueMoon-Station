@@ -330,7 +330,12 @@
 		selected["logs"] = level >= NETRUN_ACCESS_USER ? node.logs.Copy() : list()
 		selected["packets"] = level >= NETRUN_ACCESS_USER ? node.packet_headers_payload() : list()
 		var/atom/A = node.parent
-		selected["status"] = level >= NETRUN_ACCESS_USER ? A.netrun_status() : list()
+		var/list/status = level >= NETRUN_ACCESS_USER ? (A.netrun_status() || list()) : list()
+		var/policy_status = A.netrun_access_policy_status()
+		if(policy_status)
+			status = status.Copy()
+			status += policy_status
+		selected["status"] = status
 		if(node.file_store && level >= NETRUN_ACCESS_USER)
 			var/list/files = list()
 			for(var/datum/netrun_file/file as anything in node.file_store.files)

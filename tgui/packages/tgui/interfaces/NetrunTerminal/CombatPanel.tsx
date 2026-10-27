@@ -125,15 +125,15 @@ const CombatPanelView = () => {
     actionReadyIn > 0 ? `Общая пауза запуска: ещё ${actionReadyIn} с.` : null,
   ].filter((reason): reason is string => !!reason);
   return (
-    <Box className="netrun-combat-panel" style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, height: '100%', width: '100%', overflowY: 'auto', boxSizing: 'border-box', fontFamily: 'monospace' }} p={1}>
+    <Box className="netrun-combat-panel" style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, height: '100%', width: '100%', boxSizing: 'border-box', fontFamily: 'monospace' }} p={1}>
       <div className="netrun-combat-content">
-      <Box color={THEME.muted} fontSize="12px" mb={1}>
+      <Box className="netrun-combat-heading" color={THEME.muted} fontSize="12px" mb={1}>
         <Icon name="crosshairs" mr={1} />
         {combat.node ? <>Узел боя: {combat.node_name} {combat.node}</> : 'Ответный бой'}
       </Box>
       {!!combat.self && (
         <Box mb={1} p={1} className="netrun-self-panel" style={{ background: THEME.panel, border: `1px solid ${THEME.line}`, borderRadius: '8px' }}>
-          <Box color={THEME.accent}>
+          <Box className="netrun-self-panel__state" color={THEME.accent}>
             Вы {combat.self.stunned ? ' · ОГЛУШЕНЫ' : ''}{combat.self.shielded ? ' · ЩИТ АКТИВЕН' : ''}
           </Box>
           <IntegrityBar cur={combat.self.integrity} max={combat.self.max_integrity} />
@@ -143,7 +143,58 @@ const CombatPanelView = () => {
         </Box>
       )}
 
+      <section className="netrun-combat-actions" aria-label="Боевые программы">
+        <Box color={THEME.muted} fontSize="12px">Боевые программы</Box>
+        <Box className="netrun-combat-action-status" role="status" color={actionBlockReasons.length ? THEME.warn : THEME.muted}
+          title={actionBlockReasons.join('\n')}>
+          {actionBlockReasons.join(' · ') || 'Выберите доступную программу.'}
+        </Box>
+        {programs.length === 0 ? (
+          <Box color={THEME.muted}>Нет боевых программ. Запишите их на шард или добудьте из обломков ICE.</Box>
+        ) : (
+          <div className="netrun-combat-programs">
+            {programs.map((p) => {
+              const onCd = p.ready_in > 0;
+              const needTarget = p.needs_target && (!selectedTarget || !!selectedTarget.unavailable_reason);
+              const blockReasons = [
+                ...actionBlockReasons,
+                p.unavailable_reason,
+                onCd ? `Перезарядка: ещё ${p.ready_in} с.` : null,
+                needTarget ? 'Сначала выберите доступную цель.' : null,
+              ].filter((reason): reason is string => !!reason);
+              return (
+                <Button
+                  key={p.uid}
+                  className="netrun-combat-program"
+                  icon={p.icon}
+                  disabled={blockReasons.length > 0}
+                  style={{ background: THEME.panel, border: `1px solid ${ROLE_COLORS[p.role] || THEME.line}` }}
+                  tooltip={<ActionTooltip name={p.name} id={p.id} icon={p.icon} description={p.desc}
+                    facts={[
+                      { label: 'Сила', value: String(p.power) },
+                      { label: 'Перезарядка', value: onCd ? `Ещё ${p.ready_in} с` : `${p.cooldown} с`, warning: onCd },
+                      { label: 'Файл', value: p.consumable ? 'Одноразовый' : 'Многоразовый' },
+                      { label: 'Цель', value: p.needs_target ? 'Процесс в одном узле' : 'Собственная сущность' },
+                    ]}
+                    notices={blockReasons.map((text) => ({ text }))} />}
+                  onClick={() => act('program_use', { uid: p.uid, target: p.needs_target ? target : null })}
+                >
+                  <Box className="netrun-combat-program__content">
+                    <Box className="netrun-combat-program__name">{p.name.replace(/\.(exe|card)$/, '')}</Box>
+                    <Box className="netrun-combat-program__status" color={blockReasons.length ? THEME.warn : THEME.muted}>
+                      {blockReasons[0] || 'Готова к запуску'}
+                    </Box>
+                  </Box>
+                </Button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="netrun-combat-targets-region" aria-label="Цели и процессы">
       <Box color={THEME.muted} fontSize="12px" mb={1}>Цели и процессы</Box>
+      <div className="netrun-combat-targets-scroll">
       <div className="netrun-combat-targets">
       {targets.length === 0 ? (
         <Box color={THEME.muted} mb={1}>Других процессов нет.</Box>
@@ -162,23 +213,28 @@ const CombatPanelView = () => {
               borderRadius: '8px',
             }}
           >
-            <Box color={t.hostile ? THEME.bad : THEME.text}>
+            <Box className="netrun-combat-target__heading" color={t.hostile ? THEME.bad : THEME.text}>
               {t.kind === 'entity' ? <EntityAvatar avatar={t.persona?.avatar} accent={t.persona?.accent} size={30} /> : <Icon name="skull" mr={1} />}
-              {t.name}
-              {t.stunned ? <Box inline ml={1} color={THEME.warn}>оглушён</Box> : null}
-              {t.shielded ? <Box inline ml={1} color={THEME.accent}>щит</Box> : null}
-              {target === t.ref ? <Box inline ml={1} color={THEME.accent}>● цель</Box> : null}
+              <span className="netrun-combat-target__name" title={t.name}>{t.name}</span>
+              {t.stunned ? <Box inline fontSize="10px" color={THEME.warn}>оглушён</Box> : null}
+              {t.shielded ? <Box inline fontSize="10px" color={THEME.accent}>щит</Box> : null}
+              {target === t.ref ? <Box inline fontSize="10px" color={THEME.accent}>● цель</Box> : null}
             </Box>
             {!!t.persona?.tagline && <Box className="netrun-contact-tagline">{t.persona.tagline}</Box>}
             {!!t.node && <Box color={THEME.muted} fontSize="10px">{t.node_name} {t.node}</Box>}
-            {!!t.unavailable_reason && <Box color={THEME.warn} fontSize="11px">{t.unavailable_reason}</Box>}
+            <Box className="netrun-combat-target__status" color={THEME.warn} fontSize="11px" title={t.unavailable_reason || undefined}>
+              {t.unavailable_reason || '\u00a0'}
+            </Box>
             <IntegrityBar cur={t.integrity} max={t.max_integrity} />
             <Box fontSize="10px" color={THEME.muted}>
               {t.integrity}/{t.max_integrity}
             </Box>
-            {!!t.casting && <Box bold color={THEME.bad}>Готовит {t.casting.name}: {t.casting.remaining} с</Box>}
+            <Box className="netrun-combat-target__status" bold={!!t.casting} color={t.casting ? THEME.bad : THEME.muted}
+              title={t.casting ? `Готовит ${t.casting.name}: ${t.casting.remaining} с` : undefined}>
+              {t.casting ? `Готовит ${t.casting.name}: ${t.casting.remaining} с` : 'Нет подготовки программы'}
+            </Box>
             {t.programs?.map((p) => (
-              <Box key={p.name} fontSize="11px" color={p.ready_in ? THEME.muted : THEME.warn}
+              <Box key={p.name} className="netrun-combat-target__status" fontSize="11px" color={p.ready_in ? THEME.muted : THEME.warn}
                 title={`${p.desc} · сила ${p.power} · подготовка ${p.windup} с · кулдаун ${p.cooldown} с`}>
                 {p.name}: {p.ready_in > 0 ? `перезарядка ${p.ready_in} с` : 'готова'}
               </Box>
@@ -188,53 +244,10 @@ const CombatPanelView = () => {
       )}
 
       </div>
-      <Box color={THEME.muted} fontSize="12px" mt={2} mb={1}>Боевые программы</Box>
-      {!!actionBlockReasons.length && (
-        <Box role="status" color={THEME.warn} fontSize="11px" mb={1}>
-          {actionBlockReasons.map((reason) => <Box key={reason}>{reason}</Box>)}
-        </Box>
-      )}
-      {programs.length === 0 ? (
-        <Box color={THEME.muted}>Нет боевых программ. Запишите их на шард или добудьте из обломков ICE.</Box>
-      ) : (
-        <div className="netrun-combat-programs" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-          {programs.map((p) => {
-            const onCd = p.ready_in > 0;
-            const needTarget = p.needs_target && (!selectedTarget || !!selectedTarget.unavailable_reason);
-            const blockReasons = [
-              ...actionBlockReasons,
-              p.unavailable_reason,
-              onCd ? `Перезарядка: ещё ${p.ready_in} с.` : null,
-              needTarget ? 'Сначала выберите доступную цель.' : null,
-            ].filter((reason): reason is string => !!reason);
-            return (
-              <Button
-                key={p.uid}
-                icon={p.icon}
-                disabled={blockReasons.length > 0}
-                style={{ background: THEME.panel, border: `1px solid ${ROLE_COLORS[p.role] || THEME.line}`,
-                  minWidth: '138px', maxWidth: '260px', minHeight: '40px', borderRadius: '7px', whiteSpace: 'normal' }}
-                tooltip={<ActionTooltip name={p.name} id={p.id} icon={p.icon} description={p.desc}
-                  facts={[
-                    { label: 'Сила', value: String(p.power) },
-                    { label: 'Перезарядка', value: onCd ? `Ещё ${p.ready_in} с` : `${p.cooldown} с`, warning: onCd },
-                    { label: 'Файл', value: p.consumable ? 'Одноразовый' : 'Многоразовый' },
-                    { label: 'Цель', value: p.needs_target ? 'Процесс в одном узле' : 'Собственная сущность' },
-                  ]}
-                  notices={blockReasons.map((text) => ({ text }))} />}
-                onClick={() => act('program_use', { uid: p.uid, target: p.needs_target ? target : null })}
-              >
-                <Box style={{ minWidth: 0 }}>
-                  <Box>{p.name.replace(/\.(exe|card)$/, '')}</Box>
-                  {!!blockReasons.length && <Box fontSize="10px" color={THEME.warn} style={{ lineHeight: '14px' }}>{blockReasons[0]}</Box>}
-                </Box>
-              </Button>
-            );
-          })}
-        </div>
-      )}
+      </div>
+      </section>
       {!!combat.loot?.length && (
-        <Box mt={1} p={0.5} style={{ border: `1px solid ${THEME.good}` }}>
+        <Box className="netrun-combat-loot" mt={1} p={0.5} style={{ border: `1px solid ${THEME.good}` }}>
           <Box bold color={THEME.good}>Добыча в узле</Box>
           {combat.loot.map((file) => (
             <Box key={file.uid}>

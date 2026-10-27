@@ -132,7 +132,7 @@ export type Daemon = {
 };
 
 export type MatrixState = {
-  minigame?: 'matrix' | 'sequence' | 'automatic';
+  minigame?: 'matrix' | 'sequence' | 'memory' | 'routing' | 'automatic';
   target: string;
   security: number;
   size: number;
@@ -141,6 +141,11 @@ export type MatrixState = {
     active: boolean;
     order?: number;
     done?: boolean;
+    wall?: boolean;
+    entry?: boolean;
+    exit?: boolean;
+    checkpoint?: boolean;
+    current?: boolean;
   }[];
   buffer?: string[];
   buffer_size?: number;
@@ -149,6 +154,12 @@ export type MatrixState = {
   pick_row?: boolean;
   progress?: number;
   total?: number;
+  user_goal?: number;
+  phase?: 'reveal' | 'recall';
+  reveal_left?: number;
+  mistakes?: number;
+  mistakes_left?: number;
+  access_cap?: number;
 };
 
 export type LogLine = { time?: string; text: string; kind: string };

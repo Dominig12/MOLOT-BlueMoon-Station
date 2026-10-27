@@ -223,13 +223,13 @@
 		TEST_ASSERT(source.console.store_file(new /datum/netrun_file("[node.address].key", NETRUN_FILE_KEY, node.network.passcode, 1, node.network.id)), "The public map test needs legitimate keys for its security domains")
 	source.console.map_view.selected_address = source_node.address
 	source.console.workspace_view = "map"
-	var/list/payload = source.console.ui_data(null)
+	var/list/payload = netrun_settled_ui_data(source.console)
 	TEST_ASSERT(netrun_map_has_node(payload, far_node.address), "A two-edge peer must be loaded even when physically far away")
 	TEST_ASSERT(netrun_map_has_node(payload, three_hops_node.address), "A permitted peer beyond the old two-edge neighborhood must be included")
 	TEST_ASSERT(source.console.latency_to(far_node) > source.console.latency_to(near_node), "Equal-hop paths must reflect the longer geographic cable to the distant endpoint")
 	TEST_ASSERT(source.console.latency_to(far_node) > source.console.latency_to(three_hops_node), "A nearby peer through another APC can have less physical latency than a distant peer on the same APC")
 	TEST_ASSERT(source.console.store_file(netrun_daemon_file("mapper")), "The mapper daemon must fit in the test console")
-	payload = source.console.ui_data(null)
+	payload = netrun_settled_ui_data(source.console)
 	TEST_ASSERT(netrun_map_has_node(payload, three_hops_node.address), "Installing mapper must preserve already permitted distant endpoints")
 
 /// Permissions do not let an entity jump over intermediate graph nodes.
@@ -276,7 +276,7 @@
 	var/datum/component/netrun_node/apc_node = medical_apc.GetComponent(/datum/component/netrun_node)
 	TEST_ASSERT(source.console.can_route(target_node), "The protected endpoint must be physically reachable before testing disclosure")
 	TEST_ASSERT(source.console.store_file(netrun_daemon_file("mapper")), "The mapper must fit so map visibility cannot accidentally grant CLI disclosure")
-	var/list/payload = source.console.ui_data(null)
+	var/list/payload = netrun_settled_ui_data(source.console)
 	var/list/cli = payload["cli"]
 	var/list/pools = cli["completions"]
 	var/list/node_addresses = pools["nodes"]
@@ -298,7 +298,7 @@
 	TEST_ASSERT(source.console.has_key(target_node.network, TRUE), "Fresh key authorization must recognize the stored file before generating CLI disclosure")
 	TEST_ASSERT(source.console.has_key(target_node.network), "Ordinary key authorization must recognize the stored file outside a UI snapshot")
 	TEST_ASSERT_EQUAL(source.console.network_level(target_node.network), NETRUN_ACCESS_GUEST, "A legitimate key must grant the reachable protected LAN before generating CLI disclosure")
-	payload = source.console.ui_data(null)
+	payload = netrun_settled_ui_data(source.console)
 	cli = payload["cli"]
 	pools = cli["completions"]
 	node_addresses = pools["nodes"]
@@ -307,7 +307,7 @@
 	TEST_ASSERT(source_node.address in node_addresses, "Guest access to the local LAN must disclose its endpoints")
 	TEST_ASSERT(apc_node.address in node_addresses, "Granting access must not remove a structural APC from completion")
 	source.console.delete_local_file(key)
-	payload = source.console.ui_data(null)
+	payload = netrun_settled_ui_data(source.console)
 	cli = payload["cli"]
 	pools = cli["completions"]
 	node_addresses = pools["nodes"]
@@ -368,7 +368,7 @@
 	TEST_ASSERT(!stored.reached[target_node.address], "A requested server table must remove a path through broken infrastructure")
 	source.console.map_view.selected_address = target_node.address
 	source.console.workspace_view = "map"
-	var/list/payload = source.console.ui_data(null)
+	var/list/payload = netrun_settled_ui_data(source.console)
 	var/list/map = payload["map"]
 	var/list/selected_route = map["route"]
 	TEST_ASSERT(!selected_route["reachable"], "The map must publish the selected target's unreachable server route, rather than a fictitious direct path")

@@ -5372,6 +5372,7 @@
 #include "modular_bluemoon\code\modules\movement_schedule\probe_recorder.dm"
 #include "modular_bluemoon\code\modules\movespeed\_movespeed_modifier.dm"
 #include "modular_bluemoon\code\modules\netrun\core\access_events.dm"
+#include "modular_bluemoon\code\modules\netrun\core\access_policy.dm"
 #include "modular_bluemoon\code\modules\netrun\core\api.dm"
 #include "modular_bluemoon\code\modules\netrun\core\apc_bridges.dm"
 #include "modular_bluemoon\code\modules\netrun\core\apc_prebuild.dm"

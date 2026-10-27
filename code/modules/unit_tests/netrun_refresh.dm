@@ -61,7 +61,7 @@
 	console.ui_dirty = FALSE
 	TEST_ASSERT(!view.expire_ping(view.ping_id), "Expiry must be idempotent")
 	TEST_ASSERT(!console.ui_dirty, "An already expired ping must not repeatedly wake the UI")
-	var/list/payload = console.ui_data(null)
+	var/list/payload = netrun_settled_ui_data(console)
 	TEST_ASSERT_NULL(payload["ping_route"], "The legacy ping_route field must clear with the new metadata")
 	TEST_ASSERT_NULL(payload["ping"], "The next backend payload must clear the ping instance")
 

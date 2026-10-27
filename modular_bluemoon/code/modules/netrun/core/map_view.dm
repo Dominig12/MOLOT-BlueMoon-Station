@@ -797,7 +797,7 @@
 	var/previous_revision = view.state_revision
 	var/finished = FALSE
 	for(var/operation in 1 to max(1, max_operations))
-		if(step())
+		if(advance_operation())
 			finished = TRUE
 			break
 	if(length(node_updates) || length(edge_updates) || length(removed_nodes) || length(removed_edges) || finished)
@@ -810,7 +810,7 @@
 		view.owner.invalidate_ui()
 	return finished
 
-/datum/netrun_map_projection/proc/step()
+/datum/netrun_map_projection/proc/advance_operation()
 	var/list/map_nodes = view.snapshot["nodes"]
 	var/list/map_edges = view.snapshot["edges"]
 	// A node with many cables removes only one cable per operation.

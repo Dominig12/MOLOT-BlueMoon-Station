@@ -72,7 +72,8 @@
 		return COMPONENT_INCOMPATIBLE
 	src.node_type = node_type
 	src.command_ids = list("scan", "ping", "node_log", "packet_log", "packet_decrypt", "extract", "traceroute", "siphon", "spoof_log") | (command_ids || list())
-	base_security = security
+	var/atom/host = parent
+	base_security = clamp(max(security, host.netrun_security_floor()), 1, 5)
 	src.required_access = required_access
 	// Firmware documentation is available even on endpoints without writable storage.
 	file_store = new(src, storage_capacity || 0)

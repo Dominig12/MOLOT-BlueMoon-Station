@@ -168,9 +168,44 @@ describe('Netrun combat contacts', () => {
     expect(uses(topic)).toHaveLength(0);
 
     act(() => store.dispatch(backendUpdate({ data: { combat: { ...combat, action_ready_in: 0 } } })));
-    expect(panel.queryByRole('status')).toBeNull();
+    expect(panel.getByRole('status').textContent).toBe('Выберите доступную программу.');
     fireEvent.click(panel.getByText('strike'));
     expect(uses(topic)).toEqual([{ uid: 'file-strike', target: 'ice-1' }]);
+  });
+
+  test('program controls and their status slots remain mounted while combat updates around them', () => {
+    const { store, combat } = setup({
+      self: { integrity: 100, max_integrity: 100, stunned: false },
+      programs: [strike, { ...strike, uid: 'file-barrier', name: 'barrier.exe', role: 'shield', needs_target: false }],
+    });
+    const panel = render(<CombatPanel />);
+    const actions = panel.getByRole('region', { name: 'Боевые программы' });
+    const status = panel.getByRole('status');
+    const strikeButton = panel.getByText('strike').closest('.netrun-combat-program');
+    const barrierButton = panel.getByText('barrier').closest('.netrun-combat-program');
+    const programStatus = strikeButton!.querySelector('.netrun-combat-program__status');
+    const targets = panel.container.querySelector('.netrun-combat-targets-scroll');
+    expect(programStatus!.textContent).toBe('Готова к запуску');
+    expect(actions.compareDocumentPosition(targets!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const frames: CombatState[] = [
+      { ...combat, action_ready_in: 0.5, programs: [{ ...strike, ready_in: 2 }, combat.programs[1]] },
+      { ...combat, self: { ...combat.self!, stunned: true, shielded: true }, targets: [{ ...enemy,
+        stunned: true, shielded: true, casting: { name: 'blackout.exe', role: 'stun', power: 20, remaining: 1.2 },
+      }, { ...enemy, ref: 'ice-2', name: 'ICE-HUNTER' }] },
+      { ...combat, targets: [] },
+      combat,
+    ];
+    for (const frame of frames) {
+      act(() => store.dispatch(backendUpdate({ data: { combat: frame } })));
+      expect(panel.getByRole('status')).toBe(status);
+      expect(panel.getByText('strike').closest('.netrun-combat-program')).toBe(strikeButton);
+      expect(panel.getByText('barrier').closest('.netrun-combat-program')).toBe(barrierButton);
+      expect(strikeButton!.querySelector('.netrun-combat-program__status')).toBe(programStatus);
+      expect(targets!.contains(strikeButton)).toBe(false);
+      expect(targets!.contains(barrierButton)).toBe(false);
+    }
+    expect(programStatus!.textContent).toBe('Готова к запуску');
   });
 
   test('a program keeps its own cooldown after shared recovery expires', () => {
