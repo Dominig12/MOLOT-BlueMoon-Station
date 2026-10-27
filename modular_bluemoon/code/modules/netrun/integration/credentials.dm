@@ -94,7 +94,7 @@
 	SIGNAL_HANDLER
 	if(QDELETED(target) || QDELETED(console))
 		return FALSE
-	return target.check_access_list(console.credential_access(TRUE))
+	return target.check_access_list(console.user_access(TRUE))
 
 /datum/netrun_command/extract_credentials
 	id = "extract_credentials"

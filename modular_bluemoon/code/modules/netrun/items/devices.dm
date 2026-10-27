@@ -82,10 +82,10 @@
 
 // MARK: Нейролинк
 
-/// Имплант прямого подключения: беспроводной доступ к сети из головы и погружение
+/// Имплант подключения сознания к сети через близкий узел.
 /obj/item/organ/cyberimp/brain/netlink
 	name = "neural netlink implant"
-	desc = "Нейроинтерфейс прямого подключения к сети с коротким сервисным кабелем. Позволяет работать с сетью без терминала, подключаться к машинам рядом и полностью погружаться в выбранный узел."
+	desc = "Нейроинтерфейс с коротким сервисным кабелем. Позволяет выбрать близкий узел и погрузить сознание в сеть; для работы в сети необходимо погрузиться."
 	icon_state = "brain_implant"
 	implant_color = "#4a9eff"
 	slot = "brain_netlink"
@@ -149,10 +149,6 @@
 		return FALSE
 	var/mob/camera/netrun_entity/entity = netrun_start_dive(diver, node)
 	if(entity)
-		// Доступы, добытые нейролинком, переходят в погружение
-		for(var/address in console.access_session.node_access)
-			entity.console.access_session.node_access[address] = max(entity.console.access_session.node_access[address] || 0, console.access_session.node_access[address])
-		entity.console.access_session.network_access = console.access_session.network_access.Copy()
 		console.dive_ref = WEAKREF(entity)
 		entity.dive_link.bind_client(console, console.connection.jack)
 		if(QDELETED(entity))
@@ -174,8 +170,8 @@
 	SStgui.close_uis(console)
 
 /datum/action/item_action/organ_action/netrun_console
-	name = "Нейролинк"
-	desc = "Открыть интерфейс сети."
+	name = "Настроить нейролинк"
+	desc = "Выбрать узел погружения и настроить подключение."
 
 /datum/action/item_action/organ_action/netrun_dive
 	name = "Погружение"

@@ -8,6 +8,7 @@ import { CombatPanel } from './CombatPanel';
 import { MatrixPanel } from './Matrix';
 import { MapFocusRequest, StationMap } from './NetworkMap';
 import { NodePanel } from './NodePanel';
+import { NodeInteractions } from './NodeInteractions';
 import { OperationsPanel } from './OperationsPanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
 import { SessionStatus } from './SessionStatus';
@@ -33,8 +34,38 @@ export const NetrunContent = memo(() => {
   // TGUI clears data when returning a browser window to its pool. Unmount
   // subscribers together before a later session supplies its first snapshot.
   const ready = useNetrunSelector((data) => !!data.storage && Array.isArray(data.windows) && Array.isArray(data.networks));
-  return ready ? <NetrunFeedbackProvider><NetrunWorkspace /></NetrunFeedbackProvider> : null;
+  const implant = useNetrunSelector((data) => data.origin === 'implant');
+  return ready ? <NetrunFeedbackProvider>{implant ? <ImplantWorkspace /> : <NetrunWorkspace />}</NetrunFeedbackProvider> : null;
 });
+
+/** The implant prepares a local entrance; network controls belong to the diver. */
+const ImplantWorkspace = () => {
+  const { act, data } = useBackend<NetrunData>(['host_actions', 'selected', 'log', 'ui_theme']);
+  const selected = data.selected;
+  return (
+    <Box className="netrun-shell" data-net-theme={themeId(data.ui_theme)}
+      style={{ ...themeStyle(data.ui_theme), color: THEME.text, background: THEME.panel, height: '100%', overflowY: 'auto', padding: '8px' }}>
+      <Box bold fontSize="16px">Нейролинк</Box>
+      <Box mt={0.5} mb={1} color={THEME.muted}>
+        Выберите узел в своей зоне и погрузитесь, чтобы управлять сетью.
+      </Box>
+      <div role="group" aria-label="Действия подключения" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+        {(data.host_actions || []).map((action) => (
+          <Button key={action.id} compact icon={action.icon} content={action.name} onClick={() => act(action.id)} />
+        ))}
+      </div>
+      <Box mt={1} mb={1} p={1} style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
+        {selected ? <>
+          <Box bold>Узел погружения: {selected.name}</Box>
+          <Box color={THEME.muted}>{selected.address}</Box>
+          <NodeInteractions actions={selected.interactions} pending={false} />
+        </> : <Box color={THEME.muted}>Узел погружения не выбран.</Box>}
+      </Box>
+      {!!data.log?.length && <Box mb={1} color={THEME.muted} role="status">{data.log[data.log.length - 1].text}</Box>}
+      <StoragePanel />
+    </Box>
+  );
+};
 
 const NetrunWorkspace = () => {
   const { act } = useBackend([]);

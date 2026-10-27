@@ -12,6 +12,8 @@
 	var/returning = FALSE
 	var/checking = FALSE
 	var/list/datum/component/netrun_node/watched_nodes = list()
+	/// The resident gets USER at its initial host for residency, not as a transferable hack.
+	var/initial_residency_only = FALSE
 
 /datum/netrun_dive_link/New(mob/camera/netrun_entity/owner)
 	src.owner = owner
@@ -42,8 +44,36 @@
 	entry_client_ref = WEAKREF(client)
 	entry_jack_ref = jack ? WEAKREF(jack) : null
 	RegisterSignal(client, COMSIG_PARENT_QDELETING, PROC_REF(on_client_deleted))
+	client.access_session.process_events()
+	var/datum/netrun_access_session/resident = owner.console.access_session
+	initial_residency_only = !client.access_session.node_access[entry_address]
+	for(var/address in client.access_session.node_access)
+		resident.node_access[address] = max(resident.node_access[address] || 0, client.access_session.node_access[address])
+	resident.network_access = client.access_session.network_access.Copy()
+	resident.server_passwords = client.access_session.server_passwords.Copy()
+	owner.console.inventory.borrow_from(client.inventory)
 	// Establish the physical return path once; later ticks borrow its retained route table.
 	check_link(0)
+
+/// Merge only grants that survived all queued firewall resets in both sessions.
+/datum/netrun_dive_link/proc/return_access(datum/netrun_console/implant/client)
+	if(QDELETED(client) || QDELETED(owner.console))
+		return
+	var/datum/netrun_access_session/target = client.access_session
+	var/datum/netrun_access_session/resident = owner.console.access_session
+	target.process_events()
+	resident.process_events()
+	for(var/address in resident.node_access)
+		var/level = resident.node_access[address]
+		if(initial_residency_only && address == entry_address && level <= NETRUN_ACCESS_USER)
+			continue
+		target.node_access[address] = max(target.node_access[address] || 0, level)
+	for(var/network_id in resident.network_access)
+		target.network_access[network_id] = max(target.network_access[network_id] || 0, resident.network_access[network_id])
+	for(var/address in resident.server_passwords)
+		target.server_passwords[address] = resident.server_passwords[address]
+	client.invalidate_projection_caches()
+	client.map_view.invalidate(TRUE)
 
 /datum/netrun_dive_link/proc/release_body()
 	cancel_delivery()
@@ -60,6 +90,7 @@
 	route_chain.Cut()
 	entry_client_ref = null
 	entry_jack_ref = null
+	initial_residency_only = FALSE
 
 /datum/netrun_dive_link/proc/on_node_changed(datum/source, datum/component/netrun_node/old_node, datum/component/netrun_node/new_node)
 	SIGNAL_HANDLER
@@ -234,6 +265,8 @@
 		return
 	returning = TRUE
 	var/mob/living/carbon/linked_body = body
+	var/datum/netrun_console/implant/client = entry_client_ref?.resolve()
+	return_access(client)
 	release_body()
 	if(emergency)
 		to_chat(owner, span_userdanger(reason || "Аварийный разрыв соединения!"))

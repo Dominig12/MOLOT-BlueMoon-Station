@@ -451,7 +451,18 @@
 /datum/netrun_console/entity/user_access(fresh = FALSE)
 	if(!fresh && access_cache)
 		return access_cache
-	return credential_access(fresh)
+	. = credential_access(fresh)
+	var/mob/camera/netrun_entity/entity = host
+	if(!QDELETED(entity?.dive_link.body))
+		. |= netrun_mob_access(entity.dive_link.body)
+
+/// A connected shard remains in the unconscious body's implant, not in the process.
+/datum/netrun_console/entity/eject_shard(mob/user)
+	var/mob/camera/netrun_entity/entity = host
+	if(entity?.dive_link.body)
+		log_line("Шард находится в теле; извлечь его из сети нельзя.", "bad")
+		return
+	return ..()
 
 /datum/netrun_console/entity/log_source()
 	return "резидентный процесс"

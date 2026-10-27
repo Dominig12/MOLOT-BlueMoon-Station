@@ -322,7 +322,9 @@
 
 /datum/unit_test/netrun_client_device_shortcuts/Run()
 	var/datum/netrun_client_scene/scene = allocate(/datum/netrun_client_scene, run_loc_floor_bottom_left)
-	var/datum/netrun_console/implant/console = scene.implant.console
+	var/obj/item/netrun_deck/deck = allocate(/obj/item/netrun_deck, scene.user)
+	var/datum/netrun_console/console = deck.console
+	console.operator = scene.user
 	var/obj/machinery/door/airlock/door = scene.machine(/obj/machinery/door/airlock, scene.far_spot)
 	var/datum/component/netrun_node/door_node = door.GetComponent(/datum/component/netrun_node)
 	SSnetrun.ensure_topology()
@@ -333,3 +335,40 @@
 	TEST_ASSERT_EQUAL(console.remote_session.active_window, door_node.address, "The shortcut must select the intended native device")
 	TEST_ASSERT_EQUAL(console.workspace_view, "pinned", "Device management must navigate to its control workspace")
 	TEST_ASSERT(!console.node_interact(door_node, "invented_action", scene.user), "An unadvertised shortcut must never dispatch an arbitrary action")
+
+/// The body can prepare its entrance and local memory, but cannot issue network
+/// actions by forging TGUI events or invoking the direct console entry points.
+/datum/unit_test/netrun_implant_requires_dive/Run()
+	var/datum/netrun_client_scene/scene = allocate(/datum/netrun_client_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_console/implant/console = scene.implant.console
+	var/datum/tgui/ui = allocate(/datum/tgui, scene.user, console, "NetrunTerminal")
+	ui.status = UI_INTERACTIVE
+	scene.authorize()
+	TEST_ASSERT(console.select_entry(scene.target_node, scene.user), "A local authorized entry must remain selectable")
+	for(var/action in list("command", "cli", "remote_act", "window_open", "window_act", "program_use", "breach", "upload", "download", "delete_remote", "chat_send", "entity_signal", "entity_message", "workspace_view", "select"))
+		TEST_ASSERT(!console.handle_ui_action(action, list("address" = scene.target_node.address, "text" = "scan", "page" = "map"), ui), "Pre-dive network action [action] must be refused on the server")
+	TEST_ASSERT(!console.node_interact(scene.target_node, "manage", scene.user), "Direct device shortcuts must not bypass the pre-dive restriction")
+	TEST_ASSERT(!console.run_command(scene.target_node, "scan"), "Direct packet commands must require a resident")
+	TEST_ASSERT(!console.remote_request(scene.target_node.address, "test", list()), "Direct remote requests must require a resident")
+	TEST_ASSERT(!console.open_window(scene.target_node.address), "A stale machine window must not open before diving")
+	TEST_ASSERT(!console.window_act(scene.target_node.address, "test", list()), "A stale machine window must not execute before diving")
+	TEST_ASSERT(!console.cli("scan"), "Direct CLI calls must not send network actions")
+	TEST_ASSERT(!console.transfer_from_node("unknown", FALSE, scene.target_node), "A direct download must not bypass the restriction")
+	TEST_ASSERT(!console.transfer_to_node("unknown", scene.target_node), "A direct upload must not bypass the restriction")
+	TEST_ASSERT(!console.start_breach("node", scene.target_node.address), "A direct breach must not bypass the restriction")
+	TEST_ASSERT(console.handle_ui_action("file_new", list("name" = "note.txt", "content" = "local"), ui), "Local memory must remain usable before diving")
+	TEST_ASSERT_EQUAL(length(console.inventory.local_store.files), 1, "Creating a local file must not access the network")
+	var/list/data = console.ui_data(scene.user)
+	TEST_ASSERT_NULL(data["map"], "The body UI must not publish the full network map")
+	TEST_ASSERT_NULL(data["window"], "The body UI must not publish remote windows")
+	var/list/selected = data["selected"]
+	var/list/interactions = selected["interactions"]
+	TEST_ASSERT_EQUAL(length(interactions), 1, "The entrance card must expose only the dive action")
+	var/list/dive_action = interactions[1]
+	TEST_ASSERT_EQUAL(dive_action["id"], "dive", "The authorized entrance must still offer the native dive action")
+	TEST_ASSERT(dive_action["enabled"], "The actual authorized dive must remain available")
+	TEST_ASSERT(scene.implant.complete_dive(scene.target_node, scene.user), "The pre-dive restriction must not block the actual transfer of the mind")
+	var/mob/camera/netrun_entity/entity = console.dive_ref?.resolve()
+	TEST_ASSERT_NOTNULL(entity, "A successful dive must create the network process")
+	TEST_ASSERT(entity.console.open_window(scene.target_node.address), "The resident may operate a reachable authorized machine after diving")
+	entity.return_to_body()

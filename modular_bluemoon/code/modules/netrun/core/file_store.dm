@@ -85,21 +85,67 @@
 /datum/netrun_inventory
 	var/datum/netrun_console/owner
 	var/datum/netrun_file_store/local_store
+	/// A dive can borrow the implant disk without taking ownership of its files.
+	var/datum/netrun_file_store/owned_store
+	var/datum/weakref/borrowed_inventory_ref
 	var/obj/item/netrun_shard/shard
 	var/selected_file_uid
 
 /datum/netrun_inventory/New(datum/netrun_console/owner, capacity = 6)
 	src.owner = owner
 	local_store = new(src, capacity)
+	owned_store = local_store
 	RegisterSignal(local_store, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_store_changed))
 
 /datum/netrun_inventory/Destroy()
+	stop_borrowing()
 	set_shard(null)
 	UnregisterSignal(local_store, COMSIG_NETRUN_STORAGE_CHANGED)
-	QDEL_NULL(local_store)
+	local_store = null
+	QDEL_NULL(owned_store)
 	selected_file_uid = null
 	owner = null
 	return ..()
+
+/// The implant remains the sole owner; reads and writes use the same file datums.
+/datum/netrun_inventory/proc/borrow_from(datum/netrun_inventory/source)
+	if(QDELETED(source) || source == src || borrowed_inventory_ref)
+		return FALSE
+	UnregisterSignal(local_store, COMSIG_NETRUN_STORAGE_CHANGED)
+	borrowed_inventory_ref = WEAKREF(source)
+	local_store = source.local_store
+	RegisterSignal(local_store, COMSIG_PARENT_QDELETING, PROC_REF(on_borrowed_source_deleted))
+	RegisterSignal(source, COMSIG_NETRUN_INVENTORY_CHANGED, PROC_REF(on_borrowed_inventory_signal))
+	RegisterSignal(source, COMSIG_PARENT_QDELETING, PROC_REF(on_borrowed_source_deleted))
+	set_shard(source.shard)
+	notify_changed()
+	return TRUE
+
+/datum/netrun_inventory/proc/stop_borrowing()
+	if(!borrowed_inventory_ref)
+		return
+	var/datum/netrun_inventory/source = borrowed_inventory_ref.resolve()
+	if(source)
+		UnregisterSignal(source, list(COMSIG_NETRUN_INVENTORY_CHANGED, COMSIG_PARENT_QDELETING))
+	if(local_store)
+		UnregisterSignal(local_store, list(COMSIG_NETRUN_STORAGE_CHANGED, COMSIG_PARENT_QDELETING))
+	borrowed_inventory_ref = null
+	local_store = owned_store
+	RegisterSignal(local_store, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_store_changed))
+	set_shard(null)
+	notify_changed()
+
+/datum/netrun_inventory/proc/on_borrowed_source_deleted(datum/source)
+	SIGNAL_HANDLER
+	stop_borrowing()
+
+/datum/netrun_inventory/proc/on_borrowed_inventory_signal(datum/source)
+	SIGNAL_HANDLER
+	var/datum/netrun_inventory/inventory = source
+	if(shard != inventory.shard)
+		set_shard(inventory.shard)
+	else
+		notify_changed()
 
 /datum/netrun_inventory/proc/all_files(fresh = FALSE)
 	if(!fresh && owner?.ui_files)

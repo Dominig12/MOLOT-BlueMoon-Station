@@ -26,12 +26,86 @@
 /datum/netrun_console/implant/ui_static_data(mob/user)
 	if(!available_to(user || operator))
 		return list()
-	return ..()
+	return list()
 
 /datum/netrun_console/implant/ui_data(mob/user, datum/ui_source)
 	if(!available_to(user || operator))
 		return list()
+	netrun_ui_source = ui_source || src
+	if(user)
+		operator = user
+	note_ui_activity()
+	var/datum/component/netrun_node/node = selected_node()
+	var/list/entry
+	if(node && is_local_entry(node))
+		refresh_route_node(node)
+		entry = node.ui_entry(src)
+		entry["interactions"] = node_interactions(node)
+	return list(
+		"origin" = origin,
+		"ui_theme" = theme_id(user),
+		"input_ack" = input_ack,
+		"host_actions" = host_actions(),
+		"log" = log,
+		"selected" = entry,
+		"storage" = storage_payload(),
+		"shard" = shard_payload(),
+		"file" = file_payload(),
+		"networks" = list(),
+		"windows" = list(),
+	)
+
+/// A conscious wearer can prepare local media and an entrance, but only the
+/// resident process may send packets or operate machines after diving.
+/datum/netrun_console/implant/handle_ui_action(action, list/params, datum/tgui/ui, input_nonce)
+	if(!available_to(ui?.user))
+		return FALSE
+	if(action == "node_interact" && params["id"] != "dive")
+		return FALSE
+	if(!(action in list("choose_entry", "choose_connection", "unjack", "eject_shard", "node_interact", "file_select", "file_new", "file_edit", "file_rename", "file_copy", "file_move", "delete_local", "read")))
+		return FALSE
 	return ..()
+
+/// Reading a stale UID must not turn a local read into a remote request.
+/datum/netrun_console/implant/read_file(mob/user, uid, input_nonce)
+	var/datum/netrun_file/file = find_local_file(uid)
+	file?.show(user)
+
+/datum/netrun_console/implant/run_command(datum/component/netrun_node/node, command_id, input_nonce, packet_id)
+	return FALSE
+
+/datum/netrun_console/implant/remote_request(address, action, list/arguments, input_nonce)
+	return FALSE
+
+/datum/netrun_console/implant/open_window(address)
+	return FALSE
+
+/datum/netrun_console/implant/window_act(address, action, list/params, input_nonce)
+	return FALSE
+
+/datum/netrun_console/implant/cli(text)
+	return FALSE
+
+/datum/netrun_console/implant/start_breach(kind, id, automatic = FALSE)
+	return FALSE
+
+/datum/netrun_console/implant/transfer_from_node(uid, to_shard, datum/component/netrun_node/node, delivered = FALSE, input_nonce)
+	return FALSE
+
+/datum/netrun_console/implant/transfer_to_node(uid, datum/component/netrun_node/node, delivered = FALSE, input_nonce)
+	return FALSE
+
+/datum/netrun_console/implant/delete_from_node(uid, datum/component/netrun_node/node, delivered = FALSE, input_nonce)
+	return FALSE
+
+/datum/netrun_console/implant/program_use(uid, target_ref)
+	return FALSE
+
+/datum/netrun_console/implant/signal_entity(datum/component/netrun_node/node, recipient_ref, text, input_nonce)
+	return FALSE
+
+/datum/netrun_console/implant/chat_send(text)
+	return FALSE
 
 /datum/netrun_console/implant/can_route(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
 	return available_to() && ..()
@@ -72,6 +146,18 @@
 		disconnect_client()
 	return ..()
 
+/// A department LAN can cover many APC rooms; entry is limited to the body's
+/// actual room, including its sub-areas, instead of every reachable LAN member.
+/datum/netrun_console/implant/proc/is_local_entry(datum/component/netrun_node/node, mob/user = operator)
+	if(QDELETED(node) || QDELETED(node.parent) || QDELETED(user))
+		return FALSE
+	var/turf/body_position = get_turf(user)
+	var/turf/node_position = node.physical_turf()
+	if(!body_position || !node_position || body_position.z != node_position.z)
+		return FALSE
+	var/area/body_area = get_base_area(body_position)
+	return body_area && body_area == get_base_area(node_position) && netrun_sector_for(body_position) == netrun_sector_for(node_position)
+
 /datum/netrun_console/implant/proc/dive_denial(datum/component/netrun_node/node, mob/user = operator)
 	if(!available_to(user))
 		return "Имплант доступен только его владельцу в сознании."
@@ -79,6 +165,8 @@
 		return "Нейролинк заблокирован."
 	if(diving)
 		return "Погружение уже выполняется."
+	if(!is_local_entry(node, user))
+		return "Узел погружения должен находиться в вашем отсеке."
 	if(QDELETED(node) || !node.is_online() || !can_route(node) || node_level(node) < NETRUN_ACCESS_USER)
 		return "Нужны действующий маршрут и доступ пользователя к работающему узлу."
 	if(!user.mind)
@@ -93,12 +181,12 @@
 	var/datum/netrun_path_tree/tree = make_path_tree()
 	for(var/address in tree.reached)
 		var/datum/component/netrun_node/node = SSnetrun.find_node(address)
-		if(!QDELETED(node) && node.is_online() && can_route(node, tree) && node_level(node, tree) >= NETRUN_ACCESS_USER)
+		if(is_local_entry(node) && node.is_online() && can_route(node, tree) && node_level(node, tree) >= NETRUN_ACCESS_USER)
 			.["[node.get_name()] — [node.address]"] = node
 	qdel(tree)
 
 /datum/netrun_console/implant/proc/select_entry(datum/component/netrun_node/node, mob/user)
-	if(!available_to(user) || QDELETED(node) || !node.is_online() || !can_route(node) || node_level(node) < NETRUN_ACCESS_USER)
+	if(!available_to(user) || !is_local_entry(node, user) || !node.is_online() || !can_route(node) || node_level(node) < NETRUN_ACCESS_USER)
 		return FALSE
 	map_view.selected_address = node.address
 	map_view.selected_network = null
@@ -112,9 +200,9 @@
 /datum/netrun_console/implant/proc/choose_entry(mob/user)
 	var/list/choices = entry_choices()
 	if(!length(choices))
-		log_line("Нет узлов с доступом пользователя. Получите доступ или подключитесь к сервисному порту.", "average")
+		log_line("В вашем отсеке нет доступных узлов погружения.", "average")
 		return
-	var/choice = tgui_input_list(user, "Выберите узел входа в сеть. Для погружения используйте кнопку в его карточке.", "Нейролинк: узел погружения", choices)
+	var/choice = tgui_input_list(user, "Выберите узел в вашем отсеке. Для погружения используйте кнопку в его карточке.", "Нейролинк: узел погружения", choices)
 	if(!QDELETED(src) && choice)
 		select_entry(choices[choice], user)
 
@@ -130,13 +218,13 @@
 	return ..()
 
 /datum/netrun_console/implant/node_interactions(datum/component/netrun_node/node)
-	. = ..()
+	. = list()
 	var/reason = dive_denial(node)
 	. += list(list("id" = "dive", "name" = "Погрузиться в узел", "icon" = "person-walking-arrow-right", "enabled" = !reason, "reason" = reason))
 
 /datum/netrun_console/implant/node_interact(datum/component/netrun_node/node, id, mob/user)
 	if(id != "dive")
-		return ..()
+		return FALSE
 	var/reason = dive_denial(node, user)
 	if(reason)
 		log_line(reason, "bad")
