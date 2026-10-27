@@ -70,14 +70,25 @@
 	SIGNAL_HANDLER
 	invalidate_ui()
 
-/datum/netrun_console/proc/on_ui_context_changed(datum/source)
+/datum/netrun_console/proc/on_ui_context_changed(datum/source, atom/movable/changed_atom)
 	SIGNAL_HANDLER
 	access_cache = null
 	ui_node_levels?.Cut()
 	ui_legit_levels?.Cut()
 	network_level_cache?.Cut()
 	invalidate_projection_caches()
-	map_view.invalidate(FALSE)
+	// Ownership can change without moving to another turf or changing ID access.
+	// Invalidate the transferred item's nodes now, including devices in a bag;
+	// their deferred movement task may not have run by the next UI request.
+	if(istype(changed_atom, /obj/item) && map_view?.subscribed)
+		for(var/atom/contained as anything in changed_atom.GetAllContents())
+			var/datum/component/netrun_node/node = contained.GetComponent(/datum/component/netrun_node)
+			if(node)
+				map_view.invalidate_node_access(node.address)
+	// Equipment and containment signals also fire for ordinary items that do not
+	// affect credentials. Wake the UI, then let the map compare the actual access
+	// and route context before deciding which parts of its projection changed.
+	invalidate_ui()
 
 /// Native ID access lists and NTnet switches still have legacy direct writes. Compare only
 /// this small context, never the graph/panels; a quiet session does not serialize its UI.
@@ -421,7 +432,7 @@
 			. += hop["ref"]
 		qdel(route)
 	var/datum/component/netrun_node/selected = selected_node() || focus
-	if(selected && can_route(selected))
+	if(selected && node_visible(selected))
 		var/datum/netrun_route/route = route_to(selected)
 		for(var/list/hop as anything in route.hops)
 			. += hop["ref"]

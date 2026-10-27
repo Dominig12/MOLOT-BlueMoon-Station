@@ -194,6 +194,75 @@
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_CHAT_CHANGED)
 	TEST_ASSERT(console.ui_dirty, "A reopened viewer must subscribe again")
 
+/// An ordinary carried item wakes the UI without invalidating its entire map.
+/datum/unit_test/netrun_refresh_unrelated_inventory_keeps_map/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	netrun_connected_test_area()
+	var/mob/living/carbon/human/carrier = allocate(/mob/living/carbon/human, origin)
+	var/obj/item/netrun_deck/deck = allocate(/obj/item/netrun_deck, carrier)
+	var/datum/netrun_console/console = deck.console
+	console.operator = carrier
+	console.workspace_view = "map"
+	qdel(console.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+	console.map_view = view
+	SSnetrun.ensure_topology()
+	console.ui_data(null)
+	var/rebuilds = view.rebuilds
+	var/projected = view.serialized_nodes
+	var/authorization = view.authorization_revision
+	console.ui_dirty = FALSE
+	var/obj/item/unrelated = allocate(/obj/item, origin)
+	unrelated.forceMove(carrier)
+	TEST_ASSERT(console.ui_dirty, "A real containment change must still wake the UI")
+	TEST_ASSERT(!view.dirty, "An unrelated item must not force a full map projection")
+	console.ui_data(null)
+	TEST_ASSERT_EQUAL(view.rebuilds, rebuilds, "Moving an unrelated item into the carrier must retain the map")
+	TEST_ASSERT_EQUAL(view.serialized_nodes, projected, "Unchanged device access must not reproject stationary nodes")
+	TEST_ASSERT_EQUAL(view.authorization_revision, authorization, "An ordinary item must not fabricate an authorization change")
+
+/// A same-tile transfer must revoke a worn endpoint's ownership on the next UI payload.
+/datum/unit_test/netrun_refresh_same_tile_worn_owner_transfer/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	netrun_connected_test_area()
+	var/mob/living/carbon/human/first = allocate(/mob/living/carbon/human, origin)
+	var/mob/living/carbon/human/second = allocate(/mob/living/carbon/human, origin)
+	var/obj/item/netrun_deck/deck = allocate(/obj/item/netrun_deck, first)
+	var/obj/item/clothing/glasses/hud/health/night/glasses = allocate(/obj/item/clothing/glasses/hud/health/night, origin)
+	TEST_ASSERT(first.equip_to_slot_if_possible(glasses, ITEM_SLOT_EYES, disable_warning = TRUE), "The first user must wear the real HUD glasses")
+	var/datum/component/netrun_node/node = glasses.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_console/console = deck.console
+	console.operator = first
+	console.workspace_view = "map"
+	SSnetrun.ensure_topology()
+	node.join_network()
+	node.reconcile_state()
+	node.publish_changes()
+	var/list/map = console.ui_data(null)["map"]
+	var/list/entry
+	for(var/list/candidate as anything in map["nodes"])
+		if(candidate["address"] == node.address)
+			entry = candidate
+			break
+	TEST_ASSERT_NOTNULL(entry, "The wearer's HUD node must appear on the live map")
+	TEST_ASSERT_EQUAL(entry["access"], NETRUN_ACCESS_ROOT, "The wearer must see ROOT access before transferring the HUD")
+	console.ui_dirty = FALSE
+	TEST_ASSERT(first.dropItemToGround(glasses), "The first user must actually remove the worn HUD")
+	TEST_ASSERT(second.put_in_hands(glasses), "The second user must pick up the same HUD")
+	TEST_ASSERT_EQUAL(glasses.netrun_owner_access(console), NETRUN_ACCESS_NONE, "Ownership must end on the same physical tile")
+	TEST_ASSERT(console.ui_dirty, "The ownership transfer must wake the open map")
+	// No scheduler tick or manual node publication: this is the first UI update
+	// after the actual inventory transfer, while both characters remain in place.
+	map = console.ui_data(null)["map"]
+	entry = null
+	for(var/list/candidate as anything in map["nodes"])
+		if(candidate["address"] == node.address)
+			entry = candidate
+			break
+	if(entry)
+		TEST_ASSERT_EQUAL(entry["access"], console.node_level(node), "The first map payload cannot retain the former owner's ROOT access")
+		TEST_ASSERT(entry["access"] < NETRUN_ACCESS_ROOT, "A transferred HUD cannot retain ROOT on the old wearer's map")
+
 /// Countdown repaint work must end after one task instead of requeuing in the same tick.
 /datum/unit_test/netrun_refresh_countdown_does_not_requeue/Run()
 	var/obj/item/host = allocate(/obj/item)

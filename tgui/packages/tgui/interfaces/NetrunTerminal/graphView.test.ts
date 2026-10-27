@@ -45,6 +45,30 @@ test('hit boxes may overlap at overview scale, but nearest selection is determin
   expect(scene.hit({ px: -1000, py: 0 }, .08)).toBeNull();
 });
 
+test('status changes retain spatial indexes while hit tests expose current permissions', () => {
+  const nodes = [node('A'), node('B', 96)];
+  const edges = [{ id: 'AB', from: 'A', to: 'B', kind: 'endpoint' as const }];
+  const first = new GraphScene(); first.update(nodes, edges);
+  const second = new GraphScene(); second.update([{ ...nodes[0], entities: 2 }, nodes[1]], edges, first);
+  expect(second.sceneryVersion).toBe(first.sceneryVersion);
+  expect(second.adjacency).toBe(first.adjacency);
+  expect(second.hit({ px: 0, py: 0 }, 1).entities).toBe(2);
+  expect(first.hit({ px: 0, py: 0 }, 1).entities).toBe(0);
+  const revoked = new GraphScene(); revoked.update([{ ...nodes[0], access: 0 }, nodes[1]], edges, second);
+  expect(revoked.sceneryVersion).not.toBe(second.sceneryVersion);
+  expect(revoked.hit({ px: 0, py: 0 }, 1).access).toBe(0);
+  const removed = new GraphScene(); removed.update([nodes[1]], [], revoked);
+  expect(removed.hit({ px: 0, py: 0 }, 1)).toBeNull();
+});
+
+test('moving dynamic devices do not invalidate stationary scenery', () => {
+  const nodes = [node('A'), { ...node('B', 96), dynamic: true }], edges = [];
+  const first = new GraphScene(); first.update(nodes, edges);
+  const second = new GraphScene(); second.update([nodes[0], { ...nodes[1], px: 192 }], edges, first);
+  expect(second.sceneryVersion).toBe(first.sceneryVersion);
+  expect(second.hit({ px: 192, py: 0 }, 1).address).toBe('B');
+});
+
 test('actual label rectangles never overlap other labels or marker bounds, even for selected nodes', () => {
   const nodes = Array.from({ length: 100 }, (_, i) => ({ ...node(`n-${i}`, (i % 10) * 96, Math.floor(i / 10) * 96), name: 'Очень длинное название устройства станции' }));
   const camera = new GraphViewport(); camera.zoom = .7; camera.x = 40; camera.y = 40;

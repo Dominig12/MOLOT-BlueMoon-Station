@@ -16,12 +16,72 @@ export class GraphScene {
   incidentEdges = new Map<string, NetEdge[]>();
   private cells = new Map<string, PlacedNode[]>();
   private edgeIndex = new GraphEdgeIndex();
+  readonly identity: object = {};
+  previousIdentity: object | null = null;
+  changedNodes: PlacedNode[] | null = null;
+  dynamicMembershipChanged = true;
+  /** Changes only when stationary scenery needs new geometry or colors. */
+  sceneryVersion: object = {};
 
-  update(nodes: PlacedNode[], edges: NetEdge[]) {
+  update(nodes: PlacedNode[], edges: NetEdge[], previous?: GraphScene) {
+    const sameOrder = !!previous && nodes.length === previous.nodes.length
+      && nodes.every((node, i) => node.address === previous.nodes[i].address);
+    this.previousIdentity = previous?.identity || null;
+    this.changedNodes = sameOrder ? nodes.filter((node, i) => node !== previous.nodes[i]) : null;
+    this.dynamicMembershipChanged = !sameOrder
+      || this.changedNodes.some((node) => !!node.dynamic !== !!previous.byAddress.get(node.address)?.dynamic);
+    const sameGeometry = sameOrder && nodes.every((node, i) => {
+      const old = previous.nodes[i];
+      return node.px === old.px && node.py === old.py && node.anchorX === old.anchorX && node.anchorY === old.anchorY;
+    });
+    const sameScenery = sameOrder && edges === previous.edges && nodes.every((node, i) => {
+      const old = previous.nodes[i];
+      if (node === old) { return true; }
+      if (node.dynamic && old.dynamic) { return true; }
+      return node.dynamic === old.dynamic && node.type === old.type && node.network === old.network
+        && node.online === old.online && node.access === old.access && node.px === old.px && node.py === old.py
+        && node.anchorX === old.anchorX && node.anchorY === old.anchorY;
+    });
+    this.sceneryVersion = sameScenery ? previous.sceneryVersion : {};
     this.nodes = nodes;
     this.edges = edges;
     this.byAddress = new Map(nodes.map((node) => [node.address, node]));
-    this.adjacency = graphAdjacency(nodes, edges);
+    const nodeCell = (node: PlacedNode) => cellKey(Math.floor(node.px / GRAPH_GAP), Math.floor(node.py / GRAPH_GAP));
+    if (previous) {
+      this.cells = new Map(previous.cells);
+      const changedCells = new Map<string, PlacedNode[]>();
+      const edit = (key: string) => {
+        let cell = changedCells.get(key);
+        if (!cell) { cell = [...(previous.cells.get(key) || [])]; changedCells.set(key, cell); }
+        return cell;
+      };
+      for (const old of previous.nodes) {
+        if (this.byAddress.get(old.address) === old) { continue; }
+        const cell = edit(nodeCell(old)), index = cell.findIndex((node) => node.address === old.address);
+        if (index >= 0) { cell.splice(index, 1); }
+      }
+      for (const node of nodes) {
+        if (previous.byAddress.get(node.address) !== node) { edit(nodeCell(node)).push(node); }
+      }
+      for (const [key, cell] of changedCells) {
+        if (cell.length) { this.cells.set(key, cell); } else { this.cells.delete(key); }
+      }
+    } else {
+      this.cells.clear();
+      for (const node of nodes) {
+        const key = nodeCell(node), cell = this.cells.get(key) || [];
+        cell.push(node); this.cells.set(key, cell);
+      }
+    }
+    // Status-only updates do not alter graph connectivity or spatial bounds.
+    // Retain those expensive indexes, replacing references only in changed cells.
+    if (sameGeometry && edges === previous.edges) {
+      this.adjacency = previous.adjacency;
+      this.incidentEdges = previous.incidentEdges;
+      this.edgeIndex = previous.edgeIndex;
+      return;
+    }
+    this.adjacency = sameOrder && edges === previous.edges ? previous.adjacency : graphAdjacency(nodes, edges);
     this.edgeIndex.update(this.byAddress, edges);
     this.incidentEdges.clear();
     for (const edge of edges) {
@@ -30,12 +90,6 @@ export class GraphScene {
         incident.push(edge);
         this.incidentEdges.set(address, incident);
       }
-    }
-    this.cells.clear();
-    for (const node of nodes) {
-      const key = cellKey(Math.floor(node.px / GRAPH_GAP), Math.floor(node.py / GRAPH_GAP));
-      const cell = this.cells.get(key) || [];
-      cell.push(node); this.cells.set(key, cell);
     }
   }
 

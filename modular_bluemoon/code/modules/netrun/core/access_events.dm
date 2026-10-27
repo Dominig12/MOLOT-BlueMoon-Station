@@ -12,7 +12,6 @@
 	if(processing_events || !length(pending_firewalls))
 		return
 	processing_events = TRUE
-	owner.map_view.invalidate()
 	owner.invalidate_projection_caches()
 	owner.ui_node_levels?.Cut()
 	owner.ui_legit_levels?.Cut()
@@ -25,6 +24,7 @@
 		var/datum/component/netrun_node/node = reference.resolve()
 		if(QDELETED(node))
 			continue
+		owner.map_view.invalidate_node_access(address)
 		if(node_access[address])
 			revoke_node(address)
 			owner.add_trace(node.get_security() * 4)

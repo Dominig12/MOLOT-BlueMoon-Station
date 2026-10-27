@@ -115,7 +115,14 @@ class NetrunPixiSurface implements PixiSurface {
   updateScene(scene: GraphScene, base: GraphBase) {
     if (this.disposed || this.failed) { return false; }
     if (scene !== this.scene || base.gateways !== this.base?.gateways || base.apcZones !== this.base?.apcZones) {
-      this.scene = scene; this.base = base; this.sceneDirty = true; this.labelDirty = true;
+      const sceneryChanged = scene.sceneryVersion !== this.scene?.sceneryVersion
+        || base.gateways !== this.base?.gateways || base.apcZones !== this.base?.apcZones;
+      if (this.scene && (scene.changedNodes === null || scene.edges !== this.scene.edges)) {
+        this.scenery.suppressUndisclosed(scene);
+      }
+      this.scene = scene; this.base = base;
+      if (sceneryChanged) { this.sceneDirty = true; }
+      this.labelDirty = true;
       this.canvas.dataset.netNodes = String(scene.nodes.length); this.canvas.dataset.netEdges = String(scene.edges.length);
       this.requestRender();
     }
@@ -134,7 +141,8 @@ class NetrunPixiSurface implements PixiSurface {
     }
     // The UI provides one complete graph. Render-layer membership stays an
     // internal cache detail, never a second transport/layout contract.
-    const edges = prior?.scene === scene ? prior.edges
+    const edges = prior && (prior.scene === scene || (scene.previousIdentity === prior.scene.identity
+      && scene.edges === prior.scene.edges && !scene.dynamicMembershipChanged)) ? prior.edges
       : scene.edges.filter((edge) => scene.byAddress.get(edge.from)?.dynamic || scene.byAddress.get(edge.to)?.dynamic);
     this.live = { scene, overlay, edges, adjacency: scene.adjacency };
     this.actorsDirty = true; this.labelDirty = true; this.requestRender();
@@ -161,7 +169,7 @@ class NetrunPixiSurface implements PixiSurface {
     return true;
   }
   hitTest(point: GraphPoint, zoom: number) {
-    const moving = this.actors.hit(point, zoom), stationary = this.scene?.hit(point, zoom);
+    const moving = this.actors.hit(point, zoom, this.scene?.byAddress), stationary = this.scene?.hit(point, zoom);
     if (!stationary || stationary.dynamic) { return moving; }
     if (!moving) { return stationary; }
     const a = (moving.px - point.px) ** 2 + (moving.py - point.py) ** 2;

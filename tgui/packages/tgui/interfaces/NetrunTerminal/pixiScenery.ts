@@ -35,6 +35,7 @@ export class PixiScenery {
   private readonly waiting = new Set<string>();
   private readonly buckets = new Map<string, Map<string, Part>>();
   private readonly bucketKeys = new Map<string, string[]>();
+  private readonly suppressed = new Set<string>();
   private nodeInputs = new Map<string, NodeInput>();
   private edgeInputs = new Map<string, EdgeInput>();
   private zoneParts: Part[] = [];
@@ -55,6 +56,23 @@ export class PixiScenery {
     this.scene = scene; this.base = base;
     this.pending = this.build(scene, base);
     return true;
+  }
+
+  /** Never display a retained chunk containing a node or link no longer disclosed. */
+  suppressUndisclosed(scene: GraphScene) {
+    const edges = new Set(scene.edges.map((edge) => edge.id));
+    const suppress = (bucket: string) => {
+      this.suppressed.add(bucket);
+      for (const key of this.bucketKeys.get(bucket) || []) {
+        const retained = this.records.get(key);
+        if (retained) { retained.graphic.visible = false; }
+        this.waiting.delete(key);
+      }
+    };
+    for (const [address, input] of this.nodeInputs) {
+      if (!scene.byAddress.has(address)) { for (const part of input.parts) { suppress(part.bucket); } }
+    }
+    for (const [id, input] of this.edgeInputs) { if (!edges.has(id)) { suppress(input.part.bucket); } }
   }
 
   /** Build descriptors in bounded slices, then upload only newly visible GPU chunks. */
@@ -185,6 +203,7 @@ export class PixiScenery {
     // Commit atomically, including removals and moves across spatial buckets.
     this.nodeInputs = nodes; this.edgeInputs = edges; this.zoneParts = zones; this.builtZones = base.apcZones;
     for (const [bucket, batches] of prepared) {
+      this.suppressed.delete(bucket);
       for (const key of this.bucketKeys.get(bucket) || []) {
         this.prepared.delete(key); this.waiting.delete(key);
         if (!batches.has(key)) {
@@ -205,7 +224,8 @@ export class PixiScenery {
 
   private enqueueVisible() {
     for (const [key, { batch, signature }] of this.prepared) {
-      const visible = !this.viewport || boxesIntersect(batch.bounds, this.viewport);
+      const visible = !this.suppressed.has(batch.key.slice(0, batch.key.indexOf(':', batch.key.indexOf(':') + 1)))
+        && (!this.viewport || boxesIntersect(batch.bounds, this.viewport));
       const retained = this.records.get(key);
       if (retained) { retained.graphic.visible = visible && retained.signature === signature; }
       if (visible && (!retained || retained.signature !== signature)) { this.waiting.add(key); }
@@ -253,7 +273,7 @@ export class PixiScenery {
   }
 
   destroy() {
-    this.pending = null; this.waiting.clear(); this.prepared.clear(); this.records.clear(); this.buckets.clear(); this.bucketKeys.clear();
+    this.pending = null; this.waiting.clear(); this.prepared.clear(); this.records.clear(); this.buckets.clear(); this.bucketKeys.clear(); this.suppressed.clear();
     this.nodeInputs.clear(); this.edgeInputs.clear(); this.zoneParts = []; this.builtZones = undefined;
     this.scene = null; this.base = null; destroyDisplay(this.world);
   }

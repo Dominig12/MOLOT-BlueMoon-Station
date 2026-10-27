@@ -212,6 +212,44 @@
 	allocated += unreachable
 	TEST_ASSERT_EQUAL(length(unreachable.hops), 0, "An unavailable remote route must not draw a fictitious hub path")
 
+/// The indexed relay check must preserve native reachability and backbone semantics.
+/datum/unit_test/netrun_uplink_relay_index/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/local_room = scene.room(/area/engineering/netrun_route_test)
+	var/area/remote_room = scene.room(/area/medical/netrun_route_test)
+	var/list/levels = multiz_gravity_test_levels()
+	scene.mark_station(levels[1])
+	scene.take(origin, local_room)
+	scene.machine(/obj/machinery/power/apc, scene.take(get_step(origin, NORTH), local_room))
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/turf/remote_apc = scene.take(locate(81, 80, levels[1]), remote_room, TRUE)
+	var/turf/remote_spot = scene.take(locate(82, 80, levels[1]), remote_room, TRUE)
+	scene.machine(/obj/machinery/power/apc, remote_apc)
+	var/obj/machinery/ntnet_relay/remote_relay = scene.machine(/obj/machinery/ntnet_relay, remote_spot)
+	SSnetworks.station_network.setting_disabled = FALSE
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/remote_node = remote_relay.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT(remote_relay.is_operational(), "The remote relay must be online")
+	TEST_ASSERT(!source.console.can_route(remote_node), "A relay in the disconnected sector must be unreachable")
+	TEST_ASSERT(!source.console.has_uplink(), "An online but unreachable relay must not provide an uplink")
+	var/turf/local_spot = scene.take(locate(origin.x + 1, origin.y, origin.z), local_room)
+	var/obj/machinery/ntnet_relay/local_relay = scene.machine(/obj/machinery/ntnet_relay, local_spot)
+	graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
+	TEST_ASSERT(source.console.has_uplink(), "A reachable operational local relay must provide an uplink")
+	var/datum/netrun_path_tree/cached = graph.route_tables[source_node.address]
+	TEST_ASSERT_NOTNULL(cached, "The native route table must be cached")
+	TEST_ASSERT(source.console.has_uplink(), "A repeated lookup must preserve the operational result")
+	TEST_ASSERT_EQUAL(graph.route_tables[source_node.address], cached, "Repeated checks must reuse the cached route table")
+	local_relay.enabled = FALSE
+	TEST_ASSERT(!source.console.has_uplink(), "Disabling the only local relay must disconnect the uplink")
+	local_relay.enabled = TRUE
+	SSnetworks.station_network.setting_disabled = TRUE
+	TEST_ASSERT(!source.console.has_uplink(), "Disabling the backbone must override a reachable relay")
+	SSnetworks.station_network.setting_disabled = FALSE
+	TEST_ASSERT(source.console.has_uplink(), "The uplink must recover when the backbone is restored")
+
 /// A service cable selects its actual endpoint as a zero-latency source, even across LANs.
 /datum/unit_test/netrun_route_direct_and_loopback/Run()
 	var/turf/origin = run_loc_floor_bottom_left

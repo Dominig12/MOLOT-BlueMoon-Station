@@ -52,6 +52,279 @@
 	projected_by_address[node.address]++
 	return ..()
 
+/// A fixture where one endpoint is private until a node-specific grant is held.
+/datum/netrun_console/netrun_visibility_test
+	var/private_address
+
+/datum/netrun_console/netrun_visibility_test/node_visible(datum/component/netrun_node/node)
+	if(node.address == private_address)
+		return node_level(node) >= NETRUN_ACCESS_ROOT
+	return ..()
+
+/// Grant and revoke one private endpoint without projecting the whole station.
+/datum/unit_test/netrun_map_access_visibility_delta/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	for(var/turf/spot as anything in block(origin, locate(origin.x + 8, origin.y + 2, origin.z)))
+		scene.take(spot, room)
+	scene.machine(/obj/machinery/power/apc, get_step(origin, NORTH))
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/obj/machinery/computer/netrun_terminal/target = scene.machine(/obj/machinery/computer/netrun_terminal, get_step(origin, EAST))
+	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
+	var/list/fixture_nodes = list(target_node, source.GetComponent(/datum/component/netrun_node))
+	for(var/i in 1 to 200)
+		var/obj/item/device = allocate(/obj/item, locate(origin.x + i % 8, origin.y + 2, origin.z))
+		fixture_nodes += device.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	qdel(source.console)
+	var/datum/netrun_console/netrun_visibility_test/console = new(source)
+	source.console = console
+	console.private_address = target_node.address
+	qdel(console.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+	console.map_view = view
+	console.workspace_view = "map"
+	SSnetrun.ensure_topology()
+	for(var/datum/component/netrun_node/node as anything in fixture_nodes)
+		node.join_network()
+		node.reconcile_state()
+		node.publish_changes()
+	var/list/map = console.ui_data(null)["map"]
+	TEST_ASSERT(!netrun_map_has_node(list("map" = map), target_node.address), "The private endpoint begins hidden")
+	var/list/session = list("id" = 1)
+	var/list/baseline = view.encode_wire(map, session)
+	var/list/slow_session = session.Copy()
+	var/builds = view.rebuilds
+	var/projected = view.serialized_nodes
+	console.access_session.node_access[target_node.address] = NETRUN_ACCESS_ROOT
+	view.invalidate_node_access(target_node.address)
+	map = console.ui_data(null)["map"]
+	var/list/granted = view.encode_wire(map, session)
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Granting one node must not rebuild all 200 stationary endpoints")
+	TEST_ASSERT_EQUAL(view.serialized_nodes, projected + 1, "Granting one node projects only the newly visible endpoint")
+	TEST_ASSERT(!granted["full"] && length(granted["nodes"]) == 1, "Grant must transmit a single node delta")
+	TEST_ASSERT_EQUAL(granted["epoch"], baseline["epoch"], "The same operator keeps its stream on a grant")
+	TEST_ASSERT(netrun_map_has_node(list("map" = map), target_node.address), "Grant must disclose the private endpoint")
+	view.selected_address = target_node.address
+	map = console.ui_data(null)["map"]
+	view.encode_wire(map, session)
+	builds = view.rebuilds
+	target_node.raise_firewall()
+	map = console.ui_data(null)["map"]
+	var/list/revoked = view.encode_wire(map, session)
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Firewall revocation must not rebuild the other endpoints")
+	TEST_ASSERT(!revoked["full"] && (target_node.address in revoked["removed_nodes"]), "Revocation must remove the endpoint in the next wire delta")
+	TEST_ASSERT_EQUAL(revoked["epoch"], baseline["epoch"], "Revocation remains on the same authenticated stream")
+	TEST_ASSERT(!netrun_map_has_node(list("map" = map), target_node.address), "Revoked endpoint must leave the current projection")
+	TEST_ASSERT(!(target_node.address in view.revealed_addresses), "A previously selected target must lose route disclosure when its access is revoked")
+	var/list/catchup = view.encode_wire(map, slow_session)
+	for(var/list/entry as anything in catchup["nodes"])
+		TEST_ASSERT(entry["address"] != target_node.address, "A slow viewer must never receive a stale upsert after revocation")
+	session["force_full"] = TRUE
+	var/list/recovery = view.encode_wire(map, session)
+	TEST_ASSERT(recovery["full"] && !netrun_map_has_node(list("map" = recovery), target_node.address), "Resync must never disclose the revoked endpoint")
+	console.operator = allocate(/mob/living/carbon/human, origin)
+	map = console.ui_data(null)["map"]
+	var/list/replaced = view.encode_wire(map, session)
+	TEST_ASSERT(replaced["full"] && replaced["epoch"] != baseline["epoch"], "A different operator must receive an isolated baseline")
+
+/// Crossing protected LANs must only reproject the LANs whose permissions changed.
+/datum/unit_test/netrun_map_cross_lan_load/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/engineering = scene.room(/area/engineering/netrun_route_test)
+	var/area/medical = scene.room(/area/medical/netrun_route_test)
+	var/area/general = scene.room(/area/netrun_route_test)
+	var/turf/first = scene.take(origin, engineering)
+	var/turf/second = scene.take(locate(origin.x + 4, origin.y, origin.z), medical)
+	var/turf/other = scene.take(locate(origin.x + 8, origin.y, origin.z), general)
+	scene.machine(/obj/machinery/power/apc, scene.take(get_step(first, NORTH), engineering))
+	scene.machine(/obj/machinery/power/apc, scene.take(get_step(second, NORTH), medical))
+	scene.machine(/obj/machinery/power/apc, scene.take(get_step(other, NORTH), general))
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, first)
+	var/list/fixtures = list(source.GetComponent(/datum/component/netrun_node))
+	var/list/other_nodes = list()
+	var/datum/component/netrun_node/engineering_node
+	var/datum/component/netrun_node/medical_node
+	for(var/i in 1 to 20)
+		var/obj/item/device = allocate(/obj/item, i <= 10 ? first : second)
+		var/datum/component/netrun_node/node = device.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+		fixtures += node
+		if(i == 1)
+			engineering_node = node
+		if(i == 11)
+			medical_node = node
+	for(var/i in 1 to 2000)
+		var/obj/item/device = allocate(/obj/item, other)
+		var/datum/component/netrun_node/node = device.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+		node.required_access = list(ACCESS_SECURITY)
+		fixtures += node
+		other_nodes += node
+		if(!(i % 100))
+			CHECK_TICK
+	SSnetworks.station_network.setting_disabled = TRUE
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/settled = 0
+	for(var/datum/component/netrun_node/node as anything in fixtures)
+		node.join_network()
+		node.reconcile_state()
+		node.publish_changes()
+		if(!((++settled) % 100))
+			CHECK_TICK
+	var/datum/component/netrun_node/source_node = source.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_console/console = source.console
+	qdel(console.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+	console.map_view = view
+	console.workspace_view = "map"
+	var/list/map = console.ui_data(null)["map"]
+	TEST_ASSERT(netrun_map_has_node(list("map" = map), engineering_node.address), "The original home LAN must be visible")
+	TEST_ASSERT(!netrun_map_has_node(list("map" = map), medical_node.address), "The medical LAN begins protected")
+	var/datum/component/netrun_node/first_other = other_nodes[1]
+	TEST_ASSERT(netrun_map_has_node(list("map" = map), first_other.address), "The unrelated LAN must be visible in the load fixture")
+	var/list/session = list("id" = 2)
+	var/list/baseline = view.encode_wire(map, session)
+	var/builds = view.rebuilds
+	var/list/before = view.projected_by_address.Copy()
+	var/revision = graph.revision
+	for(var/step in 1 to 4)
+		var/turf/destination = step % 2 ? second : first
+		source.forceMove(destination)
+		source_node.join_network()
+		source_node.publish_changes()
+		map = console.ui_data(null)["map"]
+		var/list/delta = view.encode_wire(map, session)
+		TEST_ASSERT(!delta["full"] && delta["epoch"] == baseline["epoch"], "Crossing LANs must retain the same UI stream")
+		TEST_ASSERT_EQUAL(view.rebuilds, builds, "Crossing connected LANs must not rebuild the whole map")
+		TEST_ASSERT_EQUAL(netrun_map_has_node(list("map" = map), engineering_node.address), !(step % 2), "Engineering visibility follows the current home LAN")
+		TEST_ASSERT_EQUAL(netrun_map_has_node(list("map" = map), medical_node.address), !!(step % 2), "Medical visibility follows the current home LAN")
+		TEST_ASSERT(length(delta["nodes"]) < 100 && length(delta["removed_nodes"]) < 100, "Each transition transmits only the affected LANs")
+	TEST_ASSERT_EQUAL(graph.revision, revision, "Moving the source does not rebuild physical topology")
+	for(var/datum/component/netrun_node/node as anything in other_nodes)
+		TEST_ASSERT_EQUAL(view.projected_by_address[node.address], before[node.address], "Unchanged LAN nodes must never be projected again")
+	var/network_id = medical_node.network.id
+	console.access_session.network_access[network_id] = NETRUN_ACCESS_GUEST
+	view.invalidate_network_access(network_id)
+	map = console.ui_data(null)["map"]
+	var/list/granted = view.encode_wire(map, session)
+	TEST_ASSERT(!granted["full"] && netrun_map_has_node(list("map" = map), medical_node.address), "A network grant must disclose its devices by delta")
+	console.access_session.network_access -= network_id
+	view.invalidate_network_access(network_id)
+	map = console.ui_data(null)["map"]
+	var/list/revoked = view.encode_wire(map, session)
+	TEST_ASSERT(!revoked["full"] && (medical_node.address in revoked["removed_nodes"]), "Revoking a network grant must remove its devices by delta")
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Network grants and revocations must retain the full projection")
+	TEST_ASSERT(console.create_text_file("unrelated.txt", "text"), "The fixture can create a normal text file")
+	map = console.ui_data(null)["map"]
+	var/list/text_update = view.encode_wire(map, session)
+	TEST_ASSERT(!text_update["full"] && !length(text_update["nodes"]), "A text file cannot force a new map")
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "A normal text file must not rebuild the map")
+	var/datum/netrun_network/medical_network = medical_node.network
+	var/datum/netrun_file/key = new("medical.key", NETRUN_FILE_KEY, medical_network.passcode, 1, medical_network.id)
+	TEST_ASSERT(console.store_file(key), "A valid network key fits in local storage")
+	map = console.ui_data(null)["map"]
+	var/list/key_grant = view.encode_wire(map, session)
+	TEST_ASSERT(!key_grant["full"] && netrun_map_has_node(list("map" = map), medical_node.address), "Adding a network key discloses that LAN by delta")
+	TEST_ASSERT(console.delete_local_file(key), "The network key can be removed")
+	map = console.ui_data(null)["map"]
+	var/list/key_revoke = view.encode_wire(map, session)
+	TEST_ASSERT(!key_revoke["full"] && (medical_node.address in key_revoke["removed_nodes"]), "Removing the key revokes disclosure by delta")
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Key changes must not rebuild the entire projection")
+	var/mob/living/carbon/human/operator = allocate(/mob/living/carbon/human, first)
+	var/obj/item/clothing/under/color/grey/uniform = allocate(/obj/item/clothing/under/color/grey)
+	TEST_ASSERT(operator.equip_to_slot_if_possible(uniform, ITEM_SLOT_ICLOTHING, disable_warning = TRUE), "The operator wears a real uniform for the ID slot")
+	console.operator = operator
+	map = console.ui_data(null)["map"]
+	var/list/id_session = list("id" = 4)
+	var/list/id_baseline = view.encode_wire(map, id_session)
+	var/id_builds = view.rebuilds
+	var/list/id_before = view.projected_by_address.Copy()
+	var/obj/item/card/id/card = allocate(/obj/item/card/id)
+	card.access = list(ACCESS_MEDICAL)
+	TEST_ASSERT(operator.equip_to_slot_if_possible(card, ITEM_SLOT_ID, disable_warning = TRUE), "The operator equips the real medical ID")
+	map = console.ui_data(null)["map"]
+	var/list/id_grant = view.encode_wire(map, id_session)
+	TEST_ASSERT(!id_grant["full"] && id_grant["epoch"] == id_baseline["epoch"], "Equipping an ID updates the existing stream")
+	TEST_ASSERT(netrun_map_has_node(list("map" = map), medical_node.address), "The real medical ID discloses the medical LAN")
+	TEST_ASSERT_EQUAL(view.rebuilds, id_builds, "Equipping the ID must not rebuild the map")
+	TEST_ASSERT(operator.dropItemToGround(card), "The actual worn ID is removed")
+	map = console.ui_data(null)["map"]
+	var/list/id_revoke = view.encode_wire(map, id_session)
+	TEST_ASSERT(!id_revoke["full"] && (medical_node.address in id_revoke["removed_nodes"]), "Removing the real ID revokes medical devices by delta")
+	TEST_ASSERT_EQUAL(view.rebuilds, id_builds, "Removing the ID must not rebuild the map")
+	for(var/datum/component/netrun_node/node as anything in other_nodes)
+		TEST_ASSERT_EQUAL(view.projected_by_address[node.address], id_before[node.address], "An unrelated secured LAN must not be reprojected by the medical ID")
+	// Exercise the actual resident's enter_node lifecycle, which changes both
+	// route source and selection even when the operator/session stay the same.
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
+	entity.enter_node(engineering_node)
+	var/datum/netrun_console/entity/resident = entity.console
+	qdel(resident.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/entity_view = new(resident)
+	resident.map_view = entity_view
+	entity_view.selected_address = engineering_node.address
+	resident.workspace_view = "map"
+	map = resident.ui_data(null)["map"]
+	var/list/entity_session = list("id" = 3)
+	var/list/entity_baseline = entity_view.encode_wire(map, entity_session)
+	var/entity_builds = entity_view.rebuilds
+	var/list/entity_before = entity_view.projected_by_address.Copy()
+	entity.enter_node(engineering_node.bound_apc)
+	var/entity_started = TICK_USAGE
+	map = resident.ui_data(null)["map"]
+	var/same_lan_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - entity_started))
+	var/list/same_lan = entity_view.encode_wire(map, entity_session)
+	TEST_ASSERT(!same_lan["full"] && same_lan["epoch"] == entity_baseline["epoch"], "Resident movement between hosts must keep the same wire stream")
+	TEST_ASSERT_EQUAL(entity_view.rebuilds, entity_builds, "Entering an APC must not rebuild the station map")
+	TEST_ASSERT_EQUAL(length(map["apc_zones"]), 1, "Selecting the new APC must update its displayed zone")
+	entity.enter_node(medical_node.bound_apc)
+	entity_started = TICK_USAGE
+	map = resident.ui_data(null)["map"]
+	var/cross_lan_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - entity_started))
+	var/list/cross_lan = entity_view.encode_wire(map, entity_session)
+	log_world("NETRUN LOAD resident hops: unrelated=2000 same_lan_cpu_ms=[round(same_lan_ms, 0.01)] same_nodes=[length(same_lan["nodes"])] same_edges=[length(same_lan["edges"])] cross_lan_cpu_ms=[round(cross_lan_ms, 0.01)] cross_nodes=[length(cross_lan["nodes"])] cross_edges=[length(cross_lan["edges"])] cross_removed_nodes=[length(cross_lan["removed_nodes"])] cross_removed_edges=[length(cross_lan["removed_edges"])].")
+	TEST_ASSERT(!cross_lan["full"] && cross_lan["epoch"] == entity_baseline["epoch"], "Cross-LAN resident hops must publish deltas on the same UI stream")
+	TEST_ASSERT_EQUAL(entity_view.rebuilds, entity_builds, "Cross-LAN resident hops must not rebuild the station map")
+	TEST_ASSERT(!netrun_map_has_node(list("map" = map), engineering_node.address), "The former home LAN must be hidden after a resident leaves")
+	TEST_ASSERT(netrun_map_has_node(list("map" = map), medical_node.address), "The resident's new home LAN must become visible")
+	TEST_ASSERT(engineering_node.address in cross_lan["removed_nodes"], "The wire delta must revoke nodes from the old resident LAN")
+	var/list/zones = map["apc_zones"]
+	TEST_ASSERT_EQUAL(zones[1]["address"], medical_node.bound_apc.address, "The APC zone follows the new selected host")
+	for(var/datum/component/netrun_node/node as anything in other_nodes)
+		TEST_ASSERT_EQUAL(entity_view.projected_by_address[node.address], entity_before[node.address], "Resident hops cannot reproject the 2000 unrelated endpoints")
+
+/// Physical movement of a wireless deck does not grant its wearer's new LAN.
+/datum/unit_test/netrun_map_wireless_cross_lan/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/engineering = scene.room(/area/engineering/netrun_route_test)
+	var/area/medical = scene.room(/area/medical/netrun_route_test)
+	var/turf/first = scene.take(origin, engineering)
+	var/turf/second = scene.take(locate(origin.x + 4, origin.y, origin.z), medical)
+	scene.machine(/obj/machinery/power/apc, scene.take(get_step(first, NORTH), engineering))
+	scene.machine(/obj/machinery/power/apc, scene.take(get_step(second, NORTH), medical))
+	var/mob/living/carbon/human/carrier = allocate(/mob/living/carbon/human, first)
+	var/obj/item/netrun_deck/deck = allocate(/obj/item/netrun_deck, carrier)
+	var/obj/item/peer = allocate(/obj/item, second)
+	var/datum/component/netrun_node/peer_node = peer.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/component/netrun_node/source_node = deck.GetComponent(/datum/component/netrun_node)
+	SSnetrun.ensure_topology()
+	var/datum/netrun_console/console = deck.console
+	qdel(console.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+	console.map_view = view
+	console.workspace_view = "map"
+	var/list/map = console.ui_data(null)["map"]
+	TEST_ASSERT(console.connection.wireless, "A portable deck uses wireless connection rules")
+	TEST_ASSERT(!netrun_map_has_node(list("map" = map), peer_node.address), "The remote protected LAN starts hidden")
+	var/builds = view.rebuilds
+	carrier.forceMove(second)
+	source_node.join_network()
+	source_node.publish_changes()
+	map = console.ui_data(null)["map"]
+	TEST_ASSERT(!netrun_map_has_node(list("map" = map), peer_node.address), "Walking into that LAN must not grant a wireless deck access")
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Wireless movement with unchanged grants must retain the map")
+
 /// Walking a carried terminal must update its marker, not rebuild every permitted endpoint.
 /datum/unit_test/netrun_map_carrier_motion_work/Run()
 	var/turf/origin = run_loc_floor_bottom_left

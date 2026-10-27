@@ -1,5 +1,6 @@
 import { GraphOverlay } from './graphPresentation';
 import { GraphScene, PlacedNode } from './graphScene';
+import { PixiScenery } from './pixiScenery';
 import { framebufferResolution, mountNetrunPixi } from './pixiSurface';
 import { MockApplication, MockGraphics, resetPixiMock } from './testSupport/pixiLibraryMock';
 
@@ -88,6 +89,37 @@ test('hidden workspaces keep the same context, defer updates, and resume without
   expect(app.renderer.render.mock.calls.length).toBeGreaterThan(before);
   surface.destroy(); surface.destroy(); expect(app.destroys).toBe(1); expect(frames.size).toBe(0); expect(host.children).toHaveLength(0);
   expect(getContext.mock.calls.every(([kind]) => kind === 'webgl2')).toBe(true);
+});
+
+test('moving one dynamic node does not restart stationary scenery preparation', async () => {
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const queue = jest.spyOn(PixiScenery.prototype, 'queue');
+  const surface = await mountNetrunPixi(host, 800, 600, undefined, { reducedMotion: true });
+  const stationary = node('A'), moving = { ...node('B', 100), dynamic: true }, edges = [];
+  const first = new GraphScene(); first.update([stationary, moving], edges);
+  const state = overlay(); surface.updateScene(first, state); surface.updateActors(first, state); flush();
+  expect(queue).toHaveBeenCalledTimes(1);
+  const next = new GraphScene(); next.update([stationary, { ...moving, px: 200 }], edges, first);
+  surface.updateScene(next, state); surface.updateActors(next, state); flush();
+  expect(queue).toHaveBeenCalledTimes(1);
+  expect(surface.hitTest({ px: 200, py: 0 }, 1).address).toBe('B');
+  const revoked = new GraphScene(); revoked.update([{ ...stationary, access: 0 }, next.nodes[1]], edges, next);
+  surface.updateScene(revoked, state); surface.updateActors(revoked, state); flush();
+  expect(queue).toHaveBeenCalledTimes(2);
+  surface.destroy();
+});
+
+test('a revoked live node cannot be hit between a scene update and the next Pixi frame', async () => {
+  const host = document.createElement('div'); document.body.appendChild(host);
+  const surface = await mountNetrunPixi(host, 800, 600, undefined, { reducedMotion: true });
+  const visible = node('A'), hidden = { ...node('B', 100), dynamic: true }, edges = [];
+  const first = new GraphScene(); first.update([visible, hidden], edges);
+  const state = overlay(); surface.updateScene(first, state); surface.updateActors(first, state); flush();
+  expect(surface.hitTest({ px: 100, py: 0 }, 1).address).toBe('B');
+  const next = new GraphScene(); next.update([visible], edges, first);
+  surface.updateScene(next, state); surface.updateActors(next, state);
+  expect(surface.hitTest({ px: 100, py: 0 }, 1)).toBeNull();
+  flush(); surface.destroy();
 });
 
 test('context loss pauses frames, restores retained objects and removes all listeners on destroy', async () => {

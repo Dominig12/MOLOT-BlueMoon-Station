@@ -76,12 +76,26 @@ export class PixiActors {
     this.world.addChild(this.linkLayer, this.selectedLinks, ...this.routes.map((route) => route.graphic), this.nodeLayer, this.effects);
   }
 
+  private updateMoving(scene: GraphScene, previousScene: GraphScene) {
+    const moving = new Map(this.moving.map((node) => [node.address, node]));
+    for (const node of previousScene === scene ? [] : scene.changedNodes) {
+      if (node.dynamic) { moving.set(node.address, node); } else { moving.delete(node.address); }
+    }
+    this.moving = [...moving.values()];
+  }
+
   update(scene: GraphScene, overlay: GraphOverlay, dynamicEdges: NetEdge[], adjacency: Map<string, Set<string>>, now = performance.now()) {
     const before = this.overlay;
+    const previousScene = this.scene;
     const localOnly = this.scene === scene && this.dynamicEdges === dynamicEdges && this.adjacency === adjacency && sameOverlayData(before, overlay);
     if (localOnly && sameLocalState(before, overlay)) { return false; }
-    const affected = localOnly ? [...new Set([before.selected, before.hovered, overlay.selected, overlay.hovered])]
-      .map((address) => scene.byAddress.get(address)).filter(Boolean) : scene.nodes;
+    const incremental = !!before && !!this.scene && this.scene.edges === scene.edges
+      && (this.scene === scene || (scene.previousIdentity === this.scene.identity && scene.changedNodes !== null));
+    const affected = incremental ? [...new Set([
+      ...(this.scene === scene ? [] : scene.changedNodes.map((node) => node.address)),
+      before.selected, before.hovered, before.entityHost, before.jacked,
+      overlay.selected, overlay.hovered, overlay.entityHost, overlay.jacked,
+    ])].map((address) => scene.byAddress.get(address)).filter(Boolean) : scene.nodes;
     this.scene = scene; this.overlay = overlay; this.dynamicEdges = dynamicEdges; this.adjacency = adjacency;
     // Short, event-triggered focus animation: never leave the GPU ticker running.
     if (before?.selected !== overlay.selected && overlay.selected && !this.reducedMotion) {
@@ -89,15 +103,19 @@ export class PixiActors {
       if (node) { this.pulses.push({ born: now, point: node, tint: 0x6fe9dc }); }
     }
     if (!localOnly) {
-      this.moving = scene.nodes.filter((node) => node.dynamic);
-      this.blocked = new Set([...scene.edges, ...dynamicEdges].filter((edge) => edge.online === false)
-        .map((edge) => [edge.from, edge.to].sort().join('|')));
+      if (incremental) {
+        this.updateMoving(scene, previousScene);
+      } else {
+        this.moving = scene.nodes.filter((node) => node.dynamic);
+        this.blocked = new Set([...scene.edges, ...dynamicEdges].filter((edge) => edge.online === false)
+          .map((edge) => [edge.from, edge.to].sort().join('|')));
+      }
     }
     const alive = new Set<string>();
     for (const node of affected) {
       if (!needsActor(node, overlay)) {
         const removed = this.nodes.get(node.address);
-        if (removed && localOnly) { destroyDisplay(removed.group); this.nodes.delete(node.address); }
+        if (removed && incremental) { destroyDisplay(removed.group); this.nodes.delete(node.address); }
         continue;
       }
       alive.add(node.address);
@@ -119,7 +137,7 @@ export class PixiActors {
       }
       actor.node = node; this.paintActor(actor);
     }
-    if (!localOnly) {
+    if (!incremental) {
       for (const [address, actor] of this.nodes) { if (!alive.has(address)) { destroyDisplay(actor.group); this.nodes.delete(address); } }
     }
     const linkKeys = new Set<string>();
@@ -352,12 +370,14 @@ export class PixiActors {
     return actor && (actor.px !== node.px || actor.py !== node.py) ? { ...node, px: actor.px, py: actor.py,
       anchorX: (node.anchorX ?? node.px) + actor.px - node.px, anchorY: (node.anchorY ?? node.py) + actor.py - node.py } : node;
   }
-  hit(point: GraphPoint, zoom: number): PlacedNode | null {
+  hit(point: GraphPoint, zoom: number, disclosed?: Map<string, PlacedNode>): PlacedNode | null {
     let best: PlacedNode | null = null, distance = (16 / zoom) ** 2;
     for (const actor of this.nodes.values()) {
+      const current = disclosed ? disclosed.get(actor.node.address) : actor.node;
+      if (!current) { continue; }
       const next = (actor.px - point.px) ** 2 + (actor.py - point.py) ** 2;
-      if (next < distance || (next === distance && (!best || actor.node.address < best.address))) {
-        distance = next; best = this.pointFor(actor.node);
+      if (next < distance || (next === distance && (!best || current.address < best.address))) {
+        distance = next; best = this.pointFor(current);
       }
     }
     return best;

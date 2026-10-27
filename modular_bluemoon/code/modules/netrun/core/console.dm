@@ -106,7 +106,7 @@
 /datum/netrun_console/proc/on_session_changed(datum/source)
 	SIGNAL_HANDLER
 	if(source == inventory)
-		map_view?.invalidate()
+		map_view?.invalidate_inventory()
 		invalidate_projection_caches()
 	invalidate_ui()
 
@@ -194,15 +194,19 @@
 	return connection.has_uplink()
 
 /datum/netrun_connection/proc/has_uplink()
+	if(SSnetworks.station_network.setting_disabled)
+		return FALSE
 	var/datum/netrun_path_tree/tree = owner.path_tree()
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	. = FALSE
-	for(var/address in tree.reached)
+	for(var/address in graph.relay_addresses)
+		if(!tree.reached[address])
+			continue
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(!istype(node?.parent, /obj/machinery/ntnet_relay) || !node.is_online())
 			continue
 		var/obj/machinery/ntnet_relay/relay = node.parent
-		if(relay.is_operational() && !SSnetworks.station_network.setting_disabled)
+		if(relay.is_operational())
 			. = TRUE
 			break
 	owner.release_path_tree(tree)
@@ -737,9 +741,10 @@
 	else
 		if(finished.target_kind == "network")
 			owner.access_session.network_access[finished.target_id] = max(owner.access_session.network_access[finished.target_id] || 0, reward)
+			owner.map_view.invalidate_network_access(finished.target_id)
 		else
 			owner.access_session.node_access[finished.target_id] = max(owner.access_session.node_access[finished.target_id] || 0, reward)
-		owner.map_view.invalidate()
+			owner.map_view.invalidate_node_access(finished.target_id)
 		owner.log_line("Взлом завершён: [finished.target_name], уровень [netrun_access_name(reward)].", "good")
 		if(clean)
 			trace = 0
@@ -763,7 +768,11 @@
 
 /// Бонус от установленных демонов (каждый тип считается один раз)
 /datum/netrun_console/proc/daemon_bonus(id)
-	return inventory.daemon_bonus(id)
+	if(ui_bonuses && !isnull(ui_bonuses[id]))
+		return ui_bonuses[id]
+	. = inventory.daemon_bonus(id)
+	if(ui_bonuses)
+		ui_bonuses[id] = .
 
 /datum/netrun_console/proc/effective_trace_mult()
 	return intrusion.effective_trace_mult()

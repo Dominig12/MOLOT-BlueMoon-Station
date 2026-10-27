@@ -65,7 +65,7 @@ test('a confirmed keyboard choice keeps its selection and never claims a rejecti
   expect(panel.queryByText('Узел не выбран. Проверьте доступ и связь.')).toBeNull();
 });
 
-test('a dropped selection delta retains the GPU map, requests resync, and acknowledges the recovered snapshot', async () => {
+test('a dropped delta hides the map, requests resync, and acknowledges the recovered snapshot', async () => {
   const { panel, update } = setup();
   await waitFor(() => expect(panel.getByLabelText('Карта сети').getAttribute('data-net-runtime')).toBe('ready'));
   const full = { nodes: [source, peer], edges: [], gateways: [], focus: source.address,
@@ -77,14 +77,16 @@ test('a dropped selection delta retains the GPU map, requests resync, and acknow
 
   update({ map: { epoch: 'session:one', full: 0, base_revision: 9, state_revision: 11,
     nodes: [], edges: [], focus: peer.address } });
-  expect(panel.queryByText(/Синхронизация карты после пропущенного обновления/)).toBeNull();
-  expect(panel.getByLabelText('Карта сети')).toBeTruthy();
+  expect(panel.getByText(/Синхронизация карты после пропущенного обновления/)).toBeTruthy();
+  expect(panel.queryByLabelText('Карта сети')).toBeNull();
   await waitFor(() => expect((global as any).Byond.topic.mock.calls
     .some((call) => call[0]?.type === 'act/map_resync')).toBe(true));
 
-  // The server can replay the exact same baseline revision; recovery still
-  // needs a second acknowledgement after the stream has been invalidated.
-  update({ map: { ...full, focus: peer.address } });
+  // The missing update may revoke access: an older full snapshot cannot
+  // restore the previously displayed nodes.
+  update({ map: full });
+  expect(panel.queryByLabelText('Карта сети')).toBeNull();
+  update({ map: { ...full, state_revision: 11, focus: peer.address } });
   expect(panel.getByLabelText('Карта сети')).toBeTruthy();
   await waitFor(() => expect((global as any).Byond.topic.mock.calls.filter(
     (call) => call[0]?.type === 'act/map_sync_ack').length).toBeGreaterThanOrEqual(2));

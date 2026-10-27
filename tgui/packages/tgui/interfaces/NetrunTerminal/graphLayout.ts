@@ -56,16 +56,19 @@ export class GraphLayout {
     // Walking around the station normally moves only a handful of implants or
     // carried devices. Preserve the indexed slots and sort only those movers,
     // instead of allocating/sorting anchors for the entire station every step.
-    if (!blocked.size && this.cache.unblocked && nodes.length === this.cache.positions.size
-      && nodes.every((node) => this.cache.positions.has(node.address))) {
-      const movers = nodes.filter((node) => this.cache.positions.get(node.address).physical !== physical(node));
-      if (!movers.length) { return this.cache.positions; }
+    if (!blocked.size && this.cache.unblocked && this.cache.positions.size) {
+      const addresses = new Set(nodes.map((node) => node.address));
+      const removed = [...this.cache.positions.keys()].filter((address) => !addresses.has(address));
+      const movers = nodes.filter((node) => this.cache.positions.get(node.address)?.physical !== physical(node));
+      if (!movers.length && !removed.length) { return this.cache.positions; }
       const { occupied, anchors } = this.cache;
       const positions = new Map(this.cache.positions);
-      for (const node of movers) {
-        const before = positions.get(node.address);
+      for (const address of [...removed, ...movers.map((node) => node.address)]) {
+        const before = positions.get(address);
+        if (!before) { continue; }
         occupied.delete(key(before));
         countAnchor(anchors, `${before.anchorX},${before.anchorY}`, -1);
+        positions.delete(address);
       }
       const nextAnchors = new Map(movers.map((node) => [node.address, anchorFor(node)]));
       for (const anchor of nextAnchors.values()) { countAnchor(anchors, key(anchor), 1); }

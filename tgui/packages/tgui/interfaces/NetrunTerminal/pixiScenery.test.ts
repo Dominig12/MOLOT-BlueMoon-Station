@@ -45,6 +45,26 @@ test('unchanged spatial batches survive updates to another device', () => {
   expect(retained.destroyed).toBe(false); expect(retained.clears).toBe(clears);
 });
 
+test('a LAN visibility change among 2000 nodes removes hidden hits and preserves unrelated chunks', () => {
+  const nodes = Array.from({ length: 2000 }, (_, i) => node(`N${i}`, i * 96));
+  const scene = new GraphScene(); scene.update(nodes, []);
+  const base = { gateways: new Map() }, layer = new PixiScenery(mockPixi);
+  layer.queue(scene, base); finish(layer);
+  const distant = MockGraphics.graphics.find((graphic) => graphic.label.startsWith('3-node:200,'));
+  const clears = distant.clears;
+  const next = new GraphScene(); next.update([...nodes.slice(0, 20), ...nodes.slice(23), node('NEW', 21 * 96)], [], scene);
+  expect(next.hit({ px: 20 * 96, py: 0 }, 1)).toBeNull();
+  expect(next.hit({ px: 21 * 96, py: 0 }, 1).address).toBe('NEW');
+  expect(scene.hit({ px: 20 * 96, py: 0 }, 1).address).toBe('N20');
+  const hiddenChunk = MockGraphics.graphics.find((graphic) => graphic.label.startsWith('3-node:2,'));
+  layer.suppressUndisclosed(next);
+  expect(hiddenChunk.visible).toBe(false);
+  layer.setViewport({ left: 0, right: 100000, top: -100, bottom: 100 }, 1);
+  expect(hiddenChunk.visible).toBe(false);
+  layer.queue(next, base); finish(layer);
+  expect(distant.destroyed).toBe(false); expect(distant.clears).toBe(clears);
+});
+
 test('camera zoom leaves already-uploaded static graphics untouched', () => {
   const scene = new GraphScene(); scene.update([
     node('CAM', 0), { ...node('LAN', 200), type: 'gateway' },

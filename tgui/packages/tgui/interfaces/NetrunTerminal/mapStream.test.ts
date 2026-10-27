@@ -57,28 +57,28 @@ test('deletion removes the endpoint and any remaining incident links', () => {
   expect(deleted.edges).toEqual([]);
 });
 
-test('a missing baseline requests one resync and a same-epoch gap freezes its confirmed baseline', () => {
+test('a missing baseline requests one resync and a same-epoch gap hides the previous baseline', () => {
   const stream = new NetrunMapStream();
   expect(stream.apply(delta())).toBeNull();
   expect(stream.resyncToken).toBe(1);
   expect(stream.apply(delta({ state_revision: 12 }))).toBeNull();
   expect(stream.resyncToken).toBe(1);
-  const confirmed = stream.apply(baseline());
-  expect(stream.apply(delta({ base_revision: 11, state_revision: 12 }))).toBe(confirmed);
+  stream.apply(baseline({ state_revision: 12 }));
+  expect(stream.apply(delta({ base_revision: 11, state_revision: 13 }))).toBeNull();
   expect(stream.resyncToken).toBe(2);
-  const restored = stream.apply(baseline({ nodes: [{ ...node, address: 'ONLY-PERMITTED' }], state_revision: 12 }));
+  const restored = stream.apply(baseline({ nodes: [{ ...node, address: 'ONLY-PERMITTED' }], state_revision: 13 }));
   expect(restored.nodes.map((entry) => entry.address)).toEqual(['ONLY-PERMITTED']);
 });
 
-test('same-epoch lost delta retains the old map until a confirmed full snapshot', () => {
+test('a lost delta hides the old map and rejects a baseline older than the missed update', () => {
   const stream = new NetrunMapStream();
   const initial = stream.apply(baseline());
-  const retained = stream.apply(delta({ base_revision: 9, state_revision: 12 }));
-  expect(retained).toBe(initial);
+  expect(stream.apply(delta({ base_revision: 9, state_revision: 12 }))).toBeNull();
   expect(stream.needsResync).toBe(true);
   expect(stream.resyncToken).toBe(1);
-  expect(stream.apply(delta({ base_revision: 10, state_revision: 13, nodes: [{ ...node, name: 'Unconfirmed' }] }))).toBe(initial);
+  expect(stream.apply(delta({ base_revision: 10, state_revision: 13, nodes: [{ ...node, name: 'Unconfirmed' }] }))).toBeNull();
   expect(initial.nodes[0].name).toBe('APC');
+  expect(stream.apply(baseline({ state_revision: 12, nodes: [node] }))).toBeNull();
   const restored = stream.apply(baseline({ state_revision: 13, nodes: [{ ...node, name: 'Confirmed' }] }));
   expect(restored.nodes[0].name).toBe('Confirmed');
   expect(stream.needsResync).toBe(false);
@@ -89,7 +89,7 @@ test('new authorization epoch drops all previously disclosed nodes immediately',
   stream.apply(baseline());
   expect(stream.apply(delta({ epoch: 'ui:revoked', base_revision: 10, state_revision: 12 }))).toBeNull();
   expect(stream.needsResync).toBe(true);
-  expect(stream.apply(baseline({ epoch: 'ui:revoked', nodes: [] })).nodes).toEqual([]);
+  expect(stream.apply(baseline({ epoch: 'ui:revoked', state_revision: 12, nodes: [] })).nodes).toEqual([]);
 });
 
 test('authorization epochs replace the baseline and independent windows keep separate cursors', () => {
@@ -100,8 +100,49 @@ test('authorization epochs replace the baseline and independent windows keep sep
   expect(changed.nodes).toEqual([]);
   expect(changed.apc_zones).toEqual([]);
   expect(second.apply(delta({ epoch: 'ui:two', nodes: [{ ...node, entities: 1 }] })).nodes[0].entities).toBe(1);
-  expect(first.apply(delta({ epoch: 'ui:one', state_revision: 20 }))).toBeNull();
+  expect(first.apply(delta({ epoch: 'ui:one', state_revision: 20 }))).toBe(changed);
+  expect(first.apply(baseline({ epoch: 'ui:one', state_revision: 21 }))).toBe(changed);
   expect(second.resyncToken).toBe(0);
+});
+
+test('a full authorization change retains only unchanged entries still disclosed by the new baseline', () => {
+  const stream = new NetrunMapStream();
+  const original = Array.from({ length: 1000 }, (_, i) => ({ ...node, address: `N${i}` }));
+  const edges = [{ id: 'visible', from: 'N0', to: 'N1', kind: 'endpoint' as const }];
+  const first = stream.apply(baseline({ nodes: original, edges }));
+  const nextNodes = original.slice(0, 999).map((entry) => ({ ...entry }));
+  nextNodes[1] = { ...nextNodes[1], access: 3 };
+  const next = stream.apply(baseline({ epoch: 'ui:changed', state_revision: 1,
+    nodes: nextNodes, edges: edges.map((edge) => ({ ...edge })) }));
+  expect(next.nodes[0]).toBe(first.nodes[0]);
+  expect(next.nodes[1]).not.toBe(first.nodes[1]);
+  expect(next.nodes[1].access).toBe(3);
+  expect(next.nodes.some((entry) => entry.address === 'N999')).toBe(false);
+  expect(next.edges).toBe(first.edges);
+  expect(first.nodes[1].access).toBe(1);
+});
+
+test('monotonic wire epochs reject late snapshots after many network changes with bounded history', () => {
+  const stream = new NetrunMapStream();
+  const epoch = (generation: number) => `view-ref:${generation}:1`;
+  stream.apply(baseline({ epoch: epoch(1) }));
+  for (let generation = 2; generation <= 500; generation++) {
+    stream.apply(baseline({ epoch: epoch(generation), nodes: [{ ...node, address: `N${generation}` }] }));
+  }
+  const newest = stream.apply(baseline({ epoch: epoch(500), nodes: [{ ...node, address: 'N500' }] }));
+  expect(stream.apply(baseline({ epoch: epoch(1), state_revision: 999, nodes: [node] }))).toBe(newest);
+  expect(newest.nodes[0].address).toBe('N500');
+});
+
+test('a delayed baseline from an intermediate epoch cannot cancel a newer recovery', () => {
+  const stream = new NetrunMapStream();
+  stream.apply(baseline({ epoch: 'view:1:1' }));
+  expect(stream.apply(delta({ epoch: 'view:2:1', state_revision: 11 }))).toBeNull();
+  expect(stream.apply(delta({ epoch: 'view:3:1', state_revision: 12 }))).toBeNull();
+  expect(stream.apply(baseline({ epoch: 'view:2:1', state_revision: 12 }))).toBeNull();
+  const restored = stream.apply(baseline({ epoch: 'view:3:1', state_revision: 12, nodes: [] }));
+  expect(restored.nodes).toEqual([]);
+  expect(stream.needsResync).toBe(false);
 });
 
 test('out-of-order graph packets do not resurrect deleted endpoints or older metadata', () => {

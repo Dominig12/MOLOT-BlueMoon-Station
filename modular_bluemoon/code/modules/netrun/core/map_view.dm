@@ -33,6 +33,11 @@
 	var/list/shown_network_counts = list()
 	/// Access before a source move, including networks on floors outside the current view.
 	var/list/projected_network_levels = list()
+	var/list/projected_network_keys = list()
+	var/projected_mapper = 0
+	var/inventory_changed = FALSE
+	var/route_reveal_dirty = FALSE
+	var/list/pending_network_access = list()
 	var/list/revealed_addresses = list()
 	var/list/context
 	/// Authorization changes replace every UI baseline, including credentials lost by an operator.
@@ -91,6 +96,8 @@
 	shown_addresses.Cut()
 	shown_network_counts.Cut()
 	projected_network_levels.Cut()
+	projected_network_keys.Cut()
+	pending_network_access.Cut()
 	revealed_addresses.Cut()
 	static_structure = null
 	wire_sessions.Cut()
@@ -168,10 +175,41 @@
 	if(owner)
 		owner.invalidate_ui()
 
+/// A node-specific permission change does not invalidate unrelated projections.
+/datum/netrun_map_view/proc/invalidate_node_access(address)
+	if(!address)
+		invalidate()
+		return
+	dirty_nodes[address] = TRUE
+	route_reveal_dirty = TRUE
+	authorization_revision++
+	owner?.invalidate_ui()
+
+/datum/netrun_map_view/proc/invalidate_network_access(network_id)
+	var/datum/netrun_network/network = SSnetrun.networks[network_id]
+	if(!network)
+		invalidate()
+		return
+	for(var/datum/component/netrun_node/node as anything in network.nodes)
+		if(!QDELETED(node))
+			dirty_nodes[node.address] = TRUE
+	pending_network_access[network_id] = TRUE
+	route_reveal_dirty = TRUE
+	authorization_revision++
+	owner?.invalidate_ui()
+
+/datum/netrun_map_view/proc/invalidate_inventory()
+	inventory_changed = TRUE
+	route_reveal_dirty = TRUE
+	authorization_revision++
+	owner?.invalidate_ui()
+
 /// Reconciliation catches credentials and native state that have no change signal.
 /// One UI request shares a path tree; clicks during a puzzle never call this method.
 /datum/netrun_map_view/proc/payload()
 	subscribe()
+	// Drain revocations before deciding which pending nodes to reconcile.
+	owner.access_session.process_events()
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/focus = owner.map_focus_node()
 	var/turf/current = owner.route_source()?.physical_turf() || owner.physical_turf()
@@ -185,10 +223,47 @@
 	// projection through the context diff - no periodic full pass is needed to catch it.
 	var/datum/component/netrun_node/source = owner.route_source()
 	var/list/current_context = list(owner.operator, source?.address, source?.is_online(), source?.network?.id, selected_address, waypoint_address, active_sector, active_z, owner.user_access(), owner.is_locked(), graph.transit_availability_revision)
-	if(!netrun_snapshot_equal(context, current_context) && !source_network_projection_unchanged(graph, source, current_context))
-		dirty = TRUE
+	var/list/changed_networks
+	var/entity_source_changed = FALSE
+	if(!netrun_snapshot_equal(context, current_context))
+		if(source_network_projection_unchanged(graph, source, current_context))
+			reconcile_route_reveals()
+		else
+			changed_networks = reconcile_entity_source_context(graph, source, current_context)
+			entity_source_changed = !isnull(changed_networks)
+			if(isnull(changed_networks))
+				changed_networks = reconcile_source_network_context(graph, source, current_context)
+			if(isnull(changed_networks))
+				changed_networks = reconcile_credential_context(graph, current_context)
+			if(isnull(changed_networks))
+				dirty = TRUE
+	if(inventory_changed)
+		inventory_changed = FALSE
+		if(snapshot && owner.daemon_bonus("mapper") != projected_mapper)
+			dirty = TRUE
+		else if(snapshot)
+			for(var/id in projected_network_levels)
+				var/datum/netrun_network/network = SSnetrun.networks[id]
+				if(!network || !!projected_network_keys[id] == !!owner.has_key(network))
+					continue
+				invalidate_network_access(id)
+	if(length(pending_network_access))
+		if(!changed_networks)
+			changed_networks = list()
+		for(var/id in pending_network_access)
+			var/datum/netrun_network/network = SSnetrun.networks[id]
+			if(network)
+				changed_networks[id] = owner.network_level(network)
+		pending_network_access.Cut()
+	if(route_reveal_dirty)
+		route_reveal_dirty = FALSE
+		if(snapshot && !dirty && !structure_dirty)
+			reconcile_route_reveals()
 	context = current_context
-	var/list/current_security = list(owner.operator, owner.route_source()?.address, owner.user_access(), owner.is_locked(), authorization_revision)
+	// Credentials change the projection, not the identity of this UI stream. The
+	// journal composes removals with later upserts, and a missing baseline forces a
+	// full resync. A different operator/source must never inherit the old stream.
+	var/list/current_security = list(owner.operator, owner.origin == NETRUN_ORIGIN_ENTITY ? owner.host : source?.address)
 	if(!netrun_snapshot_equal(security_context, current_security))
 		security_context = current_security
 		wire_epoch++
@@ -198,6 +273,10 @@
 		rebuild(graph)
 	else if(length(dirty_nodes))
 		apply_incremental(graph)
+	if(entity_source_changed && !dirty && !structure_dirty)
+		refresh_selected_zone()
+	if(changed_networks && !dirty && !structure_dirty)
+		refresh_network_gateways(changed_networks)
 	var/list/result = snapshot.Copy()
 	result["focus"] = focus?.address
 	result["route"] = owner.map_route_payload(owner.selected_node() || focus)
@@ -223,6 +302,164 @@
 	if(!old_network || !new_network || isnull(projected_network_levels[old_network.id]) || isnull(projected_network_levels[new_network.id]))
 		return FALSE
 	return projected_network_levels[old_network.id] == owner.network_level(old_network) && projected_network_levels[new_network.id] == owner.network_level(new_network)
+
+/// A resident moving between connected hosts keeps its UI identity. Its home LAN,
+/// local-endpoint privilege and hop permissions are the only changed inputs.
+/datum/netrun_map_view/proc/reconcile_entity_source_context(datum/netrun_topology/graph, datum/component/netrun_node/source, list/current_context)
+	if(owner.origin != NETRUN_ORIGIN_ENTITY || !context || !snapshot || dirty || structure_dirty || snapshot["revision"] != graph.revision || context[2] == current_context[2])
+		return null
+	if(context[5] != context[2] || current_context[5] != current_context[2])
+		return null
+	var/list/other_context = current_context.Copy()
+	other_context[2] = context[2]
+	other_context[4] = context[4]
+	other_context[5] = context[5]
+	if(!netrun_snapshot_equal(context, other_context))
+		return null
+	var/datum/component/netrun_node/old_source = graph.nodes[context[2]]
+	if(QDELETED(old_source) || !old_source.is_online() || !source?.is_online() || !owner.can_route(old_source))
+		return null
+	var/datum/netrun_network/old_network = SSnetrun.networks[context[4]]
+	var/datum/netrun_network/new_network = source.network
+	if(!old_network || !new_network || isnull(projected_network_levels[old_network.id]) || isnull(projected_network_levels[new_network.id]))
+		return null
+	var/list/changed = list()
+	for(var/datum/netrun_network/network as anything in list(old_network, new_network))
+		if(!isnull(changed[network.id]))
+			continue
+		var/level = owner.network_level(network)
+		if(projected_network_levels[network.id] == level)
+			continue
+		changed[network.id] = level
+		for(var/datum/component/netrun_node/node as anything in network.nodes)
+			if(QDELETED(node) || graph.nodes[node.address] != node)
+				continue
+			var/list/previous = node_entries[node.address]
+			if(!previous || previous["access"] != owner.node_level(node))
+				dirty_nodes[node.address] = TRUE
+	for(var/datum/component/netrun_node/node as anything in list(old_source, source))
+		dirty_nodes[node.address] = TRUE
+		for(var/address in graph.neighbors(node.address))
+			dirty_nodes[address] = TRUE
+	reconcile_route_reveals()
+	return changed
+
+/// Selection follows the entity host, including when that host is an APC.
+/datum/netrun_map_view/proc/refresh_selected_zone()
+	var/list/zones = list()
+	var/datum/component/netrun_node/selected = owner.selected_node()
+	if(selected?.node_type == NETRUN_NODE_APC && shown_addresses[selected.address])
+		var/list/zone = geometry.apc_zone(selected, active_z)
+		if(zone)
+			zones += list(zone)
+	if(netrun_snapshot_equal(snapshot["apc_zones"], zones))
+		return
+	var/previous_revision = state_revision
+	snapshot["apc_zones"] = zones
+	static_structure[3] = zones
+	snapshot["static_revision"] = ++static_revision
+	snapshot["state_revision"] = ++state_revision
+	record_wire_delta(previous_revision, list(), list(), list(), list())
+
+/// A source moving between LANs in the same forwarding component changes only
+/// home-LAN permissions. Visit those LANs, not every station node.
+/datum/netrun_map_view/proc/reconcile_source_network_context(datum/netrun_topology/graph, datum/component/netrun_node/source, list/current_context)
+	if(!context || !snapshot || dirty || structure_dirty || snapshot["revision"] != graph.revision || context[4] == current_context[4])
+		return null
+	var/list/other_context = current_context.Copy()
+	other_context[4] = context[4]
+	if(!netrun_snapshot_equal(context, other_context))
+		return null
+	var/list/previous_source = node_entries[source?.address]
+	var/datum/component/netrun_node/old_apc = graph.nodes[previous_source?["uplink"]]
+	if(!old_apc || !old_apc.is_online() || !source?.is_online() || !source.bound_apc?.is_online() || !owner.can_route(old_apc))
+		return null
+	var/datum/netrun_network/old_network = SSnetrun.networks[context[4]]
+	var/datum/netrun_network/new_network = source.network
+	if(!old_network || !new_network || isnull(projected_network_levels[old_network.id]) || isnull(projected_network_levels[new_network.id]))
+		return null
+	var/list/changed = list()
+	for(var/datum/netrun_network/network as anything in list(old_network, new_network))
+		var/level = owner.network_level(network)
+		if(projected_network_levels[network.id] == level)
+			continue
+		changed[network.id] = level
+		for(var/datum/component/netrun_node/node as anything in network.nodes)
+			if(QDELETED(node) || graph.nodes[node.address] != node)
+				continue
+			var/list/previous = node_entries[node.address]
+			if(!previous || previous["access"] != owner.node_level(node))
+				dirty_nodes[node.address] = TRUE
+	reconcile_route_reveals()
+	return changed
+
+/datum/netrun_map_view/proc/reconcile_route_reveals()
+	var/list/new_revealed = owner.route_reveal_addresses(owner.map_focus_node())
+	for(var/address in revealed_addresses)
+		if(!(address in new_revealed))
+			dirty_nodes[address] = TRUE
+	for(var/address in new_revealed)
+		if(!(address in revealed_addresses))
+			dirty_nodes[address] = TRUE
+	revealed_addresses = new_revealed
+
+/// Native ID access may affect arbitrary check_access_list implementations, so
+/// examine permissions without serializing unchanged entries. No guessed access
+/// index can safely replace the native per-node check here.
+/datum/netrun_map_view/proc/reconcile_credential_context(datum/netrun_topology/graph, list/current_context)
+	if(!context || !snapshot || dirty || structure_dirty || snapshot["revision"] != graph.revision)
+		return null
+	var/list/other_context = current_context.Copy()
+	other_context[9] = context[9]
+	if(!netrun_snapshot_equal(context, other_context))
+		return null
+	reconcile_route_reveals()
+	var/list/changed = list()
+	var/reveal_all = owner.daemon_bonus("mapper")
+	for(var/id in projected_network_levels)
+		var/datum/netrun_network/network = SSnetrun.networks[id]
+		if(!network)
+			return null
+		var/level = owner.network_level(network)
+		if(projected_network_levels[id] != level)
+			changed[id] = level
+	for(var/address in graph.nodes)
+		var/datum/component/netrun_node/node = graph.nodes[address]
+		if(QDELETED(node))
+			continue
+		var/list/previous = node_entries[address]
+		var/visible = owner.can_route(node) && (reveal_all || (address in revealed_addresses) || owner.node_visible(node))
+		if(!!previous != !!visible || (visible && previous["access"] != owner.node_level(node)))
+			dirty_nodes[address] = TRUE
+	return changed
+
+/datum/netrun_map_view/proc/refresh_network_gateways(list/changed)
+	if(!length(changed) || !snapshot)
+		return
+	var/list/gateways = snapshot["gateways"]
+	var/list/next = gateways.Copy()
+	var/modified = FALSE
+	for(var/i in 1 to length(gateways))
+		var/list/gateway = gateways[i]
+		var/id = gateway["id"]
+		if(isnull(changed[id]))
+			continue
+		var/list/entry = gateway.Copy()
+		entry["access"] = changed[id]
+		var/datum/netrun_network/network = SSnetrun.networks[id]
+		entry["has_key"] = owner.has_key(network)
+		entry["can_breach"] = owner.intrusion.can_breach && changed[id] < NETRUN_ACCESS_GUEST
+		next[i] = entry
+		modified = TRUE
+	for(var/id in changed)
+		projected_network_levels[id] = changed[id]
+		var/datum/netrun_network/network = SSnetrun.networks[id]
+		projected_network_keys[id] = owner.has_key(network)
+	if(modified)
+		var/previous_revision = state_revision
+		snapshot["gateways"] = next
+		snapshot["state_revision"] = ++state_revision
+		record_wire_delta(previous_revision, list(), list(), list(), list())
 
 /// Browsing a different sector never moves the runner or grants permissions.
 /datum/netrun_map_view/proc/select_sector(id, z)
@@ -265,7 +502,9 @@
 	incident_edges = list()
 	shown_network_counts = list()
 	projected_network_levels = list()
+	projected_network_keys = list()
 	var/reveal_all = owner.daemon_bonus("mapper")
+	projected_mapper = reveal_all
 	for(var/address in graph.nodes)
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(QDELETED(node) || !owner.can_route(node) || (!reveal_all && !(address in revealed) && !owner.node_visible(node)))
@@ -277,6 +516,7 @@
 		permitted_nodes[address] = entry
 		if(node.network && isnull(projected_network_levels[node.network.id]))
 			projected_network_levels[node.network.id] = owner.network_level(node.network)
+			projected_network_keys[node.network.id] = owner.has_key(node.network)
 		if(entry["sector"] && entry["z"])
 			var/list/levels = sector_levels[entry["sector"]]
 			if(!levels)
@@ -378,6 +618,9 @@
 
 /// Only O(changed nodes + their incident edges) work for a live map update.
 /datum/netrun_map_view/proc/apply_incremental(datum/netrun_topology/graph)
+	if(!reconcile_visibility_batch(graph))
+		rebuild(graph)
+		return
 	var/previous_revision = state_revision
 	var/list/node_updates = list()
 	var/list/edge_updates = list()
@@ -525,6 +768,134 @@
 	if(static_changed)
 		snapshot["static_revision"] = ++static_revision
 	record_wire_delta(previous_revision, node_updates, edge_updates, list(), removed_edge_ids)
+
+/// Apply all newly visible/hidden leaves together. This scans the retained arrays
+/// once even when a whole LAN changes permissions; unchanged node entries are reused.
+/datum/netrun_map_view/proc/reconcile_visibility_batch(datum/netrun_topology/graph)
+	var/list/added = list()
+	var/list/removed = list()
+	var/list/network_changes = list()
+	var/reveal_all = owner.daemon_bonus("mapper")
+	for(var/address in dirty_nodes)
+		var/datum/component/netrun_node/node = graph.nodes[address]
+		if(QDELETED(node))
+			continue
+		var/list/previous = node_entries[address]
+		var/index = node_indexes[address]
+		var/turf/position = node.physical_turf()
+		var/permitted = owner.can_route(node) && (reveal_all || (address in revealed_addresses) || owner.node_visible(node))
+		if(node.binding_sector != active_sector || position?.z != active_z)
+			// Other floors contribute to the sector catalog and relay chooser.
+			if(!!previous != !!permitted)
+				return FALSE
+			continue
+		if(!!index == !!permitted)
+			continue
+		var/list/neighbors = graph.adjacency[address]
+		if(!node.network || length(neighbors) != 1 || !shown_addresses[neighbors[1]])
+			return FALSE
+		var/network_id = node.network.id
+		if(!shown_network_counts[network_id])
+			return FALSE
+		if(permitted)
+			if(!graph.edge_between(address, neighbors[1]))
+				return FALSE
+			added[address] = node
+			network_changes[network_id]++
+		else
+			var/list/incident = incident_edges[address]
+			if(length(incident) != 1)
+				return FALSE
+			removed[address] = node
+			network_changes[network_id]--
+	for(var/network_id in network_changes)
+		if(shown_network_counts[network_id] + network_changes[network_id] <= 0)
+			return FALSE
+	if(!length(added) && !length(removed))
+		return TRUE
+	var/list/old_nodes = snapshot["nodes"]
+	var/list/old_edges = snapshot["edges"]
+	var/list/next_nodes = list()
+	var/list/next_edges = list()
+	var/list/edge_ids = list()
+	var/list/node_updates = list()
+	var/list/edge_updates = list()
+	var/list/removed_nodes = list()
+	var/list/removed_edges = list()
+	var/list/paint_nodes = static_structure[1]
+	var/list/paint_edges = static_structure[2]
+	var/list/structural_nodes = structure[3]
+	var/static_changed = FALSE
+	for(var/list/entry as anything in old_nodes)
+		var/address = entry["address"]
+		if(!removed[address])
+			next_nodes += list(entry)
+			continue
+		node_entries -= address
+		shown_addresses -= address
+		structural_nodes -= address
+		if(paint_nodes[address])
+			paint_nodes -= address
+			static_changed = TRUE
+		removed_nodes += address
+		dirty_nodes -= address
+	for(var/list/edge as anything in old_edges)
+		var/id = edge["id"]
+		if(removed[edge["from"]] || removed[edge["to"]])
+			edge_entries -= id
+			if(paint_edges[id])
+				paint_edges -= id
+				static_changed = TRUE
+			removed_edges += id
+			continue
+		next_edges += list(edge)
+		edge_ids += id
+	for(var/address in added)
+		var/datum/component/netrun_node/node = added[address]
+		var/list/neighbors = graph.adjacency[address]
+		var/list/entry = project_entry(node, length(neighbors))
+		var/list/edge = graph.edge_between(address, neighbors[1]).Copy()
+		edge["online"] = netrun_link_available(graph.nodes[edge["from"]], graph.nodes[edge["to"]])
+		next_nodes += list(entry)
+		next_edges += list(edge)
+		edge_ids += edge["id"]
+		node_entries[address] = entry
+		shown_addresses[address] = TRUE
+		structural_nodes[address] = structure_entry(entry)
+		edge_entries[edge["id"]] = edge
+		if(!entry["dynamic"])
+			paint_nodes[address] = static_entry(entry)
+			static_changed = TRUE
+			if(!node_entries[neighbors[1]]["dynamic"])
+				paint_edges[edge["id"]] = edge.Copy()
+		node_updates += list(entry)
+		edge_updates += list(edge)
+		dirty_nodes -= address
+	for(var/network_id in network_changes)
+		shown_network_counts[network_id] += network_changes[network_id]
+	node_indexes = list()
+	incident_edges = list()
+	for(var/i in 1 to length(next_nodes))
+		var/list/entry = next_nodes[i]
+		var/address = entry["address"]
+		node_indexes[address] = i
+		incident_edges[address] = list()
+	for(var/i in 1 to length(next_edges))
+		var/list/edge = next_edges[i]
+		var/list/from_edges = incident_edges[edge["from"]]
+		var/list/to_edges = incident_edges[edge["to"]]
+		from_edges += i
+		to_edges += i
+	snapshot["nodes"] = next_nodes
+	snapshot["edges"] = next_edges
+	structure[4] = edge_ids
+	var/previous_revision = state_revision
+	snapshot["state_revision"] = ++state_revision
+	snapshot["structure_revision"] = ++structure_revision
+	if(static_changed)
+		snapshot["static_revision"] = ++static_revision
+	record_wire_delta(previous_revision, node_updates, edge_updates, removed_nodes, removed_edges)
+	return TRUE
 
 /// One serialization seam makes incremental work measurable without constructing fake topology.
 /datum/netrun_map_view/proc/project_entry(datum/component/netrun_node/node, neighbor_count)

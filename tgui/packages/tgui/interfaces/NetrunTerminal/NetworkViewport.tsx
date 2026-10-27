@@ -23,7 +23,10 @@ export const NetworkViewport = memo(forwardRef<NetworkViewportHandle, NetworkVie
   const host = useRef<HTMLDivElement>(null);
   const latest = useRef(props); latest.current = props;
   const hintId = useId();
-  const scene = useMemo(() => { const graph = new GraphScene(); graph.update(props.nodes, props.edges); return graph; }, [props.nodes, props.edges]);
+  const priorScene = useRef<GraphScene | null>(null);
+  const scene = useMemo(() => {
+    const graph = new GraphScene(); graph.update(props.nodes, props.edges, priorScene.current); priorScene.current = graph; return graph;
+  }, [props.nodes, props.edges]);
   const snapshot = useMemo<ViewportSnapshot>(() => ({ scene, overlay: props, suspended: !!props.suspended }), [scene, props]);
   const [status, setStatus] = useState<ViewportStatus>({ phase: props.suspended ? 'paused' : 'loading' });
   const [hud, setHUD] = useState<ViewportHUD>({ nodes: scene.nodes.length, zoom: 85 });
