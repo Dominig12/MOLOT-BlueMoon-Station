@@ -456,6 +456,12 @@
 	if(!QDELETED(entity?.dive_link.body))
 		. |= netrun_mob_access(entity.dive_link.body)
 
+/datum/netrun_console/entity/add_ui_context_sources(list/targets)
+	var/mob/camera/netrun_entity/entity = host
+	var/mob/living/carbon/body = entity?.dive_link?.body
+	if(!QDELETED(body))
+		targets |= body
+
 /// A connected shard remains in the unconscious body's implant, not in the process.
 /datum/netrun_console/entity/eject_shard(mob/user)
 	var/mob/camera/netrun_entity/entity = host

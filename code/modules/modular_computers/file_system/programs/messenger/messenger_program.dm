@@ -776,6 +776,7 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 
 /// Gets the chat by the recipient
 /datum/computer_file/program/messenger/proc/find_chat_by_recipient(recipient, fake_user = FALSE)
+	RETURN_TYPE(/datum/pda_chat)
 	for(var/chat_ref in saved_chats)
 		var/datum/pda_chat/chat = saved_chats[chat_ref]
 		if(fake_user && chat.cached_name == recipient)

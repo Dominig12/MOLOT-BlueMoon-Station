@@ -10,6 +10,23 @@
 /datum/unit_test/harddel_9827_base/Run()
 	return
 
+/// Deleted queued atoms, including hard-delete null slots, must not block smoothing.
+/datum/unit_test/icon_smoothing_deleted_queue_entries/Run()
+	var/datum/controller/subsystem/icon_smooth/smoothing = allocate(/datum/controller/subsystem/icon_smooth)
+	var/obj/live = allocate(/obj)
+	var/obj/deleted = allocate(/obj)
+	live.smooth = SMOOTH_QUEUED
+	deleted.smooth = SMOOTH_QUEUED
+	qdel(deleted)
+	smoothing.smooth_queue = list(live, deleted, null)
+	smoothing.can_fire = TRUE
+	for(var/i in 1 to 8)
+		if(!length(smoothing.smooth_queue) && !length(smoothing.deferred))
+			break
+		smoothing.fire()
+	TEST_ASSERT(!length(smoothing.smooth_queue) && !length(smoothing.deferred), "Deleted and null queue entries must not be deferred forever")
+	TEST_ASSERT(!(live.smooth & SMOOTH_QUEUED), "Valid smoothing work must still run after a deleted queue entry")
+
 /// Модкит переносит детали донора в новый ствол макросом TRANSFER_ATOM_VAR.
 /// Макрос делал qdel(TARGET.VAR) и НЕ обнулял поле, поэтому при доноре без
 /// магазина (enforcer/nomag) новый ствол оставался со ссылкой на удалённый

@@ -39,6 +39,8 @@
 
 /// Only physical ID-bearing carbons are a source. Silicon privileges are not an ID dump.
 /mob/living/carbon/netrun_credential_access()
+	if(QDELETED(src))
+		return null
 	var/list/carried_access = netrun_mob_access(src)
 	. = carried_access.Copy()
 	var/obj/item/card/id/card = get_idcard(FALSE)
@@ -51,7 +53,7 @@
 
 /obj/effect/netrun_endpoint/neural/netrun_credential_access()
 	var/mob/living/carbon/carrier = interface?.host_mob
-	if(!istype(carrier))
+	if(!istype(carrier) || QDELETED(carrier))
 		return null
 	return carrier.netrun_credential_access()
 

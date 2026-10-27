@@ -543,7 +543,7 @@
 	var/patrol_topology_revision = -1
 	/// Destroying a persistent patrol clears the LAN permanently; topology edits do not respawn it.
 	var/list/patrol_seeded_networks = list()
-	var/list/hunters_by_network = list()
+	var/list/list/datum/netrun_ice/hunters_by_network = list()
 	/// Лорные документы раскладываются по серверам один раз за раунд.
 	var/lore_initialized = FALSE
 	/// Узлы защиты со спящими ячейками льда: address -> сколько ячеек ещё можно пробудить.

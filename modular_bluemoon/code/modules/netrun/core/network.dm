@@ -173,7 +173,7 @@
 /// Доступы, которые несёт моб (ID в руке, на поясе/шее; у силиконов - всё)
 /proc/netrun_mob_access(mob/user)
 	. = list()
-	if(!user)
+	if(QDELETED(user))
 		return
 	if((issilicon(user) && !ispAI(user)) || IsAdminGhost(user))
 		return get_all_accesses()

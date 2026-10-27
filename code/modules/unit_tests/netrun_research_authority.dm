@@ -81,6 +81,31 @@
 	independent_service.network_ready()
 	TEST_ASSERT_NOTEQUAL(independent.stored_research, first.stored_research, "Newly constructed servers must remain independent until explicitly linked")
 
+/// A nearby console cannot lend a fabricator an unreachable research authority.
+/obj/machinery/mecha_part_fabricator/netrun_route_fixture
+	var/network_id = "netrun-fabricator-route-fixture"
+
+/datum/unit_test/netrun_research_fabricator_reachable_authority/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/unreachable = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	var/obj/machinery/rnd/server/reachable = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	unreachable.network_id = "netrun-fabricator-route-fixture"
+	reachable.network_id = unreachable.network_id
+	unreachable.set_machine_stat(BROKEN)
+	var/obj/machinery/computer/rdconsole/console = scene.machine(/obj/machinery/computer/rdconsole, scene.source_spot)
+	SEND_SIGNAL(console, COMSIG_ATOM_SET_TECHWEB, unreachable.stored_research)
+	TEST_ASSERT_EQUAL(netrun_atom_techweb(console), unreachable.stored_research, "The nearby console must retain the intentionally unreachable binding")
+	var/obj/machinery/mecha_part_fabricator/netrun_route_fixture/fabricator = scene.machine(/obj/machinery/mecha_part_fabricator/netrun_route_fixture, scene.source_spot)
+	SSnetrun.ensure_topology()
+	var/datum/netrun_machine_service/research_client/client = fabricator.get_netrun_machine_service("research.client")
+	TEST_ASSERT(fabricator.sync(TRUE, TRUE), "A reachable authority must accept a real synchronization request")
+	TEST_ASSERT_EQUAL(netrun_atom_techweb(fabricator), reachable.stored_research, "A nearby console must not override physical server selection")
+	var/deadline = world.time + 5 SECONDS
+	while(client.snapshot_binding != REF(reachable.stored_research) && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(client.snapshot_binding, REF(reachable.stored_research), "The selected physical server must deliver a real snapshot")
+	TEST_ASSERT_EQUAL(client.live_authority(), reachable.stored_research, "The synchronization must retain an online, reachable authority")
+
 /// Point-producing clients bind automatically without becoming snapshot subscribers.
 /datum/unit_test/netrun_research_producer_snapshot_demand/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)

@@ -48,6 +48,7 @@
 
 /// Lazy construction also supports preloaded shards created during map initialization.
 /datum/controller/subsystem/netrun/proc/get_daemon(id)
+	RETURN_TYPE(/datum/netrun_daemon)
 	if(!daemons)
 		daemons = list()
 		for(var/datum/netrun_daemon/path as anything in subtypesof(/datum/netrun_daemon))

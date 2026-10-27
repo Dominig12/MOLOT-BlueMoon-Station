@@ -87,7 +87,6 @@
 	. = ..()
 	AddComponent(/datum/component/techweb_holder)
 	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_netrun_techweb_changed))
-	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, is_station_level(z) ? SSresearch.science_tech : null)
 
 /obj/machinery/mecha_part_fabricator/Destroy()
 	if(deferred_sync_timer)
@@ -552,18 +551,6 @@
 			return
 		COOLDOWN_START(src, cooldown_say, cooldown_say_time)
 
-	if(!netrun_atom_techweb(src))
-		var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
-		if(holder?.had_authority)
-			return FALSE
-		var/datum/techweb/binding
-		for(var/obj/machinery/computer/rdconsole/console in orange(7, src))
-			binding = netrun_atom_techweb(console)
-			if(binding)
-				break
-		binding ||= find_rnd_network_for_object(src)
-		if(binding)
-			SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, binding)
 	var/datum/netrun_machine_service/research_client/client = get_netrun_machine_service("research.client")
 	if(client?.request())
 		if(!is_silent)

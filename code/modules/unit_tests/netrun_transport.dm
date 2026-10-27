@@ -47,6 +47,71 @@
 	copied_first["gas_name"] = "CHANGED"
 	TEST_ASSERT_NOTEQUAL(first["gas_name"], "CHANGED", "Transport copies must not alias native filter records")
 
+/// An already indexed local alarm needs no separate discovery task for each status.
+/datum/unit_test/netrun_transport_atmos_indexed_status/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/airalarm/alarm = scene.machine(/obj/machinery/airalarm, scene.source_spot)
+	var/obj/machinery/atmospherics/components/unary/vent_pump/vent = scene.machine(/obj/machinery/atmospherics/components/unary/vent_pump, scene.target_spot)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/deadline = world.time + 5 SECONDS
+	while(!transport.is_ready() && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(transport.is_ready(), "The indexed status path requires the normal network readiness barrier")
+	var/datum/netrun_machine_service/atmos/device/device = vent.get_netrun_machine_service("atmos.device")
+	deadline = world.time + 5 SECONDS
+	while(device.resolutions["atmos.controller|"] && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_NULL(device.resolutions["atmos.controller|"], "Initial discovery must settle before testing an indexed retry")
+	vent.on = !vent.on
+	alarm.netrun_vent_info -= vent.id_tag
+	vent.broadcast_status()
+	TEST_ASSERT_NULL(device.resolutions["atmos.controller|"], "An indexed local status must not enqueue a redundant discovery")
+	deadline = world.time + 5 SECONDS
+	var/list/status = alarm.netrun_vent_info[vent.id_tag]
+	while((!status || status["power"] != vent.on || !device.registration_complete()) && world.time < deadline)
+		sleep(world.tick_lag)
+		status = alarm.netrun_vent_info[vent.id_tag]
+	TEST_ASSERT(status && status["power"] == vent.on && device.registration_complete(), "The matching alarm must receive and acknowledge the new status")
+
+/// A failed update after registration invalidates only that recipient's ACK and retries.
+/datum/unit_test/netrun_transport_atmos_status_failure_retries/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/airalarm/first = scene.machine(/obj/machinery/airalarm, scene.source_spot)
+	var/obj/machinery/airalarm/second = scene.machine(/obj/machinery/airalarm, scene.source_spot)
+	var/obj/machinery/atmospherics/components/unary/vent_pump/vent = scene.machine(/obj/machinery/atmospherics/components/unary/vent_pump, scene.target_spot)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/datum/netrun_machine_service/atmos/device/device = vent.get_netrun_machine_service("atmos.device")
+	var/datum/netrun_machine_service/atmos/controller/first_controller = first.get_netrun_machine_service("atmos.controller")
+	var/datum/netrun_machine_service/atmos/controller/second_controller = second.get_netrun_machine_service("atmos.controller")
+	var/deadline = world.time + 5 SECONDS
+	while(!transport.is_ready() && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(transport.is_ready(), "The failure fixture needs the normal ready network")
+	vent.broadcast_status()
+	deadline = world.time + 5 SECONDS
+	while(!device.registration_complete() && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(device.acknowledged_controllers[REF(first_controller)] && device.acknowledged_controllers[REF(second_controller)], "Both controllers must initially acknowledge the real vent")
+	vent.on = !vent.on
+	vent.broadcast_status()
+	var/datum/netrun_machine_packet/data/failed_packet
+	for(var/datum/netrun_machine_packet/data/packet as anything in transport.packets)
+		if(packet.source == device && packet.recipient == second_controller && packet.message.payload["sigtype"] == "status")
+			failed_packet = packet
+			break
+	TEST_ASSERT_NOTNULL(failed_packet, "The changed status must first be admitted to the second controller")
+	failed_packet.fail("test route failure after admission")
+	TEST_ASSERT(device.acknowledged_controllers[REF(first_controller)], "A different controller's valid acknowledgement must survive")
+	TEST_ASSERT_NULL(device.acknowledged_controllers[REF(second_controller)], "A failed admitted packet must revoke its recipient's old acknowledgement")
+	TEST_ASSERT(device.registration_timer, "A failed packet must schedule a fresh status retry")
+	deadline = world.time + 12 SECONDS
+	var/list/status = second.netrun_vent_info[vent.id_tag]
+	while((!status || status["power"] != vent.on || !device.registration_complete()) && world.time < deadline)
+		sleep(world.tick_lag)
+		status = second.netrun_vent_info[vent.id_tag]
+	TEST_ASSERT(status && status["power"] == vent.on, "Retry must deliver the current status, not retain the old acknowledged value")
+	TEST_ASSERT(device.registration_complete(), "Both controllers must eventually acknowledge the current registration")
+
 /obj/machinery/netrun_server/transport_fixture/netrun_machine_service_types()
 	return ..() + list(/datum/netrun_machine_service/transport_fixture)
 
@@ -303,11 +368,15 @@
 	TEST_ASSERT(alarm.netrun_vent_info[vent.id_tag] && alarm.netrun_scrub_info[scrubber.id_tag], "Native mapload plus SSair startup broadcasts must register both actual R&D device types")
 	TEST_ASSERT(vent_port.registration_complete() && scrub_port.registration_complete(), "Delivered native mapload status must complete registration rather than retry forever")
 
-/// Run explicitly on a real production map; kept outside the hermetic NetRun runner selection.
+/// This fixture asserts the actual R&D compartment and server cluster of Peace
+/// Syndicate Station. Other maps have different layouts and are covered by the
+/// generic map tests rather than inheriting this station-specific contract.
 /datum/unit_test/atmos_netrun_roundstart_registration
 	requires_full_map = TRUE
 
 /datum/unit_test/atmos_netrun_roundstart_registration/Run()
+	if(SSmapping.config.map_name != "Peace Syndicate Station")
+		return
 	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
 	var/obj/machinery/airalarm/research_alarm
 	var/list/research_devices = list()
@@ -446,6 +515,50 @@
 		text2file(capture.result.get_base64(), "data/netrun-peace-photo.base64")
 		qdel(capture.result)
 		break
+
+/// Other mapped stations need not share Peace's R&D layout or server count.
+/// Check their actual reachable alarm/device pairs without inventing a room.
+/datum/unit_test/atmos_netrun_station_registration
+	requires_full_map = TRUE
+
+/datum/unit_test/atmos_netrun_station_registration/Run()
+	if(SSmapping.config.map_name == "Peace Syndicate Station")
+		return // The dedicated production regression above is stricter.
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/deadline = world.time + 60 SECONDS
+	while(!transport.is_ready() && world.time < deadline)
+		sleep(1 SECONDS)
+	TEST_ASSERT(transport.is_ready(), "Station atmosphere registration requires the startup network readiness barrier")
+	var/list/pairs = list()
+	var/online_matches = 0
+	for(var/datum/netrun_machine_service/atmos/device/device as anything in transport.by_id["atmos.device"])
+		var/turf/spot = get_turf(device.host)
+		if(!spot || !is_station_level(spot.z) || !device.registration_required() || !device.resolve_node()?.is_online())
+			continue
+		var/list/controllers = transport.atmos_controllers_by_area[REF(get_base_area(device.host))]
+		for(var/datum/netrun_machine_service/atmos/controller/controller as anything in controllers)
+			if(!controller.resolve_node()?.is_online() || !controller.matches(device, null))
+				continue
+			online_matches++
+			if(transport.reachable(device, controller))
+				pairs += list(list("device" = device, "controller" = controller))
+	TEST_ASSERT(!online_matches || length(pairs), "Powered matching atmosphere devices and alarms must have at least one usable station route")
+	if(!length(pairs))
+		return
+	deadline = world.time + 30 SECONDS
+	var/missing = length(pairs)
+	while(missing && world.time < deadline)
+		missing = 0
+		for(var/list/pair as anything in pairs)
+			var/datum/netrun_machine_service/atmos/device/device = pair["device"]
+			var/datum/netrun_machine_service/atmos/controller/controller = pair["controller"]
+			var/obj/machinery/airalarm/alarm = controller.host
+			var/list/received = istype(device.host, /obj/machinery/atmospherics/components/unary/vent_pump) ? alarm.netrun_vent_info : alarm.netrun_scrub_info
+			if(!received[device.service_tag()])
+				missing++
+		if(missing)
+			sleep(1 SECONDS)
+	TEST_ASSERT_EQUAL(missing, 0, "Every reachable mapped atmosphere device must register with its compatible alarm ([length(pairs)] eligible pairs)")
 
 /// Isolate readiness notifications from incidental APC signals in a busy test world.
 /datum/netrun_machine_transport/readiness_fixture

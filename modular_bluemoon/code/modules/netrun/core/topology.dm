@@ -338,6 +338,7 @@
 	return forwarding_adjacency[address] || adjacency[address] || list()
 
 /datum/netrun_topology/proc/edge_between(first, second)
+	RETURN_TYPE(/list)
 	var/list/edge = edge_lookup["[first]>[second]"]
 	if(edge)
 		return edge

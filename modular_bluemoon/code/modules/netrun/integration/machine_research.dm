@@ -7,7 +7,8 @@
 
 /datum/techweb/proc/add_research_owner(obj/machinery/rnd/server/server)
 	research_owner_refs[REF(server)] = WEAKREF(server)
-	if(QDELETED(research_owner_ref?.resolve()))
+	var/obj/machinery/rnd/server/current_owner = research_owner_ref?.resolve()
+	if(QDELETED(current_owner))
 		research_owner_ref = WEAKREF(server)
 
 /datum/techweb/proc/remove_research_owner(obj/machinery/rnd/server/server)
@@ -108,6 +109,7 @@
 	return !design_id || web.researched_designs[design_id]
 
 /atom/proc/netrun_research_snapshot()
+	RETURN_TYPE(/datum/techweb)
 	var/datum/netrun_machine_service/research_client/client = get_netrun_machine_service("research.client")
 	if(!client)
 		return null
@@ -725,19 +727,20 @@
 
 /// This is a cache assignment, not research: no points are spent and no science bounty is paid.
 /proc/netrun_apply_research_snapshot(datum/techweb/cache, list/data)
-	cache.researched_nodes = data["researched_nodes"].Copy()
-	cache.available_nodes = data["available_nodes"].Copy()
-	cache.tiers = data["tiers"].Copy()
-	cache.researched_designs = data["researched_designs"].Copy()
-	cache.custom_designs = data["custom_designs"].Copy()
-	cache.hidden_nodes = data["hidden_nodes"].Copy()
-	cache.visible_nodes = data["visible_nodes"].Copy()
+	var/list/list/list_data = data
+	cache.researched_nodes = list_data["researched_nodes"].Copy()
+	cache.available_nodes = list_data["available_nodes"].Copy()
+	cache.tiers = list_data["tiers"].Copy()
+	cache.researched_designs = list_data["researched_designs"].Copy()
+	cache.custom_designs = list_data["custom_designs"].Copy()
+	cache.hidden_nodes = list_data["hidden_nodes"].Copy()
+	cache.visible_nodes = list_data["visible_nodes"].Copy()
 	cache.boosted_nodes = deepCopyList(data["boosted_nodes"])
-	cache.research_points = data["research_points"].Copy()
-	cache.last_bitcoins = data["last_bitcoins"].Copy()
+	cache.research_points = list_data["research_points"].Copy()
+	cache.last_bitcoins = list_data["last_bitcoins"].Copy()
 	cache.organization = data["organization"]
-	cache.discovered_mutations = data["discovered_mutations"].Copy()
-	cache.deconstructed_items = data["deconstructed_items"].Copy()
+	cache.discovered_mutations = list_data["discovered_mutations"].Copy()
+	cache.deconstructed_items = list_data["deconstructed_items"].Copy()
 	cache.problem_computer_charges = data["problem_computer_charges"]
 	cache.problem_computer_max_charges = data["problem_computer_max_charges"]
 	// Derived server state is already consistent. Replaying node recalculation here

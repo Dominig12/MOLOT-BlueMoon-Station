@@ -4,8 +4,10 @@ import pathlib
 import tempfile
 import unittest
 from collections import Counter
+from unittest.mock import patch
 
 from . import baseline, dmm, lint
+from .__main__ import discover_maps
 from .error import MaplintError
 
 HEADER = "//MAP CONVERTED BY dmm2tgm.py THIS HEADER COMMENT PREVENTS RECONVERSION, DO NOT REMOVE\n"
@@ -36,6 +38,13 @@ def lint_map(text: str, map_name = "_maps/test.dmm") -> list[MaplintError]:
 
 BOTTLE = "/obj/item/reagent_containers/glass/bottle{\n\treagents = /datum/reagent/water\n\t},\n"
 FLOOR = "/turf/open/floor/plating,\n/area/space"
+
+class TestDiscovery(unittest.TestCase):
+    @patch("tools.maplint.source.__main__.glob.glob")
+    def test_generated_map_is_only_linted_when_explicit(self, glob_maps):
+        glob_maps.return_value = ["_maps/map_files/generic/CentCom_hermetic.dmm", "_maps/map_files/generic/CentCom.dmm"]
+        self.assertEqual(discover_maps([]), ["_maps/map_files/generic/CentCom.dmm"])
+        self.assertEqual(discover_maps(["_maps/map_files/generic/CentCom_hermetic.dmm"]), ["_maps/map_files/generic/CentCom_hermetic.dmm"])
 
 def error(map_file = "_maps/a.dmm", lint_name = "multiple_tables", typepath = "/obj/structure/table", instances = 1, pop_id = "a") -> MaplintError:
     result = MaplintError("test", map_file)

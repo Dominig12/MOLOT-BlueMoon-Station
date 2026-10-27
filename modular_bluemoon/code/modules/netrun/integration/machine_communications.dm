@@ -213,7 +213,8 @@
 		for(var/datum/comm_message/inbox as anything in console.messages)
 			if(inbox.netrun_message_id == data["id"] && inbox.netrun_gateway_tag == data["gateway"])
 				return TRUE
-		var/datum/comm_message/inbox = new(data["title"], data["content"], data["answers"].Copy())
+		var/list/answers = data["answers"]
+		var/datum/comm_message/inbox = new(data["title"], data["content"], answers.Copy())
 		inbox.netrun_message_id = data["id"]
 		inbox.netrun_gateway_tag = data["gateway"]
 		inbox.answered = answer_states[state_id] || data["answered"]

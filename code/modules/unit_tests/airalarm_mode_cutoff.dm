@@ -82,6 +82,7 @@
 /datum/unit_test/airalarm_flood_clamps_vents/Run()
 	var/turf/open/floor = run_loc_floor_bottom_left
 	TEST_ASSERT(istype(floor), "тесту нужен открытый турф с воздухом")
+	netrun_connected_test_area()
 
 	// AALARM_MODE_* живут только внутри airalarm.dm (в конце файла #undef), поэтому
 	// номер режима берём из его же датума - как и соседние тесты файла.
@@ -104,7 +105,13 @@
 	// Заведомо не те значения, что ждём: иначе тест зелёный и при пустой команде.
 	vent.pressure_checks = 0
 	vent.external_pressure_bound = ONE_ATMOSPHERE
+	// A queued telemetry poll must not overwrite the later, non-coalesced order.
+	TEST_ASSERT(alarm.send_signal(vent.id_tag, list("status" = TRUE)), "Запрос статуса должен попасть в очередь сети APC")
 	alarm.apply_mode_commands(flood_id)
+	var/list/budget = new_wait_budget(5 SECONDS, "доставка команды затопления")
+	while(vent.pressure_checks != 1 || vent.external_pressure_bound != ONE_ATMOSPHERE * 50 || !vent.on)
+		if(!wait_budget_tick(budget))
+			break
 
 	TEST_ASSERT_EQUAL(vent.pressure_checks, 1,
 		"затопление снова снимает проверку давления вместо потолка: вент не уйдёт в простой до конца смены")

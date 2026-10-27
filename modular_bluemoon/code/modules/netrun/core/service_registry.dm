@@ -328,12 +328,15 @@
 		return FALSE
 	if(!transport.ready_service_keys)
 		transport.ready_service_keys = transport.ready_services.Copy()
-	var/stop = min(length(transport.ready_service_keys), transport.ready_service_cursor + 7)
+	var/stop = min(length(transport.ready_service_keys), transport.ready_service_cursor + 31)
+	var/started = TICK_USAGE_REAL
 	while(transport.ready_service_cursor <= stop)
 		var/key = transport.ready_service_keys[transport.ready_service_cursor++]
 		var/datum/netrun_machine_service/service = transport.services[key]
 		if(!QDELETED(service))
 			service.network_ready()
+		if(TICK_DELTA_TO_MS(TICK_USAGE_REAL - started) >= 2 || TICK_USAGE > Master.current_ticklimit)
+			break
 	if(transport.ready_service_cursor <= length(transport.ready_service_keys))
 		return FALSE
 	transport.ready_service_keys = null
@@ -358,7 +361,7 @@
 
 /// Registration/power restoration wakes pending discovery once, after construction unwinds.
 /datum/netrun_machine_transport/proc/wake_resolutions()
-	if(!length(waiting_resolutions) || wake_timer)
+	if(!bootstrap_complete || !SSnetrun.initialized || SSatoms.initialized != INITIALIZATION_INNEW_REGULAR || !length(waiting_resolutions) || wake_timer)
 		return
 	if(wake_queued)
 		wake_again = TRUE
@@ -381,6 +384,13 @@
 /// Copying the wave and native begin() both run inside the shared MC budget.
 /// A notification during a wave coalesces into one fresh snapshot afterwards.
 /datum/netrun_machine_transport/proc/advance_resolutions()
+	if(!is_ready())
+		// The reopening barrier schedules a new wave. Do not repeatedly scan
+		// thousands of waiters while map or shuttle loading keeps it closed.
+		wake_queries = null
+		wake_again = FALSE
+		wake_queued = FALSE
+		return TRUE
 	if(!wake_queries)
 		wake_queries = waiting_resolutions.Copy()
 		wake_cursor = 1

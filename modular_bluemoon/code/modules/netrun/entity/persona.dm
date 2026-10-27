@@ -89,6 +89,7 @@
 	var/datum/netrun_persona/persona
 
 /mob/camera/netrun_entity/proc/get_persona()
+	RETURN_TYPE(/datum/netrun_persona)
 	if(QDELETED(persona))
 		persona = new(src)
 	var/datum/identity = persona.identity_ref?.resolve()

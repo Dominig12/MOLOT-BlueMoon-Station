@@ -1,8 +1,10 @@
 /// A combatant supplies one interface regardless of whether its owner is a mob or ICE.
 /datum/proc/get_netrun_combatant()
+	RETURN_TYPE(/datum/component/netrun_combatant)
 	return null
 
 /mob/camera/netrun_entity/get_netrun_combatant()
+	RETURN_TYPE(/datum/component/netrun_combatant)
 	return LoadComponent(/datum/component/netrun_combatant/entity)
 
 /datum/netrun_ice/get_netrun_combatant()

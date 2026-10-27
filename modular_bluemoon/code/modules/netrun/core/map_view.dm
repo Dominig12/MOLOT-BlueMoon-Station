@@ -722,7 +722,8 @@
 		var/list/rewire = rewired_edges[address]
 		var/index = rewire["index"]
 		var/list/previous_edge = map_edges[index]
-		var/list/entry = rewire["edge"].Copy()
+		var/list/rewired_edge = rewire["edge"]
+		var/list/entry = rewired_edge.Copy()
 		entry["online"] = netrun_link_available(graph.nodes[entry["from"]], graph.nodes[entry["to"]])
 		var/old_id = previous_edge["id"]
 		var/new_id = entry["id"]

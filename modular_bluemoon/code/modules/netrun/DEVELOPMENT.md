@@ -112,7 +112,7 @@ flowchart LR
 `/datum/netrun_provider` или `/datum/netrun_api`; полный контракт и пример — в
 [PROVIDERS.md](PROVIDERS.md). Новые файлы подключаются в `tgstation.dme`, тесты —
 в `code/modules/unit_tests/_unit_tests.dm`. Константы, нужные тестам, помещаются
-в `_DEFINES/netrun.dm`, который подключён до тестовых исходников.
+в `code/__DEFINES/netrun.dm`, который подключён до тестовых исходников.
 
 Сигнальные обработчики отмечают изменения и ставят работу в очередь. Они не
 строят граф, не сериализуют TGUI и не выполняют тяжёлые операции машины.
@@ -121,7 +121,7 @@ flowchart LR
 
 ## Лимиты исполнения и отзывчивость
 
-Значения по умолчанию объявлены как `NETRUN_DEFAULT_*` в `_DEFINES/netrun.dm`.
+Значения по умолчанию объявлены как `NETRUN_DEFAULT_*` в `code/__DEFINES/netrun.dm`.
 Администратор/код подсистемы меняет соответствующие поля `SSnetrun`;
 `get_execution_limits(TRUE)` нормализует их перед следующим `fire()`.
 Задачи получают один объект `netrun_execution_limits` и не читают произвольные

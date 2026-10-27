@@ -44,6 +44,7 @@
 		carrier = carrier.loc
 	if(operator)
 		targets |= operator
+	add_ui_context_sources(targets)
 	var/datum/ui_source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
 	var/list/viewers = SStgui.get_all_open_uis(ui_source)
 	for(var/datum/tgui/ui as anything in viewers)
@@ -63,6 +64,10 @@
 		ui_context_sources[source] = signals | list(COMSIG_MOVABLE_MOVED)
 		RegisterSignal(source, signals, PROC_REF(on_ui_context_changed))
 		RegisterSignal(source, COMSIG_MOVABLE_MOVED, PROC_REF(on_ui_context_moved))
+
+/// Consoles with credentials supplied by another physical actor can observe it too.
+/datum/netrun_console/proc/add_ui_context_sources(list/targets)
+	return
 
 /// Movement changes coordinates. Credentials and source/sector context are checked
 /// independently; clearing them here turns each walking step into a full map scan.

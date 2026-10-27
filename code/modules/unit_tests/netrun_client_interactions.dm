@@ -173,6 +173,46 @@
 	console.disconnect_client(TRUE)
 	TEST_ASSERT_EQUAL(scene.user.getOrganLoss(ORGAN_SLOT_BRAIN), brain_before + 20, "A repeated disconnect must not injure the diver twice")
 
+/// An external session sever must eject both wired and wireless divers before revoking their grants.
+/datum/unit_test/proc/netrun_assert_session_sever_during_dive(wired)
+	var/datum/netrun_client_scene/scene = allocate(/datum/netrun_client_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_console/implant/client = scene.implant.console
+	var/datum/netrun_file/original = new("original.txt", NETRUN_FILE_TEXT, "original", 1)
+	TEST_ASSERT(client.store_file(original), "The implant must own its existing data")
+	scene.authorize()
+	if(wired)
+		TEST_ASSERT(client.connection.connect_node(scene.target_node, scene.user), "The fixture must attach the physical lead")
+	TEST_ASSERT(scene.implant.complete_dive(scene.target_node, scene.user), "The session-sever fixture must enter the network")
+	var/mob/camera/netrun_entity/entity = client.dive_ref?.resolve()
+	var/datum/mind/mind = entity.mind
+	var/datum/netrun_file/downloaded = new("downloaded.txt", NETRUN_FILE_TEXT, "download", 1)
+	TEST_ASSERT(entity.console.store_file(downloaded), "The resident must write through to the implant")
+	entity.console.access_session.node_access[scene.target_node.address] = NETRUN_ACCESS_ROOT
+	entity.console.access_session.network_access[scene.target_node.network.id] = NETRUN_ACCESS_ROOT
+	var/datum/netrun_request/command/packet = new(entity.console, scene.target_node, SSnetrun.get_command("scan"), "scan", scene.target_node.network, entity)
+	TEST_ASSERT(packet.send(30 SECONDS), "The resident must have a pending packet before disconnection")
+	var/datum/component/netrun_node/implant_node = scene.implant.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_command/session_sever/sever = SSnetrun.get_command("session_sever")
+	TEST_ASSERT(sever.execute(implant_node, scene.target.console), "The external session-sever command must succeed")
+	TEST_ASSERT(QDELETED(entity), "Session sever must immediately remove the active resident")
+	TEST_ASSERT_EQUAL(mind.current, scene.user, "Session sever must return the same mind to its body")
+	TEST_ASSERT(!(entity in SSnetrun.entities) && !(entity in scene.target_node.entities), "No resident may remain registered in the network")
+	TEST_ASSERT(QDELETED(packet), "Session sever must cancel the resident's pending packet")
+	TEST_ASSERT_EQUAL(scene.user.getOrganLoss(ORGAN_SLOT_BRAIN), 20, "The forced return must inflict exactly one emergency injury")
+	TEST_ASSERT_EQUAL(length(client.access_session.node_access), 0, "Resident node grants must not be restored after session sever")
+	TEST_ASSERT_EQUAL(length(client.access_session.network_access), 0, "Resident network grants must not be restored after session sever")
+	TEST_ASSERT(client.is_locked(), "The implant must remain locked after session sever")
+	TEST_ASSERT_EQUAL(client.inventory.find_file(original.uid), original, "Session sever must preserve the original file")
+	TEST_ASSERT_EQUAL(client.inventory.find_file(downloaded.uid), downloaded, "Session sever must preserve the resident's downloaded file")
+	client.disconnect_client(TRUE)
+	TEST_ASSERT_EQUAL(scene.user.getOrganLoss(ORGAN_SLOT_BRAIN), 20, "A repeated disconnect must not injure the wearer twice")
+
+/datum/unit_test/netrun_implant_session_sever_wireless/Run()
+	netrun_assert_session_sever_during_dive(FALSE)
+
+/datum/unit_test/netrun_implant_session_sever_wired/Run()
+	netrun_assert_session_sever_during_dive(TRUE)
+
 /datum/unit_test/netrun_implant_emergency_route_loss/Run()
 	var/datum/netrun_client_scene/scene = allocate(/datum/netrun_client_scene, run_loc_floor_bottom_left)
 	scene.authorize()

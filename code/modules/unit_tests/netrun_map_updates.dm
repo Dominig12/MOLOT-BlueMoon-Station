@@ -577,7 +577,7 @@
 	var/obj/item/host = allocate(/obj/item)
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
 	var/datum/netrun_map_view/view = console.map_view
-	var/list/nodes = list()
+	var/list/list/nodes = list()
 	for(var/i in 1 to 6000)
 		nodes += list(list("address" = "N[i]", "name" = "Camera [i]", "type" = "camera", "x" = i % 80,
 			"y" = round(i / 80), "z" = 1, "online" = TRUE, "access" = 1, "entities" = 0, "ice" = 0, "active" = FALSE))

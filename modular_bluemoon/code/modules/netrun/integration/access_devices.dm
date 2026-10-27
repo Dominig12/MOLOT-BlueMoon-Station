@@ -104,11 +104,16 @@
 	if(!target)
 		return
 	target.intrusion.lockout_until = max(target.intrusion.lockout_until, world.time + 30 SECONDS)
-	target.access_session.node_access.Cut()
-	target.access_session.network_access.Cut()
-	QDEL_NULL(target.intrusion.breach)
-	target.set_jack(null)
-	target.stop_watch()
+	if(istype(target, /datum/netrun_console/implant))
+		var/datum/netrun_console/implant/implant = target
+		// Return first: the resident merges its acquired grants on exit, after
+		// which disconnect_client revokes them from the implant as well.
+		implant.disconnect_client(TRUE)
+	else
+		target.access_session.revoke_all()
+		QDEL_NULL(target.intrusion.breach)
+		target.set_jack(null)
+		target.stop_watch()
 	target.log_line("Сессия разорвана внешней сетевой командой.", "bad")
 	SStgui.close_uis(target)
 	return "Соединение клиента разорвано на 30 секунд."

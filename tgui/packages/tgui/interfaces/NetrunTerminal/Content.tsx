@@ -7,8 +7,8 @@ import { AppearancePanel } from './AppearancePanel';
 import { CombatPanel } from './CombatPanel';
 import { MatrixPanel } from './Matrix';
 import { MapFocusRequest, StationMap } from './NetworkMap';
-import { NodePanel } from './NodePanel';
 import { NodeInteractions } from './NodeInteractions';
+import { NodePanel } from './NodePanel';
 import { OperationsPanel } from './OperationsPanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
 import { SessionStatus } from './SessionStatus';
@@ -55,11 +55,13 @@ const ImplantWorkspace = () => {
         ))}
       </div>
       <Box mt={1} mb={1} p={1} style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
-        {selected ? <>
-          <Box bold>Узел погружения: {selected.name}</Box>
-          <Box color={THEME.muted}>{selected.address}</Box>
-          <NodeInteractions actions={selected.interactions} pending={false} />
-        </> : <Box color={THEME.muted}>Узел погружения не выбран.</Box>}
+        {selected ? (
+          <>
+            <Box bold>Узел погружения: {selected.name}</Box>
+            <Box color={THEME.muted}>{selected.address}</Box>
+            <NodeInteractions actions={selected.interactions} pending={false} />
+          </>
+        ) : <Box color={THEME.muted}>Узел погружения не выбран.</Box>}
       </Box>
       {!!data.log?.length && <Box mb={1} color={THEME.muted} role="status">{data.log[data.log.length - 1].text}</Box>}
       <StoragePanel />

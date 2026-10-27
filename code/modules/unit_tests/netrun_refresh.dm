@@ -194,6 +194,37 @@
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_CHAT_CHANGED)
 	TEST_ASSERT(console.ui_dirty, "A reopened viewer must subscribe again")
 
+/// A neural resident observes live credentials on the unconscious body as well as its own operator.
+/datum/unit_test/netrun_refresh_neural_body_credentials/Run()
+	var/datum/netrun_client_scene/scene = allocate(/datum/netrun_client_scene, run_loc_floor_bottom_left)
+	var/obj/item/clothing/under/color/grey/uniform = allocate(/obj/item/clothing/under/color/grey)
+	var/obj/item/card/id/card = allocate(/obj/item/card/id)
+	card.access = list(ACCESS_MEDICAL)
+	TEST_ASSERT(scene.user.equip_to_slot_if_possible(uniform, ITEM_SLOT_ICLOTHING, disable_warning = TRUE), "The diver must wear a uniform")
+	TEST_ASSERT(scene.user.equip_to_slot_if_possible(card, ITEM_SLOT_ID, disable_warning = TRUE), "The diver must wear an ID")
+	scene.authorize()
+	TEST_ASSERT(scene.implant.complete_dive(scene.target_node, scene.user), "The fixture must enter the network")
+	var/mob/camera/netrun_entity/entity = scene.implant.console.dive_ref?.resolve()
+	var/datum/netrun_console/entity/console = entity.console
+	console.note_ui_activity()
+	TEST_ASSERT(console.ui_context_sources[scene.user], "The active UI must observe the physical body supplying its credentials")
+	console.access_cache = console.user_access(TRUE)
+	TEST_ASSERT(ACCESS_MEDICAL in console.user_access(), "The cached credentials must include the body's ID")
+	console.ui_dirty = FALSE
+	TEST_ASSERT(scene.user.dropItemToGround(card), "Another actor must be able to remove the body's ID")
+	TEST_ASSERT(console.ui_dirty, "Removing the ID must immediately wake the resident UI")
+	TEST_ASSERT_NULL(console.access_cache, "Removing the ID must immediately invalidate cached credentials")
+	TEST_ASSERT(!(ACCESS_MEDICAL in console.user_access()), "The resident must lose the removed ID's access")
+	console.ui_dirty = FALSE
+	TEST_ASSERT(scene.user.equip_to_slot_if_possible(card, ITEM_SLOT_ID, disable_warning = TRUE), "The ID must be replaceable during the dive")
+	TEST_ASSERT(console.ui_dirty, "Replacing the ID must immediately wake the resident UI")
+	TEST_ASSERT(ACCESS_MEDICAL in console.user_access(), "The resident must regain the replaced ID's access")
+	console.stop_ui_observation()
+	TEST_ASSERT(!console.ui_context_sources[scene.user], "Closing the UI must release the body's subscriptions")
+	console.ui_dirty = FALSE
+	TEST_ASSERT(scene.user.dropItemToGround(card), "The ID must remain removable after closing the UI")
+	TEST_ASSERT(!console.ui_dirty, "A closed UI must not receive body equipment events")
+
 /// An ordinary carried item wakes the UI without invalidating its entire map.
 /datum/unit_test/netrun_refresh_unrelated_inventory_keeps_map/Run()
 	var/turf/origin = run_loc_floor_bottom_left

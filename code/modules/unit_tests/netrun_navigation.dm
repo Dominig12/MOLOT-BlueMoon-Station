@@ -165,6 +165,7 @@
 	var/datum/component/netrun_node/nested_node = nested.AddComponent(/datum/component/netrun_node, NETRUN_NODE_IMPLANT)
 	TEST_ASSERT(console.is_local_entry(nested_node, scene.user), "A node inside a worn container must follow the owner's physical position")
 	var/area/subroom = scene.room(/area/engineering/netrun_route_test)
+	local_room.sub_areas = list(subroom)
 	subroom.base_area = local_room
 	var/turf/subroom_spot = scene.take(locate(origin.x + 2, origin.y, origin.z), subroom)
 	nested.forceMove(subroom_spot)
@@ -172,4 +173,8 @@
 	nested.forceMove(scene.far_spot)
 	TEST_ASSERT(!console.is_local_entry(nested_node, scene.user), "Moving the endpoint to another room must invalidate its stale selection")
 	qdel(nested)
+	scene.take(subroom_spot, local_room)
+	scene.rooms -= subroom
+	qdel(subroom)
+	TEST_ASSERT_NULL(local_room.sub_areas, "Deleting a sub-area must unlink it from the base area without a runtime")
 

@@ -12,6 +12,27 @@
 	if(istype(recipient_service, /datum/netrun_machine_service/atmos/controller))
 		device?.acknowledge_controller(recipient_service)
 
+/datum/netrun_machine_message/atmos/failed(reason)
+	. = ..()
+	if(payload["sigtype"] != "status")
+		return
+	var/datum/netrun_machine_service/atmos/device/device = registration_ref?.resolve()
+	if(QDELETED(device) || QDELETED(device.host))
+		return
+	device.refresh_registration()
+	if(istype(recipient, /datum/netrun_machine_service/atmos/controller))
+		var/datum/netrun_machine_service/atmos/controller/controller = recipient
+		if(!QDELETED(controller) && controller.matches(device, null))
+			device.acknowledged_controllers -= REF(controller)
+	else if(isnull(recipient))
+		// A discovery that failed before selecting a recipient still needs to
+		// invalidate prior ACKs for matching controllers in the current area.
+		var/list/controllers = SSnetrun.get_machine_transport().atmos_controllers_by_area[REF(device.registration_area)]
+		for(var/datum/netrun_machine_service/atmos/controller/controller as anything in controllers)
+			if(!QDELETED(controller) && controller.matches(device, null))
+				device.acknowledged_controllers -= REF(controller)
+	device.arm_registration()
+
 /datum/netrun_machine_message/atmos/coalescing_key()
 	if(payload["sigtype"] == "status")
 		return "[payload["device"]]:[payload["tag"]]"
@@ -155,6 +176,7 @@
 
 /datum/netrun_machine_service/atmos/device
 	service_id = "atmos.device"
+	start_when_ready = TRUE
 	var/list/acknowledged_controllers = list()
 	var/registration_tag
 	var/registration_frequency
@@ -184,6 +206,12 @@
 	if(refresh_registration() && registration_required())
 		registration_attempts = 0
 		arm_registration(world.tick_lag)
+
+/// Avoid running thousands of retries while the common network bootstrap is
+/// still preparing APC routes. Each device gets one bounded readiness callback.
+/datum/netrun_machine_service/atmos/device/network_ready()
+	if(registration_required())
+		arm_registration(world.tick_lag + rand(0, 2 SECONDS))
 
 /datum/netrun_machine_service/atmos/device/proc/registration_required()
 	return istype(host, /obj/machinery/atmospherics/components/unary/vent_pump) || istype(host, /obj/machinery/atmospherics/components/unary/vent_scrubber)
@@ -235,6 +263,8 @@
 		SSnetrun.task_scheduler?.cancel("atmos_registration", src)
 
 /datum/netrun_machine_service/atmos/device/proc/arm_registration(delay)
+	if(!SSnetrun.get_machine_transport().bootstrap_complete)
+		return
 	if(isnull(delay))
 		// A long APC/cable outage must not permanently strand an otherwise live
 		// device. Keep probing slowly after the initial fast retry window.
@@ -314,6 +344,31 @@
 	if(destination_id == "atmos.controller" && isnull(recipient_tag))
 		return SSnetrun.get_machine_transport().atmos_controllers_by_area[REF(get_base_area(host))]
 	return ..()
+
+/// Alarms are already indexed by physical area. Once startup is complete,
+/// send status to those known recipients directly instead of creating a new
+/// discovery task for every vent retry. Delivery remains asynchronous and
+/// still validates the route and recipient before changing an alarm.
+/datum/netrun_machine_service/atmos/device/send(destination_id, datum/netrun_machine_message/message, recipient_tag)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	if(destination_id != "atmos.controller" || !isnull(recipient_tag) || QDELETED(message) || message.payload["sigtype"] != "status")
+		return ..()
+	if(!transport.bootstrap_complete)
+		// The readiness callback broadcasts the then-current status. Keeping
+		// thousands of obsolete startup snapshots would delay the bootstrap itself.
+		qdel(message)
+		return TRUE
+	if(!transport.is_ready())
+		return ..()
+	var/sent = FALSE
+	var/list/controllers = transport.atmos_controllers_by_area[REF(get_base_area(host))]
+	for(var/datum/netrun_machine_service/atmos/controller/controller as anything in controllers)
+		if(!QDELETED(controller) && controller.matches(src, null))
+			sent = send_to(controller, message.copy()) || sent
+	if(!sent)
+		message.failed("Служба недоступна по сети APC")
+	qdel(message)
+	return sent
 
 /datum/netrun_machine_service/atmos/device/accepts(datum/netrun_machine_message/message)
 	return ..() && istype(message, /datum/netrun_machine_message/atmos) && message.payload["sigtype"] == "command" && message.payload["tag"] == service_tag() && matches(message.source, service_tag())

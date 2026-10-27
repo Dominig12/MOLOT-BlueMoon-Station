@@ -411,6 +411,7 @@
  * их зона меняется каждым шагом носителя.
  */
 /obj/machinery/camera/proc/get_visible_turfs()
+	RETURN_TYPE(/list)
 	if(!isturf(loc))
 		return compute_visible_turfs()
 	if(visibility_cache_dirty || isnull(cached_visible_turfs))

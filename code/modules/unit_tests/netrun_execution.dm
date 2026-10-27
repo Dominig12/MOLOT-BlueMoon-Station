@@ -90,6 +90,7 @@
 /// A readiness timer must never synchronously retry an entire station's service-discovery backlog.
 /datum/unit_test/netrun_execution_discovery_wake_slices/Run()
 	var/datum/netrun_machine_transport/transport = allocate(/datum/netrun_machine_transport)
+	transport.bootstrap_complete = TRUE
 	var/list/samples = list("begun" = 0)
 	for(var/id in 1 to 17)
 		transport.waiting_resolutions += allocate(/datum/netrun_machine_resolution/netrun_wake_probe, transport, samples, id)
@@ -135,6 +136,9 @@
 	var/list/samples = list("begun" = 0)
 	var/datum/netrun_machine_transport/delayed = allocate(/datum/netrun_machine_transport)
 	delayed.waiting_resolutions += allocate(/datum/netrun_machine_resolution/netrun_wake_probe, delayed, samples, 1)
+	delayed.wake_resolutions()
+	TEST_ASSERT_NULL(delayed.wake_timer, "Discovery must remain suspended until network bootstrap completes")
+	delayed.bootstrap_complete = TRUE
 	delayed.wake_resolutions()
 	var/timer = delayed.wake_timer
 	TEST_ASSERT(timer, "A new readiness signal must own its deferred admission timer")

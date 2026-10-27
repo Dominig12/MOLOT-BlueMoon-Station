@@ -67,6 +67,17 @@
 	TEST_ASSERT(user.dropItemToGround(card), "The ID must be removed from its worn slot")
 	TEST_ASSERT_EQUAL(length(adapter.endpoint.netrun_credential_access()), 0, "Removing the actual ID must empty the live neural source")
 
+/// Species teardown can recreate a neural endpoint after the mob's inventory was disposed.
+/datum/unit_test/netrun_credentials_neural_owner_teardown/Run()
+	var/mob/living/carbon/human/user = allocate(/mob/living/carbon/human)
+	user.set_species(/datum/species/ipc/hk/hk47)
+	var/datum/component/neural_interface/interface = user.LoadComponent(/datum/component/neural_interface)
+	interface.AddSource("NETRUN_TEARDOWN_TEST")
+	var/datum/component/netrun_neural_adapter/adapter = interface.GetComponent(/datum/component/netrun_neural_adapter)
+	TEST_ASSERT_NOTNULL(adapter?.endpoint, "The live wearer must have a real neural endpoint before deletion")
+	qdel(user)
+	TEST_ASSERT(QDELETED(user), "Deleting the wearer with a neural interface must complete without an inventory runtime")
+
 /// Credentials consume actual memory and survive shard transfer through an independent copy.
 /datum/unit_test/netrun_credentials_memory_and_copy/Run()
 	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
