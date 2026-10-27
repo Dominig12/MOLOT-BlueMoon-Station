@@ -197,9 +197,7 @@
 	var/datum/netrun_path_tree/tree = owner.path_tree()
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	. = FALSE
-	for(var/address in graph.relay_addresses)
-		if(!tree.reached[address])
-			continue
+	for(var/address in tree.reached)
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(!istype(node?.parent, /obj/machinery/ntnet_relay) || !node.is_online())
 			continue
@@ -349,8 +347,7 @@
 	var/local_endpoint = node == (tree ? tree.source : owner.route_source())
 	if(net_level < NETRUN_ACCESS_GUEST && !local_endpoint && (!owner_level || !owner.can_route(node, tree)))
 		return NETRUN_ACCESS_NONE
-	var/inherited_level = min(net_level, target.netrun_inherited_access_cap())
-	. = max(NETRUN_ACCESS_GUEST, owner_level, inherited_level, node_access[node.address] || 0, owner.legit_node_level(node, tree))
+	. = max(NETRUN_ACCESS_GUEST, owner_level, net_level, node_access[node.address] || 0, owner.legit_node_level(node, tree))
 	if(node == owner.connection.jack)
 		. = max(., NETRUN_ACCESS_GUEST)
 
@@ -734,18 +731,6 @@
 		return
 	if(finished.target_kind == "network")
 		reward = min(reward, NETRUN_ACCESS_GUEST)
-	else
-		var/datum/component/netrun_node/node = SSnetrun.find_node(finished.target_id)
-		var/atom/target = node?.parent
-		var/access_cap = target ? target.netrun_breach_access_cap(finished.initial_access_level) : NETRUN_ACCESS_NONE
-		if(target)
-			// Revoking the USER prerequisite during escalation must also revoke ROOT.
-			var/datum/netrun_path_tree/tree = owner.make_path_tree()
-			access_cap = min(access_cap, target.netrun_breach_access_cap(owner.node_level(node, tree)))
-			qdel(tree)
-		if(reward > access_cap)
-			owner.log_line("Контроллер изолирован от ЛВС: сначала нужен USER, затем отдельный взлом для ROOT.", "average")
-		reward = min(reward, access_cap)
 	if(!reward && !clean)
 		owner.log_line("Взлом провален.", "bad")
 		owner.add_trace(25)

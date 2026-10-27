@@ -13,27 +13,27 @@
 	console.map_view.selected_address = node.address
 	TEST_ASSERT(console.create_text_file("draft.txt", "persistent file"), "The workspace needs a real selected local file")
 	var/uid = console.inventory.selected_file_uid
-	var/list/data = netrun_settled_ui_data(console)
+	var/list/data = console.ui_data(null)
 	TEST_ASSERT_EQUAL(data["workspace_view"], "terminal", "A new session must start on the dedicated terminal page")
 	TEST_ASSERT_NULL(data["map"], "A hidden map must not serialize a full graph")
 	TEST_ASSERT(console.start_breach("node", node.address), "The fixture must run a real breach")
 	TEST_ASSERT_EQUAL(console.workspace_view, "breach", "A new breach must open its own workspace")
 	var/datum/netrun_breach/job = console.intrusion.breach
-	data = netrun_settled_ui_data(console)
+	data = console.ui_data(null)
 	var/list/file = data["file"]
 	TEST_ASSERT_EQUAL(file["uid"], uid, "A puzzle must not discard the selected file payload")
 	console.workspace_view = "map"
-	data = netrun_settled_ui_data(console)
+	data = console.ui_data(null)
 	TEST_ASSERT_NOTNULL(data["map"], "The map page must be available while a breach is running")
 	TEST_ASSERT_NOTNULL(data["breach"], "Browsing the map must preserve the active breach")
 	TEST_ASSERT_EQUAL(console.intrusion.breach, job, "Page navigation must never replace the job")
 	TEST_ASSERT(console.open_window(node.address), "A permitted node must be pinnable")
 	TEST_ASSERT_EQUAL(console.workspace_view, "pinned", "Pinning a node must open the dedicated pinned workspace")
-	data = netrun_settled_ui_data(console)
+	data = console.ui_data(null)
 	TEST_ASSERT_NOTNULL(data["window"], "Pinned nodes must remain operable during a breach")
 	TEST_ASSERT_NULL(data["map"], "Pinned workspace must not contain the hidden map")
 	console.workspace_view = "files"
-	data = netrun_settled_ui_data(console)
+	data = console.ui_data(null)
 	file = data["file"]
 	TEST_ASSERT_EQUAL(file["uid"], uid, "The file workspace must retain the selected local file")
 	TEST_ASSERT_NOTNULL(data["selected"], "File upload controls need the selected remote node's permissions")
@@ -54,7 +54,7 @@
 	SSnetrun.ensure_topology()
 	terminal.console.workspace_view = "map"
 	terminal.console.map_view.selected_address = apc_node.address
-	var/list/data = netrun_settled_ui_data(terminal.console)
+	var/list/data = terminal.console.ui_data(null)
 	var/list/map = data["map"]
 	var/list/zones = map["apc_zones"]
 	TEST_ASSERT_EQUAL(length(zones), 1, "Only the selected APC area should be highlighted")
@@ -110,7 +110,7 @@
 	SSnetrun.ensure_topology()
 	source.console.workspace_view = "map"
 	source.console.map_view.selected_address = local_node.address
-	var/list/data = netrun_settled_ui_data(source.console)
+	var/list/data = source.console.ui_data(null)
 	var/list/map = data["map"]
 	TEST_ASSERT(netrun_map_has_node(data, local_node.address), "The initial map must include the current sector's relay")
 	TEST_ASSERT(!netrun_map_has_node(data, remote_node.address), "A remote-sector relay must not be drawn among local physical nodes")
@@ -121,14 +121,14 @@
 			found = TRUE
 	TEST_ASSERT(found, "The selected relay must expose its actual remote gateway destination")
 	TEST_ASSERT(source.console.map_view.select_sector(remote_node.binding_sector, remote_relay_spot.z), "A disclosed destination sector must be browsable")
-	data = netrun_settled_ui_data(source.console)
+	data = source.console.ui_data(null)
 	map = data["map"]
 	TEST_ASSERT(netrun_map_has_node(data, remote_node.address), "Switching sectors must display remote physical coordinates")
 	TEST_ASSERT(!netrun_map_has_node(data, local_node.address), "Sector switching must unload nodes from the other sector")
 	TEST_ASSERT_EQUAL(get_turf(source), origin, "Browsing a sector must not teleport the physical client")
 	TEST_ASSERT(!source.console.map_view.select_sector("sector:forged", 999), "An undisclosed or forged sector must not be accepted")
 	source.console.map_view.follow_source()
-	data = netrun_settled_ui_data(source.console)
+	data = source.console.ui_data(null)
 	TEST_ASSERT(netrun_map_has_node(data, local_node.address), "Return to source must restore the source sector")
 
 /// An offscreen source changing departments must replace the remote floor's permissions.
@@ -166,9 +166,9 @@
 	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
 	console.map_view = view
 	console.workspace_view = "map"
-	netrun_settled_ui_data(console)
+	console.ui_data(null)
 	TEST_ASSERT(view.select_sector(engineering_node.binding_sector, levels[2]), "The linked remote floor must already be disclosed by its APCs")
-	var/list/data = netrun_settled_ui_data(console)
+	var/list/data = console.ui_data(null)
 	TEST_ASSERT_EQUAL(view.active_z, levels[2], "The baseline must browse the upper floor while the source remains downstairs")
 	TEST_ASSERT(!view.shown_addresses[source_node.address], "The moving source must start outside the displayed projection")
 	TEST_ASSERT(netrun_map_has_node(data, engineering_node.address), "The original home LAN must disclose its upper-floor endpoint")
@@ -182,7 +182,7 @@
 	TEST_ASSERT(source_node.network != old_network, "The physical move must actually change the source LAN")
 	TEST_ASSERT_EQUAL(source_node.address, address, "The context change must retain the source's address")
 	TEST_ASSERT_EQUAL(graph.revision, revision, "A leaf rebind must retain the warm topology revision")
-	data = netrun_settled_ui_data(console)
+	data = console.ui_data(null)
 	TEST_ASSERT_EQUAL(view.active_z, levels[2], "Changing departments downstairs must preserve the browsed remote floor")
 	TEST_ASSERT(!netrun_map_has_node(data, engineering_node.address), "Losing the offscreen source's home LAN must revoke its remote private endpoint")
 	TEST_ASSERT(netrun_map_has_node(data, medical_node.address), "The new home LAN must disclose its remote private endpoint on the next poll")
@@ -223,7 +223,7 @@
 	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
 	console.map_view = view
 	console.workspace_view = "map"
-	var/list/data = netrun_settled_ui_data(console)
+	var/list/data = console.ui_data(null)
 	var/remote_sector = leaf.binding_sector
 	var/local_sector = view.active_sector
 	TEST_ASSERT(local_sector != remote_sector, "The baseline must display a different sector from the moving endpoint")
@@ -240,7 +240,7 @@
 	TEST_ASSERT_EQUAL(leaf.bound_apc, original_apc, "The mobile endpoint must retain its APC within the same linked area")
 	TEST_ASSERT_EQUAL(leaf.network, original_network, "A floor change must keep the original authorization domain")
 	TEST_ASSERT_EQUAL(graph.revision, revision, "The offscreen floor move must retain the cached physical topology")
-	data = netrun_settled_ui_data(console)
+	data = console.ui_data(null)
 	TEST_ASSERT_EQUAL(view.active_sector, local_sector, "An offscreen move must preserve the user's viewed sector")
 	TEST_ASSERT(!view.shown_addresses[leaf.address], "Updating the catalog must not draw offscreen nodes in the local projection")
 	var/list/entry = view.node_entries[leaf.address]

@@ -55,7 +55,7 @@
 	observer.console.map_view = view
 	observer.console.workspace_view = "map"
 
-/datum/netrun_carrier_scene/proc/warm(list/nodes, datum/unit_test/test)
+/datum/netrun_carrier_scene/proc/warm(list/nodes)
 	SSnetrun.ensure_topology()
 	var/list/settle = nodes.Copy()
 	settle |= apc.GetComponent(/datum/component/netrun_node)
@@ -65,8 +65,8 @@
 		node.reconcile_state()
 		node.publish_changes()
 	SSnetrun.get_topology().borrow_infrastructure_tree(apc.GetComponent(/datum/component/netrun_node))
-	test.netrun_settled_ui_data(observer.console)
-	test.netrun_settled_ui_data(observer.console)
+	observer.console.ui_data(null)
+	observer.console.ui_data(null)
 
 /// Native PDA/HUD slots and a nullspace neural implant follow one walking wearer immediately.
 /datum/unit_test/netrun_carriers_worn_native_nodes/Run()
@@ -90,7 +90,7 @@
 	for(var/datum/component/netrun_node/node as anything in nodes)
 		TEST_ASSERT_NOTNULL(node, "Every native carried device must provide its actual network component")
 		TEST_ASSERT_EQUAL(node.physical_carrier, scene.first, "Worn and installed endpoints must subscribe to their common wearer")
-	scene.warm(nodes, src)
+	scene.warm(nodes)
 	var/datum/netrun_carrier_probe/probe = allocate(/datum/netrun_carrier_probe, nodes)
 	var/datum/netrun_topology/graph = SSnetrun.get_topology()
 	var/revision = graph.revision
@@ -103,7 +103,7 @@
 		TEST_ASSERT_EQUAL(probe.positions[node.address], destination, "Movement publication must carry the wearer's new turf")
 		TEST_ASSERT(node.pending_physical_update && graph.moved_nodes[node], "Movement must enqueue each contained endpoint before any polling or worker tick")
 		TEST_ASSERT_EQUAL(node.topology_turf, scene.spots[2], "The synchronous notification must defer route and cable recomputation")
-	netrun_settled_ui_data(scene.observer.console)
+	scene.observer.console.ui_data(null)
 	for(var/datum/component/netrun_node/node as anything in nodes)
 		var/list/entry = scene.view.node_entries[node.address]
 		TEST_ASSERT_EQUAL(entry?["x"], destination.x, "The first fresh UI poll must show each carried endpoint's new X")
@@ -132,7 +132,7 @@
 	TEST_ASSERT(SEND_SIGNAL(box, COMSIG_TRY_STORAGE_INSERT, small, scene.first, TRUE, TRUE), "The real storage component must accept the second endpoint")
 	TEST_ASSERT(SEND_SIGNAL(pack, COMSIG_TRY_STORAGE_INSERT, box, scene.first, TRUE, TRUE), "The real backpack must accept the nested box")
 	var/list/nodes = list(box_node, small_node, deck_node)
-	scene.warm(nodes, src)
+	scene.warm(nodes)
 	var/datum/netrun_carrier_probe/probe = allocate(/datum/netrun_carrier_probe, nodes)
 	for(var/datum/component/netrun_node/node as anything in nodes)
 		TEST_ASSERT_EQUAL(node.physical_carrier, scene.first, "A multi-level storage descendant must retain its actual outer wearer")
@@ -243,7 +243,7 @@
 	scene.owned += container
 	scene.owned += endpoint
 	var/datum/component/netrun_node/node = endpoint.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
-	scene.warm(list(node), src)
+	scene.warm(list(node))
 	var/datum/netrun_carrier_probe/probe = allocate(/datum/netrun_carrier_probe, list(node))
 	TEST_ASSERT_EQUAL(node.physical_carrier, scene.first, "The nested endpoint must initially follow its outer owner")
 	container.moveToNullspace()

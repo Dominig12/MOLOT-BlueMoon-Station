@@ -72,8 +72,7 @@
 		return COMPONENT_INCOMPATIBLE
 	src.node_type = node_type
 	src.command_ids = list("scan", "ping", "node_log", "packet_log", "packet_decrypt", "extract", "traceroute", "siphon", "spoof_log") | (command_ids || list())
-	var/atom/host = parent
-	base_security = clamp(max(security, host.netrun_security_floor()), 1, 5)
+	base_security = security
 	src.required_access = required_access
 	// Firmware documentation is available even on endpoints without writable storage.
 	file_store = new(src, storage_capacity || 0)
@@ -509,7 +508,7 @@
 /atom/proc/netrun_on_illegal(datum/netrun_console/console, datum/component/netrun_node/node)
 	return
 
-/// Explicit manual protocol (matrix / sequence / memory / routing); null uses device selection.
+/// Объект может навязать конкретную мини-игру взлома ("matrix" / "sequence"); null - по умолчанию.
 /atom/proc/netrun_breach_minigame()
 	return null
 

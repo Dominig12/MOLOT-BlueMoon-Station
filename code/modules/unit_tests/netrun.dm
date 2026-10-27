@@ -1,23 +1,3 @@
-/// Legacy content assertions need a completed presentation, not its first empty frame.
-/// Dedicated async suites exercise real tick barriers separately. This helper drains
-/// finite worker slices without sleeps so snapshot/load assertions remain deterministic.
-/datum/unit_test/proc/netrun_settled_ui_data(datum/netrun_console/console)
-	var/list/data = console.ui_data(null)
-	for(var/pass in 1 to 512)
-		var/datum/netrun_map_view/view = console.map_view
-		if(!console.ui_routes_pending && (console.workspace_view != "map" || (!view.projection && !view.dirty && !view.structure_dirty && !length(view.dirty_nodes))))
-			return data
-		var/datum/netrun_topology/graph = SSnetrun.get_topology()
-		if(length(graph.ui_route_jobs))
-			graph.ui_route_advanced_at = -INFINITY
-			graph.advance_ui_routes(512)
-		if(view.projection)
-			view.projection_advanced_at = -INFINITY
-			view.advance_projection(512)
-		data = console.ui_data(null)
-	Fail("The Netrun UI did not settle after 512 bounded worker slices.")
-	return data
-
 /// Find a public command entry rather than depending on its order in the registry.
 /datum/unit_test/proc/netrun_command_entry(list/entries, command_id)
 	for(var/list/entry as anything in entries)
@@ -45,7 +25,7 @@
 	TEST_ASSERT_EQUAL(console.node_level(node), NETRUN_ACCESS_GUEST, "A LAN key must grant traversal without granting USER machine actions")
 	console.access_session.node_access[node.address] = NETRUN_ACCESS_USER
 	console.workspace_view = "map"
-	var/list/payload = netrun_settled_ui_data(console)
+	var/list/payload = console.ui_data(null)
 	var/list/selected = payload["selected"]
 	var/list/window = console.window_payload()
 	TEST_ASSERT_NOTNULL(selected, "Selecting a reachable node must populate its card")
@@ -269,9 +249,6 @@
 	var/security = node.network.breach_security()
 	TEST_ASSERT(security >= node.get_security(), "A gateway must account for its strongest member")
 	var/datum/netrun_breach/machine = allocate(/datum/netrun_breach, console, "node", node.address, "machine", node.get_security())
-	// This comparison exercises the matrix protocol, independent of per-device mode selection.
-	machine.minigame = "matrix"
-	machine.generate()
 	var/datum/netrun_breach/gateway = allocate(/datum/netrun_breach, console, "network", node.network.id, "gateway", security)
 	TEST_ASSERT(gateway.size > machine.size, "The gateway matrix must be larger on the same hardware")
 	TEST_ASSERT(gateway.deadline < machine.deadline, "The gateway must give less time on the same hardware")

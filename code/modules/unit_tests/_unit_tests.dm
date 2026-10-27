@@ -335,13 +335,8 @@
 #include "mod_suit_fixes.dm"
 #include "modular_map_loader.dm" //SPLURT EDIT
 #include "netrun.dm"
-#include "netrun_async_map.dm"
-#include "netrun_async_routes.dm"
-#include "netrun_async_scheduler.dm"
 #include "netrun_combat.dm"
 #include "netrun_combat_fairness.dm"
-#include "netrun_breach_games.dm"
-#include "netrun_critical_access.dm"
 #include "netrun_ice_fairness.dm"
 #include "netrun_threats.dm"
 #include "netrun_inventory.dm"

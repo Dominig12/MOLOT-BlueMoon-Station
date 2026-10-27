@@ -7,7 +7,7 @@ import { useNetrunBackend as useBackend } from './useNetrunBackend';
 const LIME = THEME.accent;
 const CELL = 46;
 
-/** The server selects the challenge and authorizes every cell selection. */
+/** Головоломка взлома. Тип выбирает сервер: протокол (matrix) или трассировка (sequence). */
 export const MatrixPanel = (props: { state: MatrixState }) => {
   const { act } = useBackend<NetrunData>([]);
   const signature = JSON.stringify(props.state);
@@ -56,9 +56,6 @@ const MatrixView = memo((props: { state: MatrixState; act: (action: string, payl
   if (state.minigame === 'sequence') {
     return <SequenceView state={state} act={act} />;
   }
-  if (state.minigame === 'memory' || state.minigame === 'routing') {
-    return <ChallengeView state={state} act={act} />;
-  }
   return <ProtocolView state={state} act={act} />;
 });
 
@@ -73,7 +70,7 @@ const ProtocolView = (props: { state: MatrixState; act: (action: string, payload
     <Box style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
       <Shell>
         <Header target={state.target} security={state.security} timeLeft={state.time_left}
-          subtitle={`выбор в ${state.pick_row ? 'строке' : 'столбце'}`} accessCap={state.access_cap} />
+          subtitle={`выбор в ${state.pick_row ? 'строке' : 'столбце'}`} />
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px' }}>
           <table aria-label="Матрица протокола" style={{ borderCollapse: 'separate', borderSpacing: '3px', width: 'auto', flex: '0 0 auto' }}>
             <tbody>
@@ -125,7 +122,7 @@ const SequenceView = (props: { state: MatrixState; act: (action: string, payload
     <Box style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
       <Shell>
         <Header target={state.target} security={state.security} timeLeft={state.time_left}
-          subtitle={`трассировка ${progress}/${total}`} accessCap={state.access_cap} />
+          subtitle={`трассировка ${progress}/${total}`} />
         <Box mb={0.5} style={{ height: '4px', background: THEME.line, borderRadius: '2px' }}>
           <Box style={{ height: '4px', width: `${total ? (progress / total) * 100 : 0}%`, background: LIME,
             borderRadius: '2px', transition: 'width 0.3s ease' }} />
@@ -150,109 +147,7 @@ const SequenceView = (props: { state: MatrixState; act: (action: string, payload
   );
 };
 
-const ChallengeView = (props: { state: MatrixState; act: (action: string, payload?: object) => void }) => {
-  const { state, act } = props;
-  const memory = state.minigame === 'memory';
-  const revealing = memory && state.phase === 'reveal';
-  const progress = state.progress ?? 0;
-  const total = state.total ?? 0;
-  const checkpointLabel = state.daemons[0]?.reward === 3 ? 'ROOT' : 'USER';
-  const exitLabel = state.access_cap === 2 ? 'USER' : 'ROOT';
-  const onPick = useCallback((index: number) => act('breach_pick', { index: index + 1 }), [act]);
-  const rows = useMemo(() => Array.from({ length: state.size }, (_, row) =>
-    Array.from({ length: state.size }, (_, column) => row * state.size + column)), [state.size]);
-  return (
-    <Box style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
-      <Shell>
-        <Header target={state.target} security={state.security} timeLeft={state.time_left}
-          subtitle={memory ? `эхо памяти · ${progress}/${total}` : `маршрутизация · шагов ${progress}/${total}`}
-          accessCap={state.access_cap} />
-        <Box role="status" mb={1} style={{ minHeight: '42px' }}>
-          {memory ? (
-            <>
-              <Box bold color={LIME}>{revealing
-                ? `Запомните ячейки и порядок · просмотр ещё ${state.reveal_left ?? 0} с`
-                : 'Повторите последовательность по памяти'}</Box>
-              <Box color={THEME.muted} fontSize="11px">Осталось ошибок: {state.mistakes_left ?? 3}. Ошибка: −3 с, +3% трассировки и повторный просмотр.</Box>
-            </>
-          ) : (
-            <>
-              <Box bold color={LIME}>Проложите путь от входа через {checkpointLabel} к выходу {exitLabel}</Box>
-              <Box color={THEME.muted} fontSize="11px">Ходите по соседним клеткам вверх, вниз, влево или вправо. Можно вернуться назад.</Box>
-            </>
-          )}
-        </Box>
-        <Box style={{ maxWidth: '100%', overflowX: 'auto' }}>
-          <table aria-label={memory ? 'Эхо памяти' : 'Маршрутизация пакета'}
-            style={{ borderCollapse: 'separate', borderSpacing: '3px', tableLayout: 'fixed', width: `${state.size * (CELL + 3) + 3}px`, margin: '12px auto' }}>
-            <tbody>
-              {rows.map((row, r) => (
-                <tr key={r}>
-                  {row.map((index) => (
-                    <ChallengeCell key={index} cell={state.cells[index]} index={index}
-                      memory={memory} revealing={revealing} checkpointLabel={checkpointLabel} exitLabel={exitLabel} onPick={onPick} />
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Box>
-        <Box mb={1} color={THEME.muted} fontSize="11px">
-          {state.daemons.map((goal) => (
-            <Box key={goal.name} color={goal.done ? THEME.good : THEME.muted}>
-              {goal.done ? '✔' : '○'} {goal.name}{goal.done ? ' · сохранится при завершении взлома' : ''}
-            </Box>
-          ))}
-        </Box>
-        <Button icon="stop" color="bad" content="Завершить" onClick={() => act('breach_abort')} />
-      </Shell>
-    </Box>
-  );
-};
-
-const ChallengeCell = memo((props: {
-  cell: MatrixState['cells'][number];
-  index: number;
-  memory: boolean;
-  revealing: boolean;
-  checkpointLabel: string;
-  exitLabel: string;
-  onPick: (index: number) => void;
-}) => {
-  const { cell, index, memory, revealing, checkpointLabel, exitLabel, onPick } = props;
-  const clickable = !!cell.active && !revealing && !cell.wall;
-  const shownOrder = memory && revealing ? cell.order : undefined;
-  const marker = memory ? shownOrder : cell.exit ? exitLabel : cell.checkpoint ? checkpointLabel : cell.entry ? 'ВХОД' : null;
-  const highlighted = !!shownOrder || cell.current;
-  const color = cell.wall ? THEME.muted : cell.done ? THEME.good : highlighted || clickable ? THEME.text : '#91a8bc';
-  const cellLabel = [
-    `${clickable ? 'Выбрать ячейку' : 'Ячейка'} ${index + 1}`,
-    memory ? `код ${cell.code ?? ''}` : cell.wall ? 'стена' : 'проход',
-    marker ? memory ? `шаг ${marker}` : marker : null,
-    cell.current ? 'текущая позиция' : cell.done ? 'пройдена' : null,
-  ].filter(Boolean).join(', ');
-  return (
-    <td role={clickable ? 'button' : undefined} tabIndex={clickable ? 0 : -1}
-      aria-label={cellLabel}
-      onClick={clickable ? () => onPick(index) : undefined}
-      onKeyDown={(event) => {
-        if (clickable && (event.key === 'Enter' || event.key === ' ')) {
-          event.preventDefault();
-          onPick(index);
-        }
-      }}
-      style={{ width: `${CELL}px`, height: `${CELL}px`, textAlign: 'center', position: 'relative',
-        fontFamily: 'monospace', fontSize: '15px', color, cursor: clickable ? 'pointer' : 'default',
-        background: cell.wall ? '#071019' : highlighted ? 'rgba(85, 203, 233, 0.30)' : cell.done ? 'rgba(91, 218, 177, 0.17)' : '#0c1a27',
-        border: `1px solid ${highlighted || clickable ? LIME : THEME.line}` }}>
-      {memory ? cell.done ? '✔' : cell.code : cell.wall ? '■' : cell.current ? '●' : cell.done ? '·' : ''}
-      {!!marker && <span style={{ position: 'absolute', top: '2px', right: '3px', fontSize: memory ? '12px' : '8px', color: LIME }}>{marker}</span>}
-    </td>
-  );
-});
-
-const Header = (props: { target: string; security: number; timeLeft: number; subtitle: string; accessCap?: number }) => (
-  <Box mb={1}>
+const Header = (props: { target: string; security: number; timeLeft: number; subtitle: string }) => (
   <Stack align="center" mb={1}>
     <Stack.Item grow>
       <Box color={LIME} bold style={{ fontFamily: 'monospace' }}>{props.target}</Box>
@@ -264,10 +159,6 @@ const Header = (props: { target: string; security: number; timeLeft: number; sub
       </Box>
     </Stack.Item>
   </Stack>
-  {props.accessCap === 2 && <Box color={THEME.warn} fontSize="11px">
-    Первый контур: USER. Для ROOT выполните отдельный взлом после получения USER.
-  </Box>}
-  </Box>
 );
 
 const GridCell = memo((props: {

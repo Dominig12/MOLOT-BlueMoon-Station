@@ -18,9 +18,6 @@
 	var/datum/netrun_network/target_network
 	var/target_name
 	var/security = 1
-	/// Captured before generation: critical machines require a separate second breach for ROOT.
-	var/initial_access_level = NETRUN_ACCESS_NONE
-	var/access_cap = NETRUN_ACCESS_ROOT
 	var/size = 5
 	var/list/matrix
 	var/list/used
@@ -33,36 +30,19 @@
 	var/list/daemons = list()
 	var/deadline = 0
 	var/finished = FALSE
-	/// Manual protocols: matrix, sequence, memory, or routing. Automatic uses its subtype.
+	/// Тип мини-игры: "matrix" (протокол взлома) или "sequence" (трассировка цепочки)
 	var/minigame = "matrix"
 	/// Для "sequence": порядок ячеек, которые надо нажать, и сколько уже пройдено
 	var/list/order = list()
 	var/progress = 0
 	/// Для "sequence": сколько нажатий даёт USER (чекпоинт); полный порядок даёт ROOT.
 	var/user_goal = 0
-	/// Memory answers are only published during this server-owned reveal window.
-	var/reveal_until = 0
-	var/mistakes = 0
-	var/max_mistakes = 3
-	/// Routing is a perfect maze; order retains its solution only on the server.
-	var/list/routing_open = list()
-	var/routing_entry = 1
-	var/routing_exit = 0
-	var/routing_checkpoint = 0
 
 /datum/netrun_breach/New(datum/netrun_console/console, target_kind, target_id, target_name, security)
 	src.console = console
 	src.target_kind = target_kind
 	src.target_id = target_id
 	src.target_name = target_name
-	if(target_kind == "node")
-		var/datum/component/netrun_node/node = SSnetrun.find_node(target_id)
-		if(node)
-			var/datum/netrun_path_tree/tree = console.make_path_tree()
-			initial_access_level = console.node_level(node, tree)
-			qdel(tree)
-			var/atom/target = node.parent
-			access_cap = target.netrun_breach_access_cap(initial_access_level)
 	src.security = clamp(security - console.daemon_bonus("icepick"), 1, 5)
 	size = 5 + (src.security >= 3) + (src.security >= 5)
 	buffer_size = 4 + round(src.security / 2) + console.intrusion.buffer_bonus + console.daemon_bonus("buffer")
@@ -74,27 +54,18 @@
 	minigame = pick_minigame()
 	generate()
 
-/// Device type and address select a stable protocol; cancelling never rerolls its kind.
+/// Выбор мини-игры: простая трассировка для слабых узлов, протокол взлома для защищённых.
+/// Объект цели может навязать свой вариант через netrun_breach_minigame().
 /datum/netrun_breach/proc/pick_minigame()
+	if(target_kind == "node")
+		var/datum/component/netrun_node/node = SSnetrun.find_node(target_id)
+		var/atom/target = node?.parent
+		var/forced = target?.netrun_breach_minigame()
+		if(forced)
+			return forced
 	if(target_kind == "firmware" || target_kind == "network")
 		return "matrix"
-	var/datum/component/netrun_node/node = SSnetrun.find_node(target_id)
-	var/atom/target = node?.parent
-	var/forced = target?.netrun_breach_minigame()
-	if(forced in list("matrix", "sequence", "memory", "routing"))
-		return forced
-	var/list/modes
-	switch(node?.node_type)
-		if(NETRUN_NODE_CAMERA, NETRUN_NODE_OPTIC, NETRUN_NODE_NEURAL, NETRUN_NODE_IMPLANT, NETRUN_NODE_PAI)
-			modes = security <= 2 ? list("sequence", "memory") : list("memory", "matrix")
-		if(NETRUN_NODE_APC, NETRUN_NODE_AIRLOCK, NETRUN_NODE_ATMOS, NETRUN_NODE_TURRET, NETRUN_NODE_CIRCUIT)
-			modes = security <= 2 ? list("sequence", "routing") : list("routing", "matrix")
-		else
-			modes = security <= 2 ? list("sequence", "memory", "routing") : list("memory", "routing", "matrix")
-	if(security >= 5)
-		modes = list("routing", "matrix")
-	var/variant = hex2num(copytext(md5("[target_id]"), 1, 5))
-	return modes[(variant % length(modes)) + 1]
+	return security <= 2 ? "sequence" : "matrix"
 
 /datum/netrun_breach/Destroy()
 	console = null
@@ -122,25 +93,9 @@
 	return ((index - 1) % size) + 1
 
 /datum/netrun_breach/proc/generate()
-	switch(minigame)
-		if("sequence")
-			generate_sequence()
-		if("memory")
-			generate_memory()
-		if("routing")
-			generate_routing()
-		else
-			generate_matrix()
-	cap_daemon_rewards()
-
-/datum/netrun_breach/proc/cap_daemon_rewards()
-	for(var/list/daemon as anything in daemons)
-		if(daemon["reward"] > access_cap)
-			daemon["reward"] = access_cap
-			if(access_cap == NETRUN_ACCESS_USER && daemon["name"] == "ROOT")
-				daemon["name"] = "ЗАКРЕПИТЬ USER"
-
-/datum/netrun_breach/proc/generate_matrix()
+	if(minigame == "sequence")
+		generate_sequence()
+		return
 	var/list/codes = NETRUN_BREACH_CODES
 	matrix = list()
 	used = list()
@@ -222,9 +177,6 @@
 		pool -= cell
 		order += cell
 	user_goal = min(user_goal, length(order))
-	generate_checkpoint_goals()
-
-/datum/netrun_breach/proc/generate_checkpoint_goals()
 	var/user_name = "ДОСТУП"
 	var/user_reward = NETRUN_ACCESS_USER
 	if(target_kind == "node" && console.daemon_bonus("skeleton"))
@@ -233,145 +185,6 @@
 	daemons += list(list("name" = user_name, "reward" = user_reward, "sequence" = list(), "done" = FALSE))
 	daemons += list(list("name" = "ROOT", "reward" = NETRUN_ACCESS_ROOT, "sequence" = list(), "done" = FALSE))
 	daemons += list(list("name" = "ЗАМЕСТИ СЛЕДЫ", "reward" = 0, "sequence" = list(), "done" = FALSE))
-
-/// A short spatial memory challenge: every unchosen tile remains possible during recall.
-/datum/netrun_breach/proc/generate_memory()
-	generate_sequence()
-	order.Cut(clamp(4 + security, 5, 8) + 1)
-	user_goal = length(order) - 2
-	mistakes = 0
-	reveal_until = min(deadline, world.time + (4 + (security >= 3) + (security >= 5)) SECONDS)
-
-/// Four-neighbor coordinates, reused by maze generation and authoritative move validation.
-/datum/netrun_breach/proc/grid_neighbors(index, distance = 1)
-	var/row = row_of(index)
-	var/col = col_of(index)
-	. = list()
-	if(row > distance)
-		. += cell(row - distance, col)
-	if(row + distance <= size)
-		. += cell(row + distance, col)
-	if(col > distance)
-		. += cell(row, col - distance)
-	if(col + distance <= size)
-		. += cell(row, col + distance)
-
-/// Randomized depth-first carving produces a connected maze with no shortcut cycles.
-/datum/netrun_breach/proc/generate_routing()
-	size = security >= 4 ? 7 : 5
-	matrix = list()
-	used = list()
-	daemons = list()
-	buffer = list()
-	order = list()
-	routing_open = list()
-	for(var/i in 1 to size * size)
-		matrix += pick(NETRUN_BREACH_CODES)
-		used += FALSE
-		routing_open += FALSE
-	routing_entry = cell(1, 1)
-	routing_exit = cell(size, size)
-	routing_open[routing_entry] = TRUE
-	var/list/stack = list(routing_entry)
-	while(length(stack))
-		var/current = stack[length(stack)]
-		var/list/options = list()
-		for(var/neighbor in grid_neighbors(current, 2))
-			if(!routing_open[neighbor])
-				options += neighbor
-		if(!length(options))
-			stack.Cut(length(stack))
-			continue
-		var/next = pick(options)
-		routing_open[(current + next) / 2] = TRUE
-		routing_open[next] = TRUE
-		stack += next
-	// Retain the unique solution to place a real checkpoint halfway to the exit.
-	var/list/queue = list(routing_entry)
-	var/list/parents = list()
-	parents.len = size * size
-	parents[routing_entry] = -1
-	for(var/i = 1, i <= length(queue), i++)
-		var/current = queue[i]
-		if(current == routing_exit)
-			break
-		for(var/neighbor in grid_neighbors(current))
-			if(routing_open[neighbor] && isnull(parents[neighbor]))
-				parents[neighbor] = current
-				queue += neighbor
-	var/step = routing_exit
-	while(step != routing_entry)
-		order.Insert(1, step)
-		step = parents[step]
-	order.Insert(1, routing_entry)
-	user_goal = clamp(round((length(order) + 1) / 2), 3, length(order) - 2)
-	routing_checkpoint = order[user_goal]
-	buffer += routing_entry
-	used[routing_entry] = TRUE
-	progress = 1
-	generate_checkpoint_goals()
-
-/// New interactive protocols validate live lifecycle state before accepting any input.
-/datum/netrun_breach/proc/can_choose_grid(index)
-	if(finished || !isnum(index) || index != round(index) || index < 1 || index > length(matrix))
-		return FALSE
-	if(time_left() <= 0 || !valid_target())
-		finish()
-		return FALSE
-	return TRUE
-
-/datum/netrun_breach/proc/choose_memory(index)
-	if(!can_choose_grid(index) || world.time < reveal_until || used[index])
-		return FALSE
-	if(index != order[progress + 1])
-		mistakes++
-		deadline -= 3 SECONDS
-		console.add_trace(3)
-		if(QDELETED(src) || finished)
-			return FALSE
-		if(mistakes >= max_mistakes || time_left() <= 0)
-			finish()
-			return FALSE
-		progress = 0
-		for(var/i in 1 to length(used))
-			used[i] = FALSE
-		reveal_until = min(deadline, world.time + 2 SECONDS)
-		return FALSE
-	used[index] = TRUE
-	progress++
-	if(progress >= user_goal)
-		daemons[1]["done"] = TRUE
-	if(progress >= length(order))
-		daemons[2]["done"] = TRUE
-		if(time_left() >= 10 SECONDS && !mistakes)
-			daemons[3]["done"] = TRUE
-		finish()
-	return TRUE
-
-/datum/netrun_breach/proc/routing_legal_move(index)
-	if(!routing_open[index] || !(index in grid_neighbors(buffer[length(buffer)])))
-		return FALSE
-	// Revisit only the preceding path tile: no loops can manufacture progress.
-	return !used[index] || (length(buffer) > 1 && index == buffer[length(buffer) - 1])
-
-/datum/netrun_breach/proc/choose_routing(index)
-	if(!can_choose_grid(index) || !routing_legal_move(index))
-		return FALSE
-	if(used[index])
-		used[buffer[length(buffer)]] = FALSE
-		buffer.Cut(length(buffer))
-	else
-		used[index] = TRUE
-		buffer += index
-	progress = length(buffer)
-	if(index == routing_checkpoint)
-		daemons[1]["done"] = TRUE
-	if(index == routing_exit && daemons[1]["done"])
-		daemons[2]["done"] = TRUE
-		if(time_left() >= 10 SECONDS)
-			daemons[3]["done"] = TRUE
-		finish()
-	return TRUE
 
 /datum/netrun_breach/proc/choose_sequence(index)
 	if(finished || index < 1 || index > length(matrix) || used[index])
@@ -392,10 +205,6 @@
 	return TRUE
 
 /datum/netrun_breach/proc/choose(index)
-	if(minigame == "memory")
-		return choose_memory(index)
-	if(minigame == "routing")
-		return choose_routing(index)
 	if(minigame == "sequence")
 		return choose_sequence(index)
 	if(finished || index < 1 || index > length(matrix) || used[index])
@@ -440,10 +249,6 @@
 /datum/netrun_breach/proc/ui_payload()
 	if(minigame == "sequence")
 		return sequence_payload()
-	if(minigame == "memory")
-		return memory_payload()
-	if(minigame == "routing")
-		return routing_payload()
 	var/list/cells = list()
 	for(var/i in 1 to length(matrix))
 		cells += list(list(
@@ -454,7 +259,6 @@
 		"minigame" = "matrix",
 		"target" = target_name,
 		"security" = security,
-		"access_cap" = access_cap,
 		"size" = size,
 		"cells" = cells,
 		"buffer" = buffer,
@@ -478,7 +282,6 @@
 		"minigame" = "sequence",
 		"target" = target_name,
 		"security" = security,
-		"access_cap" = access_cap,
 		"size" = size,
 		"cells" = cells,
 		"progress" = progress,
@@ -486,30 +289,6 @@
 		"daemons" = daemons,
 		"time_left" = round(time_left() / (1 SECONDS)),
 	)
-
-/datum/netrun_breach/proc/memory_payload()
-	var/revealing = world.time < reveal_until
-	var/list/cells = list()
-	for(var/i in 1 to length(matrix))
-		var/list/entry = list("code" = matrix[i], "done" = used[i], "active" = !revealing && !used[i])
-		if(revealing)
-			entry["order"] = order.Find(i)
-		cells += list(entry)
-	return list("minigame" = "memory", "target" = target_name, "security" = security, "access_cap" = access_cap,
-		"size" = size, "cells" = cells, "progress" = progress, "total" = length(order), "user_goal" = user_goal,
-		"phase" = revealing ? "reveal" : "recall", "reveal_left" = max(0, CEILING((reveal_until - world.time) / (1 SECONDS), 0.1)),
-		"mistakes" = mistakes, "mistakes_left" = max(0, max_mistakes - mistakes), "daemons" = daemons,
-		"time_left" = round(time_left() / (1 SECONDS)))
-
-/datum/netrun_breach/proc/routing_payload()
-	var/list/cells = list()
-	for(var/i in 1 to length(matrix))
-		cells += list(list("code" = routing_open[i] ? matrix[i] : null, "wall" = !routing_open[i],
-			"entry" = i == routing_entry, "exit" = i == routing_exit, "checkpoint" = i == routing_checkpoint,
-			"current" = i == buffer[length(buffer)], "done" = used[i], "active" = routing_legal_move(i)))
-	return list("minigame" = "routing", "target" = target_name, "security" = security, "access_cap" = access_cap,
-		"size" = size, "cells" = cells, "progress" = progress, "total" = length(order), "user_goal" = user_goal,
-		"daemons" = daemons, "time_left" = round(time_left() / (1 SECONDS)))
 
 /// Uses the ordinary breach lifecycle, trace, defenses and final validation.
 /datum/netrun_breach/automatic

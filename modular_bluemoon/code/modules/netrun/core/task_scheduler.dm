@@ -48,34 +48,6 @@
 /datum/netrun_task/continuation/proc/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
 	return TRUE
 
-/// UI discovery yields a real tick between slices, even when the worker has budget left.
-/datum/netrun_task/tick_continuation
-	parent_type = /datum/netrun_task/continuation
-
-/datum/netrun_task/tick_continuation/execute(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
-	var/datum/work = target()
-	if(QDELETED(work))
-		return FALSE
-	if(!advance(worker, limits || worker.get_execution_limits()) && !QDELETED(work))
-		worker.get_task_scheduler().defer(kind, work, priority)
-	return TRUE
-
-/datum/netrun_task/ui_routes
-	parent_type = /datum/netrun_task/tick_continuation
-	kind = "ui_routes"
-
-/datum/netrun_task/ui_routes/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
-	var/datum/netrun_topology/graph = target()
-	return graph.advance_ui_routes(limits.route_operations)
-
-/datum/netrun_task/map_projection
-	parent_type = /datum/netrun_task/tick_continuation
-	kind = "map_projection"
-
-/datum/netrun_task/map_projection/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
-	var/datum/netrun_map_view/view = target()
-	return view.advance_projection(limits.map_projection_operations)
-
 /// A queue never contains cancelled tasks or obsolete priority entries.
 /datum/netrun_task_queue
 	var/datum/netrun_task/first
@@ -239,8 +211,6 @@
 /// Tasks are merged by kind and target, with fair service for all three priorities.
 /datum/netrun_task_scheduler
 	var/list/by_key = list()
-	/// Timer IDs only; delayed continuations retain their targets through weakrefs.
-	var/list/deferred = list()
 	var/list/queues
 	var/datum/netrun_task_queue/interactive_queue
 	var/interactive_streak = 0
@@ -309,8 +279,6 @@
 		return FALSE
 	priority = IS_FINITE(priority) ? clamp(round(priority), NETRUN_TASK_CRITICAL, NETRUN_TASK_BACKGROUND) : NETRUN_TASK_NORMAL
 	var/key = "[kind]:[target ? REF(target) : "global"]"
-	if(deferred[key])
-		return FALSE
 	var/datum/netrun_task/existing = by_key[key]
 	if(existing && !QDELETED(existing))
 		merged++
@@ -338,13 +306,9 @@
 
 /datum/netrun_task_scheduler/proc/cancel(kind, datum/target)
 	var/key = "[kind]:[target ? REF(target) : "global"]"
-	var/was_deferred = !!deferred[key]
-	if(was_deferred)
-		deltimer(deferred[key])
-		deferred -= key
 	var/datum/netrun_task/task = by_key[key]
 	if(!task)
-		return was_deferred
+		return FALSE
 	counts[task.priority]--
 	by_key -= key
 	if(task.delivery)
@@ -352,24 +316,6 @@
 	cancelled++
 	qdel(task)
 	return TRUE
-
-/datum/netrun_task_scheduler/proc/defer(kind, datum/target, priority)
-	if(QDELETED(target))
-		return
-	var/key = "[kind]:[REF(target)]"
-	if(deferred[key])
-		return
-	// A signal raised inside advance() may have queued the same work already.
-	// Move that duplicate behind the tick barrier as well.
-	if(by_key[key])
-		cancel(kind, target)
-	deferred[key] = addtimer(CALLBACK(src, PROC_REF(resume_deferred), kind, key, WEAKREF(target), priority), world.tick_lag, TIMER_STOPPABLE)
-
-/datum/netrun_task_scheduler/proc/resume_deferred(kind, key, datum/weakref/target_ref, priority)
-	deferred -= key
-	var/datum/work = target_ref.resolve()
-	if(!QDELETED(work) && enqueue(kind, work, priority))
-		SSnetrun.wake_ready_delivery()
 
 /datum/netrun_task_scheduler/proc/take_priority(priority)
 	if(priority < NETRUN_TASK_CRITICAL || priority > NETRUN_TASK_BACKGROUND)
@@ -444,9 +390,6 @@
 	return jointext(parts, " | ")
 
 /datum/netrun_task_scheduler/Destroy()
-	for(var/key in deferred)
-		deltimer(deferred[key])
-	deferred.Cut()
 	for(var/key in by_key)
 		qdel(by_key[key])
 	by_key.Cut()

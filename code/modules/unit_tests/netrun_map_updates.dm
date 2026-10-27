@@ -12,25 +12,25 @@
 	var/datum/component/netrun_node/target_node = target.GetComponent(/datum/component/netrun_node)
 	SSnetrun.ensure_topology()
 	source.console.workspace_view = "map"
-	var/list/payload = netrun_settled_ui_data(source.console)
+	var/list/payload = source.console.ui_data(null)
 	TEST_ASSERT(netrun_map_has_node(payload, target_node.address), "The complete permitted graph must include endpoints beyond four edges")
 	var/list/map = payload["map"]
 	var/structural = map["structure_revision"]
 	var/state = map["state_revision"]
-	payload = netrun_settled_ui_data(source.console)
+	payload = source.console.ui_data(null)
 	map = payload["map"]
 	TEST_ASSERT_EQUAL(map["structure_revision"], structural, "A repeated poll must reuse the structural generation")
 	TEST_ASSERT_EQUAL(map["state_revision"], state, "A repeated unchanged poll must reuse the state generation")
 	target.set_machine_stat(BROKEN)
 	target_node.reconcile_state()
-	payload = netrun_settled_ui_data(source.console)
+	payload = source.console.ui_data(null)
 	map = payload["map"]
 	TEST_ASSERT(netrun_map_has_node(payload, target_node.address), "An offline leaf remains a discoverable endpoint")
 	TEST_ASSERT_EQUAL(map["structure_revision"], structural, "An offline leaf must not trigger a new layout generation")
 	TEST_ASSERT(map["state_revision"] > state, "Native availability changes must publish a new status generation")
 	var/old_address = target_node.address
 	qdel(target)
-	payload = netrun_settled_ui_data(source.console)
+	payload = source.console.ui_data(null)
 	map = payload["map"]
 	TEST_ASSERT(!netrun_map_has_node(payload, old_address), "Deleting a node must remove it on the next update without reopening UI")
 	TEST_ASSERT(map["structure_revision"] > structural, "Removing a visible node must advance the projection generation")
@@ -70,7 +70,7 @@
 	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
 	console.map_view = view
 	console.workspace_view = "map"
-	netrun_settled_ui_data(console)
+	console.ui_data(null)
 	var/builds = view.rebuilds
 	var/entries = view.serialized_nodes
 	var/paint = view.static_revision
@@ -81,7 +81,7 @@
 	var/started = TICK_USAGE
 	for(var/i in 1 to 20)
 		carrier.forceMove(locate(origin.x + i % 2, origin.y, origin.z))
-		netrun_settled_ui_data(console)
+		console.ui_data(null)
 	world.log << "NETRUN_LOAD 100 endpoints, 20 carrier moves: [round(TICK_DELTA_TO_MS(TICK_USAGE - started), 0.01)]ms; map rebuilds [view.rebuilds - builds], projected [view.serialized_nodes - entries]."
 	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Twenty same-area carrier moves must not rebuild the full permitted map")
 	TEST_ASSERT(view.serialized_nodes <= entries + 20, "Movement must project only the moving endpoint, independent of the other hundred nodes")
@@ -137,7 +137,7 @@
 	var/warm_ms = 0
 	for(var/datum/netrun_console/console as anything in consoles)
 		var/started = TICK_USAGE
-		netrun_settled_ui_data(console)
+		console.ui_data(null)
 		warm_ms += max(0, TICK_DELTA_TO_MS(TICK_USAGE - started))
 		var/datum/netrun_map_view/netrun_performance_test/view = console.map_view
 		builds[console] = view.rebuilds
@@ -145,7 +145,7 @@
 		address_entries[console] = view.projected_by_address.Copy()
 		CHECK_TICK
 	for(var/datum/netrun_console/console as anything in consoles)
-		netrun_settled_ui_data(console)
+		console.ui_data(null)
 		var/datum/netrun_map_view/netrun_performance_test/view = console.map_view
 		log_world("NETRUN LOAD movement warmup: viewer=[consoles.Find(console)] initial_projected=[entries[console]] quiet_projected=[view.serialized_nodes - entries[console]] rebuilds=[view.rebuilds - builds[console]] dirty=[length(view.dirty_nodes)]")
 		TEST_ASSERT_EQUAL(view.serialized_nodes, entries[console], "A settled stationary fixture must have a quiet projection before measuring movement")
@@ -164,7 +164,7 @@
 		peak_move_ms = max(peak_move_ms, move_cost_ms)
 		for(var/datum/netrun_console/console as anything in consoles)
 			var/started = TICK_USAGE
-			netrun_settled_ui_data(console)
+			console.ui_data(null)
 			var/cost_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - started))
 			elapsed_ms += cost_ms
 			peak_poll_ms = max(peak_poll_ms, cost_ms)
@@ -225,18 +225,18 @@
 	console.map_view = view
 	console.workspace_view = "map"
 	SSnetrun.ensure_topology()
-	var/list/payload = netrun_settled_ui_data(console)
+	var/list/payload = console.ui_data(null)
 	var/list/map = payload["map"]
 	var/paint = map["static_revision"]
 	var/generation = map["state_revision"]
 	var/builds = view.rebuilds
 	var/entries = view.serialized_nodes
 	console.process_tick(1)
-	netrun_settled_ui_data(console)
+	console.ui_data(null)
 	TEST_ASSERT_EQUAL(view.rebuilds, builds, "An idle console tick must reuse its permitted map instead of rebuilding every node")
 	TEST_ASSERT_EQUAL(view.serialized_nodes, entries, "A quiet UI request must serialize zero node entries")
 	node.touch()
-	payload = netrun_settled_ui_data(console)
+	payload = console.ui_data(null)
 	map = payload["map"]
 	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Activity must update its indexed entry without rebuilding the full projection")
 	TEST_ASSERT_EQUAL(view.serialized_nodes, entries + 1, "One activity invalidation must serialize exactly one indexed node")
@@ -245,7 +245,7 @@
 	entries = view.serialized_nodes
 	target.set_machine_stat(BROKEN)
 	node.reconcile_state()
-	netrun_settled_ui_data(console)
+	console.ui_data(null)
 	TEST_ASSERT_EQUAL(view.rebuilds, builds, "An unavailable leaf must not rebuild the reachable network projection")
 	TEST_ASSERT_EQUAL(view.serialized_nodes, entries + 1, "An unavailable leaf must serialize just itself and update its incident edge")
 	console.workspace_view = "terminal"
@@ -254,7 +254,7 @@
 	node.touch()
 	TEST_ASSERT_EQUAL(length(view.dirty_nodes), 0, "Hidden maps must not collect per-node update queues")
 	console.workspace_view = "map"
-	netrun_settled_ui_data(console)
+	console.ui_data(null)
 	TEST_ASSERT(view.subscribed && view.rebuilds > builds, "Returning to a suspended map must subscribe and reconcile changes once")
 
 /// A carried endpoint remains directly attached to its APC when crossing other machines.
@@ -463,7 +463,7 @@
 	console.map_view = view
 	console.workspace_view = "map"
 	SSnetrun.ensure_topology()
-	var/list/map = netrun_settled_ui_data(console)["map"]
+	var/list/map = console.ui_data(null)["map"]
 	var/builds = view.rebuilds
 	var/datum/component/netrun_node/node = target.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_node/second_node = second.GetComponent(/datum/component/netrun_node)
@@ -471,6 +471,6 @@
 	target.forceMove(destination)
 	node.join_network()
 	TEST_ASSERT_EQUAL(node.bound_apc, second_node, "The leaf must change its APC")
-	map = netrun_settled_ui_data(console)["map"]
+	map = console.ui_data(null)["map"]
 	TEST_ASSERT_EQUAL(view.rebuilds, builds, "An APC-to-APC move within one LAN must avoid rebuilding the entire viewer map")
 	TEST_ASSERT(netrun_map_has_node(list("map" = map), node.address), "The moved leaf must remain visible")
