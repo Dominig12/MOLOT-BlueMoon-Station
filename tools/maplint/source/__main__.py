@@ -1,5 +1,4 @@
 import argparse
-import glob
 from collections import Counter
 import pathlib
 import traceback
@@ -7,16 +6,6 @@ import yaml
 
 from . import baseline, dmm, lint
 from .error import MaplintError
-
-# The hermetic test build generates this derivative of CentCom.dmm locally.
-# Linting it by default would duplicate findings and make the baseline depend on
-# whether a test build happened to run before maplint.
-GENERATED_MAPS = {"_maps/map_files/generic/CentCom_hermetic.dmm"}
-
-def discover_maps(explicit_maps):
-    if explicit_maps:
-        return [baseline.normalize_map_path(filename) for filename in explicit_maps]
-    return [filename for filename in sorted(baseline.normalize_map_path(path) for path in glob.glob("_maps/**/*.dmm", recursive = True)) if filename not in GENERATED_MAPS]
 
 def green(text):
     return "\033[32m" + str(text) + "\033[0m"
@@ -102,7 +91,7 @@ def main(args):
     previous = baseline.load(baseline_path) if baseline_path is not None else {}
     known = {} if args.update_baseline else previous
 
-    map_filenames = discover_maps(args.maps)
+    map_filenames = [baseline.normalize_map_path(map_filename) for map_filename in (args.maps or baseline.list_maps())]
     found: Counter = Counter()
 
     for map_filename in map_filenames:

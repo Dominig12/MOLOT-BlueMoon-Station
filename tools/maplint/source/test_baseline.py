@@ -1,13 +1,14 @@
 import copy
 import io
 import pathlib
+import shutil
+import subprocess
 import tempfile
 import unittest
 from collections import Counter
-from unittest.mock import patch
+from unittest import mock
 
 from . import baseline, dmm, lint
-from .__main__ import discover_maps
 from .error import MaplintError
 
 HEADER = "//MAP CONVERTED BY dmm2tgm.py THIS HEADER COMMENT PREVENTS RECONVERSION, DO NOT REMOVE\n"
@@ -38,13 +39,6 @@ def lint_map(text: str, map_name = "_maps/test.dmm") -> list[MaplintError]:
 
 BOTTLE = "/obj/item/reagent_containers/glass/bottle{\n\treagents = /datum/reagent/water\n\t},\n"
 FLOOR = "/turf/open/floor/plating,\n/area/space"
-
-class TestDiscovery(unittest.TestCase):
-    @patch("tools.maplint.source.__main__.glob.glob")
-    def test_generated_map_is_only_linted_when_explicit(self, glob_maps):
-        glob_maps.return_value = ["_maps/map_files/generic/CentCom_hermetic.dmm", "_maps/map_files/generic/CentCom.dmm"]
-        self.assertEqual(discover_maps([]), ["_maps/map_files/generic/CentCom.dmm"])
-        self.assertEqual(discover_maps(["_maps/map_files/generic/CentCom_hermetic.dmm"]), ["_maps/map_files/generic/CentCom_hermetic.dmm"])
 
 def error(map_file = "_maps/a.dmm", lint_name = "multiple_tables", typepath = "/obj/structure/table", instances = 1, pop_id = "a") -> MaplintError:
     result = MaplintError("test", map_file)
@@ -135,6 +129,33 @@ class TestMerge(unittest.TestCase):
             self.assertNotIn(b"\r\n", path.read_bytes())
 
         self.assertEqual(baseline.load(pathlib.Path("does/not/exist.json")), {})
+
+class TestMapList(unittest.TestCase):
+    def test_generated_maps_are_skipped(self):
+        if shutil.which("git") is None:
+            self.skipTest("git is not installed")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check = True)
+            (root / ".gitignore").write_text("/_maps/generic/CentCom_hermetic.dmm\n", encoding = "utf-8")
+            maps = root / "_maps" / "generic"
+            maps.mkdir(parents = True)
+            for name in ("CentCom.dmm", "CentCom_hermetic.dmm", "new.dmm", "deleted.dmm"):
+                (maps / name).write_text(HEADER, encoding = "utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "_maps/generic/CentCom.dmm", "_maps/generic/deleted.dmm"], check = True)
+            (maps / "deleted.dmm").unlink()
+
+            self.assertEqual(baseline.list_maps(root), ["_maps/generic/CentCom.dmm", "_maps/generic/new.dmm"])
+
+    def test_without_git_generated_maps_are_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            maps = root / "_maps" / "generic"
+            maps.mkdir(parents = True)
+            for name in ("CentCom.dmm", "CentCom_hermetic.dmm", "new.dmm"):
+                (maps / name).write_text(HEADER, encoding = "utf-8")
+            with mock.patch.object(baseline.subprocess, "run", side_effect = FileNotFoundError("git")):
+                self.assertEqual(baseline.list_maps(root), ["_maps/generic/CentCom.dmm", "_maps/generic/new.dmm"])
 
 class TestMapCounts(unittest.TestCase):
     def count(self, text):
