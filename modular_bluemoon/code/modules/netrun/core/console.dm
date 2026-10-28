@@ -143,10 +143,10 @@
 		last_netrun_tick = world.time
 	SSnetrun.active_consoles[src] = TRUE
 
-/datum/netrun_console/proc/note_ui_activity()
+/datum/netrun_console/proc/note_ui_activity(defer_context_refresh = FALSE)
 	var/new_observation = !ui_observing
 	last_ui_at = world.time
-	observe_ui_state()
+	observe_ui_state(defer_context_refresh)
 	activate()
 	if(new_observation)
 		SSnetrun.collect_console_node_interest(src)
@@ -203,6 +203,9 @@
 			. |= source.network
 
 /// Permission checks need a boolean, not a disposable home_networks() list.
+/datum/netrun_console/proc/is_home_network(datum/netrun_network/network, datum/netrun_path_tree/tree)
+	return connection.is_home_network(network, tree)
+
 /datum/netrun_connection/proc/is_home_network(datum/netrun_network/network, datum/netrun_path_tree/tree)
 	if(jack?.network == network && owner.jack_valid())
 		return TRUE
@@ -318,7 +321,7 @@
 		. = NETRUN_ACCESS_NONE
 	else
 		. = max(network_access[network.id] || 0, owner.legit_network_level(network, !ui_read))
-		if(owner.connection.is_home_network(network, tree))
+		if(owner.is_home_network(network, tree))
 			. = max(., NETRUN_ACCESS_GUEST)
 	if(ui_read && owner.network_level_cache)
 		owner.network_level_cache[network.id] = .
@@ -389,11 +392,12 @@
 	var/net_level = owner.network_level(node.network, tree)
 	var/atom/target = node.parent
 	var/owner_level = target.netrun_owner_access(owner)
+	var/acquired_level = node_access[node.address] || 0
 	var/local_endpoint = node == (tree ? tree.source : owner.route_source())
-	if(net_level < NETRUN_ACCESS_GUEST && !local_endpoint && (!owner_level || !owner.can_route(node, tree)))
+	if(net_level < NETRUN_ACCESS_GUEST && !local_endpoint && (!(owner_level || acquired_level) || !owner.can_route(node, tree)))
 		. = NETRUN_ACCESS_NONE
 	else
-		. = max(NETRUN_ACCESS_GUEST, owner_level, net_level, node_access[node.address] || 0, owner.legit_node_level(node, tree))
+		. = max(NETRUN_ACCESS_GUEST, owner_level, net_level, acquired_level, owner.legit_node_level(node, tree))
 		if(node == owner.connection.jack)
 			. = max(., NETRUN_ACCESS_GUEST)
 	if(owns_tree)

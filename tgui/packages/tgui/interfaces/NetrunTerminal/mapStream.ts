@@ -121,7 +121,11 @@ export class NetrunMapStream {
         // Route, selection and relay readiness may change without graph mutations.
         return this.metadata(packet, this.snapshot.nodes, this.snapshot.edges);
       }
-      if (packet.base_revision !== this.revision) { return this.resync(packet.epoch, packet.state_revision); }
+      // The server composes final upserts/removals over this entire interval.
+      // A delayed full-snapshot receipt may rewind its cursor while this client
+      // already has an intermediate revision. Applying that overlap is idempotent;
+      // only a baseline ahead of ours means an update is actually missing.
+      if (packet.base_revision > this.revision) { return this.resync(packet.epoch, packet.state_revision); }
       const nodes = patchEntries(this.snapshot.nodes, this.nodes, this.nodeIndexes,
         packet.nodes || [], packet.removed_nodes || [], (node) => node.address);
       const removedEdges = packet.removed_edges || [];

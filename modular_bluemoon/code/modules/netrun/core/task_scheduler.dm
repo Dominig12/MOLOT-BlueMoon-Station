@@ -212,6 +212,10 @@
 
 /// Tasks are merged by kind and target, with fair service for all three priorities.
 /datum/netrun_task_scheduler
+	/// Only real workers own admission wakeups; standalone fixtures remain isolated.
+	var/datum/controller/subsystem/netrun/worker
+	var/datum/netrun_execution_limits/configured_limits
+	var/configured_revision = -1
 	var/list/by_key = list()
 	var/list/queues
 	var/datum/netrun_task_queue/interactive_queue
@@ -243,8 +247,9 @@
 	var/task_overruns = 0
 	var/peak_pass_ms = 0
 
-/datum/netrun_task_scheduler/New(datum/netrun_execution_limits/limits)
+/datum/netrun_task_scheduler/New(datum/netrun_execution_limits/limits, datum/controller/subsystem/netrun/worker)
 	. = ..()
+	src.worker = worker
 	queues = list(new /datum/netrun_task_queue, new /datum/netrun_task_queue, new /datum/netrun_task_queue)
 	interactive_queue = new
 	if(limits)
@@ -252,6 +257,10 @@
 
 /// A worker supplies normalized tuning; standalone scheduler fixtures retain the same defaults.
 /datum/netrun_task_scheduler/proc/configure(datum/netrun_execution_limits/limits)
+	if(configured_limits == limits && configured_revision == limits.configuration_revision)
+		return
+	configured_limits = limits
+	configured_revision = limits.configuration_revision
 	priority_rotation = limits.priority_rotation
 	late_after = limits.late_after
 	cost_smoothing = limits.cost_smoothing
@@ -293,6 +302,8 @@
 			peak_queued_by_priority[existing.priority] = max(peak_queued_by_priority[existing.priority], counts[existing.priority])
 			append_task(existing)
 			promoted++
+			if(interactive)
+				worker?.wake_ready_delivery()
 		return FALSE
 	var/path = task_type(kind)
 	var/datum/netrun_task/task = new path(kind, key, priority, target)
@@ -304,6 +315,10 @@
 	peak_queued_by_priority[priority] = max(peak_queued_by_priority[priority], counts[priority])
 	peak_pending = max(peak_pending, length(by_key))
 	append_task(task)
+	// A readiness event must not wait for the slow maintenance cadence, including
+	// discovery/prebuild continuations without a delivery timer of their own.
+	if(worker && length(by_key) == 1)
+		worker.wake_ready_delivery()
 	return TRUE
 
 /datum/netrun_task_scheduler/proc/cancel(kind, datum/target)
@@ -392,6 +407,8 @@
 	return jointext(parts, " | ")
 
 /datum/netrun_task_scheduler/Destroy()
+	worker = null
+	configured_limits = null
 	for(var/key in by_key)
 		qdel(by_key[key])
 	by_key.Cut()

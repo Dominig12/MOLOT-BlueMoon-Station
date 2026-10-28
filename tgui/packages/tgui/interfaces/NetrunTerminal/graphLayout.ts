@@ -1,9 +1,9 @@
 import type { GraphPoint, LayoutNode } from './mapLayout';
 import { NetEdge } from './types';
 
-export const GRAPH_TILE = 96;
+export const GRAPH_TILE = 144;
 /** Local marker slots within/around a physical station tile. */
-export const GRAPH_GAP = 48;
+export const GRAPH_GAP = 72;
 export const GRAPH_GLYPH_RADIUS = 24;
 type CachedPoint = GraphPoint & { anchorX: number; anchorY: number; physical: string };
 export type GraphLayoutCache = {

@@ -75,7 +75,7 @@ test('a dropped delta hides the map, requests resync, and acknowledges the recov
   await waitFor(() => expect((global as any).Byond.topic.mock.calls
     .some((call) => call[0]?.type === 'act/map_sync_ack')).toBe(true));
 
-  update({ map: { epoch: 'session:one', full: 0, base_revision: 9, state_revision: 11,
+  update({ map: { epoch: 'session:one', full: 0, base_revision: 11, state_revision: 12,
     nodes: [], edges: [], focus: peer.address } });
   expect(panel.getByText(/Синхронизация карты после пропущенного обновления/)).toBeTruthy();
   expect(panel.queryByLabelText('Карта сети')).toBeNull();
@@ -86,7 +86,7 @@ test('a dropped delta hides the map, requests resync, and acknowledges the recov
   // restore the previously displayed nodes.
   update({ map: full });
   expect(panel.queryByLabelText('Карта сети')).toBeNull();
-  update({ map: { ...full, state_revision: 11, focus: peer.address } });
+  update({ map: { ...full, state_revision: 12, focus: peer.address } });
   expect(panel.getByLabelText('Карта сети')).toBeTruthy();
   await waitFor(() => expect((global as any).Byond.topic.mock.calls.filter(
     (call) => call[0]?.type === 'act/map_sync_ack').length).toBeGreaterThanOrEqual(2));

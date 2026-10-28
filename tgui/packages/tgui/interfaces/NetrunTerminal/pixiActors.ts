@@ -155,7 +155,7 @@ export class PixiActors {
       if (retained.signature !== signature) {
         retained.signature = signature;
         retained.graphic.clear().moveTo(from.px, from.py).lineTo(to.px, to.py)
-          .stroke({ color: edgeColor(edge.kind, edge.online !== false), width: 1.6, alpha: edge.online === false ? .4 : .85 });
+          .stroke({ color: edgeColor(edge.kind, edge.online !== false), width: 1, alpha: edge.online === false ? .12 : .3 });
       }
     }
     for (const [id, link] of this.links) { if (!linkKeys.has(id)) { destroyDisplay(link.graphic); this.links.delete(id); } }
@@ -237,7 +237,7 @@ export class PixiActors {
     this.selectedSignature = signature; this.selectedLinks.clear();
     if (this.detailed) {
       for (const { from, to } of edges) { segmentPath(this.selectedLinks, from, to); }
-      this.selectedLinks.stroke({ color: 0x9ad0e0, width: edges.length > 24 ? 1 : 2.5, alpha: edges.length > 24 ? .22 : .8 });
+      this.selectedLinks.stroke({ color: 0x9ad0e0, width: edges.length > 24 ? .8 : 2, alpha: edges.length > 24 ? .16 : .7 });
     }
     for (const { from, to } of anchors) { segmentPath(this.selectedLinks, from, to); }
     if (anchors.length) { this.selectedLinks.stroke({ color: 0x75a3b4, width: 1.2, alpha: .5 }); }
@@ -331,7 +331,7 @@ export class PixiActors {
         if (retained.signature === signature) { continue; }
         retained.signature = signature; retained.bounds = segmentBox(from, to);
         retained.graphic.clear().moveTo(from.px, from.py).lineTo(to.px, to.py)
-          .stroke({ color: edgeColor(edge.kind, edge.online !== false), width: 1.6, alpha: edge.online === false ? .4 : .85 });
+          .stroke({ color: edgeColor(edge.kind, edge.online !== false), width: 1, alpha: edge.online === false ? .12 : .3 });
       }
     }
     this.effects.clear();

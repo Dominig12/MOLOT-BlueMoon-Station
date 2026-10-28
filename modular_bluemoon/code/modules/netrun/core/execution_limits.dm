@@ -34,12 +34,25 @@
 	if(!execution_limits)
 		execution_limits = new
 		refresh = TRUE
-	if(refresh)
+	if(refresh && !execution_limits.matches(src))
 		execution_limits.configure(src)
 	return execution_limits
 
 /// A validated snapshot separates tuning from task behavior and never mutates public settings.
 /datum/netrun_execution_limits
+	/// Stable raw tuning avoids rebuilding normalized lists on every packet drain.
+	var/configuration_revision = 0
+	var/list/source_values
+	var/source_rotation
+	var/list/source_rotation_values
+	var/static/list/source_fields = list(
+		"task_adaptive_budget", "task_budget_ms", "task_min_budget_ms", "task_pressure_tick_usage",
+		"task_min_per_pass", "task_max_per_pass", "task_interactive_burst", "task_interactive_priority",
+		"ui_interactive_flush", "task_cost_floor_ms", "task_initial_cost_ms", "task_cost_smoothing",
+		"task_population_interval", "apc_prebuild_operations", "route_refresh_interval", "route_expiry_interval",
+		"ui_refresh_interval", "ui_activity_lease", "node_activity_duration", "node_poll_interval",
+		"node_idle_poll_interval", "node_update_interval", "task_critical_late_after",
+		"task_normal_late_after", "task_background_late_after")
 	var/adaptive_budget = TRUE
 	var/budget_ms = NETRUN_DEFAULT_TASK_BUDGET_MS
 	var/min_budget_ms = NETRUN_DEFAULT_TASK_MIN_BUDGET_MS
@@ -72,6 +85,24 @@
 
 /datum/netrun_execution_limits/proc/interval(value, fallback)
 	return bounded(value, fallback, NETRUN_EXECUTION_MIN_INTERVAL, NETRUN_EXECUTION_MAX_INTERVAL)
+
+/// Compare scalars without allocating a fresh signature. The rotation also checks
+/// its saved values, so admin edits in place apply on the very next worker pass.
+/datum/netrun_execution_limits/proc/matches(datum/controller/subsystem/netrun/worker)
+	if(!source_values)
+		return FALSE
+	for(var/field in source_fields)
+		if(source_values[field] != worker.vars[field])
+			return FALSE
+	var/list/requested = worker.task_priority_rotation
+	if(!islist(requested))
+		return requested == source_rotation
+	if(!source_rotation_values || length(requested) != length(source_rotation_values))
+		return FALSE
+	for(var/index in 1 to length(requested))
+		if(requested[index] != source_rotation_values[index])
+			return FALSE
+	return TRUE
 
 /datum/netrun_execution_limits/proc/configure(datum/controller/subsystem/netrun/worker)
 	adaptive_budget = !!worker.task_adaptive_budget
@@ -111,6 +142,12 @@
 	for(var/priority in NETRUN_TASK_CRITICAL to NETRUN_TASK_BACKGROUND)
 		if(!(priority in priority_rotation))
 			priority_rotation += priority
+	source_values = list()
+	for(var/field in source_fields)
+		source_values[field] = worker.vars[field]
+	source_rotation = worker.task_priority_rotation
+	source_rotation_values = islist(source_rotation) ? worker.task_priority_rotation.Copy() : null
+	configuration_revision++
 
 /datum/netrun_execution_limits/proc/budget_for(tick_usage)
 	var/pressure = adaptive_budget ? clamp(tick_usage / pressure_tick_usage, 0, 1) : 0

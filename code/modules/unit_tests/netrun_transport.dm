@@ -697,6 +697,45 @@
 			TEST_ASSERT_EQUAL(entry["headers"], headers, "Unchanged telemetry must reuse its immutable capture instead of serializing it again at delivery")
 	TEST_ASSERT(accepted, "The real snapshot must complete its normal delivery")
 
+/datum/netrun_machine_message/transport_fixture/copy_probe/copy()
+	if(outcomes)
+		outcomes["copies"] = (outcomes["copies"] || 0) + 1
+	return ..()
+
+/// A fanout owns independent deliveries, but its last delivery can consume the original.
+/datum/unit_test/netrun_transport_resolution_moves_last_payload/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/netrun_server/transport_fixture/extra = scene.machine(/obj/machinery/netrun_server/transport_fixture, scene.target_spot)
+	var/datum/netrun_machine_service/extra_target = extra.get_netrun_machine_service("transport.fixture")
+	var/list/outcomes = list()
+	var/datum/netrun_machine_message/message = new /datum/netrun_machine_message/transport_fixture/copy_probe(list("nested" = list("value" = "owned")), outcomes)
+	var/datum/netrun_machine_resolution/query = new(scene.source, "transport.fixture", null)
+	TEST_ASSERT(query.enqueue(message), "The real resolution must own its admitted original")
+	query.completed = TRUE
+	query.resolved_targets = list(scene.target, extra_target)
+	query.deliver()
+	TEST_ASSERT_EQUAL(outcomes["copies"], 1, "Two recipients need one independent copy and the transferred original")
+	var/datum/netrun_machine_packet/data/first
+	var/datum/netrun_machine_packet/data/last
+	for(var/datum/netrun_machine_packet/data/packet as anything in SSnetrun.get_machine_transport().packets)
+		if(packet.source != scene.source)
+			continue
+		if(packet.recipient == scene.target)
+			first = packet
+		else if(packet.recipient == extra_target)
+			last = packet
+	TEST_ASSERT(first && last, "Both fanout branches must own real admitted packets")
+	TEST_ASSERT_EQUAL(last.message, message, "The last recipient must own the admitted original")
+	var/list/first_nested = first.message.payload["nested"]
+	var/list/last_nested = last.message.payload["nested"]
+	first_nested["value"] = "changed"
+	TEST_ASSERT_EQUAL(last_nested["value"], "owned", "Moving the original must not alias earlier recipients' nested payloads")
+	TEST_ASSERT(netrun_wait_delivery(outcomes), "Both separately owned branches must complete normal delivery")
+	var/deadline = world.time + 5 SECONDS
+	while((outcomes["delivered"] || 0) < 2 && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(outcomes["delivered"], 2, "Both branch owners must settle exactly once")
+
 /datum/unit_test/netrun_transport_replaceable_burst/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
 	var/list/outcomes = list()
@@ -815,6 +854,47 @@
 	while(!outcomes["delivered"] && !outcomes["failed"] && world.time < deadline)
 		sleep(world.tick_lag)
 	return outcomes["delivered"]
+
+/// Native speech admits subspace work asynchronously. Follow this radio's exact
+/// transactions through discovery and every relay branch, including failures,
+/// before checking receipt or isolation; unrelated station automation may continue.
+/datum/unit_test/proc/netrun_wait_radio(obj/item/radio/radio, timeout = 5 SECONDS)
+	var/datum/netrun_machine_service/source = radio.get_netrun_machine_service("telecomms.origin")
+	var/list/transmissions = list()
+	for(var/key in source.resolutions)
+		var/datum/netrun_machine_resolution/query = source.resolutions[key]
+		for(var/datum/netrun_machine_message/telecomms/message in query.queued)
+			if(message.transmission)
+				transmissions |= message.transmission
+	for(var/datum/netrun_machine_packet/data/packet as anything in SSnetrun.get_machine_transport().packets)
+		var/datum/netrun_machine_message/telecomms/message = packet.message
+		if(istype(message) && message.signal?.source == radio && message.transmission)
+			transmissions |= message.transmission
+	var/list/budget = new_wait_budget(timeout, "[radio.type] telecomms transactions settled")
+	for(var/datum/netrun_telecomms_transmission/transmission as anything in transmissions)
+		while(!QDELETED(transmission) && !transmission.finished)
+			if(!wait_budget_tick(budget))
+				return FALSE
+	return TRUE
+
+/// Transaction completion stops observers before RF fallback releases the root
+/// signal. A late/deleted dependency still clears fields through an empty index.
+/datum/unit_test/netrun_transport_telecomms_observer_teardown/Run()
+	var/obj/item/radio/radio = allocate(/obj/item/radio)
+	var/mob/living/user = allocate(/mob/living)
+	var/atom/movable/virtualspeaker/speaker = allocate(/atom/movable/virtualspeaker, null, user, radio)
+	var/datum/signal/subspace/vocal/signal = new(radio, FREQ_COMMON, speaker, null, "observer teardown", list())
+	allocated += signal
+	signal.observe_netrun_dependencies()
+	TEST_ASSERT(signal.netrun_dependencies[radio] && signal.netrun_dependencies[speaker], "A live telecomms signal must observe its native dependencies")
+	signal.stop_netrun_dependency_observation()
+	signal.stop_netrun_dependency_observation()
+	TEST_ASSERT_NULL(signal.netrun_dependencies, "Repeated completion must release the complete observer index")
+	signal.on_netrun_dependency_deleted(radio)
+	signal.on_netrun_dependency_deleted(speaker)
+	TEST_ASSERT_NULL(signal.source, "A late source callback must clear the retained radio reference")
+	TEST_ASSERT_NULL(signal.virt, "A late speaker callback must clear the retained virtual speaker")
+	TEST_ASSERT_NULL(signal.netrun_dependencies, "Late callbacks must leave an empty observer index")
 
 /// APC discovery must really deliver a packet after asynchronous admission.
 /datum/unit_test/netrun_transport_cold_delivery/Run()

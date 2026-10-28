@@ -845,6 +845,36 @@
 	TEST_ASSERT(view.ack_full(ui, repeated["epoch"], 10), "The matching UI can confirm the delivered baseline")
 	TEST_ASSERT(!view.encode_wire(full, session)["full"], "After confirmation the lightweight delta stream resumes")
 
+/// Live changes cannot make every valid recovery receipt perpetually out of date.
+/datum/unit_test/netrun_map_resync_live_ack/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
+	var/datum/netrun_map_view/view = console.map_view
+	var/mob/living/user = allocate(/mob/living)
+	var/datum/tgui/ui = allocate(/datum/tgui, user, console, "NetrunTerminal")
+	var/list/session = view.wire_session(user, console, ui)
+	view.state_revision = 10
+	var/list/full = list("state_revision" = 10, "structure_revision" = 1, "static_revision" = 1,
+		"revision" = 1, "nodes" = list(), "edges" = list(), "gateways" = list(),
+		"sectors" = list(), "apc_zones" = list())
+	var/list/original = view.encode_wire(full, session)
+	view.resync(ui)
+	var/list/recovery = view.encode_wire(full, session)
+	TEST_ASSERT(recovery["epoch"] != original["epoch"], "A recovery stream must reject receipts from its previous baseline")
+	view.state_revision = 11
+	full["state_revision"] = 11
+	view.record_wire_delta(10, list(), list(), list(), list())
+	var/list/newer = view.encode_wire(full, session)
+	TEST_ASSERT(newer["full"], "An unacknowledged viewer still receives a complete recovery packet")
+	TEST_ASSERT(!view.ack_full(ui, original["epoch"], 10), "A delayed receipt for the pre-recovery stream must not unlock it")
+	TEST_ASSERT(!view.ack_full(ui, recovery["epoch"], 9), "A generation never sent in this stream cannot be acknowledged")
+	view.resync(ui)
+	TEST_ASSERT_EQUAL(view.encode_wire(full, session)["epoch"], recovery["epoch"], "A retry must retain the recovery epoch while receipts are in flight")
+	TEST_ASSERT(view.ack_full(ui, recovery["epoch"], 10), "A delivered baseline must remain acknowledgeable after a newer full packet is sent")
+	var/list/delta = view.encode_wire(full, session)
+	TEST_ASSERT(!delta["full"] && delta["base_revision"] == 10 && delta["state_revision"] == 11, "Recovery must resume with changes after the actually acknowledged baseline")
+	TEST_ASSERT("apc_zones" in delta, "Recovery must restore metadata even if only a later full packet contained its newest version")
+
 /// Reopening and NTOS program ownership must never share a cursor by accident.
 /datum/unit_test/netrun_map_wire_ui_sessions/Run()
 	var/obj/item/host = allocate(/obj/item)

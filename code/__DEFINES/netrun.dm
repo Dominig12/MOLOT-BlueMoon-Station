@@ -41,7 +41,8 @@
 #define NETRUN_TASK_BACKGROUND 3
 
 /// Execution defaults. Times are deciseconds unless the name ends in _MS.
-#define NETRUN_DEFAULT_FIRE_INTERVAL 2
+/// Slow maintenance cadence; admitted work and explicit input wake the bounded worker.
+#define NETRUN_DEFAULT_FIRE_INTERVAL 20
 #define NETRUN_DEFAULT_TASK_BUDGET_MS 6.0
 #define NETRUN_DEFAULT_TASK_MIN_BUDGET_MS 1.0
 #define NETRUN_DEFAULT_TASK_PRESSURE_TICK_USAGE 100

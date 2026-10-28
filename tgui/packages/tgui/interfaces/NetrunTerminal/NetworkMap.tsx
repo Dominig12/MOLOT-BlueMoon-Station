@@ -282,6 +282,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
 
   if (!map) { return null; }
   const sector = map.sectors?.find((entry) => entry.id === map.active_sector);
+  const selectedNode = selectedAddress ? byAddress.get(selectedAddress) : null;
   const relayDestinations = (map.relay_destinations || []).filter((destination) => destination.from === (selectedAddress || entityHost));
   return (
     <Box data-net-layout="map" onKeyDown={onKeyDown} style={{
@@ -298,7 +299,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
           icon="location-crosshairs" content="Точка подключения" onClick={() => act('map_sector', { id: map.source_sector, z: map.source_z })} />}
                                 </Box>}
       <Box className="netrun-map-tools" p={1} style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', borderBottom: `1px solid ${THEME.line}`, background: THEME.panel }}>
-        <Input key={searchReset} width="156px" placeholder="поиск узла…" value={query}
+        <Input key={searchReset} width="190px" placeholder="Имя или адрес устройства…" aria-label="Поиск устройств на карте" value={query}
           onInput={(_event, value) => { setPendingCenter(null); setQuery(value); }}
           onEnter={(_event, value) => act('search', { text: value })} />
         <Button compact icon="magnifying-glass" tooltip="Поиск узлов по всей сети" onClick={() => act('search', { text: query })} />
@@ -306,9 +307,9 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
           onClick={() => locate(entityHost, true)} />}
         <Button compact icon="bullseye" content="Рядом" selected={focusNearby} disabled={!selectedAddress}
           tooltip="Показать окружение выбранного узла в 2 переходах" onClick={() => { setPendingCenter(null); setFocusNearby(!focusNearby); }} />
-        <Button compact icon="crosshairs" tooltip="К выбранному узлу" disabled={!selectedAddress}
+        <Button compact icon="crosshairs" content="К выбранному" tooltip="Центрировать выбранное устройство" disabled={!selectedAddress}
           onClick={() => selectedAddress && viewport.current?.center(selectedAddress)} />
-        <Button compact icon="expand" tooltip="Вместить все отфильтрованные узлы" onClick={() => viewport.current?.fit()} />
+        <Button compact icon="expand" content="Обзор" tooltip="Показать все устройства текущего этажа" onClick={() => viewport.current?.fit()} />
         <Box style={{ flex: '1 1 auto', minWidth: 0 }} />
         <Box color={THEME.muted} fontSize="10px" style={{ whiteSpace: 'nowrap' }}>
           {visibleNodes.length}/{nodes.length} · текущий этаж
@@ -318,8 +319,10 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
             : <Box color={THEME.muted} fontSize="10px">Путь: —</Box>}
         </Box>
       </Box>
-      <Box className="netrun-map-filterbar" p={0.5} style={{ display: 'flex', gap: '4px', flex: '0 0 auto', alignItems: 'center', borderBottom: `1px solid ${THEME.line}` }}>
+      <Box className="netrun-map-filterbar" p={0.5} style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', flex: '0 0 auto', alignItems: 'center', borderBottom: `1px solid ${THEME.line}` }}>
+        <Box color={THEME.muted} fontSize="10px" mr={0.5}>Устройства</Box>
         {types.map((type) => (<Button key={type} compact icon={NODE_ICONS[type] || 'circle'}
+          content={<span className="netrun-map-type-label">{NODE_NAMES[type] || type}</span>}
           selected={!disabledTypes[type]} aria-label={`Фильтр: ${NODE_NAMES[type] || type}`}
           tooltip={NODE_NAMES[type] || type}
           onClick={() => { setPendingCenter(null); setDisabledTypes((old) => ({ ...old, [type]: !old[type] })); }} />))}
@@ -339,6 +342,15 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
           }} />))}
           </div>
         </details>
+      </Box>
+      <Box className="netrun-map-selectionbar" role="status">
+        <Icon name={selectedNode ? NODE_ICONS[selectedNode.type] || 'circle' : 'hand-pointer'} />
+        <strong>{selectedNode?.name || 'Выберите устройство на карте'}</strong>
+        {selectedNode ? <><span>{selectedNode.address}</span>
+          <span style={{ color: selectedNode.online ? THEME.good : THEME.bad }}>{selectedNode.online ? 'В сети' : 'Не отвечает'}</span>
+          <span>{ACCESS_NAMES[selectedNode.access]}</span>
+                        </>
+          : <span>Наведите курсор для подсказки · нажмите для просмотра действий</span>}
       </Box>
       {!!waypoint && <Box p={0.5} style={{ background: '#12202a', borderBottom: `1px solid ${THEME.line}` }}>
         <WaypointRoute wp={waypoint} onClear={() => act('clear_waypoint')} onNext={(address) => act('select', { address })} />
@@ -383,7 +395,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
         entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || EMPTY_ADDRESSES}
         pingRoute={pingAddresses} pingId={pingId} pingExpiresAt={pingExpiresAt} events={events} onSelect={onSelect} />
       <Box p={0.5} color={THEME.muted} fontSize="10px" style={{ flexShrink: 0, borderTop: `1px solid ${THEME.line}`, background: '#0d222d' }}>
-        □ APC · ⬡ реле · ◇ сервер/терминал · ○ устройство · подсветка — зона выбранного APC<br />
+        □ APC · ⬡ реле · ◇ сервер/терминал · ○ устройство · яркая линия — выбранный маршрут<br />
         ЛКМ — выбрать · потянуть — переместить · колесо — масштаб · WASD — выбор{hasEntity ? ' · Shift+WASD — переход' : ''}
       </Box>
     </Box>

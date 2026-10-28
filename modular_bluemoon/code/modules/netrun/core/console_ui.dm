@@ -13,15 +13,18 @@
 	var/ui_legacy_status_address
 	var/list/ui_legacy_status
 
-/datum/netrun_console/proc/observe_ui_state()
-	if(ui_observing)
-		return
-	ui_observing = TRUE
-	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODES_CHANGED, PROC_REF(on_ui_nodes_changed))
-	RegisterSignal(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, PROC_REF(on_ui_topology_changed))
-	RegisterSignal(SSnetrun, COMSIG_NETRUN_NETWORK_CHANGED, PROC_REF(on_ui_network_changed))
-	RegisterSignal(SSnetrun, COMSIG_NETRUN_CHAT_CHANGED, PROC_REF(on_ui_chat_changed))
-	refresh_ui_context_sources()
+/datum/netrun_console/proc/observe_ui_state(defer_context_refresh = FALSE)
+	var/new_observation = !ui_observing
+	if(new_observation)
+		ui_observing = TRUE
+		RegisterSignal(SSnetrun, COMSIG_NETRUN_NODES_CHANGED, PROC_REF(on_ui_nodes_changed))
+		RegisterSignal(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, PROC_REF(on_ui_topology_changed))
+		RegisterSignal(SSnetrun, COMSIG_NETRUN_NETWORK_CHANGED, PROC_REF(on_ui_network_changed))
+		RegisterSignal(SSnetrun, COMSIG_NETRUN_CHAT_CHANGED, PROC_REF(on_ui_chat_changed))
+	// Explicit wakes can replace the operator or attach a newly unconscious body.
+	// ui_data alone defers the duplicate scan to its immediate reconciliation.
+	if(new_observation || !defer_context_refresh)
+		refresh_ui_context_sources()
 
 /datum/netrun_console/proc/stop_ui_observation()
 	map_view?.suspend()
@@ -204,7 +207,7 @@
 		if(operator != user)
 			ui_network_catalog = null
 		operator = user
-	note_ui_activity()
+	note_ui_activity(TRUE)
 	// Matrix clicks need no global discovery pass. The live delivery/finish
 	// checks own fresh trees; this snapshot only describes the visible panel.
 	refresh_route_node(selected_node())

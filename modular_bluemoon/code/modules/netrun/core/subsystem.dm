@@ -16,6 +16,9 @@ SUBSYSTEM_DEF(netrun)
 	var/list/commands
 	var/datum/netrun_task_scheduler/task_scheduler
 	var/next_task_population = 0
+	/// Cached only while queue/track/population already visits these small indices.
+	var/next_node_deadline = INFINITY
+	var/ice_clock_active = FALSE
 	var/task_populations = 0
 	var/apc_prebuild_steps = 0
 	/// HUD profiling: a single response may have many targets but at most one route snapshot.
@@ -135,6 +138,7 @@ SUBSYSTEM_DEF(netrun)
 		if(!isnull(previous_due))
 			due = max(world.time, min(due, previous_due))
 		dirty_nodes[node] = due
+		next_node_deadline = min(next_node_deadline, due)
 		// The first event already admitted this node for this tick. Native signal
 		// bursts must not rebuild the scheduler key and promote the same task again.
 		if(due <= world.time && (isnull(previous_due) || previous_due != world.time))
@@ -184,6 +188,7 @@ SUBSYSTEM_DEF(netrun)
 	if(endpoint.netrun_needs_poll())
 		if(isnull(poll_nodes[node]))
 			poll_nodes[node] = world.time + get_execution_limits().node_idle_poll_interval
+		next_node_deadline = min(next_node_deadline, poll_nodes[node])
 	else
 		poll_nodes -= node
 	var/next_expiry = INFINITY
@@ -200,6 +205,7 @@ SUBSYSTEM_DEF(netrun)
 		next_expiry = min(next_expiry, node.last_activity + limits.node_activity_duration)
 	if(next_expiry < INFINITY)
 		timed_nodes[node] = next_expiry
+		next_node_deadline = min(next_node_deadline, next_expiry)
 	else
 		timed_nodes -= node
 
@@ -218,6 +224,7 @@ SUBSYSTEM_DEF(netrun)
 		return
 	var/datum/netrun_execution_limits/limits = get_execution_limits()
 	poll_nodes[node] = world.time + (node_interest_until[node] > world.time ? limits.node_poll_interval : limits.node_idle_poll_interval)
+	next_node_deadline = min(next_node_deadline, poll_nodes[node])
 
 /// Absolute deadlines let packets/pings reuse their already calculated route without a new tree.
 /datum/controller/subsystem/netrun/proc/retain_node_interest(datum/component/netrun_node/node, until)
@@ -228,6 +235,7 @@ SUBSYSTEM_DEF(netrun)
 	node_interest_until[node] = max(node_interest_until[node] || 0, until)
 	if(!was_interested && !isnull(poll_nodes[node]))
 		poll_nodes[node] = min(poll_nodes[node], world.time)
+		next_node_deadline = min(next_node_deadline, poll_nodes[node])
 	if(!was_interested && !isnull(dirty_nodes[node]))
 		queue_node(node)
 	return TRUE
@@ -295,26 +303,33 @@ SUBSYSTEM_DEF(netrun)
 
 /datum/controller/subsystem/netrun/proc/populate_node_tasks()
 	var/datum/netrun_task_scheduler/scheduler = get_task_scheduler()
+	next_node_deadline = INFINITY
 	for(var/datum/component/netrun_node/node as anything in node_interest_until)
 		if(QDELETED(node) || node_interest_until[node] <= world.time)
 			node_interest_until -= node
 	for(var/datum/component/netrun_node/node as anything in dirty_nodes)
 		if(!QDELETED(node) && dirty_nodes[node] <= world.time)
 			scheduler.enqueue("node", node, NETRUN_TASK_NORMAL)
+		else if(!QDELETED(node))
+			next_node_deadline = min(next_node_deadline, dirty_nodes[node])
 	for(var/datum/component/netrun_node/node as anything in poll_nodes)
 		if(QDELETED(node))
 			poll_nodes -= node
 			continue
 		if(poll_nodes[node] <= world.time)
 			scheduler.enqueue("node", node, NETRUN_TASK_BACKGROUND)
+		else
+			next_node_deadline = min(next_node_deadline, poll_nodes[node])
 	for(var/datum/component/netrun_node/node as anything in timed_nodes)
 		if(timed_nodes[node] <= world.time && !QDELETED(node))
 			queue_node(node, TRUE)
+		else if(!QDELETED(node))
+			next_node_deadline = min(next_node_deadline, timed_nodes[node])
 
 /datum/controller/subsystem/netrun/proc/get_task_scheduler()
 	RETURN_TYPE(/datum/netrun_task_scheduler)
 	if(!task_scheduler)
-		task_scheduler = new(get_execution_limits())
+		task_scheduler = new(get_execution_limits(), src)
 		RegisterSignal(src, COMSIG_NETRUN_TOPOLOGY_DIRTY, PROC_REF(on_topology_dirty))
 	return task_scheduler
 
@@ -340,11 +355,15 @@ SUBSYSTEM_DEF(netrun)
 		var/priority = console.intrusion.breach || console.is_locked() ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL
 		scheduler.enqueue("console", console, priority)
 	collect_defense_network_interest()
+	ice_clock_active = FALSE
 	for(var/datum/netrun_ice/ice as anything in ice_processes)
 		if(QDELETED(ice))
 			continue
 		if(ice.needs_netrun_tick())
+			ice_clock_active = TRUE
 			scheduler.enqueue("ice", ice, ice.pending_program ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL)
+		else if(ice.kind == NETRUN_ICE_HUNTER && !ice.persistent)
+			ice_clock_active = TRUE
 	for(var/datum/netrun_request/delivery/request as anything in pending_requests)
 		if(QDELETED(request))
 			pending_requests -= request
@@ -368,7 +387,20 @@ SUBSYSTEM_DEF(netrun)
 	next_fire = min(next_fire, world.time)
 
 /datum/controller/subsystem/netrun/proc/refresh_delivery_interval()
-	wait = (task_scheduler?.pending() || length(node_publications) || length(network_publications)) ? world.tick_lag : NETRUN_DEFAULT_FIRE_INTERVAL
+	if(task_scheduler?.pending() || length(node_publications) || length(network_publications))
+		wait = world.tick_lag
+		return
+	var/next_due = world.time + NETRUN_DEFAULT_FIRE_INTERVAL
+	// Quiet maintenance rests for twenty deciseconds. Live UI/gameplay clocks
+	// still honor configured population intervals after the queue has drained.
+	if(length(active_consoles) || length(pending_requests) || length(active_defense_networks) || ice_clock_active)
+		next_due = min(next_due, next_task_population)
+	// Stale minima after cancellation cost at most one population, never a spin.
+	// Native deadlines are sampled by the existing population cadence rather than
+	// introducing a full node-index scan on every packet-ready worker pass.
+	if(next_node_deadline < INFINITY)
+		next_due = min(next_due, max(next_task_population, next_node_deadline))
+	wait = max(world.tick_lag, next_due - world.time)
 
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
 	var/slice_start_usage = TICK_USAGE

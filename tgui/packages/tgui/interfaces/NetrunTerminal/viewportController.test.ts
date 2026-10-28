@@ -11,6 +11,30 @@ const snapshot = (): ViewportSnapshot => {
   suspended: false };
 };
 const callbacks = () => ({ onStatus: jest.fn(), onHUD: jest.fn(), onHover: jest.fn(), onSelect: jest.fn() });
+
+test('a large graph opens at a readable connection scale and overview still fits every device', async () => {
+  const data = snapshot();
+  const remote = { ...node, address: 'REMOTE', px: 20000, py: 10000 };
+  data.scene.update([node, remote], []);
+  const host = hostElement();
+  const factory = jest.fn(async (element: HTMLElement) => makePixiSurfaceMock(element));
+  const controller = new NetworkViewportController(data, callbacks(), factory);
+  try {
+    controller.attach(host); await factory.mock.results[0].value; await Promise.resolve();
+    expect(controller.camera.zoom).toBe(.7);
+    const connection = controller.camera.project(node);
+    expect(connection.px).toBeCloseTo(360);
+    expect(connection.py).toBeCloseTo(240);
+    controller.fit();
+    expect(controller.camera.zoom).toBeLessThan(.55);
+    for (const entry of [node, remote]) {
+      const point = controller.camera.project(entry);
+      expect(point.px).toBeGreaterThanOrEqual(0); expect(point.px).toBeLessThanOrEqual(720);
+      expect(point.py).toBeGreaterThanOrEqual(0); expect(point.py).toBeLessThanOrEqual(480);
+    }
+  } finally { controller.detach(); host.remove(); }
+});
+
 const hostElement = (scale = 1, left = 0, top = 0) => {
   const host = document.createElement('div');
   host.tabIndex = 0;

@@ -64,16 +64,16 @@ test('a missing baseline requests one resync and a same-epoch gap hides the prev
   expect(stream.apply(delta({ state_revision: 12 }))).toBeNull();
   expect(stream.resyncToken).toBe(1);
   stream.apply(baseline({ state_revision: 12 }));
-  expect(stream.apply(delta({ base_revision: 11, state_revision: 13 }))).toBeNull();
+  expect(stream.apply(delta({ base_revision: 13, state_revision: 14 }))).toBeNull();
   expect(stream.resyncToken).toBe(2);
-  const restored = stream.apply(baseline({ nodes: [{ ...node, address: 'ONLY-PERMITTED' }], state_revision: 13 }));
+  const restored = stream.apply(baseline({ nodes: [{ ...node, address: 'ONLY-PERMITTED' }], state_revision: 14 }));
   expect(restored.nodes.map((entry) => entry.address)).toEqual(['ONLY-PERMITTED']);
 });
 
 test('a lost delta hides the old map and rejects a baseline older than the missed update', () => {
   const stream = new NetrunMapStream();
   const initial = stream.apply(baseline());
-  expect(stream.apply(delta({ base_revision: 9, state_revision: 12 }))).toBeNull();
+  expect(stream.apply(delta({ base_revision: 11, state_revision: 12 }))).toBeNull();
   expect(stream.needsResync).toBe(true);
   expect(stream.resyncToken).toBe(1);
   expect(stream.apply(delta({ base_revision: 10, state_revision: 13, nodes: [{ ...node, name: 'Unconfirmed' }] }))).toBeNull();
@@ -82,6 +82,17 @@ test('a lost delta hides the old map and rejects a baseline older than the misse
   const restored = stream.apply(baseline({ state_revision: 13, nodes: [{ ...node, name: 'Confirmed' }] }));
   expect(restored.nodes[0].name).toBe('Confirmed');
   expect(stream.needsResync).toBe(false);
+});
+
+test('a delayed full receipt can overlap a newer client without restarting recovery', () => {
+  const stream = new NetrunMapStream();
+  stream.apply(baseline({ nodes: [node, { ...node, address: 'REVOKED' }] }));
+  stream.apply(delta({ nodes: [{ ...node, entities: 1 }], removed_nodes: ['REVOKED'] }));
+  const next = stream.apply(delta({ base_revision: 10, state_revision: 12,
+    nodes: [{ ...node, entities: 2 }], removed_nodes: ['REVOKED'] }));
+  expect(next.nodes).toEqual([{ ...node, entities: 2 }]);
+  expect(stream.needsResync).toBe(false);
+  expect(stream.resyncToken).toBe(0);
 });
 
 test('new authorization epoch drops all previously disclosed nodes immediately', () => {

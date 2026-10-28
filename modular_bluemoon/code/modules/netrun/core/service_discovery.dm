@@ -117,6 +117,17 @@
 		if(target_cursor <= length(resolved_targets))
 			var/datum/netrun_machine_service/target = resolved_targets[target_cursor++]
 			if(!QDELETED(target) && target.matches(source, recipient_tag))
+				if(target_cursor > length(resolved_targets))
+					// Transfer the owned original to the last recipient. Earlier
+					// recipients retain independent copies; a unicast needs none.
+					queued.Cut(1, 2)
+					transport.queued_messages--
+					target_cursor = 1
+					message_attempted = FALSE
+					source.send_to(target, message)
+					if(QDELETED(src))
+						return FALSE
+					continue
 				message_attempted = TRUE
 				source.send_to(target, message.copy())
 				if(QDELETED(src))

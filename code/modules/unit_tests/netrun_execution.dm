@@ -174,12 +174,63 @@
 /// Every kind of admitted backlog needs fast follow-up, including prewarm and node work.
 /datum/unit_test/netrun_execution_backlog_cadence/Run()
 	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
+	TEST_ASSERT_EQUAL(NETRUN_DEFAULT_FIRE_INTERVAL, 20, "Idle/background maintenance must use the requested twenty-decisecond cadence")
+	worker.wait = NETRUN_DEFAULT_FIRE_INTERVAL
+	worker.next_fire = world.time + NETRUN_DEFAULT_FIRE_INTERVAL
 	worker.get_task_scheduler().enqueue("execution_probe", allocate(/datum), NETRUN_TASK_BACKGROUND)
+	TEST_ASSERT(worker.next_fire <= world.time, "Admitting ready background I/O must interrupt the idle deadline immediately")
 	worker.refresh_delivery_interval()
 	TEST_ASSERT_EQUAL(worker.wait, world.tick_lag, "A pending non-delivery task must not wait for the idle subsystem interval")
 	qdel(worker.task_scheduler.take())
 	worker.refresh_delivery_interval()
 	TEST_ASSERT_EQUAL(worker.wait, NETRUN_DEFAULT_FIRE_INTERVAL, "A drained queue must return to its idle cadence")
+	var/datum/player = allocate(/datum)
+	worker.get_task_scheduler().enqueue("execution_probe", player, NETRUN_TASK_BACKGROUND)
+	worker.wait = NETRUN_DEFAULT_FIRE_INTERVAL
+	worker.next_fire = world.time + NETRUN_DEFAULT_FIRE_INTERVAL
+	worker.get_task_scheduler().enqueue("execution_probe", player, NETRUN_TASK_CRITICAL, TRUE)
+	TEST_ASSERT_EQUAL(worker.wait, world.tick_lag, "Explicit input must restore the responsive cadence when promoting existing work")
+	TEST_ASSERT(worker.next_fire <= world.time, "An input promotion must not wait for the next two-second maintenance pass")
+
+/// A drained active clock honors its configured population instead of the idle interval.
+/datum/unit_test/netrun_execution_active_cadence/Run()
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
+	worker.active_consoles[console] = TRUE
+	var/population_delay = max(world.tick_lag, 2)
+	worker.next_task_population = world.time + population_delay
+	worker.refresh_delivery_interval()
+	TEST_ASSERT_EQUAL(worker.wait, population_delay, "A live console must preserve a short configured UI/gameplay population interval after its task drains")
+	worker.active_consoles.Cut()
+	worker.next_node_deadline = world.time + 5
+	worker.refresh_delivery_interval()
+	TEST_ASSERT_EQUAL(worker.wait, max(world.tick_lag, 5), "A known native deadline must shorten idle maintenance without scanning every node")
+	worker.next_node_deadline = world.time - 1
+	worker.refresh_delivery_interval()
+	TEST_ASSERT_EQUAL(worker.wait, population_delay, "A stale cancelled native deadline must wait for one population rather than spin every tick")
+	worker.next_node_deadline = INFINITY
+	worker.refresh_delivery_interval()
+	TEST_ASSERT_EQUAL(worker.wait, NETRUN_DEFAULT_FIRE_INTERVAL, "An empty worker must still return to the requested slow cadence")
+
+/// Fast follow-up passes share normalized tuning; actual live edits still apply immediately.
+/datum/unit_test/netrun_execution_limits_reuse/Run()
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
+	var/datum/netrun_execution_limits/limits = worker.get_execution_limits(TRUE)
+	var/revision = limits.configuration_revision
+	var/list/rotation = limits.priority_rotation.Copy()
+	for(var/pass in 1 to 8)
+		worker.get_execution_limits(TRUE)
+	TEST_ASSERT_EQUAL(limits.configuration_revision, revision, "An unchanged packet burst must not repeatedly normalize all tuning fields and rebuild the rotation")
+	worker.task_max_per_pass = 7
+	worker.get_execution_limits(TRUE)
+	TEST_ASSERT_EQUAL(limits.max_per_pass, 7, "Changing scalar tuning in the same tick must be visible on the next refresh")
+	TEST_ASSERT_EQUAL(limits.configuration_revision, revision + 1, "A real tuning edit must produce one new normalized revision")
+	worker.task_priority_rotation[1] = NETRUN_TASK_BACKGROUND
+	worker.get_execution_limits(TRUE)
+	TEST_ASSERT_EQUAL(limits.priority_rotation[1], NETRUN_TASK_BACKGROUND, "An in-place priority rotation edit must not be hidden by reference equality")
+	TEST_ASSERT_EQUAL(limits.configuration_revision, revision + 2, "An in-place list edit must normalize exactly once")
+	TEST_ASSERT_EQUAL(rotation[1], NETRUN_TASK_CRITICAL, "The fixture must have started with the default critical-first rotation")
 
 /datum/unit_test/netrun_execution_live_limits/Run()
 	var/datum/controller/subsystem/netrun/original = SSnetrun

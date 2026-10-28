@@ -264,7 +264,11 @@
 		// Leaf activity cannot change permissions or forwarding. Its hidden or
 		// offscreen status does not contribute anything to this viewer's map.
 		var/all_projections = (flags & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED)) || graph?.is_infrastructure(node) || length(graph?.adjacency[address]) > 1
-		if(all_projections || !snapshot || shown_addresses[address])
+		var/list/known = node_entries[address]
+		// Permitted offscreen endpoints still own sector-catalog membership.
+		// Their cached binding supplies these scalar checks without a turf scan.
+		var/offscreen_changed = known && (known["z"] != node?.topology_turf?.z || known["sector"] != node?.binding_sector || known["network"] != node?.network?.id)
+		if(all_projections || !snapshot || shown_addresses[address] || offscreen_changed)
 			if(flags & NETRUN_CHANGED_REMOVED)
 				structure_dirty = TRUE
 			else
@@ -275,7 +279,9 @@
 				continue
 			var/list/cached = operator_projections[key]
 			var/list/fields = cached["fields"]
-			if(!all_projections && fields["snapshot"] && !fields["shown_addresses"][address])
+			known = fields["node_entries"][address]
+			offscreen_changed = known && (known["z"] != node?.topology_turf?.z || known["sector"] != node?.binding_sector || known["network"] != node?.network?.id)
+			if(!all_projections && fields["snapshot"] && !fields["shown_addresses"][address] && !offscreen_changed)
 				continue
 			if(flags & NETRUN_CHANGED_REMOVED)
 				fields["structure_dirty"] = TRUE
@@ -1209,8 +1215,15 @@
 		wire_sessions[key] = session
 	// Sending a snapshot does not prove TGUI delivered it. Keep this viewer
 	// on full snapshots until its frontend explicitly acknowledges the epoch.
+	if(session["force_full"])
+		// Retries belong to the same recovery stream; restarting its epoch would
+		// invalidate in-flight receipts while the station keeps changing.
+		owner?.invalidate_ui()
+		return
 	session["force_full"] = TRUE
 	session["revision"] = null
+	session["projection_epoch"] = null
+	session["full_revisions"] = list()
 	owner?.invalidate_ui()
 
 /// Acknowledge a full snapshot only from the UI that owns the wire cursor.
@@ -1224,9 +1237,16 @@
 		return FALSE
 	var/key = "[REF(ui.user)]:[REF(ui.src_object)]"
 	var/list/session = wire_sessions[key]
-	if(!session || !session["force_full"] || session["epoch"] != epoch || session["revision"] != confirmed_revision)
+	var/list/sent_revisions = session?["full_revisions"]
+	if(!session || !session["force_full"] || session["epoch"] != epoch || !(confirmed_revision in sent_revisions))
 		return FALSE
 	session["force_full"] = FALSE
+	// A newer snapshot may already be in flight. Resume from the baseline this
+	// viewer actually confirmed and compose all later changes from the journal.
+	session["revision"] = confirmed_revision
+	session["full_revisions"] = null
+	for(var/metadata_key in list("gateways", "sectors", "apc_zones"))
+		session[metadata_key] = null
 	return TRUE
 
 /datum/netrun_map_view/proc/encode_wire(list/full, list/session)
@@ -1236,6 +1256,7 @@
 	if(isnull(session["projection_epoch"]) || session["projection_epoch"] != wire_epoch)
 		session["projection_epoch"] = wire_epoch
 		session["stream_generation"] = ++projection_generation
+		session["full_revisions"] = list()
 	var/epoch = "[REF(src)]:[session["stream_generation"]]:[session["id"]]"
 	var/previous = session["revision"]
 	var/list/result = full.Copy()
@@ -1267,6 +1288,15 @@
 		send_full = cursor != state_revision
 	result["epoch"] = epoch
 	result["full"] = send_full
+	if(send_full && session["force_full"])
+		var/list/sent_revisions = session["full_revisions"]
+		if(!islist(sent_revisions))
+			sent_revisions = list()
+			session["full_revisions"] = sent_revisions
+		if(!(state_revision in sent_revisions))
+			sent_revisions += state_revision
+			if(length(sent_revisions) > 32)
+				sent_revisions.Cut(1, 2)
 	if(!send_full)
 		result["base_revision"] = previous
 		// Selected APC shapes and sector catalogs can be large despite being immutable.

@@ -1,3 +1,4 @@
+import { GRAPH_TILE } from './graphLayout';
 import { GraphScene, PlacedNode } from './graphScene';
 import { PixiScenery } from './pixiScenery';
 import { MockGraphics, mockPixi, resetPixiMock } from './testSupport/pixiLibraryMock';
@@ -8,7 +9,7 @@ const finish = (layer: PixiScenery) => { for (let i = 0; i < 10000 && layer.adva
 beforeEach(resetPixiMock);
 
 test('large scenes retain every node, edge and APC run instead of rejecting GPU rendering', () => {
-  const nodes = Array.from({ length: 6001 }, (_, i) => node(`N${i}`, (i % 100) * 96, Math.floor(i / 100) * 96));
+  const nodes = Array.from({ length: 6001 }, (_, i) => node(`N${i}`, (i % 100) * GRAPH_TILE, Math.floor(i / 100) * GRAPH_TILE));
   const edges = nodes.slice(1).map((entry, i) => ({ id: `E${i}`, from: nodes[i].address, to: entry.address, kind: 'apc' as const }));
   const scene = new GraphScene(); scene.update(nodes, edges);
   const runs = Array.from({ length: 5000 }, (_, i) => ({ x: i % 100, y: Math.floor(i / 100), width: 1 }));
@@ -38,7 +39,7 @@ test('unchanged spatial batches survive updates to another device', () => {
   const scene = new GraphScene(); scene.update([node('A', 0), node('B', 10000)], []);
   const base = { gateways: new Map() }, layer = new PixiScenery(mockPixi);
   layer.queue(scene, base); finish(layer);
-  const retained = MockGraphics.graphics.find((graphic) => graphic.label.startsWith('3-node:13,'));
+  const retained = MockGraphics.graphics.find((graphic) => graphic.label.startsWith('3-node:8,'));
   const clears = retained.clears;
   const next = new GraphScene(); next.update([{ ...scene.nodes[0], online: false }, scene.nodes[1]], []);
   layer.queue(next, base); finish(layer);
@@ -46,16 +47,16 @@ test('unchanged spatial batches survive updates to another device', () => {
 });
 
 test('a LAN visibility change among 2000 nodes removes hidden hits and preserves unrelated chunks', () => {
-  const nodes = Array.from({ length: 2000 }, (_, i) => node(`N${i}`, i * 96));
+  const nodes = Array.from({ length: 2000 }, (_, i) => node(`N${i}`, i * GRAPH_TILE));
   const scene = new GraphScene(); scene.update(nodes, []);
   const base = { gateways: new Map() }, layer = new PixiScenery(mockPixi);
   layer.queue(scene, base); finish(layer);
   const distant = MockGraphics.graphics.find((graphic) => graphic.label.startsWith('3-node:200,'));
   const clears = distant.clears;
-  const next = new GraphScene(); next.update([...nodes.slice(0, 20), ...nodes.slice(23), node('NEW', 21 * 96)], [], scene);
-  expect(next.hit({ px: 20 * 96, py: 0 }, 1)).toBeNull();
-  expect(next.hit({ px: 21 * 96, py: 0 }, 1).address).toBe('NEW');
-  expect(scene.hit({ px: 20 * 96, py: 0 }, 1).address).toBe('N20');
+  const next = new GraphScene(); next.update([...nodes.slice(0, 20), ...nodes.slice(23), node('NEW', 21 * GRAPH_TILE)], [], scene);
+  expect(next.hit({ px: 20 * GRAPH_TILE, py: 0 }, 1)).toBeNull();
+  expect(next.hit({ px: 21 * GRAPH_TILE, py: 0 }, 1).address).toBe('NEW');
+  expect(scene.hit({ px: 20 * GRAPH_TILE, py: 0 }, 1).address).toBe('N20');
   const hiddenChunk = MockGraphics.graphics.find((graphic) => graphic.label.startsWith('3-node:2,'));
   layer.suppressUndisclosed(next);
   expect(hiddenChunk.visible).toBe(false);
@@ -117,7 +118,7 @@ test('moving and removing a device update its old and new chunks and incident ca
   ]);
   const layer = new PixiScenery(mockPixi), base = { gateways: new Map() };
   layer.queue(scene, base); finish(layer);
-  const untouched = MockGraphics.graphics.find((graphic) => graphic.label.startsWith('3-node:26,'));
+  const untouched = MockGraphics.graphics.find((graphic) => graphic.label.startsWith('3-node:17,'));
   const clears = untouched.clears;
   const next = new GraphScene(); next.update([{ ...scene.nodes[0], px: 2000 }, ...scene.nodes.slice(1)], scene.edges);
   layer.queue(next, base); finish(layer);
@@ -131,7 +132,7 @@ test('moving and removing a device update its old and new chunks and incident ca
 });
 
 test('a superseded partial build cannot leave stale primitives or discard the committed scene', () => {
-  const nodes = Array.from({ length: 512 }, (_, i) => node(`N${i}`, i * 96));
+  const nodes = Array.from({ length: 512 }, (_, i) => node(`N${i}`, i * GRAPH_TILE));
   const first = new GraphScene(); first.update(nodes, []);
   const layer = new PixiScenery(mockPixi), base = { gateways: new Map() };
   layer.queue(first, base); finish(layer);

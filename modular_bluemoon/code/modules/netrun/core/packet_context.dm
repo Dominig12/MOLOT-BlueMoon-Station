@@ -22,10 +22,27 @@
 				budget[2] = TRUE
 				break
 			var/key = input[i]
-			if(istext(key) && !isnull(input[key]))
-				output[copytext_char(key, 1, 129)] = netrun_packet_preview(input[key], budget, depth + 1)
+			var/associative = istext(key) && !isnull(input[key])
+			var/entry = associative ? input[key] : key
+			var/preview
+			if(islist(entry))
+				preview = netrun_packet_preview(entry, budget, depth + 1)
 			else
-				output += list(netrun_packet_preview(key, budget, depth + 1))
+				// Scalar fields need no recursive proc call. Preserve the same
+				// shared item/character budget and never retain native references.
+				budget[1]--
+				if(istext(entry))
+					if(length_char(entry) > 512)
+						budget[2] = TRUE
+					preview = copytext_char(entry, 1, 513)
+				else if(isnum(entry) || isnull(entry))
+					preview = entry
+				else
+					preview = "<native value>"
+			if(associative)
+				output[copytext_char(key, 1, 129)] = preview
+			else
+				output += list(preview)
 		return output
 	if(istext(value))
 		if(length_char(value) > 512)
@@ -111,6 +128,24 @@
 
 /// Accept the two existing route representations without retaining the caller's lists.
 /datum/netrun_packet_context/proc/set_route(list/hops)
+	// Admission and delivery usually observe the same physical route. It is
+	// already an immutable owned snapshot, so retain it when every hop matches.
+	if(length(route) == length(hops))
+		var/unchanged = TRUE
+		for(var/i in 1 to length(hops))
+			var/hop = hops[i]
+			var/address = hop
+			if(islist(hop))
+				var/list/entry = hop
+				if(entry["kind"] && entry["kind"] != "node")
+					unchanged = FALSE
+					break
+				address = entry["ref"]
+			if(!istext(address) || route[i] != address)
+				unchanged = FALSE
+				break
+		if(unchanged)
+			return
 	var/list/addresses = list()
 	for(var/hop as anything in hops)
 		var/address = hop

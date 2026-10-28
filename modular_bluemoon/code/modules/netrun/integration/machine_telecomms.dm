@@ -289,13 +289,18 @@
 		var/datum/signal/subspace/vocal/vocal = src
 		if(vocal.virt == dependency)
 			vocal.virt = null
-	UnregisterSignal(dependency, COMSIG_PARENT_QDELETING)
-	netrun_dependencies -= dependency
+	// An already deleted source can be found before any listener was registered;
+	// a callback copied by an in-flight signal can also arrive after stop(). Both
+	// paths must detach native references without subtracting from a null index.
+	if(netrun_dependencies?[dependency])
+		UnregisterSignal(dependency, COMSIG_PARENT_QDELETING)
+		LAZYREMOVE(netrun_dependencies, dependency)
 
 /datum/signal/subspace/proc/stop_netrun_dependency_observation()
-	for(var/datum/dependency as anything in netrun_dependencies)
-		UnregisterSignal(dependency, COMSIG_PARENT_QDELETING)
+	var/list/observed = netrun_dependencies
 	netrun_dependencies = null
+	for(var/datum/dependency as anything in observed)
+		UnregisterSignal(dependency, COMSIG_PARENT_QDELETING)
 
 /datum/signal/subspace/Destroy()
 	stop_netrun_dependency_observation()

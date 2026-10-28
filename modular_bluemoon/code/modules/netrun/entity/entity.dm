@@ -458,6 +458,10 @@
 	if(entity?.host_node?.network)
 		. += entity.host_node.network
 
+/datum/netrun_console/entity/is_home_network(datum/netrun_network/network, datum/netrun_path_tree/tree)
+	var/mob/camera/netrun_entity/entity = host
+	return network && entity?.host_node?.network == network
+
 /datum/netrun_console/entity/has_uplink()
 	return ..()
 

@@ -266,6 +266,22 @@
 	sleep(world.tick_lag)
 	TEST_ASSERT(terminal.console.can_route(scene.target.node), "An unsignalled APC countdown recovery must restore command routing")
 
+/// A new source can discover an unsigned APC outage after this tick's shared fallback.
+/datum/unit_test/netrun_routing_cache_unsigned_cold_recovery/Run()
+	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/computer/netrun_terminal/terminal = scene.machine(/obj/machinery/computer/netrun_terminal, scene.source_spot)
+	var/datum/component/netrun_node/source = terminal.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/remote = scene.remote_apc.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	graph.reconcile_availability()
+	scene.remote_apc.failure_timer = 5
+	var/datum/netrun_path_tree/offline = graph.route_snapshot(source, TRUE)
+	TEST_ASSERT(!offline.reached[scene.target.node.address], "The cold solve must honor the native outage without another whole-station scan")
+	TEST_ASSERT(!remote.last_online, "A cold negative solve must retain its actual forwarding sample for recovery detection")
+	scene.remote_apc.failure_timer = 0
+	sleep(world.tick_lag)
+	TEST_ASSERT(terminal.console.can_route(scene.target.node), "The next tick must invalidate the cold negative tree when the native countdown recovers")
+
 /// More clients must add their source tables, not deep-copy every graph on every access read.
 /datum/unit_test/netrun_routing_cache_console_reads/Run()
 	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene, run_loc_floor_bottom_left)

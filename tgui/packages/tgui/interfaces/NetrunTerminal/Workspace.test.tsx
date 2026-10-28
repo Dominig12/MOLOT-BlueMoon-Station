@@ -121,7 +121,7 @@ describe('Netrun workspace pages', () => {
     const editor = page('files').querySelector('textarea');
     fireEvent.change(editor, { target: { value: 'Несохранённый документ' } });
     fireEvent.click(panel.getByText('Карта'));
-    const search = panel.getByPlaceholderText('поиск узла…') as HTMLInputElement;
+    const search = panel.getByPlaceholderText('Имя или адрес устройства…') as HTMLInputElement;
     fireEvent.input(search, { target: { value: 'Сервер' } });
     const viewport = page('map').querySelector('[data-net-viewport]');
     expect(viewport).not.toBeNull();
@@ -133,7 +133,7 @@ describe('Netrun workspace pages', () => {
     expect(page('files').querySelector('textarea')).toBe(editor);
     expect(editor.value).toBe('Несохранённый документ');
     fireEvent.click(panel.getByText('Карта'));
-    expect(panel.getByPlaceholderText('поиск узла…')).toBe(search);
+    expect(panel.getByPlaceholderText('Имя или адрес устройства…')).toBe(search);
     expect(search.value).toBe('Сервер');
     await act(async () => {});
   });
@@ -192,7 +192,7 @@ describe('Netrun workspace pages', () => {
     update({ workspace_view: 'map' });
     await act(async () => {});
     const surface = await jest.mocked(mountNetrunPixi).mock.results.slice(-1)[0].value as MockPixiSurface;
-    fireEvent.input(panel.getByPlaceholderText('поиск узла…'), { target: { value: 'Сервер' } });
+    fireEvent.input(panel.getByPlaceholderText('Имя или адрес устройства…'), { target: { value: 'Сервер' } });
     const canvas = surface.element, viewport = page('map').querySelector('[data-net-viewport]');
     const initialCamera = { ...surface.updateCamera.mock.calls.slice(-1)[0][0] };
     const pointer = (target: EventTarget, type: string, clientX: number, clientY: number) => {
@@ -224,7 +224,7 @@ describe('Netrun workspace pages', () => {
     fireEvent.click(within(entry).getByText('Показать узел'));
     expect(actions(topic, 'select')).toEqual([{ address: peer.address }]);
     expect(panel.getByRole('tabpanel', { name: 'Карта' })).toBeTruthy();
-    expect((panel.getByPlaceholderText('поиск узла…') as HTMLInputElement).value).toBe('');
+    expect((panel.getByPlaceholderText('Имя или адрес устройства…') as HTMLInputElement).value).toBe('');
     expect(surface.updateCamera.mock.calls.slice(-1)[0][0]).toEqual(camera);
     update({ workspace_view: 'map', map, selected: peer });
     expect(within(page('map').querySelector<HTMLElement>('[data-net-layout="sidebar"]')).getByText(peer.name)).toBeTruthy();

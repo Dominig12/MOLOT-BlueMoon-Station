@@ -1,3 +1,4 @@
+import { GRAPH_TILE } from './graphLayout';
 import { MapProjection } from './mapLayers';
 import { NetEdge, NetNode } from './types';
 
@@ -24,9 +25,9 @@ test('movement updates one placement while unrelated devices retain their slots 
   const first = projection.update([node, mobile], [edge]);
   const moved = projection.update([node, { ...mobile, x: 20 }], [edge]);
   expect(moved.nodes[0]).toBe(first.nodes[0]);
-  expect(moved.nodes[1].px).toBe(20 * 96);
-  expect(moved.nodes[1].anchorX).toBe(20 * 96);
-  expect(moved.nodes[1].py).toBe(-96);
+  expect(moved.nodes[1].px).toBe(20 * GRAPH_TILE);
+  expect(moved.nodes[1].anchorX).toBe(20 * GRAPH_TILE);
+  expect(moved.nodes[1].py).toBe(-GRAPH_TILE);
 });
 
 test('an ordinary device can move or change its mobility hint without leaving the graph', () => {
@@ -34,7 +35,7 @@ test('an ordinary device can move or change its mobility hint without leaving th
   const first = projection.update([node, mobile], [edge]);
   const changed = projection.update([{ ...node, x: 30, dynamic: true }, mobile], [edge]);
   expect(changed.nodes).toHaveLength(2);
-  expect(changed.nodes[0].px).toBe(30 * 96);
+  expect(changed.nodes[0].px).toBe(30 * GRAPH_TILE);
   expect(changed.nodes[1]).toBe(first.nodes[1]);
   expect(changed.edges).toEqual([edge]);
 });

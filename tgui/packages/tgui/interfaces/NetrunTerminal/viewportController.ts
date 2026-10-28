@@ -114,6 +114,14 @@ export class NetworkViewportController {
     // projection, geography and window dimensions; those are not camera-reset events.
     if (!this.cameraInitialized) {
       this.fitCamera();
+      // A station-wide fit can turn thousands of devices into an unreadable
+      // cloud. Start at the connection in a usable scale; Overview still fits all.
+      const focus = snapshot.scene.byAddress.get(snapshot.overlay.entityHost || snapshot.overlay.jacked || snapshot.overlay.selected);
+      if (focus && this.camera.zoom < .55) {
+        const { width, height } = this.size();
+        this.camera.zoom = .7;
+        this.camera.center(focus, width, height);
+      }
       this.cameraInitialized = true;
       this.camera.fitting = false;
     }

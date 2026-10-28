@@ -362,12 +362,19 @@
 		return ..()
 	var/sent = FALSE
 	var/list/controllers = transport.atmos_controllers_by_area[REF(get_base_area(host))]
+	var/datum/netrun_machine_service/atmos/controller/pending
 	for(var/datum/netrun_machine_service/atmos/controller/controller as anything in controllers)
 		if(!QDELETED(controller) && controller.matches(src, null))
-			sent = send_to(controller, message.copy()) || sent
-	if(!sent)
+			if(pending)
+				sent = send_to(pending, message.copy()) || sent
+			pending = controller
+	if(pending)
+		// The final recipient takes ownership of the original. With one local
+		// alarm there is no reason to copy and then immediately delete it.
+		sent = send_to(pending, message) || sent
+	else
 		message.failed("Служба недоступна по сети APC")
-	qdel(message)
+		qdel(message)
 	return sent
 
 /datum/netrun_machine_service/atmos/device/accepts(datum/netrun_machine_message/message)

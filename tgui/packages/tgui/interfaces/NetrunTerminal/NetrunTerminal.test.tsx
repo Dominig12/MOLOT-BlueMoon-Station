@@ -6,6 +6,7 @@ import { debugReducer } from '../../debug';
 import { CombatPanel } from './CombatPanel';
 import { NetrunContent } from './Content';
 import { FilePanel } from './FilePanel';
+import { GRAPH_TILE } from './graphLayout';
 import { GraphScene } from './graphScene';
 import { GraphViewport } from './graphViewport';
 import * as mapGeometry from './mapLayout';
@@ -222,11 +223,11 @@ describe('Netrun terminal panels', () => {
     await act(async () => {});
     fireEvent.click(panel.getByLabelText('Фильтр: Камеры'));
     fireEvent.click(panel.getByText('Рядом'));
-    fireEvent.input(panel.getByPlaceholderText('поиск узла…'), { target: { value: 'Скрыть всё' } });
+    fireEvent.input(panel.getByPlaceholderText('Имя или адрес устройства…'), { target: { value: 'Скрыть всё' } });
     fireEvent.click(panel.getByText('Мой узел'));
     expect(sent(topic, 'focus_host')).toHaveLength(1);
     expect(center).not.toHaveBeenCalled();
-    expect((panel.getByPlaceholderText('поиск узла…') as HTMLInputElement).value).toBe('');
+    expect((panel.getByPlaceholderText('Имя или адрес устройства…') as HTMLInputElement).value).toBe('');
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...initial }, log: [{ text: 'Old floor response', kind: 'label' }] } })));
     expect(center).not.toHaveBeenCalled();
     const fresh = { ...initial, revision: 2, active_sector: 'station', active_z: 1,
@@ -236,7 +237,7 @@ describe('Netrun terminal panels', () => {
     await act(async () => {});
     expect(panel.getByText('2/2 · текущий этаж')).toBeTruthy();
     expect(center).toHaveBeenCalledTimes(1);
-    expect(center.mock.calls[0][0]).toEqual(expect.objectContaining({ px: 50 * 96, py: -60 * 96 }));
+    expect(center.mock.calls[0][0]).toEqual(expect.objectContaining({ px: 50 * GRAPH_TILE, py: -60 * GRAPH_TILE }));
     act(() => topic.store.dispatch(backendUpdate({ data: { map: { ...fresh } } })));
     expect(center).toHaveBeenCalledTimes(1);
     center.mockRestore();
@@ -253,7 +254,7 @@ describe('Netrun terminal panels', () => {
     const panel = render(<StationMap />);
     await act(async () => {});
     fireEvent.click(panel.getByLabelText('Фильтр: Реле NTnet'));
-    fireEvent.input(panel.getByPlaceholderText('поиск узла…'), { target: { value: 'Без совпадений' } });
+    fireEvent.input(panel.getByPlaceholderText('Имя или адрес устройства…'), { target: { value: 'Без совпадений' } });
     fireEvent.click(panel.getByLabelText('Показать реле Реле назначения'));
     expect(sent(topic, 'select')).toEqual([{ address: target.address }]);
     expect(sent(topic, 'map_sector')).toEqual([]);
@@ -266,7 +267,7 @@ describe('Netrun terminal panels', () => {
     await act(async () => {});
     expect(panel.getByText('1/1 · текущий этаж')).toBeTruthy();
     expect(center).toHaveBeenCalledTimes(1);
-    expect(center.mock.calls[0][0]).toEqual(expect.objectContaining({ px: 70 * 96, py: -80 * 96 }));
+    expect(center.mock.calls[0][0]).toEqual(expect.objectContaining({ px: 70 * GRAPH_TILE, py: -80 * GRAPH_TILE }));
     center.mockRestore();
   });
 
@@ -281,7 +282,7 @@ describe('Netrun terminal panels', () => {
     panel.rerender(<StationMap />);
     await act(async () => {});
     expect(layout).toHaveBeenCalledTimes(2);
-    expect(layout.mock.results[1].value.get(node.address).anchorX).toBe(50 * 96);
+    expect(layout.mock.results[1].value.get(node.address).anchorX).toBe(50 * GRAPH_TILE);
     layout.mockRestore();
   });
 
@@ -541,7 +542,7 @@ describe('Netrun terminal panels', () => {
     expect(sent(topic, 'select')).toEqual([]);
     fireEvent.click(getByLabelText('Фильтр: Камеры'));
     expect(getByText('2/2 · текущий этаж')).toBeTruthy();
-    const input = getByPlaceholderText('поиск узла…');
+    const input = getByPlaceholderText('Имя или адрес устройства…');
     fireEvent.input(input, { target: { value: 'лаборатории' } });
     expect(getByText('1/2 · текущий этаж')).toBeTruthy();
     fireEvent.input(input, { target: { value: 'несуществующий узел' } });
@@ -695,7 +696,7 @@ describe('Netrun terminal panels', () => {
     });
     const { getByLabelText, getByPlaceholderText } = render(<StationMap />);
     await act(async () => {});
-    fireEvent.keyDown(getByPlaceholderText('поиск узла…'), { key: 'd', shiftKey: true });
+    fireEvent.keyDown(getByPlaceholderText('Имя или адрес устройства…'), { key: 'd', shiftKey: true });
     expect(sent(topic, 'hop')).toEqual([]);
     const canvas = getByLabelText('Карта сети');
     fireEvent.keyDown(canvas, { key: 'd', shiftKey: true });
@@ -710,12 +711,13 @@ describe('Netrun terminal panels', () => {
     try {
       const panel = render(<StationMap />);
     await act(async () => {});
+      centered.mockClear(); // Initial framing centers the connection on a large graph.
       fireEvent.click(panel.getByLabelText('Фильтр: Камеры'));
-      fireEvent.input(panel.getByPlaceholderText('поиск узла…'), { target: { value: 'Нет совпадений' } });
+      fireEvent.input(panel.getByPlaceholderText('Имя или адрес устройства…'), { target: { value: 'Нет совпадений' } });
       expect(panel.getByText('Все узлы скрыты фильтрами.')).toBeTruthy();
       fireEvent.click(panel.getByLabelText(`Выбрать узел ${target.name} на карте`));
       expect(panel.getByText('2/2 · текущий этаж')).toBeTruthy();
-      expect((panel.getByPlaceholderText('поиск узла…') as HTMLInputElement).value).toBe('');
+      expect((panel.getByPlaceholderText('Имя или адрес устройства…') as HTMLInputElement).value).toBe('');
       expect(sent(topic, 'select')).toEqual([{ address: target.address }]);
       expect(centered).not.toHaveBeenCalled();
       act(() => topic.store.dispatch(backendUpdate({ data: { selected: target } })));
@@ -738,7 +740,7 @@ describe('Netrun terminal panels', () => {
     viewport.appendChild(textarea);
     fireEvent.keyDown(textarea, { key: 'd' });
     textarea.remove();
-    fireEvent.keyDown(panel.getByPlaceholderText('поиск узла…'), { key: 'd' });
+    fireEvent.keyDown(panel.getByPlaceholderText('Имя или адрес устройства…'), { key: 'd' });
     expect(sent(topic, 'select')).toEqual([]);
     fireEvent.keyDown(viewport, { key: 'd' });
     expect(sent(topic, 'select')).toEqual([{ address: 'BBBB:0002' }]);

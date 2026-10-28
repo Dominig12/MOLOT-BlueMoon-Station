@@ -483,6 +483,20 @@
   background: var(--net-panel);
 }
 .netrun-map-filterbar > .Button { flex: 0 0 auto; }
+.netrun-map-selectionbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--net-border);
+  background: var(--net-elevated);
+  color: var(--net-muted);
+  font-size: 11px;
+}
+.netrun-map-selectionbar strong { color: var(--net-text); }
+.netrun-map-selectionbar > .Icon { color: var(--net-accent); }
 .netrun-map-gateways { position: relative; flex: 0 0 auto; margin-left: auto; color: var(--net-muted); }
 .netrun-map-gateways summary {
   cursor: pointer;
@@ -525,6 +539,7 @@
 }
 @media (max-width: 930px) {
   .netrun-map-filterbar { overflow-x: auto; }
+  .netrun-map-type-label { display: none; }
 }
 @media (max-width: 650px) {
   .netrun-shell { padding-left: 6px; }

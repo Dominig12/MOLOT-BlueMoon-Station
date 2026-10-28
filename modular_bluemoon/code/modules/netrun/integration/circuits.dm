@@ -67,6 +67,10 @@
 	if(source?.network)
 		. += source.network
 
+/datum/netrun_console/circuit/is_home_network(datum/netrun_network/network, datum/netrun_path_tree/tree)
+	var/datum/component/netrun_node/source = tree ? tree.source : route_source()
+	return network && source?.network == network
+
 /datum/netrun_console/circuit/user_access(fresh = FALSE)
 	var/obj/item/integrated_circuit/chip = host
 	if(!istype(chip) || QDELETED(chip))

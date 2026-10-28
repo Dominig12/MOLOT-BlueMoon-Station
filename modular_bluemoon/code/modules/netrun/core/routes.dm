@@ -61,6 +61,7 @@
 		return
 	var/list/settled = list()
 	var/list/relay_states
+	var/list/changed_availability
 	var/relays_expanded = FALSE
 	var/backbone_enabled = !SSnetworks.station_network.setting_disabled
 	reached[start.address] = TRUE
@@ -74,10 +75,19 @@
 		var/datum/component/netrun_node/current = graph.nodes[address]
 		if(current?.network)
 			reached_networks[current.network.id] = TRUE
-		// Offline destinations are leaves: they cannot forward traffic.
-		if(QDELETED(current) || !(current == start ? source_online : current.is_online()))
+		if(QDELETED(current))
 			continue
 		var/current_relay = istype(current.parent, /obj/machinery/ntnet_relay)
+		var/current_online = current == start ? source_online : current.is_online()
+		// A cold solve already samples forwarders. Remember unsigned native
+		// changes so negative trees can recover without another station scan.
+		if((current.node_type == NETRUN_NODE_APC || current_relay || length(graph.adjacency[address]) > 1) && current_online != current.last_online)
+			if(!changed_availability)
+				changed_availability = list()
+			changed_availability[current] = current_online
+		// Offline destinations are leaves: they cannot forward traffic.
+		if(!current_online)
+			continue
 		if(current_relay)
 			if(!relay_states)
 				relay_states = list()
@@ -120,6 +130,19 @@
 	frontier_addresses.Cut()
 	frontier_costs.Cut()
 	network_index_ready = TRUE
+	// No callbacks run while Dijkstra is traversing mutable graph arrays. Record
+	// all sampled state first, then publish checked lifecycle notifications. Any
+	// callback's later change advances the graph beyond this tree's generation.
+	for(var/datum/component/netrun_node/node as anything in changed_availability)
+		if(QDELETED(node))
+			continue
+		node.last_online = changed_availability[node]
+		graph.availability_changed(node)
+	availability_revision = graph.availability_revision
+	transit_availability_revision = graph.transit_availability_revision
+	for(var/datum/component/netrun_node/node as anything in changed_availability)
+		if(!QDELETED(node))
+			node.notify_changed(NETRUN_CHANGED_STATE, FALSE, TRUE)
 
 /// A solve never yields. Sample each remote relay's native state once within it,
 /// while preserving discoverability of an operational relay with offline_until set.
@@ -235,7 +258,7 @@
 /// Only physical paths are retained. Permissions and command authorization
 /// deliberately remain outside this cache and are evaluated for each request.
 /datum/netrun_topology
-	var/list/route_tables = list()
+	var/list/datum/netrun_path_tree/route_tables = list()
 	var/list/route_used = list()
 	var/route_revision = 0
 	/// Deep snapshots are reserved for operations that can yield, never boolean reads.
@@ -278,7 +301,7 @@
 	var/limit = max(1, infrastructure_route_limit)
 	var/datum/netrun_path_tree/tree = infrastructure_route_trees[root.address]
 	if(!tree || tree.graph_ref?.resolve() != src || tree.source != root || tree.geometry_revision != infrastructure_revision || tree.transit_availability_revision != transit_availability_revision || tree.source_online != root.is_online())
-		reconcile_availability(TRUE)
+		reconcile_availability()
 		forget_infrastructure_route(root.address)
 		trim_infrastructure_routes(limit - 1)
 		tree = new(src, root, TRUE)
@@ -304,7 +327,7 @@
 	route_used -= address
 
 /datum/netrun_topology/proc/store_route_table(datum/component/netrun_node/start)
-	reconcile_availability(TRUE)
+	reconcile_availability()
 	var/datum/netrun_path_tree/table = new(src, start)
 	table.retained = TRUE
 	table.revision = ++route_revision
@@ -315,7 +338,7 @@
 
 /// Unsigned native relay toggles and backbone settings have no common change signal.
 /// Their small infrastructure index is reconciled without walking the full graph.
-/datum/netrun_topology/proc/reconcile_availability(force_forwarding = FALSE)
+/datum/netrun_topology/proc/reconcile_availability()
 	SSnetrun.reconcile_dirty_availability()
 	var/disabled = !!SSnetworks.station_network?.setting_disabled
 	if(disabled != backbone_disabled)
@@ -331,9 +354,10 @@
 			node.last_online = online
 			availability_changed(node)
 			node.notify_changed(NETRUN_CHANGED_STATE, FALSE, TRUE)
-	// APC countdown recovery has no reliable native node signal. Its small index
-	// is the fallback, once per tick; a new solve samples it before saving negatives.
-	if(force_forwarding || forwarding_checked_at != world.time)
+	// APC countdown recovery has no reliable native node signal. Poll at most
+	// once per tick, including when many clients need cold source trees. Solves
+	// themselves record any additional native changes they actually encounter.
+	if(forwarding_checked_at != world.time)
 		forwarding_checked_at = world.time
 		for(var/address in registered_apcs)
 			var/datum/component/netrun_node/node = nodes[address]

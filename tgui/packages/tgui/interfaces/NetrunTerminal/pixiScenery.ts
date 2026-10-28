@@ -104,7 +104,7 @@ export class PixiScenery {
     const anchor = physicalPoint(node), parts: Part[] = [];
     if (anchor.px !== node.px || anchor.py !== node.py) {
       parts.push({ bucket: bucketAt('2-anchor', node.px, node.py), key: node.address,
-        color: 0x75a3b4, alpha: .4, width: 1, stroke: { from: anchor, to: node },
+        color: 0x75a3b4, alpha: .16, width: .7, stroke: { from: anchor, to: node },
         signature: `${anchor.px},${anchor.py},${node.px},${node.py}`, bounds: segmentBox(anchor, node) });
     }
     parts.push({ bucket: bucketAt('3-node', node.px, node.py), key: node.address,
@@ -121,8 +121,8 @@ export class PixiScenery {
     if (previous && previous.edge.kind === edge.kind && previous.edge.online === edge.online
       && previous.fromX === from.px && previous.fromY === from.py && previous.toX === to.px && previous.toY === to.py) { return previous; }
     const part: Part = { bucket: bucketAt('1-edge', from.px, from.py), key: edge.id,
-      color: edgeColor(edge.kind, edge.online !== false), alpha: edge.online === false ? .42 : edge.kind === 'endpoint' ? .6 : .9,
-      width: edge.kind === 'endpoint' ? 1 : 1.6, stroke: { from, to },
+      color: edgeColor(edge.kind, edge.online !== false), alpha: edge.online === false ? .12 : edge.kind === 'endpoint' ? .22 : .4,
+      width: edge.kind === 'endpoint' ? .75 : 1.1, stroke: { from, to },
       signature: `${edge.id}:${from.px},${from.py},${to.px},${to.py}`, bounds: segmentBox(from, to) };
     return { edge, fromX: from.px, fromY: from.py, toX: to.px, toY: to.py, part };
   }
