@@ -113,6 +113,32 @@
 	TEST_ASSERT_NULL(SSnetrun.task_scheduler.by_key[key], "Cancellation must remove the ready scheduler entry")
 	TEST_ASSERT_EQUAL(length(samples), 0, "A cancelled packet must never execute")
 
+/// Removing the real physical deck must cancel both kinds of pending work, even
+/// when the remote destination remains alive and the delivery deadline is far away.
+/datum/unit_test/netrun_delivery_deleted_deck_releases_work/Run()
+	var/obj/item/netrun_deck/deck = allocate(/obj/item/netrun_deck, run_loc_floor_bottom_left)
+	var/datum/netrun_console/console = deck.console
+	var/obj/item/target = allocate(/obj/item, get_step(run_loc_floor_bottom_left, EAST))
+	var/datum/component/netrun_node/node = target.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_request/delivery/netrun_queue_probe/queued = allocate(/datum/netrun_request/delivery/netrun_queue_probe, console, node, node.network)
+	var/datum/netrun_request/delivery/netrun_queue_probe/delayed = allocate(/datum/netrun_request/delivery/netrun_queue_probe, console, node, node.network)
+	var/list/queued_samples = queued.observations
+	var/list/delayed_samples = delayed.observations
+	queued.send()
+	delayed.send(30 SECONDS)
+	var/queued_key = "request_delivery:[REF(queued)]"
+	var/console_key = "console:[REF(console)]"
+	TEST_ASSERT_NOTNULL(SSnetrun.task_scheduler.by_key[queued_key], "The ready packet must start in the scheduler")
+	TEST_ASSERT_NOTNULL(delayed.timer_id, "The delayed packet must own a real pending timer")
+	qdel(deck)
+	TEST_ASSERT(QDELETED(console) && QDELETED(queued) && QDELETED(delayed), "Deck destruction must synchronously dispose its console and pending packets")
+	TEST_ASSERT_NULL(SSnetrun.task_scheduler.by_key[queued_key], "No ready packet may survive its originating deck")
+	TEST_ASSERT_NULL(SSnetrun.task_scheduler.by_key[console_key], "No console processing task may survive its originating deck")
+	TEST_ASSERT_NULL(delayed.timer_id, "Deleting a deck must release its packet's delayed callback immediately")
+	TEST_ASSERT(!(console in SSnetrun.consoles) && !(console in SSnetrun.active_consoles), "Deleted decks must leave both console registries")
+	TEST_ASSERT(!(queued in SSnetrun.pending_requests) && !(delayed in SSnetrun.pending_requests), "Neither pending packet may retain a deleted console")
+	TEST_ASSERT_EQUAL(length(queued_samples) + length(delayed_samples), 0, "No cancelled deck process may execute against the surviving remote endpoint")
+
 /datum/netrun_machine_message/transport_fixture/queue_snapshot/coalescing_key()
 	return "replaceable-status"
 

@@ -5,8 +5,15 @@
 
 /datum/netrun_access_session/proc/on_firewall_changed(datum/source, datum/component/netrun_node/node)
 	SIGNAL_HANDLER
+	if(QDELETED(owner) || QDELETED(node))
+		return
+	var/datum/netrun_breach/breach = owner.intrusion?.breach
+	// Node/map events already publish the visible security change. A session
+	// without this grant or breach has no authority state for the firewall to revoke.
+	if(!node_access[node.address] && !(breach && breach.target_kind != "network" && breach.target_id == node.address))
+		return
 	pending_firewalls[node.address] = WEAKREF(node)
-	owner?.invalidate_ui()
+	owner.invalidate_ui()
 
 /datum/netrun_access_session/proc/process_events()
 	if(processing_events || !length(pending_firewalls))

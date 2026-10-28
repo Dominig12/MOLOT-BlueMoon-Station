@@ -37,6 +37,7 @@
 
 /datum/netrun_command/rnd_report
 	id = "rnd_report"
+	read_only = TRUE
 	name = "Сводка исследований"
 	desc = "Показать сеть, запас очков и число открытых узлов техвеба."
 	access = NETRUN_ACCESS_USER
@@ -108,6 +109,7 @@
 
 /datum/netrun_command/rnd_nodes
 	id = "rnd_nodes"
+	read_only = TRUE
 	name = "Список технологий"
 	desc = "Показать открытые узлы техвеба сервера."
 	access = NETRUN_ACCESS_USER

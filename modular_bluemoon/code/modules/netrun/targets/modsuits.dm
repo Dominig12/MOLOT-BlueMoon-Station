@@ -274,6 +274,7 @@
 
 /datum/netrun_command/mod_status
 	id = "mod_status"
+	read_only = TRUE
 	name = "Диагностика MOD"
 	desc = "Получить питание, состояние контроллера и список установленных модулей костюма."
 	access = NETRUN_ACCESS_USER

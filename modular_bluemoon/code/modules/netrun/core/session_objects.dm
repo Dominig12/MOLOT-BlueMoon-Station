@@ -3,12 +3,15 @@
 	var/datum/netrun_console/owner
 	var/datum/component/netrun_node/jack
 	var/wireless = TRUE
+	/// Cleared at the end of every synchronous UI serialization pass.
+	var/list/ui_refreshed_nodes
 
 /datum/netrun_connection/New(datum/netrun_console/owner)
 	src.owner = owner
 
 /datum/netrun_connection/Destroy()
 	set_jack(null)
+	ui_refreshed_nodes = null
 	owner = null
 	return ..()
 
@@ -26,8 +29,10 @@
 	set_jack(null)
 
 /datum/netrun_connection/proc/jack_valid()
+	if(QDELETED(jack) || QDELETED(jack.parent))
+		return FALSE
 	var/turf/source_turf = owner?.physical_turf()
-	var/turf/target_turf = jack?.physical_turf()
+	var/turf/target_turf = jack.physical_turf()
 	return source_turf && target_turf && source_turf.z == target_turf.z && get_dist(source_turf, target_turf) <= 1
 
 /// Acquired grants belong to the session; ID credentials still come from its operator.

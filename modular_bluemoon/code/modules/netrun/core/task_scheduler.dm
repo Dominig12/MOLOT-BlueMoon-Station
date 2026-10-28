@@ -111,7 +111,7 @@
 	worker.dirty_nodes -= node
 	node.processing_update = TRUE
 	var/datum/netrun_topology/graph = worker.get_topology()
-	if(node.pending_physical_update || node.is_dynamic() || !node.binding_checked || node.binding_infra_revision != graph.infrastructure_revision)
+	if(node.pending_physical_update || !node.binding_checked || node.binding_infra_revision != graph.infrastructure_revision)
 		node.join_network()
 	node.reconcile_state()
 	node.processing_update = FALSE
@@ -140,13 +140,15 @@
 	// Dive-link processing can end the dive and destroy the originating console.
 	if(QDELETED(console))
 		return TRUE
-	console.flush_ui(interactive || console.ui_event_pending)
+	// Network/occupant/log events can arrive every MC slice. They share the
+	// configured repaint cadence; only actual user input bypasses it.
+	console.flush_ui(interactive)
 	if(QDELETED(console))
 		return TRUE
 	console.ui_processing = FALSE
 	// A domain signal may arrive while serialization yields. Preserve that next update;
 	// countdown invalidations never requeue themselves within the same server tick.
-	if(console.ui_dirty && console.ui_event_pending && limits.interactive_flush && !console.ui_serializing && !console.ui_flushing && console.is_ui_active())
+	if(console.ui_dirty && console.ui_event_pending && world.time >= console.last_ui_at + limits.ui_refresh_interval && !console.ui_serializing && !console.ui_flushing && console.is_ui_active())
 		worker.get_task_scheduler().enqueue("console", console, NETRUN_TASK_NORMAL)
 	worker.last_processed_consoles++
 	if(!QDELETED(console) && !console.needs_processing())

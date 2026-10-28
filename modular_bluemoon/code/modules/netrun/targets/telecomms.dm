@@ -43,6 +43,7 @@
 
 /datum/netrun_command/tcomm_logs
 	id = "tcomm_logs"
+	read_only = TRUE
 	name = "Логи переговоров"
 	desc = "Прочитать перехваченные сервером связи записи сообщений."
 	access = NETRUN_ACCESS_USER
@@ -104,6 +105,7 @@
 
 /datum/netrun_command/pda_logs
 	id = "pda_logs"
+	read_only = TRUE
 	name = "Сообщения ПДА"
 	desc = "Прочитать перехваченные сервером ПДА-сообщения. Требуется пароль сервера."
 	help = "Без извлечённого пароля сервера сообщения зашифрованы. Сначала примените «Пароль сервера» (ROOT)."

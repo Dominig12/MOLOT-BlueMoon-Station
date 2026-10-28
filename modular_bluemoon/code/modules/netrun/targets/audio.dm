@@ -96,6 +96,7 @@
 
 /datum/netrun_command/audio_log
 	id = "audio_log"
+	read_only = TRUE
 	name = "Журнал записи"
 	desc = "Вывести последние реплики, записанные источником."
 	icon = "list"

@@ -53,6 +53,7 @@
 
 /datum/netrun_command/pc_programs
 	id = "pc_programs"
+	read_only = TRUE
 	name = "Список программ"
 	desc = "Показать установленные и запущенные программы."
 	access = NETRUN_ACCESS_USER

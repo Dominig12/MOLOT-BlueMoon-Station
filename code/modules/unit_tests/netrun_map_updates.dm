@@ -52,6 +52,199 @@
 	projected_by_address[node.address]++
 	return ..()
 
+/// Navigation must retain the station projection and update only route disclosure/APC shape.
+/datum/unit_test/netrun_map_navigation_work/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	for(var/turf/spot as anything in block(origin, locate(origin.x + 8, origin.y + 2, origin.z)))
+		scene.take(spot, room)
+	var/obj/machinery/power/apc/apc = scene.machine(/obj/machinery/power/apc, get_step(origin, NORTH))
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/list/fixtures = list(apc.GetComponent(/datum/component/netrun_node), source.GetComponent(/datum/component/netrun_node))
+	var/list/targets = list()
+	for(var/i in 1 to 100)
+		var/obj/item/device = allocate(/obj/item, locate(origin.x + i % 8, origin.y + 2, origin.z))
+		var/datum/component/netrun_node/node = device.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+		fixtures += node
+		targets += node
+	SSnetrun.ensure_topology()
+	for(var/datum/component/netrun_node/node as anything in fixtures)
+		node.join_network()
+		node.reconcile_state()
+		node.publish_changes()
+	var/datum/netrun_console/console = source.console
+	qdel(console.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+	console.map_view = view
+	console.workspace_view = "map"
+	console.ui_data(null)
+	var/builds = view.rebuilds
+	var/datum/component/netrun_node/unchanged = targets[100]
+	var/projected = view.projected_by_address[unchanged.address]
+	var/datum/component/netrun_node/first = targets[1]
+	var/datum/component/netrun_node/second = targets[2]
+	view.selected_address = first.address
+	console.ui_data(null)
+	view.waypoint_address = second.address
+	console.ui_data(null)
+	view.waypoint_address = null
+	var/datum/component/netrun_node/apc_node = apc.GetComponent(/datum/component/netrun_node)
+	view.selected_address = apc_node.address
+	var/list/map = console.ui_data(null)["map"]
+	var/list/zones = map["apc_zones"]
+	TEST_ASSERT_EQUAL(length(zones), 1, "Selecting an APC must add its native shape without a whole map rebuild")
+	TEST_ASSERT_EQUAL(zones[1]["address"], apc_node.address, "The selected APC owns the displayed shape")
+	view.selected_address = first.address
+	map = console.ui_data(null)["map"]
+	TEST_ASSERT_EQUAL(length(map["apc_zones"]), 0, "Selecting an ordinary device must remove the previous APC shape")
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Selection and waypoint changes must retain the full permitted projection")
+	TEST_ASSERT_EQUAL(view.projected_by_address[unchanged.address], projected, "Navigation must not serialize unrelated stationary devices")
+
+/// Alternating viewers of one physical terminal retain isolated ownership projections.
+/datum/unit_test/netrun_map_multiple_operators/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	var/area/medical = scene.room(/area/medical/netrun_route_test)
+	for(var/turf/spot as anything in block(origin, locate(origin.x + 3, origin.y + 2, origin.z)))
+		scene.take(spot, room)
+	var/turf/remote = scene.take(locate(origin.x + 6, origin.y, origin.z), medical)
+	var/obj/machinery/power/apc/local_apc = scene.machine(/obj/machinery/power/apc, get_step(origin, NORTH))
+	var/obj/machinery/power/apc/remote_apc = scene.machine(/obj/machinery/power/apc, scene.take(get_step(remote, NORTH), medical))
+	var/obj/machinery/computer/netrun_terminal/source = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/mob/living/carbon/human/first_operator = allocate(/mob/living/carbon/human, remote)
+	var/mob/living/carbon/human/second_operator = allocate(/mob/living/carbon/human, origin)
+	var/obj/item/netrun_deck/private_deck = allocate(/obj/item/netrun_deck, first_operator)
+	var/datum/component/netrun_node/private_node = private_deck.GetComponent(/datum/component/netrun_node)
+	var/obj/item/private_device = allocate(/obj/item, remote)
+	var/datum/component/netrun_node/grant_node = private_device.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/list/fixtures = list(local_apc.GetComponent(/datum/component/netrun_node), remote_apc.GetComponent(/datum/component/netrun_node),
+		source.GetComponent(/datum/component/netrun_node), private_node, grant_node)
+	for(var/i in 1 to 100)
+		var/obj/item/device = allocate(/obj/item, locate(origin.x + i % 3, origin.y + 2, origin.z))
+		fixtures += device.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	SSnetrun.ensure_topology()
+	for(var/datum/component/netrun_node/node as anything in fixtures)
+		node.join_network()
+		node.reconcile_state()
+		node.publish_changes()
+	var/datum/netrun_console/console = source.console
+	qdel(console.map_view)
+	var/datum/netrun_map_view/netrun_performance_test/view = new(console)
+	console.map_view = view
+	console.workspace_view = "map"
+	var/list/first_session = list("id" = 1)
+	var/list/second_session = list("id" = 2)
+	console.operator = first_operator
+	var/list/first_map = console.ui_data(null)["map"]
+	var/list/first_baseline = view.encode_wire(first_map, first_session)
+	TEST_ASSERT(netrun_map_has_node(list("map" = first_map), private_node.address), "The owner's view must disclose their carried deck in a protected LAN")
+	console.operator = second_operator
+	var/list/second_map = console.ui_data(null)["map"]
+	var/list/second_baseline = view.encode_wire(second_map, second_session)
+	TEST_ASSERT(!netrun_map_has_node(list("map" = second_map), private_node.address), "Another viewer must not inherit the owner's private device")
+	var/builds = view.rebuilds
+	var/entries = view.serialized_nodes
+	for(var/i in 1 to 5)
+		console.operator = first_operator
+		first_map = console.ui_data(null)["map"]
+		var/list/first_delta = view.encode_wire(first_map, first_session)
+		TEST_ASSERT(!first_delta["full"] && first_delta["epoch"] == first_baseline["epoch"], "Returning to the owner must keep their existing wire baseline")
+		TEST_ASSERT(netrun_map_has_node(list("map" = first_map), private_node.address), "The owner must retain private ownership access after another viewer")
+		console.operator = second_operator
+		second_map = console.ui_data(null)["map"]
+		var/list/second_delta = view.encode_wire(second_map, second_session)
+		TEST_ASSERT(!second_delta["full"] && second_delta["epoch"] == second_baseline["epoch"], "The other viewer must keep an independent wire baseline")
+		TEST_ASSERT(!netrun_map_has_node(list("map" = second_map), private_node.address), "Alternation must never disclose another operator's device")
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Two established viewers must not rebuild the station projection when alternating")
+	TEST_ASSERT_EQUAL(view.serialized_nodes, entries, "Quiet alternating viewers must serialize zero stationary nodes")
+	private_deck.burnt_until = world.time + 20 SECONDS
+	view.on_node_changed(SSnetrun, private_node, NETRUN_CHANGED_STATE)
+	console.operator = first_operator
+	first_map = console.ui_data(null)["map"]
+	var/list/activity = view.encode_wire(first_map, first_session)
+	TEST_ASSERT(!activity["full"] && length(activity["nodes"]) == 1, "A parked owner's visible node must still receive its pending status delta")
+	TEST_ASSERT(!activity["nodes"][1]["online"], "The restored projection must contain the node's current native status")
+	console.access_session.node_access[grant_node.address] = NETRUN_ACCESS_ROOT
+	view.invalidate_node_access(grant_node.address)
+	first_map = console.ui_data(null)["map"]
+	view.encode_wire(first_map, first_session)
+	console.operator = second_operator
+	second_map = console.ui_data(null)["map"]
+	view.encode_wire(second_map, second_session)
+	TEST_ASSERT(netrun_map_has_node(list("map" = second_map), grant_node.address), "A shared command-session grant must reach both operator projections")
+	console.access_session.node_access -= grant_node.address
+	view.invalidate_node_access(grant_node.address)
+	console.operator = first_operator
+	first_map = console.ui_data(null)["map"]
+	var/list/revoked = view.encode_wire(first_map, first_session)
+	TEST_ASSERT(!revoked["full"] && (grant_node.address in revoked["removed_nodes"]), "A parked projection must revoke its delivered node by delta")
+	TEST_ASSERT(!netrun_map_has_node(list("map" = first_map), grant_node.address), "Restoring a projection must never restore a revoked grant")
+	TEST_ASSERT_EQUAL(view.rebuilds, builds, "Node status and grants must reconcile without rebuilding either established projection")
+	for(var/i in 1 to 9)
+		console.operator = allocate(/mob/living, origin)
+		view.select_operator_projection()
+	TEST_ASSERT(length(view.operator_projections) <= 8, "A physical console must retain at most eight operator projections")
+	console.operator = first_operator
+	first_map = console.ui_data(null)["map"]
+	var/list/reopened = view.encode_wire(first_map, first_session)
+	TEST_ASSERT(reopened["full"] && reopened["epoch"] != first_baseline["epoch"], "An evicted viewer must receive a new complete baseline")
+	view.suspend()
+	TEST_ASSERT_EQUAL(length(view.operator_projections), 0, "Suspending the map must release every parked operator projection")
+
+/// A hidden ordinary endpoint's packets/occupants cannot alter another viewer's map.
+/datum/unit_test/netrun_map_hidden_activity_sleep/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)
+	var/obj/item/device = allocate(/obj/item)
+	var/datum/component/netrun_node/node = device.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_map_view/view = console.map_view
+	view.snapshot = list()
+	console.ui_dirty = FALSE
+	view.on_node_changed(SSnetrun, node, NETRUN_CHANGED_OCCUPANTS)
+	TEST_ASSERT(!console.ui_dirty && !length(view.dirty_nodes), "An unseen leaf's occupants must not wake an unrelated map")
+	view.on_node_changed(SSnetrun, node, NETRUN_CHANGED_STATE)
+	TEST_ASSERT(!console.ui_dirty && !length(view.dirty_nodes), "An unseen leaf's activity must not wake an unrelated map")
+	view.shown_addresses[node.address] = TRUE
+	view.on_node_changed(SSnetrun, node, NETRUN_CHANGED_STATE)
+	TEST_ASSERT(console.ui_dirty && view.dirty_nodes[node.address], "A visible endpoint must still invalidate its own marker")
+	view.dirty_nodes.Cut()
+	view.shown_addresses.Cut()
+	console.ui_dirty = FALSE
+	view.on_node_changed(SSnetrun, node, NETRUN_CHANGED_BINDING)
+	TEST_ASSERT(console.ui_dirty && view.dirty_nodes[node.address], "A binding change must still reconcile newly reachable endpoints")
+
+/datum/netrun_map_geometry/netrun_performance_test
+	var/builds = 0
+
+/datum/netrun_map_geometry/netrun_performance_test/build_area_runs(area/room, z)
+	builds++
+	return ..()
+
+/// Simultaneous viewers share area compression while expired native geometry is refreshed.
+/datum/unit_test/netrun_map_shared_area_geometry/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/netrun_route_test)
+	scene.take(origin, room)
+	scene.take(locate(origin.x + 2, origin.y, origin.z), room)
+	var/datum/netrun_map_geometry/netrun_performance_test/first = allocate(/datum/netrun_map_geometry/netrun_performance_test)
+	var/datum/netrun_map_geometry/netrun_performance_test/second = allocate(/datum/netrun_map_geometry/netrun_performance_test)
+	var/key = "[REF(room)]:[origin.z]"
+	first.area_run_cache -= key
+	var/list/runs = first.area_runs(room, origin.z)
+	TEST_ASSERT_EQUAL(length(runs), 2, "Native area compression must preserve the gap between disconnected tiles")
+	TEST_ASSERT_EQUAL(second.area_runs(room, origin.z), runs, "Two viewers must share the same immutable compressed shape")
+	TEST_ASSERT_EQUAL(first.builds + second.builds, 1, "Opening another viewer must not scan the same native area again")
+	scene.take(get_step(origin, EAST), room)
+	first.area_run_cache[key]["expires"] = world.time - 1
+	var/list/refreshed = second.area_runs(room, origin.z)
+	TEST_ASSERT_EQUAL(length(refreshed), 1, "Expired area geometry must reconcile native turf changes")
+	TEST_ASSERT_EQUAL(refreshed[1]["width"], 3, "The reconciled shape must include the newly connected turf")
+	TEST_ASSERT_EQUAL(first.builds + second.builds, 2, "Refreshing an expired shape scans it exactly once")
+	first.area_run_cache -= key
+
 /// A fixture where one endpoint is private until a node-specific grant is held.
 /datum/netrun_console/netrun_visibility_test
 	var/private_address

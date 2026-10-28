@@ -167,26 +167,30 @@
 	// Standalone help/completion callers also get one bounded routing snapshot.
 	var/owns_routes = !ui_routes
 	if(owns_routes)
-		ui_routes = path_tree()
+		ui_routes = connection.read_path_tree()
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	var/list/node_addresses = list()
 	var/list/network_codes = list()
-	var/list/seen_networks = list()
+	var/list/network_levels = list()
 	for(var/address in ui_routes.reached)
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(QDELETED(node) || QDELETED(node.parent) || !node.network)
 			continue
 		var/datum/netrun_network/network = node.network
-		if(!seen_networks[network.id])
-			seen_networks[network.id] = TRUE
+		// A LAN has one access level in this synchronous projection. Checking it
+		// for every endpoint repeatedly resolves the same source, ID and route.
+		if(isnull(network_levels[network.id]))
+			network_levels[network.id] = network_level(network)
 			network_codes += network.code
 		// Keep the original CLI disclosure policy. Mapper alone does not reveal
 		// locked endpoint addresses through these shared completion lists.
 		// DM evaluates `in` after `||`: keep membership separate from authorization.
-		if(network_level(network) >= NETRUN_ACCESS_GUEST || (node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)))
+		if(network_levels[network.id] >= NETRUN_ACCESS_GUEST || (node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)))
 			node_addresses += node.address
 	if(owns_routes)
-		QDEL_NULL(ui_routes)
+		var/datum/netrun_path_tree/tree = ui_routes
+		ui_routes = null
+		release_path_tree(tree)
 	cli_projection_context = current_context
 	cli_projection_values = list("nodes" = node_addresses, "networks" = network_codes)
 	if(ui_completion_cache)

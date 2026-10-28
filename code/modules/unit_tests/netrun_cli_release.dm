@@ -7,6 +7,41 @@
 	TEST_ASSERT_NULL(netrun_cli_tokens("cat trailing\\"), "A trailing escape must not silently truncate the filename")
 	TEST_ASSERT_EQUAL(length(netrun_cli_tokens(" \t ")), 0, "Whitespace-only input has no executable verb")
 
+/// Count actual authorization queries on the standalone static-data/completion path.
+/datum/netrun_console/cli_projection_fixture
+	var/list/network_checks = list()
+
+/datum/netrun_console/cli_projection_fixture/network_level(datum/netrun_network/network, datum/netrun_path_tree/tree)
+	network_checks[network.id] = (network_checks[network.id] || 0) + 1
+	return ..()
+
+/// Opening several terminals must calculate a LAN's permissions once per viewer,
+/// rather than once for every machine on that LAN before the first ui_data pass.
+/datum/unit_test/netrun_cli_completion_lan_scaling/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/room = scene.room(/area/engineering/netrun_route_test)
+	scene.take(origin, room)
+	scene.take(get_step(origin, NORTH), room)
+	scene.machine(/obj/machinery/power/apc, get_step(origin, NORTH))
+	var/obj/machinery/computer/netrun_terminal/terminal = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/datum/component/netrun_node/source = terminal.GetComponent(/datum/component/netrun_node)
+	for(var/index in 1 to 16)
+		var/obj/item/endpoint = allocate(/obj/item, origin)
+		endpoint.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	for(var/index in 1 to 4)
+		var/datum/netrun_console/cli_projection_fixture/console = allocate(/datum/netrun_console/cli_projection_fixture, terminal)
+		console.connection.wireless = FALSE
+		var/list/addresses = console.cli_completion_values("nodes")
+		TEST_ASSERT(length(addresses) >= 18, "Each viewer must still receive every permitted endpoint and its APC")
+		TEST_ASSERT_EQUAL(console.network_checks[source.network.id], 1, "Completion must resolve one authorization level per LAN, independent of its endpoint population")
+		var/list/networks = console.cli_completion_values("networks")
+		TEST_ASSERT(source.network.code in networks, "The same projection must provide its network completion code")
+		TEST_ASSERT_EQUAL(console.network_checks[source.network.id], 1, "Shared verb pools must reuse the same per-viewer projection")
+		TEST_ASSERT_NULL(console.ui_routes, "A standalone completion query must release its transient route reference")
+		TEST_ASSERT(!QDELETED(graph.route_tables[source.address]), "Completion teardown must preserve the shared routing table for subsequent viewers")
+
 /datum/unit_test/netrun_cli_renamed_daemon/Run()
 	var/obj/item/host = allocate(/obj/item)
 	var/datum/netrun_console/console = allocate(/datum/netrun_console, host)

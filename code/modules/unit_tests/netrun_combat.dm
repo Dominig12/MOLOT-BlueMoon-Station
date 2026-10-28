@@ -119,12 +119,14 @@
 	TEST_ASSERT(first.begin_program(trace, console), "The first sentry must announce its real trace")
 	TEST_ASSERT(second.begin_program(trace, console), "A second sentry must obtain an independent contact")
 	var/before_combat_paths = SSnetrun.combat_ui_tree_builds
+	var/before_combat_copies = SSnetrun.get_topology().route_snapshot_copies
 	var/list/warnings_only = console.combat_context.status_payload()
 	TEST_ASSERT_EQUAL(length(warnings_only["incoming"]), 2, "The compact warning must still identify both attackers")
 	TEST_ASSERT(!("targets" in warnings_only) && !("programs" in warnings_only), "A warning must not build hidden combat cards or program inventory")
 	TEST_ASSERT_EQUAL(SSnetrun.combat_ui_tree_builds, before_combat_paths, "The compact HUD must never build a routing tree")
 	var/list/payload = console.breach_combat_payload()
-	TEST_ASSERT_EQUAL(SSnetrun.combat_ui_tree_builds, before_combat_paths + 1, "One combat payload with several targets must build only one routing tree")
+	TEST_ASSERT_EQUAL(SSnetrun.combat_ui_tree_builds, before_combat_paths + 1, "One combat payload with several targets must acquire only one routing tree")
+	TEST_ASSERT_EQUAL(SSnetrun.get_topology().route_snapshot_copies, before_combat_copies, "Combat cards must borrow current physical routes without copying every network endpoint")
 	TEST_ASSERT_EQUAL(length(payload["targets"]), 2, "The puzzle must expose both actual attackers and no unrelated ICE")
 	TEST_ASSERT_EQUAL(length(payload["incoming"]), 2, "Both announced attacks must remain visible")
 	TEST_ASSERT_EQUAL(length(payload["programs"]), 4, "Installed counterattacks remain available and player trace stays hidden")

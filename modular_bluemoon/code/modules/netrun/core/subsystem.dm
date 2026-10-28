@@ -32,6 +32,14 @@ SUBSYSTEM_DEF(netrun)
 	var/list/node_interest_until = list()
 	var/list/pending_requests = list()
 	var/list/dirty_nodes = list()
+	/// Presentation contains only scalar addresses/flags, never deleted-node references.
+	var/list/node_publications = list()
+	/// LAN log changes share the same boundary; one weak reference per network id.
+	var/list/network_publications = list()
+	var/publishing_nodes = FALSE
+	var/node_publication_batches = 0
+	var/node_publication_entries = 0
+	var/network_publication_entries = 0
 	/// Routing drains native availability changes separately from presentation work.
 	var/list/availability_nodes = list()
 	/// Only temporary outages need an availability deadline; activity/firewall timers do not.
@@ -76,17 +84,60 @@ SUBSYSTEM_DEF(netrun)
 		msg += " Exec:[scheduler.executed_by_priority[1]]/[scheduler.executed_by_priority[2]]/[scheduler.executed_by_priority[3]] WaitMax:[round(scheduler.max_wait_by_priority[1] / (1 SECONDS), 0.1)]/[round(scheduler.max_wait_by_priority[2] / (1 SECONDS), 0.1)]/[round(scheduler.max_wait_by_priority[3] / (1 SECONDS), 0.1)]s Late:[scheduler.overdue_by_priority[1]]/[scheduler.overdue_by_priority[2]]/[scheduler.overdue_by_priority[3]] Ovr:[scheduler.budget_overruns]/[scheduler.task_overruns]"
 	if(profile_armed)
 		msg += " Cam ms total/max F:[round(camera_feed_scan_ms, 0.1)]/[round(camera_feed_scan_max_ms, 0.1)] R:[round(camera_route_check_ms, 0.1)]/[round(camera_route_check_max_ms, 0.1)]"
+	msg += " Pub:[node_publication_batches]/[node_publication_entries]/[network_publication_entries]"
 	return ..()
+
+/// Repeated changes to one address are one UI event, without an extra node/state task.
+/datum/controller/subsystem/netrun/proc/queue_node_publication(datum/component/netrun_node/node, flags)
+	if(!node?.address || !flags)
+		return
+	var/was_empty = !length(node_publications) && !length(network_publications)
+	node_publications[node.address] = (node_publications[node.address] || 0) | flags
+	if(was_empty)
+		wake_ready_delivery()
+
+/datum/controller/subsystem/netrun/proc/queue_network_publication(datum/netrun_network/network)
+	if(QDELETED(network) || !network.id)
+		return
+	var/was_empty = !length(node_publications) && !length(network_publications)
+	network_publications[network.id] = WEAKREF(network)
+	if(was_empty)
+		wake_ready_delivery()
+
+/// Maps/consoles inspect one immutable batch per worker boundary, not every packet/hop.
+/// Direct ui_data reads may drain this queue too, before selecting their projection.
+/datum/controller/subsystem/netrun/proc/flush_node_publications()
+	if(publishing_nodes || (!length(node_publications) && !length(network_publications)))
+		return
+	var/list/changes = node_publications
+	var/list/network_changes = network_publications
+	node_publications = list()
+	network_publications = list()
+	publishing_nodes = TRUE
+	node_publication_batches++
+	node_publication_entries += length(changes)
+	if(length(changes))
+		SEND_SIGNAL(src, COMSIG_NETRUN_NODES_CHANGED, changes)
+	for(var/network_id in network_changes)
+		var/datum/weakref/reference = network_changes[network_id]
+		var/datum/netrun_network/network = reference.resolve()
+		if(!QDELETED(network))
+			network_publication_entries++
+			SEND_SIGNAL(src, COMSIG_NETRUN_NETWORK_CHANGED, network)
+	publishing_nodes = FALSE
 
 /// Repeated cold inputs share one fixed trailing deadline measured from completed processing.
 /datum/controller/subsystem/netrun/proc/queue_node(datum/component/netrun_node/node, urgent = FALSE)
 	if(!QDELETED(node))
 		node.urgent_update ||= urgent
 		var/due = (urgent || node_interest_until[node] > world.time) ? world.time : max(world.time, node.last_processed_at + get_execution_limits().node_update_interval)
-		if(!isnull(dirty_nodes[node]))
-			due = min(due, dirty_nodes[node])
+		var/previous_due = dirty_nodes[node]
+		if(!isnull(previous_due))
+			due = max(world.time, min(due, previous_due))
 		dirty_nodes[node] = due
-		if(due <= world.time)
+		// The first event already admitted this node for this tick. Native signal
+		// bursts must not rebuild the scheduler key and promote the same task again.
+		if(due <= world.time && (isnull(previous_due) || previous_due != world.time))
 			get_task_scheduler().enqueue("node", node, NETRUN_TASK_NORMAL)
 
 /// A route can be requested before the next node pass, including twice in one tick.
@@ -122,12 +173,15 @@ SUBSYSTEM_DEF(netrun)
 		if(online != node.last_online)
 			node.last_online = online
 			get_topology().availability_changed(node)
+			node.notify_changed(NETRUN_CHANGED_STATE, FALSE, TRUE)
 
 /datum/controller/subsystem/netrun/proc/track_node(datum/component/netrun_node/node)
 	if(QDELETED(node))
 		return
 	var/atom/endpoint = node.parent
-	if(node.is_dynamic() || endpoint.netrun_needs_poll())
+	// Movement and containment already have native subscriptions, including all
+	// carriers. Unanchored machinery needs no extra poll just for being movable.
+	if(endpoint.netrun_needs_poll())
 		if(isnull(poll_nodes[node]))
 			poll_nodes[node] = world.time + get_execution_limits().node_idle_poll_interval
 	else
@@ -285,10 +339,12 @@ SUBSYSTEM_DEF(netrun)
 		collect_console_node_interest(console)
 		var/priority = console.intrusion.breach || console.is_locked() ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL
 		scheduler.enqueue("console", console, priority)
+	collect_defense_network_interest()
 	for(var/datum/netrun_ice/ice as anything in ice_processes)
 		if(QDELETED(ice))
 			continue
-		if(ice.needs_netrun_tick())			scheduler.enqueue("ice", ice, ice.pending_program ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL)
+		if(ice.needs_netrun_tick())
+			scheduler.enqueue("ice", ice, ice.pending_program ? NETRUN_TASK_CRITICAL : NETRUN_TASK_NORMAL)
 	for(var/datum/netrun_request/delivery/request as anything in pending_requests)
 		if(QDELETED(request))
 			pending_requests -= request
@@ -312,10 +368,11 @@ SUBSYSTEM_DEF(netrun)
 	next_fire = min(next_fire, world.time)
 
 /datum/controller/subsystem/netrun/proc/refresh_delivery_interval()
-	wait = task_scheduler?.pending() ? world.tick_lag : NETRUN_DEFAULT_FIRE_INTERVAL
+	wait = (task_scheduler?.pending() || length(node_publications) || length(network_publications)) ? world.tick_lag : NETRUN_DEFAULT_FIRE_INTERVAL
 
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
 	var/slice_start_usage = TICK_USAGE
+	flush_node_publications()
 	if(!resumed && initialized)
 		get_machine_transport().prepare_network()
 	if(!resumed)
@@ -357,6 +414,7 @@ SUBSYSTEM_DEF(netrun)
 		qdel(task)
 		executed++
 		if(MC_TICK_CHECK)
+			flush_node_publications()
 			refresh_delivery_interval()
 			scheduler.last_executed = executed
 			scheduler.last_budget_ms = budget_ms
@@ -366,6 +424,7 @@ SUBSYSTEM_DEF(netrun)
 				scheduler.budget_overruns++
 			current_pass_cost_ms += scheduler.last_execution_ms
 			return
+	flush_node_publications()
 	scheduler.last_executed = executed
 	scheduler.last_budget_ms = budget_ms
 	scheduler.last_execution_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage))
@@ -453,7 +512,7 @@ SUBSYSTEM_DEF(netrun)
 	events += list(list("kind" = kind, "from" = from_ref, "to" = to_ref, "t" = world.time, "route" = route?.Copy()))
 	if(length(events) > 40)
 		events.Cut(1, length(events) - 40 + 1)
-	SEND_SIGNAL(src, COMSIG_NETRUN_EVENT_POSTED, kind, from_ref, to_ref)
+	SEND_SIGNAL(src, COMSIG_NETRUN_EVENT_POSTED, kind, from_ref, to_ref, route)
 
 /// Недавние события (последние секунды) для интерфейса
 /datum/controller/subsystem/netrun/proc/recent_events(datum/netrun_console/viewer)

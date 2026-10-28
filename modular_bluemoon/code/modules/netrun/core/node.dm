@@ -237,7 +237,11 @@
 /datum/component/netrun_node/proc/queue_physical_update()
 	if(QDELETED(src))
 		return
-	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_MOVED, src, topology_turf, physical_turf())
+	var/turf/position = physical_turf()
+	// Resident cameras follow only their own host. A local movement signal keeps
+	// dormant residents in sync without subscribing each one to all station moves.
+	SEND_SIGNAL(src, COMSIG_NETRUN_NODE_MOVED, src, topology_turf, position)
+	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_MOVED, src, topology_turf, position)
 	// Never scan bindings or repair every retained route inside the character's move.
 	// The existing node task coalesces several moves, and explicit route consumers
 	// call join_network() themselves before authorizing a packet or serializing UI.
@@ -263,7 +267,7 @@
 
 /datum/component/netrun_node/proc/on_storage_changed(datum/source)
 	SIGNAL_HANDLER
-	notify_changed()
+	queue_presentation(NETRUN_CHANGED_DETAILS)
 
 /// The fallback samples only fields exposed by the graph, including timed states.
 /// Polls the timed/native status that has no change signal (power, firewall expiry, occupants,
@@ -279,7 +283,8 @@
 	var/dynamic = is_dynamic()
 	if(!pending_state_notification && online == last_online && security == last_security && entity_count == last_entities && ice_count == last_ice && active == last_active && dynamic == last_dynamic)
 		return
-	if(online != last_online)
+	var/availability_changed = online != last_online
+	if(availability_changed)
 		SSnetrun.get_topology().availability_changed(src)
 	pending_state_notification = FALSE
 	last_online = online
@@ -288,34 +293,47 @@
 	last_ice = ice_count
 	last_active = active
 	last_dynamic = dynamic
-	notify_changed(NETRUN_CHANGED_STATE)
+	notify_changed(NETRUN_CHANGED_STATE, FALSE, availability_changed)
 
-/datum/component/netrun_node/proc/notify_changed(flags = NETRUN_CHANGED_STATE)
-	if(!QDELETED(src) && !(flags & NETRUN_CHANGED_REMOVED))
-		SSnetrun.track_node(src)
+/datum/component/netrun_node/proc/notify_changed(flags = NETRUN_CHANGED_STATE, check_native_state = TRUE, availability_changed = FALSE)
 	// Availability is a separate routing generation: occupant/activity changes do not
 	// rebuild shortest paths, while power/EMP changes invalidate retained display paths.
-	var/online = is_online()
-	var/availability_changed = online != last_online
-	if(online != last_online)
-		last_online = online
-		SSnetrun.get_topology().availability_changed(src)
+	// Reconciliation already sampled native state and the worker tracks timers once.
+	// Occupancy cannot change a machine's power, so it never performs a native poll.
+	if(check_native_state && (flags & (NETRUN_CHANGED_STATE | NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED)))
+		if(!QDELETED(src) && !(flags & NETRUN_CHANGED_REMOVED))
+			SSnetrun.track_node(src)
+		var/online = is_online()
+		if(online != last_online)
+			availability_changed = TRUE
+			last_online = online
+			SSnetrun.get_topology().availability_changed(src)
 	SEND_SIGNAL(src, COMSIG_NETRUN_NODE_CHANGED, src, flags)
+	// Machine-service readiness and clustering remain synchronous. UI observers
+	// consume the batched stream instead of these native lifecycle notifications.
+	if(availability_changed || (flags & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED)))
+		SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, src, flags)
+	queue_presentation(flags)
+
+/// Logs/storage are observational: they must not poll power, refresh bindings or
+/// call every dive link's gameplay listener just to repaint one selected panel.
+/datum/component/netrun_node/proc/queue_presentation(flags = NETRUN_CHANGED_STATE)
+	// Unobserved journals already retain their bounded contents. Opening a panel
+	// reads them directly; background machine packets must not wake UI machinery.
+	if(flags == NETRUN_CHANGED_DETAILS && SSnetrun.node_interest_until[src] <= world.time)
+		return
 	pending_changed_flags |= flags
 	if(processing_update)
 		return
-	if((flags & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED)) || urgent_update || availability_changed || SSnetrun.node_interest_until[src] > world.time)
-		publish_changes()
-	else
-		SSnetrun.queue_node(src)
+	publish_changes()
 
-/// Only the global presentation stream is batched; gameplay fields and local signals are live.
+/// Hand off scalar flags once; the worker publishes all changed addresses together.
 /datum/component/netrun_node/proc/publish_changes()
 	var/flags = pending_changed_flags
 	if(!flags)
 		return
 	pending_changed_flags = 0
-	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, src, flags)
+	SSnetrun.queue_node_publication(src, flags)
 
 /datum/component/netrun_node/proc/on_emp(datum/source, severity)
 	SIGNAL_HANDLER
@@ -352,14 +370,22 @@
 	return A.netrun_name()
 
 /datum/component/netrun_node/proc/touch()
+	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
+	var/was_active = world.time - last_activity < limits.node_activity_duration
 	last_activity = world.time
-	notify_changed()
+	// Packets may touch a node hundreds of times while its visible activity stays
+	// TRUE. Extend the deadline in place and publish only the first active frame.
+	if(was_active)
+		return
+	last_active = TRUE
+	SSnetrun.track_node(src)
+	queue_presentation(NETRUN_CHANGED_STATE)
 
 /datum/component/netrun_node/proc/add_log(text)
 	logs += "[STATION_TIME_TIMESTAMP("hh:mm:ss", world.time)] [text]"
 	if(length(logs) > NETRUN_MAX_LOG)
 		logs.Cut(1, length(logs) - NETRUN_MAX_LOG + 1)
-	notify_changed()
+	queue_presentation(NETRUN_CHANGED_DETAILS)
 
 /datum/component/netrun_node/proc/add_packet_log(packet_id, phase, kind, from_address, to_address, service_id, reason, operation_id, list/route, list/headers)
 	packet_logs += list(list("id" = packet_id, "time" = world.time, "phase" = phase, "kind" = kind,
@@ -367,9 +393,9 @@
 		"operation_id" = operation_id || packet_id, "route" = route, "headers" = headers))
 	if(length(packet_logs) > NETRUN_MAX_PACKET_LOG)
 		packet_logs.Cut(1, length(packet_logs) - NETRUN_MAX_PACKET_LOG + 1)
-	// Logging does not broadcast per packet or keep unrelated nodes in the hot lane.
-	pending_changed_flags |= NETRUN_CHANGED_STATE
-	SSnetrun.queue_node(src)
+	// Packet journals are read only by selected-device panels; a packet must not
+	// schedule a whole native state reconciliation or wake every network map.
+	queue_presentation(NETRUN_CHANGED_DETAILS)
 
 /datum/component/netrun_node/proc/packet_log_text()
 	var/list/lines = list()

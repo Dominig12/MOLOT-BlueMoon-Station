@@ -199,3 +199,140 @@
 	TEST_ASSERT(QDELETED(packet), "A delivered packet must release its dependencies")
 	TEST_ASSERT_NULL(packet.timer_id, "Early delivery must cancel its pending timer")
 	TEST_ASSERT_NULL(SStimer.timer_id_dict[timer_id], "A consumed packet must not leave a timer behind")
+
+/// Clientless residents rest without polling topology, vision or neural HUD feedback.
+/datum/unit_test/netrun_scheduler_idle_resident/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/obj/item/carrier = allocate(/obj/item, origin)
+	var/obj/item/host = allocate(/obj/item, carrier)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
+	entity.enter_node(node)
+	var/datum/netrun_console/console = entity.console
+	console.last_ui_at = -INFINITY
+	console.stop_ui_observation()
+	SSnetrun.active_consoles -= console
+	SSnetrun.task_scheduler?.cancel("console", console)
+	TEST_ASSERT(!entity.needs_processing(), "A healthy resident without a player or neural body has no periodic work")
+	TEST_ASSERT(!console.needs_processing(), "The entity origin must not keep an idle console awake forever")
+	carrier.forceMove(get_step(origin, EAST))
+	TEST_ASSERT_EQUAL(entity.loc, get_turf(carrier), "A sleeping resident must still follow its moving physical carrier through a local signal")
+	TEST_ASSERT(!(console in SSnetrun.active_consoles), "Following a carrier must not wake a clientless resident's UI")
+	entity.take_integrity(1, "repair wake test")
+	TEST_ASSERT(entity.needs_processing() && (console in SSnetrun.active_consoles), "Damage must wake the resident until its integrity has repaired")
+	entity.integrity = entity.max_integrity
+	TEST_ASSERT(!entity.needs_processing(), "Completed repair must allow the resident to sleep again")
+	var/turf/last_position = entity.loc
+	entity.leave_node()
+	carrier.forceMove(origin)
+	TEST_ASSERT_EQUAL(entity.loc, last_position, "Leaving a host must release its local movement subscription")
+
+/// Native signals already track carried machinery; periodic fallback is for custom state.
+/datum/unit_test/netrun_scheduler_signal_driven_machinery/Run()
+	var/obj/machinery/host = allocate(/obj/machinery)
+	host.anchored = FALSE
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	SSnetrun.track_node(node)
+	TEST_ASSERT(node.is_dynamic(), "The fixture must be an unanchored dynamic endpoint")
+	TEST_ASSERT(isnull(SSnetrun.poll_nodes[node]), "Being movable must not add machinery with native state signals to the poll set")
+	node.pending_physical_update = FALSE
+	host.forceMove(get_step(get_turf(host), EAST))
+	TEST_ASSERT(node.pending_physical_update, "Native movement must still enqueue physical reconciliation without a fallback poll")
+
+/datum/component/netrun_node/netrun_scheduler_probe
+	var/join_calls = 0
+
+/datum/component/netrun_node/netrun_scheduler_probe/join_network()
+	join_calls++
+	return ..()
+
+/// A presentation/status poll must not rejoin a dynamic endpoint that has not moved.
+/datum/unit_test/netrun_scheduler_dynamic_binding_reuse/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/component/netrun_node/netrun_scheduler_probe/node = host.AddComponent(/datum/component/netrun_node/netrun_scheduler_probe, NETRUN_NODE_TERMINAL)
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
+	node.pending_physical_update = FALSE
+	node.binding_checked = TRUE
+	node.binding_infra_revision = worker.get_topology().infrastructure_revision
+	worker.node_interest_until[node] = world.time + NETRUN_NODE_INTEREST_LEASE
+	var/joins = node.join_calls
+	var/datum/netrun_task_scheduler/scheduler = worker.get_task_scheduler()
+	scheduler.enqueue("node", node)
+	var/datum/netrun_task/task = scheduler.take()
+	task.execute(worker)
+	qdel(task)
+	TEST_ASSERT_EQUAL(node.join_calls, joins, "Unmoved dynamic nodes must reuse their current APC/LAN binding")
+	node.pending_physical_update = TRUE
+	scheduler.enqueue("node", node)
+	task = scheduler.take()
+	task.execute(worker)
+	qdel(task)
+	TEST_ASSERT_EQUAL(node.join_calls, joins + 1, "A queued physical change must still reconcile the actual binding")
+
+/// Idle patrols generate no traffic in empty LANs and resume for local gameplay only.
+/datum/unit_test/netrun_scheduler_patrol_interest_lifecycle/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = allocate(/datum/netrun_route_scene, origin.z)
+	var/area/engineering = scene.room(/area/engineering/netrun_route_test)
+	var/area/medical = scene.room(/area/medical/netrun_route_test)
+	var/obj/machinery/power/apc/local_apc = scene.machine(/obj/machinery/power/apc, scene.take(origin, engineering))
+	var/obj/machinery/computer/netrun_terminal/local_terminal = scene.machine(/obj/machinery/computer/netrun_terminal, scene.take(get_step(origin, EAST), engineering))
+	var/obj/machinery/power/apc/remote_apc = scene.machine(/obj/machinery/power/apc, scene.take(locate(origin.x + 5, origin.y, origin.z), medical))
+	SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/local_node = local_apc.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/target_node = local_terminal.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/remote_node = remote_apc.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_ice/local_patrol = allocate(/datum/netrun_ice, local_node, NETRUN_ICE_HUNTER)
+	var/datum/netrun_ice/remote_patrol = allocate(/datum/netrun_ice, remote_node, NETRUN_ICE_HUNTER)
+	local_patrol.persistent = TRUE
+	remote_patrol.persistent = TRUE
+	local_patrol.hop_cooldown = world.time
+	remote_patrol.hop_cooldown = world.time
+	SSnetrun.collect_defense_network_interest()
+	TEST_ASSERT(!local_patrol.needs_netrun_tick() && !remote_patrol.needs_netrun_tick(), "Due persistent patrols must sleep when their LANs are empty")
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
+	entity.enter_node(target_node)
+	TEST_ASSERT(SSnetrun.active_defense_networks[local_node.network.id], "A local arrival must mark its own LAN immediately")
+	TEST_ASSERT(SSnetrun.task_scheduler.by_key["ice:[REF(local_patrol)]"], "A local arrival must wake its hunter without waiting for population")
+	TEST_ASSERT(!SSnetrun.active_defense_networks[remote_node.network.id], "An arrival must not wake another department")
+	SSnetrun.collect_defense_network_interest()
+	local_patrol.hop_cooldown = world.time
+	TEST_ASSERT(local_patrol.needs_netrun_tick(), "An occupied LAN must resume its patrol deadlines")
+	qdel(entity)
+	SSnetrun.collect_defense_network_interest()
+	TEST_ASSERT(!local_patrol.needs_netrun_tick(), "Removing the last resident must let its patrol sleep again")
+	var/datum/netrun_console/console = local_terminal.console
+	TEST_ASSERT(console.start_breach("network", target_node.network.id), "A real network breach must remain available in the idle LAN")
+	SSnetrun.collect_defense_network_interest()
+	TEST_ASSERT(SSnetrun.active_defense_networks[local_node.network.id], "A live remote breach must keep its target LAN active without resident entities")
+	qdel(console.intrusion.breach)
+	console.intrusion.breach = null
+	SSnetrun.collect_defense_network_interest()
+	TEST_ASSERT(!SSnetrun.active_defense_networks[local_node.network.id], "Cancelling the last breach must release patrol interest")
+
+/// Synchronous combat/movement admission reads fresh authority without cloning the station.
+/datum/unit_test/netrun_scheduler_entity_authority_borrows/Run()
+	var/turf/origin = run_loc_floor_bottom_left
+	var/datum/netrun_route_scene/scene = netrun_connected_test_area()
+	var/obj/machinery/computer/netrun_terminal/host = scene.machine(/obj/machinery/computer/netrun_terminal, origin)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/component/netrun_node/node = host.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/next_node = node.bound_apc
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
+	entity.enter_node(node)
+	var/datum/netrun_console/console = entity.console
+	console.access_session.node_access[next_node.address] = NETRUN_ACCESS_USER
+	var/datum/netrun_path_tree/stale = console.make_path_tree()
+	stale.reached.Cut()
+	stale.reached_networks.Cut()
+	console.ui_routes = stale
+	var/copies = graph.route_snapshot_copies
+	TEST_ASSERT(entity.can_enter(next_node), "Movement admission must use the current physical path even while an old UI tree says it is unreachable")
+	console.access_session.node_access -= node.address
+	var/datum/netrun_ice/ice = allocate(/datum/netrun_ice, node)
+	TEST_ASSERT(ice.valid_program_target(SSnetrun.get_program("strike"), entity, TRUE), "A fresh combat check must still identify an unauthorized resident")
+	TEST_ASSERT_EQUAL(graph.route_snapshot_copies, copies, "Synchronous movement and ICE authority checks must not deep-copy whole route trees")
+	var/datum/netrun_path_tree/retained = graph.route_tables[node.address]
+	TEST_ASSERT(retained && !QDELETED(retained), "Releasing a borrowed authority tree must preserve the topology's retained route table")
+	console.ui_routes = null
+	qdel(stale)

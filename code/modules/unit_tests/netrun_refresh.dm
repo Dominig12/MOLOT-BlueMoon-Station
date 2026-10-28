@@ -92,6 +92,7 @@
 	TEST_ASSERT(!console.map_view.subscribed, "A hidden map must release its global projection subscriptions")
 	console.ui_dirty = FALSE
 	node.notify_changed()
+	SSnetrun.flush_node_publications()
 	TEST_ASSERT(console.ui_dirty, "A selected device change must still wake its file workspace")
 	TEST_ASSERT_EQUAL(length(console.map_view.dirty_nodes), 0, "A hidden map must not accumulate a projection update queue")
 
@@ -101,6 +102,7 @@
 	console.workspace_view = "pinned"
 	console.ui_dirty = FALSE
 	node.notify_changed()
+	SSnetrun.flush_node_publications()
 	TEST_ASSERT(console.ui_dirty, "An active pinned device must react independently of the selected map node")
 
 	console.workspace_view = "files"
@@ -108,13 +110,16 @@
 	console.ui_dirty = FALSE
 	var/datum/netrun_file/file = new("external.txt", NETRUN_FILE_TEXT, "Another runner uploaded this file.")
 	TEST_ASSERT(node.file_store.insert(file), "The selected endpoint must accept a real external file")
+	SSnetrun.flush_node_publications()
 	TEST_ASSERT(console.ui_dirty, "An external remote-store write must wake the file list")
 	console.ui_dirty = FALSE
 	node.add_log("Another runner inspected this device.")
+	SSnetrun.flush_node_publications()
 	TEST_ASSERT(console.ui_dirty, "A selected device's new log line must wake its observers")
 	console.map_view.selected_network = node.network.id
 	console.ui_dirty = FALSE
 	node.network.add_log("External network activity.")
+	SSnetrun.flush_node_publications()
 	TEST_ASSERT(console.ui_dirty, "A selected network log must wake its observers")
 
 /// A backend notification queues one normal task immediately, independently of population.
@@ -389,48 +394,73 @@
 	var/datum/component/netrun_node/target
 	var/count = 0
 	var/flags = 0
+	var/native_count = 0
 
-/datum/netrun_node_publication_probe/proc/on_changed(datum/source, datum/component/netrun_node/node, changes)
+/datum/netrun_node_publication_probe/proc/on_changed(datum/source, list/changes)
+	SIGNAL_HANDLER
+	if(!isnull(changes[target.address]))
+		count++
+		flags |= changes[target.address]
+
+/datum/netrun_node_publication_probe/proc/on_native_changed(datum/source, datum/component/netrun_node/node, changes)
 	SIGNAL_HANDLER
 	if(node == target)
-		count++
-		flags |= changes
+		native_count++
 
-/// A continuous cold signal stream has one trailing deadline, measured from completed work.
+/datum/component/netrun_node/netrun_publication_probe
+	var/online_calls = 0
+	var/join_calls = 0
+
+/datum/component/netrun_node/netrun_publication_probe/is_online(remote = TRUE)
+	online_calls++
+	return ..()
+
+/datum/component/netrun_node/netrun_publication_probe/join_network()
+	join_calls++
+	return ..()
+
+/// Observational bursts merge before UI fanout and never schedule native state work.
 /datum/unit_test/netrun_refresh_cold_node_coalescing/Run()
 	var/obj/item/host = allocate(/obj/item)
-	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/component/netrun_node/netrun_publication_probe/node = host.AddComponent(/datum/component/netrun_node/netrun_publication_probe, NETRUN_NODE_TERMINAL)
+	SSnetrun.flush_node_publications()
 	var/datum/netrun_node_publication_probe/probe = allocate(/datum/netrun_node_publication_probe)
 	probe.target = node
-	probe.RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, TYPE_PROC_REF(/datum/netrun_node_publication_probe, on_changed))
-	SSnetrun.node_interest_until -= node
+	probe.RegisterSignal(SSnetrun, COMSIG_NETRUN_NODES_CHANGED, TYPE_PROC_REF(/datum/netrun_node_publication_probe, on_changed))
+	probe.RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, TYPE_PROC_REF(/datum/netrun_node_publication_probe, on_native_changed))
+	SSnetrun.node_interest_until[node] = world.time + NETRUN_NODE_INTEREST_LEASE
 	SSnetrun.dirty_nodes -= node
 	SSnetrun.get_task_scheduler().cancel("node", node)
 	node.urgent_update = FALSE
 	node.last_processed_at = world.time
 	var/processed_at = node.last_processed_at
+	var/online_calls = node.online_calls
+	var/join_calls = node.join_calls
 	for(var/i in 1 to 40)
-		node.notify_changed(i % 2 ? NETRUN_CHANGED_OCCUPANTS : NETRUN_CHANGED_STATE)
-	var/due = processed_at + SSnetrun.get_execution_limits().node_update_interval
-	TEST_ASSERT_EQUAL(SSnetrun.dirty_nodes[node], due, "Repeated input must not move the first trailing deadline")
+		node.add_log("Observer burst [i].")
+		node.add_packet_log("packet-[i]", "FORWARD", "machine", "source", "target", "test")
+		node.notify_changed(NETRUN_CHANGED_OCCUPANTS)
+		node.queue_presentation(NETRUN_CHANGED_STATE)
+	TEST_ASSERT_NULL(SSnetrun.dirty_nodes[node], "Logs and occupancy publications must not require a whole native node update")
 	TEST_ASSERT_EQUAL(node.last_processed_at, processed_at, "An incoming signal must not pretend processing finished")
-	TEST_ASSERT_EQUAL(probe.count, 0, "A cold node must not publish every occupancy/native change globally")
-	TEST_ASSERT_NULL(SSnetrun.get_task_scheduler().by_key["node:[REF(node)]"], "Cold signal waves must not enqueue work before the deadline")
-
-	// Advance the fixture's completed-work anchor rather than sleeping a real ten seconds.
-	node.last_processed_at = world.time - SSnetrun.get_execution_limits().node_update_interval
-	SSnetrun.queue_node(node)
-	var/datum/netrun_task/node/task = SSnetrun.get_task_scheduler().by_key["node:[REF(node)]"]
-	TEST_ASSERT_NOTNULL(task, "The first due update must become schedulable")
-	// An owned direct task avoids disturbing unrelated live scheduler queues.
-	SSnetrun.get_task_scheduler().cancel("node", node)
-	task = allocate(/datum/netrun_task/node, "node", "cold-probe", NETRUN_TASK_NORMAL, node)
-	task.execute(SSnetrun, SSnetrun.get_execution_limits())
-	TEST_ASSERT_EQUAL(probe.count, 1, "Processing must publish one merged global update")
+	TEST_ASSERT_EQUAL(node.online_calls, online_calls, "A journal/occupancy burst must not poll native power")
+	TEST_ASSERT_EQUAL(node.join_calls, join_calls, "A journal/occupancy burst must not rejoin network bindings")
+	TEST_ASSERT_EQUAL(probe.count, 0, "Repeated observations must wait for the single batched publication")
+	TEST_ASSERT_EQUAL(probe.native_count, 0, "Observational changes must not wake native service listeners")
+	TEST_ASSERT_NULL(SSnetrun.get_task_scheduler().by_key["node:[REF(node)]"], "Observational bursts must not enter the native scheduler")
+	node.offline_until = world.time + 5 SECONDS
+	node.notify_changed()
+	TEST_ASSERT_EQUAL(probe.native_count, 1, "A true availability transition must still notify native service observers immediately")
+	TEST_ASSERT(!node.last_online, "Native availability must be reconciled before a UI batch is published")
+	SSnetrun.flush_node_publications()
+	TEST_ASSERT_EQUAL(probe.count, 1, "The worker boundary must publish one merged address update")
 	TEST_ASSERT(probe.flags & NETRUN_CHANGED_OCCUPANTS, "The batch must retain occupancy flags")
 	TEST_ASSERT(probe.flags & NETRUN_CHANGED_STATE, "The batch must retain native state flags")
-	TEST_ASSERT_EQUAL(node.last_processed_at, world.time, "The next cooldown must start from actual completed processing")
-	probe.UnregisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED)
+	TEST_ASSERT(probe.flags & NETRUN_CHANGED_DETAILS, "The batch must retain selected-panel detail changes")
+	SSnetrun.node_interest_until -= node
+	node.add_log("Unobserved background log.")
+	TEST_ASSERT_NULL(SSnetrun.node_publications[node.address], "An unobserved journal must keep its contents without scheduling any publication")
+	probe.UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODES_CHANGED, COMSIG_NETRUN_NODE_CHANGED))
 
 /// Player interest releases deferred work; urgent availability and timer work never waits.
 /datum/unit_test/netrun_refresh_node_interest_and_timers/Run()

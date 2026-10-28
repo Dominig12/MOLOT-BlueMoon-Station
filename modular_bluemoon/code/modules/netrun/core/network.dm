@@ -129,7 +129,9 @@
 		logs.Cut(1, length(logs) - NETRUN_MAX_LOG + 1)
 	if(important)
 		SSnetrun.ntnet_log("[short_name]: [text]", important)
-	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NETWORK_CHANGED, src)
+	// Native logs are stored now; viewers need one notification for the whole
+	// burst, rather than one global callback for every packet and patrol message.
+	SSnetrun.queue_network_publication(src)
 
 /// Легальный гостевой доступ в ЛВС по списку доступов
 /datum/netrun_network/proc/legit_guest(list/access)

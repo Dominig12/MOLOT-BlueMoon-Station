@@ -67,6 +67,7 @@
 
 /datum/netrun_command/neural/status
 	id = "neural_status"
+	read_only = TRUE
 	name = "Состояние интерфейса"
 	desc = "Получить список модулей и источников нейроинтерфейса."
 	trace = 2

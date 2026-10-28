@@ -205,7 +205,7 @@
 	prune_contacts()
 	var/owns_tree = !tree
 	if(owns_tree)
-		tree = console.make_path_tree(TRUE)
+		tree = console.connection.read_path_tree(TRUE)
 		SSnetrun.combat_ui_tree_builds++
 	var/datum/component/netrun_node/node = local_known ? local_node : console.combat_node(tree)
 	var/list/candidates = list()
@@ -234,7 +234,7 @@
 		entry["unavailable_reason"] = target_denial(target, tree, node, TRUE)
 		. += list(entry)
 	if(owns_tree)
-		qdel(tree)
+		console.release_path_tree(tree)
 
 /datum/netrun_combat_context/proc/program_entry(datum/netrun_program/program, uid, builtin = FALSE, file_name)
 	var/list/entry = program.ui_entry()
@@ -316,14 +316,14 @@
 	var/datum/netrun_path_tree/tree = console.ui_routes
 	var/owns_tree = !tree
 	if(owns_tree)
-		tree = console.make_path_tree(TRUE)
+		tree = console.connection.read_path_tree(TRUE)
 		SSnetrun.combat_ui_tree_builds++
 	var/datum/component/netrun_node/node = console.combat_node(tree)
 	var/list/target_entries = targets(tree, node, TRUE)
 	var/list/incoming_entries = incoming()
 	if(!node && !length(target_entries) && !length(incoming_entries))
 		if(owns_tree)
-			qdel(tree)
+			console.release_path_tree(tree)
 		return null
 	var/datum/self = console.combat_self()
 	var/list/hp = netrun_combatant_integrity(self)
@@ -333,7 +333,7 @@
 		"targets" = target_entries, "programs" = programs(), "incoming" = incoming_entries, "loot" = loot,
 		"action_ready_in" = max(0, CEILING((next_program - world.time) / (1 SECONDS), 0.1)))
 	if(owns_tree)
-		qdel(tree)
+		console.release_path_tree(tree)
 	if(measuring)
 		var/cost = max(0, TICK_DELTA_TO_MS(TICK_USAGE - started))
 		SSnetrun.combat_full_payload_ms += cost

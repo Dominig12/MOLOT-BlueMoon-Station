@@ -43,7 +43,7 @@
 	var/ui_uplink_value = FALSE
 	var/ui_uplink_refresh = -INFINITY
 	var/ui_dirty = TRUE
-	/// Domain changes bypass the countdown repaint interval, still within scheduler budgets.
+	/// Domain changes coalesce until the scheduled repaint; explicit input may flush now.
 	var/ui_event_pending = FALSE
 	var/ui_processing = FALSE
 	/// Acknowledgement confirms receipt only, never access or action success.
@@ -52,6 +52,8 @@
 	var/datum/netrun_interaction/interaction
 	/// UI polling renews this lease, including consoles embedded in NTOS windows.
 	var/last_ui_at = -INFINITY
+	/// Actual snapshots, independently of activity leases renewed by incoming input.
+	var/ui_rendered_at = -INFINITY
 	/// TRUE only inside one ui_data serialization pass; enables per-pass projection reuse.
 	var/ui_serializing = FALSE
 	/// Projection-context snapshot shared by catalog/CLI validity checks within one pass.
@@ -122,6 +124,12 @@
 	if(QDELETED(src))
 		return
 	ui_dirty = TRUE
+	// A batch can contain hundreds of changed nodes, and several observers may
+	// invalidate the same console. One pending wake already owns that work.
+	if(immediate && ui_event_pending && SSnetrun.active_consoles[src])
+		var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
+		if(ui_processing || ui_flushing || world.time < ui_rendered_at + limits.ui_refresh_interval || SSnetrun.task_scheduler?.by_key["console:[REF(src)]"])
+			return
 	ui_event_pending ||= immediate
 	activate()
 	if(immediate && !ui_processing && is_ui_active())
@@ -144,7 +152,12 @@
 		SSnetrun.collect_console_node_interest(src)
 
 /datum/netrun_console/proc/needs_processing()
-	return origin == NETRUN_ORIGIN_ENTITY || is_ui_active() || intrusion.breach || intrusion.trace > 0 || is_locked() || connection.jack || remote_session.watch_node
+	if(is_ui_active() || intrusion.breach || intrusion.trace > 0 || is_locked() || connection.jack || remote_session.watch_node)
+		return TRUE
+	if(istype(host, /mob/camera/netrun_entity))
+		var/mob/camera/netrun_entity/entity = host
+		return entity.needs_processing()
+	return FALSE
 
 /datum/netrun_console/proc/is_ui_active()
 	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
@@ -189,6 +202,15 @@
 		if(source?.network)
 			. |= source.network
 
+/// Permission checks need a boolean, not a disposable home_networks() list.
+/datum/netrun_connection/proc/is_home_network(datum/netrun_network/network, datum/netrun_path_tree/tree)
+	if(jack?.network == network && owner.jack_valid())
+		return TRUE
+	if(!wireless)
+		var/datum/component/netrun_node/source = tree ? tree.source : route_source()
+		return source?.network == network
+	return FALSE
+
 /// Есть ли выход в NTnet
 /datum/netrun_console/proc/has_uplink()
 	return connection.has_uplink()
@@ -196,8 +218,10 @@
 /datum/netrun_connection/proc/has_uplink()
 	if(SSnetworks.station_network.setting_disabled)
 		return FALSE
-	var/datum/netrun_path_tree/tree = owner.path_tree()
-	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/netrun_path_tree/tree = read_path_tree()
+	var/datum/netrun_topology/graph = SSnetrun.topology
+	if(!graph || graph.dirty)
+		graph = SSnetrun.ensure_topology()
 	. = FALSE
 	for(var/address in graph.relay_addresses)
 		if(!tree.reached[address])
@@ -205,10 +229,9 @@
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(!istype(node?.parent, /obj/machinery/ntnet_relay) || !node.is_online())
 			continue
-		var/obj/machinery/ntnet_relay/relay = node.parent
-		if(relay.is_operational())
-			. = TRUE
-			break
+		// This relay's netrun_online() already validated native operation.
+		. = TRUE
+		break
 	owner.release_path_tree(tree)
 
 /datum/netrun_console/proc/can_reach(datum/netrun_network/network, datum/netrun_path_tree/tree)
@@ -219,7 +242,7 @@
 		return FALSE
 	var/owns_tree = !tree
 	if(owns_tree)
-		tree = owner.path_tree()
+		tree = read_path_tree()
 	. = FALSE
 	if(tree.network_index_ready)
 		. = !!tree.reached_networks[network.id]
@@ -270,34 +293,45 @@
 	return access_session.legit_network_level(network, fresh)
 
 /datum/netrun_access_session/proc/legit_network_level(datum/netrun_network/network, fresh = FALSE)
-	if(owner.has_key(network, fresh))
-		return NETRUN_ACCESS_GUEST
-	return network.legit_guest(owner.user_access(fresh)) ? NETRUN_ACCESS_GUEST : NETRUN_ACCESS_NONE
+	if(!network)
+		return NETRUN_ACCESS_NONE
+	// String IDs cache effective LAN grants; datum keys cache only ID/key access.
+	// Sharing this pass-local list also shares all existing permission invalidation.
+	if(!fresh && owner.network_level_cache && !isnull(owner.network_level_cache[network]))
+		return owner.network_level_cache[network]
+	. = (owner.has_key(network, fresh) || network.legit_guest(owner.user_access(fresh))) ? NETRUN_ACCESS_GUEST : NETRUN_ACCESS_NONE
+	if(!fresh && owner.network_level_cache)
+		owner.network_level_cache[network] = .
 
 /datum/netrun_console/proc/network_level(datum/netrun_network/network, datum/netrun_path_tree/tree)
 	return access_session.network_level(network, tree)
 
 /datum/netrun_access_session/proc/network_level(datum/netrun_network/network, datum/netrun_path_tree/tree)
-	process_events()
-	if(!tree && owner.network_level_cache && !isnull(owner.network_level_cache[network.id]))
+	if(length(pending_firewalls))
+		process_events()
+	if(!network)
+		return NETRUN_ACCESS_NONE
+	var/ui_read = !tree || (owner.ui_serializing && tree == owner.ui_routes)
+	if(ui_read && owner.network_level_cache && !isnull(owner.network_level_cache[network.id]))
 		return owner.network_level_cache[network.id]
 	if(!owner.can_reach(network, tree) || owner.is_locked())
 		. = NETRUN_ACCESS_NONE
 	else
-		. = max(network_access[network.id] || 0, owner.legit_network_level(network, !!tree))
-		if(network in owner.home_networks())
+		. = max(network_access[network.id] || 0, owner.legit_network_level(network, !ui_read))
+		if(owner.connection.is_home_network(network, tree))
 			. = max(., NETRUN_ACCESS_GUEST)
-	if(!tree && owner.network_level_cache)
+	if(ui_read && owner.network_level_cache)
 		owner.network_level_cache[network.id] = .
 
 /datum/netrun_console/proc/legit_node_level(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
 	return access_session.legit_node_level(node, tree)
 
 /datum/netrun_access_session/proc/legit_node_level(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
-	if(!tree && owner.ui_legit_levels && !isnull(owner.ui_legit_levels[node.address]))
+	var/ui_read = !tree || (owner.ui_serializing && tree == owner.ui_routes)
+	if(ui_read && owner.ui_legit_levels && !isnull(owner.ui_legit_levels[node.address]))
 		return owner.ui_legit_levels[node.address]
-	. = owner.compute_legit_node_level(node, !!tree)
-	if(!tree && owner.ui_legit_levels)
+	. = owner.compute_legit_node_level(node, !ui_read)
+	if(ui_read && owner.ui_legit_levels)
 		owner.ui_legit_levels[node.address] = .
 
 /datum/netrun_console/proc/compute_legit_node_level(datum/component/netrun_node/node, fresh = FALSE)
@@ -332,28 +366,38 @@
 	return access_session.node_level(node, tree)
 
 /datum/netrun_access_session/proc/node_level(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
-	process_events()
+	if(length(pending_firewalls))
+		process_events()
 	if(!node?.network || owner.is_locked())
 		return NETRUN_ACCESS_NONE
-	if(!tree && owner.ui_node_levels && !isnull(owner.ui_node_levels[node.address]))
+	var/ui_read = !tree || (owner.ui_serializing && tree == owner.ui_routes)
+	if(ui_read && owner.ui_node_levels && !isnull(owner.ui_node_levels[node.address]))
 		return owner.ui_node_levels[node.address]
 	. = owner.compute_node_level(node, tree)
-	if(!tree && owner.ui_node_levels)
+	if(ui_read && owner.ui_node_levels)
 		owner.ui_node_levels[node.address] = .
 
 /datum/netrun_console/proc/compute_node_level(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
 	return access_session.compute_node_level(node, tree)
 
 /datum/netrun_access_session/proc/compute_node_level(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
+	var/owns_tree = !tree && !owner.ui_routes
+	if(owns_tree)
+		// One synchronous authority read has one physical source and one tree.
+		// Reuse them for the LAN, loopback and optional owner-route checks.
+		tree = owner.connection.read_path_tree(TRUE)
 	var/net_level = owner.network_level(node.network, tree)
 	var/atom/target = node.parent
 	var/owner_level = target.netrun_owner_access(owner)
 	var/local_endpoint = node == (tree ? tree.source : owner.route_source())
 	if(net_level < NETRUN_ACCESS_GUEST && !local_endpoint && (!owner_level || !owner.can_route(node, tree)))
-		return NETRUN_ACCESS_NONE
-	. = max(NETRUN_ACCESS_GUEST, owner_level, net_level, node_access[node.address] || 0, owner.legit_node_level(node, tree))
-	if(node == owner.connection.jack)
-		. = max(., NETRUN_ACCESS_GUEST)
+		. = NETRUN_ACCESS_NONE
+	else
+		. = max(NETRUN_ACCESS_GUEST, owner_level, net_level, node_access[node.address] || 0, owner.legit_node_level(node, tree))
+		if(node == owner.connection.jack)
+			. = max(., NETRUN_ACCESS_GUEST)
+	if(owns_tree)
+		owner.release_path_tree(tree)
 
 // MARK: Действия
 
@@ -455,7 +499,10 @@
 	qdel(request)
 	if(QDELETED(src) || QDELETED(node))
 		return !isnull(result)
-	node.notify_changed()
+	if(command.read_only)
+		node.queue_presentation(NETRUN_CHANGED_DETAILS)
+	else
+		node.notify_changed()
 	if(isnull(result))
 		operation?.finish("rejected", "Команда не принята устройством. Подробности в терминале.")
 		return FALSE
@@ -481,10 +528,13 @@
 		return FALSE
 	var/owns_tree = !tree
 	if(owns_tree)
-		tree = owner.path_tree()
+		tree = read_path_tree()
 	. = !!tree.reached[node.address]
-	if(. && tree != owner.ui_routes)
-		. = tree.path_available(SSnetrun.ensure_topology(), node.address)
+	if(. && (!owner.ui_serializing || tree != owner.ui_routes))
+		var/datum/netrun_topology/graph = SSnetrun.topology
+		if(!graph || graph.dirty)
+			graph = SSnetrun.ensure_topology()
+		. = tree.path_available(graph, node.address)
 	if(owns_tree)
 		owner.release_path_tree(tree)
 
@@ -580,13 +630,9 @@
 		return FALSE
 	if(map_view.has_ping())
 		return TRUE
-	// The shared recent-events ribbon fades over four seconds on every live map.
-	var/events_len = length(SSnetrun.events)
-	if(events_len)
-		var/list/newest = SSnetrun.events[events_len]
-		if(world.time - newest["t"] < 4 SECONDS)
-			return TRUE
-	return FALSE
+	// Only visible event effects need fading frames. Traffic in an unrelated
+	// sector must not keep every station map serializing once per second.
+	return world.time < map_view.event_refresh_until
 
 /datum/netrun_console/proc/process_tick(delta)
 	map_view.expire_ping()

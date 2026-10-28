@@ -154,8 +154,10 @@
 #define COMSIG_NETRUN_RESEARCH_CHANGED "netrun_research_changed"
 
 /// Domain notifications. Handlers invalidate caches; they must not serialize UI.
-/// SSnetrun and node: (node, changed_flags).
+/// Node: live gameplay change (node, changed_flags). SSnetrun: native binding/availability.
 #define COMSIG_NETRUN_NODE_CHANGED "netrun_node_changed"
+/// SSnetrun: one coalesced observational publication (address => changed_flags).
+#define COMSIG_NETRUN_NODES_CHANGED "netrun_nodes_changed"
 /// SSnetrun: (revision), after a complete structural graph commit.
 #define COMSIG_NETRUN_TOPOLOGY_CHANGED "netrun_topology_changed"
 /// SSnetrun: (node), before affected sessions revoke grants.
@@ -176,6 +178,8 @@
 #define NETRUN_CHANGED_BINDING (1<<1)
 #define NETRUN_CHANGED_OCCUPANTS (1<<2)
 #define NETRUN_CHANGED_REMOVED (1<<3)
+/// Journals and file contents change selected-device panels, never map markers or routing.
+#define NETRUN_CHANGED_DETAILS (1<<4)
 
 #define NETRUN_TRACE_MAX 100
 /// Сколько трассировки спадает за секунду простоя

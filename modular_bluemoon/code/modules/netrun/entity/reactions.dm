@@ -81,6 +81,7 @@
 				break
 	if(!has_threat)
 		return
+	SSnetrun.active_defense_networks[network.id] = TRUE
 	// A local arrival/breach wakes this LAN's hunters, never remote departments.
 	for(var/datum/netrun_ice/ice as anything in SSnetrun.hunters_by_network[network.id])
 		if(!QDELETED(ice) && ice.node != src)

@@ -88,17 +88,29 @@
 		return null
 	var/datum/component/netrun_node/start = source.resolve_node()
 	var/datum/component/netrun_node/finish = recipient.resolve_node()
-	if(QDELETED(start) || QDELETED(finish) || !start.is_online() || !finish.is_online())
+	if(QDELETED(start) || QDELETED(finish) || !start.is_online() || (start != finish && !finish.is_online()))
 		return null
-	// A carried endpoint does not receive its container's MOVED signal.
-	start.join_network()
-	if(start != finish)
-		finish.join_network()
-	SSnetrun.ensure_topology()
+	// Native movement/containment subscriptions already include every carrier.
+	// A packet changes neither endpoint's attachment: reconcile only a queued
+	// physical change or a new infrastructure generation, even during discovery.
 	var/datum/netrun_topology/graph = SSnetrun.get_topology()
+	var/recheck_endpoints = graph.dirty
+	if(start.pending_physical_update || !start.binding_checked || start.binding_infra_revision != graph.infrastructure_revision)
+		recheck_endpoints = TRUE
+		start.join_network()
+	if(start != finish && (finish.pending_physical_update || !finish.binding_checked || finish.binding_infra_revision != graph.infrastructure_revision))
+		recheck_endpoints = TRUE
+		finish.join_network()
+	graph = SSnetrun.ensure_topology()
 	if(graph.nodes[start.address] != start || graph.nodes[finish.address] != finish)
 		return null
+	var/previous_availability = graph.availability_revision
 	graph.reconcile_availability()
+	// Binding/reconciliation can publish native signals. Only those callbacks
+	// require resampling endpoints; an unchanged warm lookup is one atomic read.
+	if(recheck_endpoints || previous_availability != graph.availability_revision)
+		if(!start.is_online() || (start != finish && !finish.is_online()))
+			return null
 	var/datum/component/netrun_node/root = start
 	var/datum/component/netrun_node/destination = finish
 	var/prefix_cost = 0
@@ -106,19 +118,21 @@
 	var/list/neighbors = graph.adjacency[start.address]
 	if(start != finish && !graph.is_infrastructure(start) && length(neighbors) == 1)
 		root = graph.nodes[neighbors[1]]
-		if(!netrun_link_available(start, root))
+		// A non-infrastructure leaf cannot form a quantum transition. Its own
+		// state was just sampled above, so only the attachment needs checking.
+		if(QDELETED(root) || (root != start && root != finish && !root.is_online()))
 			return null
 		prefix_cost = graph.cached_edge_cost(start.address, root.address)
 	neighbors = graph.adjacency[finish.address]
 	if(start != finish && !graph.is_infrastructure(finish) && length(neighbors) == 1)
 		destination = graph.nodes[neighbors[1]]
-		if(!netrun_link_available(destination, finish))
+		if(QDELETED(destination) || (destination != root && destination != start && destination != finish && !destination.is_online()))
 			return null
 		suffix_cost = graph.cached_edge_cost(destination.address, finish.address)
 	var/key = "[start.address]>[finish.address]"
 	var/datum/netrun_machine_path/cached = pair_routes[key]
 	if(cached && cached.graph_ref?.resolve() == graph && cached.geometry_revision == graph.infrastructure_revision && cached.transit_revision == graph.transit_availability_revision && cached.from_anchor == root.address && cached.to_anchor == destination.address && cached.prefix_cost == prefix_cost && cached.suffix_cost == suffix_cost)
-		if(!length(cached.hops) || path_available(graph, cached.hops))
+		if(!length(cached.hops) || path_available(graph, cached.hops, start, finish, root, destination))
 			touch_pair_route(key)
 			path_cache_hits++
 			return length(cached.hops) ? cached : null
@@ -158,10 +172,25 @@
 	store_pair_route(key, result)
 	return length(result.hops) ? result : null
 
-/datum/netrun_machine_transport/proc/path_available(datum/netrun_topology/graph, list/path)
-	for(var/i in 2 to length(path))
-		if(!netrun_link_available(graph.nodes[path[i - 1]], graph.nodes[path[i]]))
+/datum/netrun_machine_transport/proc/path_available(datum/netrun_topology/graph, list/path, datum/component/netrun_node/checked_start, datum/component/netrun_node/checked_finish, datum/component/netrun_node/checked_root, datum/component/netrun_node/checked_destination)
+	// Sample every host once. Checking both ends of every cable rechecks every
+	// interior APC twice and each quantum relay's operational state several times.
+	var/backbone_enabled = !SSnetworks.station_network.setting_disabled
+	var/previous_relay = FALSE
+	for(var/address in path)
+		var/datum/component/netrun_node/node = graph.nodes[address]
+		if(QDELETED(node))
 			return FALSE
+		// Warm pair lookup has already sampled both leaves and their anchors,
+		// with no intervening callbacks. Never reuse these samples on the cold
+		// solve path, which may publish a fresh availability generation.
+		if(node != checked_start && node != checked_finish && node != checked_root && node != checked_destination && !node.is_online())
+			return FALSE
+		var/current_relay = istype(node.parent, /obj/machinery/ntnet_relay)
+		// Relay netrun_online already includes its native is_operational check.
+		if(previous_relay && current_relay && !backbone_enabled)
+			return FALSE
+		previous_relay = current_relay
 	return TRUE
 
 /datum/netrun_machine_transport/proc/reconcile_path(datum/netrun_topology/graph, list/path)
@@ -171,7 +200,9 @@
 			continue
 		var/online = node.is_online()
 		if(node.last_online != online)
-			node.notify_changed(NETRUN_CHANGED_STATE)
+			node.last_online = online
+			graph.availability_changed(node)
+			node.notify_changed(NETRUN_CHANGED_STATE, FALSE, TRUE)
 
 
 /datum/netrun_machine_transport/proc/reachable(datum/netrun_machine_service/source, datum/netrun_machine_service/recipient, communications)

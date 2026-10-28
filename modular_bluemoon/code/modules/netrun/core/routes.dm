@@ -20,6 +20,8 @@
 /// Request-local weighted shortest paths. UI serialization shares one snapshot; later requests
 /// revalidate live APC and relay availability instead of caching working routes.
 /datum/netrun_path_tree
+	/// Only the topology may release its retained tables. Synchronous readers borrow them.
+	var/retained = FALSE
 	var/datum/component/netrun_node/source
 	var/revision = 0
 	var/updated_at = 0
@@ -58,7 +60,9 @@
 	if(QDELETED(start) || !graph.nodes[start.address])
 		return
 	var/list/settled = list()
+	var/list/relay_states
 	var/relays_expanded = FALSE
+	var/backbone_enabled = !SSnetworks.station_network.setting_disabled
 	reached[start.address] = TRUE
 	costs[start.address] = 0
 	push_candidate(start.address, 0)
@@ -71,40 +75,73 @@
 		if(current?.network)
 			reached_networks[current.network.id] = TRUE
 		// Offline destinations are leaves: they cannot forward traffic.
-		if(QDELETED(current) || !current.is_online())
+		if(QDELETED(current) || !(current == start ? source_online : current.is_online()))
 			continue
+		var/current_relay = istype(current.parent, /obj/machinery/ntnet_relay)
+		if(current_relay)
+			if(!relay_states)
+				relay_states = list()
+			// netrun_online() on an actual relay already checked is_operational().
+			relay_states[address] = TRUE
+		var/current_cost = costs[address]
+		var/current_remote = remote[address]
 		var/list/neighbors = infrastructure_only ? graph.forwarding_neighbors(address) : graph.neighbors(address, FALSE)
 		for(var/neighbor in neighbors)
 			neighbor_visits++
 			var/datum/component/netrun_node/next = graph.nodes[neighbor]
-			if(settled[neighbor] || QDELETED(next) || !netrun_link_available(current, next, TRUE))
+			if(settled[neighbor] || QDELETED(next) || QDELETED(next.parent))
+				continue
+			var/next_relay = istype(next.parent, /obj/machinery/ntnet_relay)
+			// The source's live state is fixed for this synchronous solve and was
+			// checked above. Physical cables allow offline destinations; only a
+			// relay-to-relay transition adds a destination-operational requirement.
+			if(current_relay && next_relay && (!backbone_enabled || !solve_relay_available(next, relay_states)))
 				continue
 			// Ordinary endpoints have exactly one cable and cannot be transit. Their
 			// shortest path is final when this sole parent settles: skip a heap visit.
-			var/transit = graph.is_infrastructure(next) || length(graph.adjacency[neighbor]) > 1
+			var/transit = next.node_type == NETRUN_NODE_APC || next_relay || length(graph.adjacency[neighbor]) > 1
 			if(infrastructure_only && !transit)
 				continue
-			relax(neighbor, address, costs[address] + graph.cached_edge_cost(address, neighbor), remote[address], transit)
+			relax(neighbor, address, current_cost + graph.cached_edge_cost(address, neighbor), current_remote, transit)
 			if(!transit && next.network)
 				reached_networks[next.network.id] = TRUE
 		// Every operational relay can reach every other relay at the same cost.
 		// The cheapest settled entry expands this virtual bucket exactly once.
-		if(relays_expanded || !graph.is_relay(current))
-			continue
-		var/obj/machinery/ntnet_relay/relay = current.parent
-		if(!relay.is_operational() || SSnetworks.station_network.setting_disabled)
+		if(relays_expanded || !current_relay || !backbone_enabled)
 			continue
 		relays_expanded = TRUE
 		for(var/relay_address in graph.relay_addresses)
 			if(relay_address == address || settled[relay_address])
 				continue
 			var/datum/component/netrun_node/next = graph.nodes[relay_address]
-			if(!netrun_link_available(current, next, TRUE))
+			if(QDELETED(next) || QDELETED(next.parent) || !solve_relay_available(next, relay_states))
 				continue
-			relax(relay_address, address, costs[address] + NETRUN_RELAY_LATENCY, TRUE)
+			relax(relay_address, address, current_cost + NETRUN_RELAY_LATENCY, TRUE)
 	frontier_addresses.Cut()
 	frontier_costs.Cut()
 	network_index_ready = TRUE
+
+/// A solve never yields. Sample each remote relay's native state once within it,
+/// while preserving discoverability of an operational relay with offline_until set.
+/datum/netrun_path_tree/proc/solve_relay_available(datum/component/netrun_node/node, list/states)
+	var/online = states[node.address]
+	if(isnull(online))
+		var/obj/machinery/ntnet_relay/relay = node.parent
+		online = relay.is_operational()
+		states[node.address] = online
+	return online
+
+/datum/netrun_path_tree/Destroy()
+	source = null
+	graph_ref = null
+	reached.Cut()
+	reached_networks.Cut()
+	previous.Cut()
+	costs.Cut()
+	remote.Cut()
+	frontier_addresses.Cut()
+	frontier_costs.Cut()
+	return ..()
 
 /datum/netrun_path_tree/proc/relax(address, from_address, cost, quantum, enqueue = TRUE)
 	if(!isnull(costs[address]) && costs[address] <= cost)
@@ -201,6 +238,8 @@
 	var/list/route_tables = list()
 	var/list/route_used = list()
 	var/route_revision = 0
+	/// Deep snapshots are reserved for operations that can yield, never boolean reads.
+	var/route_snapshot_copies = 0
 	var/route_refresh_at = -INFINITY
 	var/forwarding_checked_at = -INFINITY
 	/// The physical graph alone owns reusable APC/forwarder trees. Consumers borrow.
@@ -257,9 +296,17 @@
 		route_used.Cut()
 	route_refresh_at = -INFINITY
 
+/// A deleted source cannot issue more reads. Release its full table immediately,
+/// rather than keeping its node and every destination until the idle expiry poll.
+/datum/netrun_topology/proc/forget_route_table(address)
+	qdel(route_tables[address])
+	route_tables -= address
+	route_used -= address
+
 /datum/netrun_topology/proc/store_route_table(datum/component/netrun_node/start)
 	reconcile_availability(TRUE)
 	var/datum/netrun_path_tree/table = new(src, start)
+	table.retained = TRUE
 	table.revision = ++route_revision
 	table.updated_at = world.time
 	qdel(route_tables[start.address])
@@ -281,7 +328,9 @@
 			continue
 		var/online = node.is_online()
 		if(online != node.last_online)
-			node.notify_changed(NETRUN_CHANGED_STATE)
+			node.last_online = online
+			availability_changed(node)
+			node.notify_changed(NETRUN_CHANGED_STATE, FALSE, TRUE)
 	// APC countdown recovery has no reliable native node signal. Its small index
 	// is the fallback, once per tick; a new solve samples it before saving negatives.
 	if(force_forwarding || forwarding_checked_at != world.time)
@@ -292,7 +341,9 @@
 				continue
 			var/online = node.is_online()
 			if(online != node.last_online)
-				node.notify_changed(NETRUN_CHANGED_STATE)
+				node.last_online = online
+				availability_changed(node)
+				node.notify_changed(NETRUN_CHANGED_STATE, FALSE, TRUE)
 
 /// Requests validate the selected predecessor chain without allocating a hop list.
 /// Offline terminal destinations remain discoverable; intermediate nodes must forward.
@@ -300,13 +351,30 @@
 	if(!reached[address] || QDELETED(source) || graph.nodes[source.address] != source)
 		return FALSE
 	var/destination = address
+	var/datum/component/netrun_node/to_node = graph.nodes[address]
+	if(QDELETED(to_node) || QDELETED(to_node.parent))
+		return FALSE
 	while(previous[address])
 		var/parent_address = previous[address]
 		var/datum/component/netrun_node/from_node = graph.nodes[parent_address]
-		var/datum/component/netrun_node/to_node = graph.nodes[address]
-		if(!(graph.edge_lookup["[parent_address]>[address]"] || netrun_quantum_link(from_node, to_node)) || !netrun_link_available(from_node, to_node, address == destination))
+		// Walking backwards samples every forwarder exactly once. The previous
+		// iteration already checked to_node when it was the source of that edge.
+		if(QDELETED(from_node) || !from_node.is_online())
 			return FALSE
+		var/quantum = netrun_quantum_link(from_node, to_node)
+		if(!graph.edge_lookup["[parent_address]>[address]"] && !quantum)
+			return FALSE
+		if(quantum)
+			if(SSnetworks.station_network.setting_disabled)
+				return FALSE
+			// Only the final destination can be offline. Its relay hardware must
+			// still operate for a quantum transition, as in netrun_link_available.
+			if(address == destination)
+				var/obj/machinery/ntnet_relay/relay = to_node.parent
+				if(!relay.is_operational())
+					return FALSE
 		address = parent_address
+		to_node = from_node
 	return address == source.address
 
 /// Geometry is already maintained by structural/movement signals. Reuse its cached
@@ -321,14 +389,10 @@
 	if(world.time < route_refresh_at)
 		return
 	route_refresh_at = world.time + refresh_interval
-	if(length(route_tables))
-		reconcile_availability()
 	for(var/address in route_used.Copy())
 		var/datum/component/netrun_node/start = nodes[address]
 		if(QDELETED(start) || route_used[address] < world.time - expiry_interval)
-			qdel(route_tables[address])
-			route_tables -= address
-			route_used -= address
+			forget_route_table(address)
 			continue
 
 /// A degree-one endpoint cannot be transit for any other destination. Moving its
@@ -396,7 +460,10 @@
 	var/datum/netrun_path_tree/table = route_tables[start.address]
 	if(!table || table.geometry_revision != weight_revision || table.transit_availability_revision != transit_availability_revision || table.source_online != start.is_online())
 		table = store_route_table(start)
-	return borrow ? table : table.copy()
+	if(borrow)
+		return table
+	route_snapshot_copies++
+	return table.copy()
 
 /datum/netrun_console/proc/route_source()
 	RETURN_TYPE(/datum/component/netrun_node)
@@ -431,6 +498,12 @@
 /datum/netrun_connection/proc/refresh_route_node(datum/component/netrun_node/node)
 	if(QDELETED(node) || QDELETED(node.parent))
 		return null
+	// ui_data is synchronous. Repeated visibility/access reads of the same node
+	// share its completed binding instead of asking it to join the LAN each time.
+	if(owner.ui_serializing && owner.ui_routes && ui_refreshed_nodes)
+		if(ui_refreshed_nodes[node.address] == node && !node.pending_physical_update)
+			return node
+		ui_refreshed_nodes[node.address] = node
 	var/datum/netrun_network/previous = node.network
 	node.join_network()
 	if(previous != node.network)
@@ -445,26 +518,51 @@
 		return owner.ui_routes
 	return owner.make_path_tree()
 
+/// Read-only, synchronous queries may borrow physical paths. Never carry this tree
+/// across sleep()/do_after(): explicit operations use make_path_tree() instead.
+/datum/netrun_connection/proc/read_path_tree(fresh = FALSE)
+	if(!fresh && owner.ui_routes)
+		return owner.ui_routes
+	var/datum/component/netrun_node/start = owner.physical_route_source()
+	if(wireless_zone_restricted())
+		return local_path_tree(start)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/netrun_path_tree/tree = graph.route_snapshot(start, TRUE)
+	if(tree)
+		return tree
+	return new /datum/netrun_path_tree
+
+/datum/netrun_connection/proc/wireless_zone_restricted()
+	if(!wireless || owner.origin == NETRUN_ORIGIN_ENTITY || owner.jack_valid())
+		return FALSE
+	var/turf/here = owner.physical_turf()
+	return !here || (!is_station_level(here.z) && !is_mining_level(here.z))
+
+/// A restricted wireless session only knows its own endpoint. Do not solve/copy
+/// the entire station graph merely to discard every remote address afterwards.
+/datum/netrun_connection/proc/local_path_tree(datum/component/netrun_node/start)
+	var/datum/netrun_path_tree/tree = new
+	tree.source = start
+	tree.network_index_ready = TRUE
+	if(start && start == netrun_find_node(owner.host))
+		tree.reached[start.address] = TRUE
+		tree.costs[start.address] = 0
+		if(start.network)
+			tree.reached_networks[start.network.id] = TRUE
+	return tree
+
 /// Explicit request trees are local variables, so concurrent yielding device
 /// operations cannot borrow another request's path or an old UI snapshot.
 /datum/netrun_console/proc/make_path_tree(use_stored_routes = TRUE)
 	return connection.make_path_tree(use_stored_routes)
 
 /datum/netrun_connection/proc/make_path_tree(use_stored_routes = TRUE)
-	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	var/datum/component/netrun_node/start = owner.physical_route_source()
+	if(wireless_zone_restricted())
+		return local_path_tree(start)
 	// A source can move its nested node while being resolved.
-	graph = SSnetrun.ensure_topology()
-	var/datum/netrun_path_tree/tree = use_stored_routes ? graph.route_snapshot(start) : new(graph, start)
-	var/turf/here = owner.physical_turf()
-	if(wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z))))
-		tree.reached.Cut()
-		tree.reached_networks.Cut()
-		if(start && start == netrun_find_node(owner.host))
-			tree.reached[start.address] = TRUE
-			if(start.network)
-				tree.reached_networks[start.network.id] = TRUE
-	return tree
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	return use_stored_routes ? graph.route_snapshot(start) : new /datum/netrun_path_tree(graph, start)
 
 /// The one UI snapshot per poll shares the server's retained routing table directly when no
 /// request-local restriction (the wireless-zone cut) can mutate it. Borrowing avoids copying
@@ -473,26 +571,16 @@
 	return connection.acquire_ui_routes()
 
 /datum/netrun_connection/proc/acquire_ui_routes()
-	var/turf/here = owner.physical_turf()
-	// Same predicate as make_path_tree/watch_target: only this case rewrites the tree in place.
-	if(wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() && (!here || (!is_station_level(here.z) && !is_mining_level(here.z))))
-		owner.ui_routes_borrowed = FALSE
-		return owner.make_path_tree(TRUE)
-	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
-	var/datum/component/netrun_node/start = owner.physical_route_source()
-	graph = SSnetrun.ensure_topology()
-	var/datum/netrun_path_tree/borrowed = graph.route_snapshot(start, TRUE)
-	if(borrowed)
-		owner.ui_routes_borrowed = TRUE
-		return borrowed
-	owner.ui_routes_borrowed = FALSE
-	return new /datum/netrun_path_tree
+	ui_refreshed_nodes = list()
+	var/datum/netrun_path_tree/tree = read_path_tree(TRUE)
+	owner.ui_routes_borrowed = tree.retained
+	return tree
 
 /datum/netrun_console/proc/release_path_tree(datum/netrun_path_tree/tree)
 	return connection.release_path_tree(tree)
 
 /datum/netrun_connection/proc/release_path_tree(datum/netrun_path_tree/tree)
-	if(tree != owner.ui_routes)
+	if(tree != owner.ui_routes && !tree?.retained)
 		qdel(tree)
 
 /datum/netrun_console/proc/route_to(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
@@ -505,7 +593,7 @@
 		return route
 	var/owns_tree = !tree
 	if(owns_tree)
-		tree = owner.path_tree()
+		tree = read_path_tree()
 	var/list/addresses = tree.addresses_to(node.address)
 	if(!length(addresses))
 		route.latency = 3

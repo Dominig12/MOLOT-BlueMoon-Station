@@ -14,18 +14,19 @@
 	var/list/ui_legacy_status
 
 /datum/netrun_console/proc/observe_ui_state()
-	if(!ui_observing)
-		ui_observing = TRUE
-		RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(on_ui_node_changed))
-		RegisterSignal(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, PROC_REF(on_ui_topology_changed))
-		RegisterSignal(SSnetrun, COMSIG_NETRUN_NETWORK_CHANGED, PROC_REF(on_ui_network_changed))
-		RegisterSignal(SSnetrun, COMSIG_NETRUN_CHAT_CHANGED, PROC_REF(on_ui_chat_changed))
+	if(ui_observing)
+		return
+	ui_observing = TRUE
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODES_CHANGED, PROC_REF(on_ui_nodes_changed))
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, PROC_REF(on_ui_topology_changed))
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_NETWORK_CHANGED, PROC_REF(on_ui_network_changed))
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_CHAT_CHANGED, PROC_REF(on_ui_chat_changed))
 	refresh_ui_context_sources()
 
 /datum/netrun_console/proc/stop_ui_observation()
 	map_view?.suspend()
 	if(ui_observing)
-		UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_NETWORK_CHANGED, COMSIG_NETRUN_CHAT_CHANGED))
+		UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODES_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_NETWORK_CHANGED, COMSIG_NETRUN_CHAT_CHANGED))
 	ui_observing = FALSE
 	for(var/atom/source as anything in ui_context_sources)
 		UnregisterSignal(source, ui_context_sources[source])
@@ -36,7 +37,7 @@
 	ui_legacy_status_address = null
 
 /// A carried host can change turf when its container moves without receiving MOVED itself.
-/datum/netrun_console/proc/refresh_ui_context_sources()
+/datum/netrun_console/proc/refresh_ui_context_sources(list/viewers)
 	var/list/targets = list()
 	var/atom/movable/carrier = physical_host()
 	while(ismovable(carrier))
@@ -45,8 +46,9 @@
 	if(operator)
 		targets |= operator
 	add_ui_context_sources(targets)
-	var/datum/ui_source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
-	var/list/viewers = SStgui.get_all_open_uis(ui_source)
+	if(isnull(viewers))
+		var/datum/ui_source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
+		viewers = SStgui.get_all_open_uis(ui_source)
 	for(var/datum/tgui/ui as anything in viewers)
 		if(ui.user)
 			targets |= ui.user
@@ -100,18 +102,28 @@
 /datum/netrun_console/proc/reconcile_ui_context()
 	if(!ui_observing)
 		return
-	refresh_ui_context_sources()
-	var/list/credentials = list(list(operator, user_access(TRUE)))
 	var/datum/ui_source = QDELETED(netrun_ui_source) ? src : netrun_ui_source
 	var/list/viewers = SStgui.get_all_open_uis(ui_source)
+	refresh_ui_context_sources(viewers)
+	// The observed credential set is independent of which viewer TGUI renders
+	// first. Alternating two users must not look like a station-wide ID change.
+	var/list/credential_users = list()
 	for(var/datum/tgui/ui as anything in viewers)
-		if(ui.user && ui.user != operator)
-			credentials += list(list(ui.user, netrun_mob_access(ui.user)))
+		if(ui.user)
+			credential_users[REF(ui.user)] = ui.user
+	if(operator)
+		credential_users[REF(operator)] = operator
+	var/list/credentials = list()
+	for(var/reference in sort_list(credential_users.Copy()))
+		var/mob/viewer = credential_users[reference]
+		credentials += list(list(viewer, viewer == operator ? user_access(TRUE) : netrun_mob_access(viewer)))
+	if(!operator)
+		credentials += list(list(null, user_access(TRUE)))
 	var/turf/here = physical_turf()
 	if(ui_legacy_turf != here)
 		on_ui_context_moved(src)
 	ui_legacy_turf = here
-	var/list/current = list(operator, credentials, SSntnet.is_enabled(), length(SSntnet.catalog), SSnetworks.station_network?.setting_disabled)
+	var/list/current = list(credentials, SSntnet.is_enabled(), length(SSntnet.catalog), SSnetworks.station_network?.setting_disabled)
 	if(ui_legacy_context && !netrun_snapshot_equal(ui_legacy_context, current))
 		on_ui_context_changed(src)
 	ui_legacy_context = current
@@ -128,16 +140,30 @@
 
 /datum/netrun_console/proc/on_ui_node_changed(datum/source, datum/component/netrun_node/node, flags)
 	SIGNAL_HANDLER
-	if(!node || !is_ui_active())
+	if(!node)
+		return
+	var/list/changes = list()
+	changes[node.address] = flags
+	on_ui_nodes_changed(source, changes)
+
+/datum/netrun_console/proc/on_ui_nodes_changed(datum/source, list/changes)
+	SIGNAL_HANDLER
+	if(!length(changes) || !is_ui_active())
 		return
 	// Infrastructure affects reachability on every workspace. Ordinary unrelated activity
 	// is handled only by a visible map and must not wake every terminal in the world.
 	var/transit_revision = SSnetrun.topology?.transit_availability_revision || 0
-	var/routes_changed = (flags & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED)) || transit_revision != ui_transit_revision
+	var/routes_changed = transit_revision != ui_transit_revision
+	var/relevant = FALSE
+	for(var/address in changes)
+		if(changes[address] & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED))
+			routes_changed = TRUE
+		if(address == ui_source_address || address == map_view.selected_address || address == remote_session.active_window || (address in remote_session.windows))
+			relevant = TRUE
 	if(routes_changed)
 		ui_transit_revision = transit_revision
 		invalidate_projection_caches()
-	if(routes_changed || node.address == ui_source_address || node.address == map_view.selected_address || node.address == remote_session.active_window || (node.address in remote_session.windows))
+	if(routes_changed || relevant)
 		invalidate_ui()
 
 /datum/netrun_console/proc/on_ui_topology_changed(datum/source)
@@ -172,6 +198,7 @@
 		ui.open()
 
 /datum/netrun_console/ui_data(mob/user, datum/ui_source)
+	ui_rendered_at = world.time
 	netrun_ui_source = ui_source || src // scheduler
 	if(user)
 		if(operator != user)
@@ -186,6 +213,9 @@
 	else
 		ui_routes = null
 		ui_routes_borrowed = FALSE
+	// Route-source resolution can itself publish a carried endpoint's latest
+	// movement. Drain the merged batch before choosing this viewer's map cache.
+	SSnetrun.flush_node_publications()
 	ui_source_address = ui_routes?.source?.address
 	ui_transit_revision = SSnetrun.topology?.transit_availability_revision || 0
 	reconcile_ui_context()
@@ -221,6 +251,7 @@
 	ui_selected_node_cache = null
 	ui_selected_resolved = FALSE
 	ui_serializing = FALSE
+	connection.ui_refreshed_nodes = null
 	if(ui_routes_borrowed)
 		// Borrowed the server's shared routing table; never destroy it on teardown.
 		ui_routes = null
@@ -447,7 +478,7 @@
 /datum/netrun_console/proc/map_route_payload(datum/component/netrun_node/target)
 	if(!target)
 		return null
-	var/datum/netrun_path_tree/tree = path_tree()
+	var/datum/netrun_path_tree/tree = connection.read_path_tree()
 	var/list/addresses = tree.addresses_to(target.address)
 	var/datum/netrun_route/route = route_to(target, tree)
 	. = list(

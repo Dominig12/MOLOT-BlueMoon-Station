@@ -137,6 +137,7 @@
 	if(!node)
 		return
 	forget_infrastructure_route(node.address)
+	forget_route_table(node.address)
 	nodes -= node.address
 	adjacency -= node.address
 	forwarding_adjacency -= node.address

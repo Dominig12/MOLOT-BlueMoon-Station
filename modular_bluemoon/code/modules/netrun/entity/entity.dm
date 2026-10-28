@@ -59,6 +59,7 @@
 	get_persona()
 	if(!client)
 		return
+	console?.activate()
 	to_chat(src, span_notice("Вы — процесс в сети станции. Мир виден через доступную оптику: камеры, киберглаза и взломанные HUD-очки. \
 		В окне устройства включите «Смотреть». Говорить и слышать можно через интеркомы — включите микрофон или динамик. Кнопка «Сеть» \
 		открывает карту; переходы между узлами — Shift+WASD по положению на карте (наведя фокус на карту)."))
@@ -82,6 +83,7 @@
 	leave_node()
 	host_node = node
 	LAZYADD(node.entities, src)
+	RegisterSignal(node, COMSIG_NETRUN_NODE_MOVED, PROC_REF(on_host_moved))
 	abstract_move(node.physical_turf())
 	console.map_view.viewed_network_id = node.network?.id
 	console.map_view.selected_address = node.address
@@ -100,6 +102,7 @@
 	if(!host_node)
 		return
 	var/datum/component/netrun_node/old = host_node
+	UnregisterSignal(old, COMSIG_NETRUN_NODE_MOVED)
 	LAZYREMOVE(host_node.entities, src)
 	old.notify_changed(NETRUN_CHANGED_OCCUPANTS)
 	host_node = null
@@ -119,10 +122,10 @@
 	// полученный USER может не учитываться до следующего обновления интерфейса.
 	var/owns_tree = !tree
 	if(owns_tree)
-		tree = console.make_path_tree()
+		tree = console.connection.read_path_tree(TRUE)
 	. = console.node_level(node, tree) >= NETRUN_ACCESS_USER || console.has_key(node.network, TRUE)
 	if(owns_tree)
-		qdel(tree)
+		console.release_path_tree(tree)
 
 /// Понятная причина отказа в переходе - для журнала консоли.
 /mob/camera/netrun_entity/proc/hop_denial(datum/component/netrun_node/node)
@@ -178,7 +181,17 @@
 /mob/camera/netrun_entity/forceMove(atom/destination)
 	return abstract_move(destination)
 
-/// Синхронизация с носителем, вызывается консолью раз в секунду
+/// Empty resident processes have no clock to advance. Navigation and link changes
+/// own their timers; players, neural bodies and integrity repair still need ticks.
+/mob/camera/netrun_entity/proc/needs_processing()
+	return !!client || !QDELETED(dive_link?.body) || integrity < max_integrity
+
+/mob/camera/netrun_entity/proc/on_host_moved(datum/source, datum/component/netrun_node/node, turf/old_position, turf/position)
+	SIGNAL_HANDLER
+	if(node == host_node && position != loc)
+		abstract_move(position)
+
+/// Синхронизация активного процесса с носителем, вызывается консолью раз в секунду
 /mob/camera/netrun_entity/proc/process_tick(delta)
 	if(host_node)
 		var/turf/T = host_node.physical_turf()

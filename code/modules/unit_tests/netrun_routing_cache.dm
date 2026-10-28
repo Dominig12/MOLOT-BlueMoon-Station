@@ -265,3 +265,108 @@
 	scene.remote_apc.failure_timer = 0
 	sleep(world.tick_lag)
 	TEST_ASSERT(terminal.console.can_route(scene.target.node), "An unsignalled APC countdown recovery must restore command routing")
+
+/// More clients must add their source tables, not deep-copy every graph on every access read.
+/datum/unit_test/netrun_routing_cache_console_reads/Run()
+	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/computer/netrun_terminal/first = scene.machine(/obj/machinery/computer/netrun_terminal, scene.source_spot)
+	var/obj/machinery/computer/netrun_terminal/second = scene.machine(/obj/machinery/computer/netrun_terminal, scene.source_spot)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/copies = graph.route_snapshot_copies
+	for(var/obj/machinery/computer/netrun_terminal/terminal as anything in list(first, second))
+		for(var/i in 1 to 40)
+			TEST_ASSERT(terminal.console.can_route(scene.target.node), "Both sessions must retain physical access to the remote endpoint")
+			TEST_ASSERT(terminal.console.can_reach(scene.target.node.network), "LAN discovery must use the same read-only physical table")
+			terminal.console.node_level(scene.target.node)
+			var/datum/netrun_route/route = terminal.console.route_to(scene.target.node)
+			TEST_ASSERT(length(route.hops), "An owned delivery route must still contain the actual path")
+			qdel(route)
+		var/datum/component/netrun_node/source = terminal.GetComponent(/datum/component/netrun_node)
+		var/datum/netrun_path_tree/borrowed = terminal.console.connection.read_path_tree()
+		TEST_ASSERT_EQUAL(borrowed, graph.route_tables[source.address], "Synchronous reads must borrow their graph-owned table")
+		terminal.console.release_path_tree(borrowed)
+		TEST_ASSERT(!QDELETED(borrowed), "Releasing a synchronous borrow must preserve the graph's routing table")
+	TEST_ASSERT_EQUAL(graph.route_snapshot_copies, copies, "Repeated multiplayer access checks and route serialization must make zero full-graph copies")
+	var/datum/netrun_path_tree/owned = first.console.make_path_tree()
+	allocated += owned
+	TEST_ASSERT_EQUAL(graph.route_snapshot_copies, copies + 1, "An explicit execution snapshot must still get its own stable full tree")
+	owned.reached.Cut()
+	TEST_ASSERT(first.console.can_route(scene.target.node), "Mutating an owned execution tree must not corrupt either session's retained paths")
+	first.console.ui_routes = owned
+	TEST_ASSERT(!first.console.can_route(scene.target.node), "The fixture's stale UI tree must actually hide the target")
+	var/datum/netrun_path_tree/fresh = first.console.connection.read_path_tree(TRUE)
+	TEST_ASSERT(first.console.can_route(scene.target.node, fresh), "A synchronous authority read must bypass even an active stale UI snapshot")
+	first.console.release_path_tree(fresh)
+	first.console.ui_routes = null
+	TEST_ASSERT_EQUAL(graph.route_snapshot_copies, copies + 1, "Fresh synchronous authority reads must also avoid full-graph copies")
+	// A retained tree can also be the UI's tree. Outside serialization that
+	// identity must never skip live forwarding checks on an explicit borrow.
+	first.console.ui_routes = fresh
+	scene.remote_apc.failure_timer = 5
+	var/datum/netrun_path_tree/live = first.console.connection.read_path_tree(TRUE)
+	TEST_ASSERT(!first.console.can_route(scene.target.node, live), "A fresh borrow shared with UI must still reject an unsignalled failed forwarding APC")
+	first.console.release_path_tree(live)
+	scene.remote_apc.failure_timer = 0
+	first.console.ui_routes = null
+
+/// Count real membership work, including movement that occurs during a serialization pass.
+/datum/component/netrun_node/routing_cache_test
+	var/join_calls = 0
+
+/datum/component/netrun_node/routing_cache_test/join_network()
+	join_calls++
+	return ..()
+
+/datum/unit_test/netrun_routing_cache_ui_membership/Run()
+	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/computer/netrun_terminal/terminal = scene.machine(/obj/machinery/computer/netrun_terminal, scene.source_spot)
+	var/obj/item/target = allocate(/obj/item, scene.remote_spot)
+	var/datum/component/netrun_node/routing_cache_test/node = target.AddComponent(/datum/component/netrun_node/routing_cache_test, NETRUN_NODE_TERMINAL)
+	SSnetrun.ensure_topology()
+	var/datum/netrun_console/console = terminal.console
+	console.ui_routes = console.acquire_ui_routes()
+	console.ui_serializing = TRUE
+	node.join_calls = 0
+	for(var/i in 1 to 40)
+		TEST_ASSERT(console.can_route(node), "All visibility reads in one UI pass must see the reachable endpoint")
+	TEST_ASSERT_EQUAL(node.join_calls, 1, "One UI pass must reconcile a node's physical binding only once")
+	target.forceMove(scene.source_spot)
+	TEST_ASSERT(console.can_route(node), "A real move during the pass must still refresh the cached physical binding")
+	TEST_ASSERT_EQUAL(node.join_calls, 2, "A pending physical update must bypass the per-pass membership cache")
+	TEST_ASSERT_EQUAL(node.bound_apc, scene.apc.GetComponent(/datum/component/netrun_node), "The cached pass must observe the moved endpoint's actual APC")
+	console.ui_serializing = FALSE
+	console.ui_routes = null
+	console.ui_routes_borrowed = FALSE
+	console.connection.ui_refreshed_nodes = null
+
+/// Device deletion must release its source tree without waiting for a scheduled expiry.
+/datum/unit_test/netrun_routing_cache_deleted_source/Run()
+	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/computer/netrun_terminal/terminal = scene.machine(/obj/machinery/computer/netrun_terminal, scene.source_spot)
+	var/datum/component/netrun_node/source = terminal.GetComponent(/datum/component/netrun_node)
+	var/address = source.address
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/datum/netrun_path_tree/tree = terminal.console.connection.read_path_tree()
+	TEST_ASSERT_EQUAL(graph.route_tables[address], tree, "The source must first own a retained routing table")
+	TEST_ASSERT(!isnull(graph.route_used[address]), "The active source must be tracked for idle expiry")
+	qdel(terminal)
+	TEST_ASSERT(QDELETED(tree), "Deleting the actual source device must immediately delete its graph-owned tree")
+	TEST_ASSERT_NULL(graph.route_tables[address], "A deleted source must not occupy the full-tree cache")
+	TEST_ASSERT_NULL(graph.route_used[address], "A deleted source must not remain in idle-expiry bookkeeping")
+	TEST_ASSERT_NULL(tree.source, "A released tree must not retain the deleted node through another UI reference")
+	TEST_ASSERT_EQUAL(length(tree.reached), 0, "Releasing a retained tree must immediately free its destination arrays")
+
+/// A firewall change must revoke actual grants without waking every unopened deck.
+/datum/unit_test/netrun_routing_cache_firewall_interest/Run()
+	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/computer/netrun_terminal/granted = scene.machine(/obj/machinery/computer/netrun_terminal, scene.source_spot)
+	var/obj/machinery/computer/netrun_terminal/unrelated = scene.machine(/obj/machinery/computer/netrun_terminal, scene.source_spot)
+	granted.console.access_session.node_access[scene.target.node.address] = NETRUN_ACCESS_ROOT
+	unrelated.console.ui_dirty = FALSE
+	SSnetrun.active_consoles -= unrelated.console
+	scene.target.node.raise_firewall()
+	TEST_ASSERT_EQUAL(length(granted.console.access_session.pending_firewalls), 1, "The session with a compromised grant must receive its revocation")
+	TEST_ASSERT_EQUAL(length(unrelated.console.access_session.pending_firewalls), 0, "Unrelated sessions must not allocate pending firewall work")
+	TEST_ASSERT(!unrelated.console.ui_dirty && !SSnetrun.active_consoles[unrelated.console], "An unopened unrelated terminal must remain asleep after another node raises its firewall")
+	granted.console.access_session.process_events()
+	TEST_ASSERT_NULL(granted.console.access_session.node_access[scene.target.node.address], "Filtering unrelated listeners must not preserve the actual compromised grant")

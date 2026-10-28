@@ -17,6 +17,9 @@
 	var/works_offline = FALSE
 	/// Выполняется без задержки маршрута (ping сам измеряет задержку)
 	var/ignores_latency = FALSE
+	/// Diagnostic execution does not mutate the target's native state. Its logs and
+	/// operator UI still update, without an extra native power/binding reconciliation.
+	var/read_only = FALSE
 
 /// Выполнить команду. Возвращает текст результата или null при неудаче (причину пишет в консоль сам)
 /datum/netrun_command/proc/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
@@ -77,6 +80,7 @@
 
 /datum/netrun_command/node_log
 	id = "node_log"
+	read_only = TRUE
 	name = "Журнал узла"
 	desc = "Прочитать последние сетевые события этой машины."
 	help = "Журнал следует за устройством при смене отсека. Содержит подключения, запросы, файловые операции и события защиты."
@@ -90,6 +94,7 @@
 
 /datum/netrun_command/packet_log
 	id = "packet_log"
+	read_only = TRUE
 	name = "Журнал пакетов"
 	desc = "Отправка, пересылка, получение и отказы сетевых пакетов этого узла."
 	help = "Последние 100 записей: время, ID, этап, адреса, служба и заголовки. SEND — отправка, FORWARD — пересылка, RECEIVE — получение, ACCEPT — принятие, REJECT/DROP — отказ. В карточке узла доступны заголовки последних 20 записей. Для содержимого нужен ROOT и расшифровка; общий буфер хранит 256 пакетов, до 4096 символов каждого."
@@ -103,6 +108,7 @@
 
 /datum/netrun_command/packet_decrypt
 	id = "packet_decrypt"
+	read_only = TRUE
 	name = "Расшифровать пакет"
 	desc = "Прочитать содержимое захваченного пакета из журнала узла."
 	help = "Выберите пакет в карточке узла. Нужен ROOT; маршрут и права перепроверяются при доставке. Большие и сложные пакеты показаны ограниченным фрагментом."
@@ -144,6 +150,7 @@
 
 /datum/netrun_command/scan
 	id = "scan"
+	read_only = TRUE
 	name = "Сканировать"
 	desc = "Снять состояние узла."
 	access = NETRUN_ACCESS_GUEST
@@ -163,6 +170,7 @@
 
 /datum/netrun_command/ping
 	id = "ping"
+	read_only = TRUE
 	name = "Ping"
 	desc = "Измерить задержку маршрута до узла."
 	access = NETRUN_ACCESS_GUEST
@@ -188,6 +196,7 @@
 
 /datum/netrun_command/traceroute
 	id = "traceroute"
+	read_only = TRUE
 	name = "Трассировка маршрута"
 	desc = "Показать маршрут и задержку до узла по реальному графу сети."
 	access = NETRUN_ACCESS_GUEST

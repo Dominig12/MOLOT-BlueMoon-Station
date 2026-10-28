@@ -57,26 +57,119 @@
 	var/source_z
 	var/list/sector_catalog = list()
 	var/datum/netrun_map_geometry/geometry
+	/// Navigation and wire cursors belong to the console; permitted projections belong
+	/// to operators. Parking them avoids rebuilding the station on every alternating
+	/// TGUI viewer. Closed/idle viewers are bounded and released with the subscription.
+	var/list/operator_projections = list()
+	var/active_projection_key
+	var/projection_generation = 0
+	var/projection_cleanup_at = -INFINITY
+	/// Only events that can draw something in a viewer keep this console repainting.
+	var/event_refresh_until = 0
+	var/events_need_reconcile = TRUE
+	/// Trusted private field contract. Only projection state is switched; command
+	/// grants, navigation, authorization_revision and wire_sessions remain shared.
+	var/static/list/projection_defaults = list(
+		"structure_revision" = 0, "state_revision" = 0, "static_revision" = 0,
+		"static_structure" = null, "dirty" = TRUE, "structure_dirty" = TRUE,
+		"dirty_nodes" = list(), "refreshed_at" = -INFINITY, "snapshot" = null,
+		"structure" = null, "node_entries" = list(), "edge_entries" = list(),
+		"node_indexes" = list(), "incident_edges" = list(), "shown_addresses" = list(),
+		"shown_network_counts" = list(), "projected_network_levels" = list(),
+		"projected_network_keys" = list(), "projected_mapper" = 0,
+		"inventory_changed" = FALSE, "route_reveal_dirty" = FALSE,
+		"pending_network_access" = list(), "revealed_addresses" = list(),
+		"context" = null, "security_context" = null, "wire_epoch" = 0,
+		"wire_journal" = list(), "wire_journal_entries" = 0,
+		"source_sector" = null, "source_z" = null, "sector_catalog" = list())
 
 /datum/netrun_map_view/New(datum/netrun_console/owner)
 	src.owner = owner
 	geometry = new
+
+/// Called only within synchronous payload serialization. A parked projection's
+/// immutable entries and journal remain intact while another operator is rendered.
+/datum/netrun_map_view/proc/select_operator_projection()
+	var/key = owner.operator ? REF(owner.operator) : "anonymous"
+	var/list/active = active_projection_key ? operator_projections[active_projection_key] : null
+	if(active_projection_key != key)
+		if(active)
+			var/list/fields = active["fields"]
+			for(var/field in projection_defaults)
+				fields[field] = vars[field]
+		var/list/next = operator_projections[key]
+		if(next)
+			var/list/fields = next["fields"]
+			for(var/field in projection_defaults)
+				vars[field] = fields[field]
+		else
+			// The first viewer adopts the initial state, including a resumed map.
+			// Later viewers start with fresh lists and a distinct transport epoch.
+			if(active_projection_key)
+				var/previous_source_sector = source_sector
+				var/previous_source_z = source_z
+				var/list/previous_nodes = node_entries
+				var/list/previous_edges = edge_entries
+				for(var/field in projection_defaults)
+					var/default_value = projection_defaults[field]
+					vars[field] = islist(default_value) ? list() : default_value
+				// Opening another viewer is not a physical source move and must not
+				// reset the console's shared sector navigation to the source floor.
+				source_sector = previous_source_sector
+				source_z = previous_source_z
+				// Rebuild checks the new operator's permissions for every candidate.
+				// Equal immutable entries can then be shared across viewers; the
+				// resulting dictionaries and disclosed sets are always independent.
+				node_entries = previous_nodes
+				edge_entries = previous_edges
+				advance_wire_epoch()
+			next = list("fields" = list())
+			operator_projections[key] = next
+			events_need_reconcile = TRUE
+		active_projection_key = key
+		active = next
+	active["seen"] = world.time
+	if(length(operator_projections) <= 8 && world.time < projection_cleanup_at)
+		return
+	projection_cleanup_at = world.time + 1 MINUTES
+	var/oldest_key
+	var/oldest_at = INFINITY
+	for(var/cached_key in operator_projections)
+		if(cached_key == active_projection_key)
+			continue
+		var/list/cached = operator_projections[cached_key]
+		if(world.time > cached["seen"] + 5 MINUTES)
+			operator_projections -= cached_key
+		else if(cached["seen"] < oldest_at)
+			oldest_key = cached_key
+			oldest_at = cached["seen"]
+	if(length(operator_projections) > 8 && oldest_key)
+		operator_projections -= oldest_key
+
+/// Recreated/evicted projections must never reuse an old viewer's wire baseline.
+/datum/netrun_map_view/proc/advance_wire_epoch()
+	projection_generation = max(projection_generation, wire_epoch) + 1
+	wire_epoch = projection_generation
 
 /datum/netrun_map_view/proc/subscribe()
 	if(subscribed)
 		return
 	subscribed = TRUE
 	dirty = TRUE
-	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(on_node_changed))
+	events_need_reconcile = TRUE
+	RegisterSignal(SSnetrun, COMSIG_NETRUN_NODES_CHANGED, PROC_REF(on_nodes_changed))
 	RegisterSignal(SSnetrun, COMSIG_NETRUN_TOPOLOGY_CHANGED, PROC_REF(on_topology_changed))
 	RegisterSignal(SSnetrun, COMSIG_NETRUN_EVENT_POSTED, PROC_REF(on_event_posted))
 
 /// Closed/hidden maps do not receive every process movement elsewhere in the world.
 /datum/netrun_map_view/proc/suspend()
+	operator_projections.Cut()
+	active_projection_key = null
+	event_refresh_until = 0
 	if(!subscribed)
 		return
 	subscribed = FALSE
-	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_EVENT_POSTED))
+	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODES_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_EVENT_POSTED))
 	dirty_nodes.Cut()
 	dirty = TRUE
 
@@ -84,7 +177,7 @@
 	if(ping_timer)
 		deltimer(ping_timer)
 	ping_timer = null
-	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODE_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_EVENT_POSTED))
+	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_NODES_CHANGED, COMSIG_NETRUN_TOPOLOGY_CHANGED, COMSIG_NETRUN_EVENT_POSTED))
 	QDEL_NULL(geometry)
 	snapshot = null
 	structure = null
@@ -103,6 +196,7 @@
 	wire_sessions.Cut()
 	wire_journal.Cut()
 	security_context = null
+	operator_projections.Cut()
 	owner = null
 	return ..()
 
@@ -150,26 +244,105 @@
 /// gateway set remain visible. Permission changes fall back to rebuild().
 /datum/netrun_map_view/proc/on_node_changed(datum/source, datum/component/netrun_node/node, flags)
 	SIGNAL_HANDLER
-	if(flags & NETRUN_CHANGED_REMOVED)
-		structure_dirty = TRUE
-	else if(node)
-		dirty_nodes[node.address] = TRUE
-	if(owner)
-		owner.invalidate_ui()
+	if(!node)
+		return
+	var/list/changes = list()
+	changes[node.address] = flags
+	on_nodes_changed(source, changes)
+
+/// One publication batch wakes each map once, regardless of how many devices
+/// changed. Merge parked-view dirty queues here without per-node UI scheduling.
+/datum/netrun_map_view/proc/on_nodes_changed(datum/source, list/changes)
+	SIGNAL_HANDLER
+	var/changed = FALSE
+	var/datum/netrun_topology/graph = SSnetrun.topology
+	for(var/address in changes)
+		var/flags = changes[address]
+		if(!(flags & ~NETRUN_CHANGED_DETAILS))
+			continue
+		var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
+		// Leaf activity cannot change permissions or forwarding. Its hidden or
+		// offscreen status does not contribute anything to this viewer's map.
+		var/all_projections = (flags & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_REMOVED)) || graph?.is_infrastructure(node) || length(graph?.adjacency[address]) > 1
+		if(all_projections || !snapshot || shown_addresses[address])
+			if(flags & NETRUN_CHANGED_REMOVED)
+				structure_dirty = TRUE
+			else
+				dirty_nodes[address] = TRUE
+			changed = TRUE
+		for(var/key in operator_projections)
+			if(key == active_projection_key)
+				continue
+			var/list/cached = operator_projections[key]
+			var/list/fields = cached["fields"]
+			if(!all_projections && fields["snapshot"] && !fields["shown_addresses"][address])
+				continue
+			if(flags & NETRUN_CHANGED_REMOVED)
+				fields["structure_dirty"] = TRUE
+			else
+				fields["dirty_nodes"][address] = TRUE
+			changed = TRUE
+	if(changed)
+		owner?.invalidate_ui()
 
 /datum/netrun_map_view/proc/on_topology_changed(datum/source)
 	SIGNAL_HANDLER
 	structure_dirty = TRUE
+	for(var/key in operator_projections)
+		if(key == active_projection_key)
+			continue
+		var/list/cached = operator_projections[key]
+		cached["fields"]["structure_dirty"] = TRUE
 	if(owner)
 		owner.invalidate_ui()
 
-/datum/netrun_map_view/proc/on_event_posted(datum/source, kind, from_ref, to_ref)
+/datum/netrun_map_view/proc/on_event_posted(datum/source, kind, from_ref, to_ref, list/route)
 	SIGNAL_HANDLER
-	if(subscribed && owner)
+	if(subscribed && owner && event_visible(from_ref, to_ref, route))
+		event_refresh_until = max(event_refresh_until, world.time + 4 SECONDS)
 		owner.invalidate_ui()
+
+/// Events only animate visible endpoints and route segments. A packet elsewhere
+/// must not keep every open station map serializing its panels and countdowns.
+/datum/netrun_map_view/proc/event_visible(from_ref, to_ref, list/route)
+	// Preserve global/synthetic notifications that have no physical endpoint.
+	if(!length(route) && !SSnetrun.nodes_by_address[from_ref] && !SSnetrun.nodes_by_address[to_ref])
+		return TRUE
+	if(event_visible_in(from_ref, to_ref, route, shown_addresses))
+		return TRUE
+	for(var/key in operator_projections)
+		if(key == active_projection_key)
+			continue
+		var/list/cached = operator_projections[key]
+		if(event_visible_in(from_ref, to_ref, route, cached["fields"]["shown_addresses"]))
+			return TRUE
+	return FALSE
+
+/datum/netrun_map_view/proc/event_visible_in(from_ref, to_ref, list/route, list/shown)
+	if(shown[from_ref] || shown[to_ref])
+		return TRUE
+	for(var/address in route)
+		if(shown[address])
+			return TRUE
+	return FALSE
+
+/// Opening a map or revealing a sector can expose an event posted before this
+/// subscription. Initialize its fade once from the bounded recent-event history.
+/datum/netrun_map_view/proc/reconcile_visible_events()
+	events_need_reconcile = FALSE
+	for(var/list/event as anything in SSnetrun.events)
+		var/until = event["t"] + 4 SECONDS
+		if(until <= world.time || !event_visible(event["from"], event["to"], event["route"]))
+			continue
+		event_refresh_until = max(event_refresh_until, until)
 
 /datum/netrun_map_view/proc/invalidate(sensitive = TRUE)
 	dirty = TRUE
+	for(var/key in operator_projections)
+		if(key == active_projection_key)
+			continue
+		var/list/cached = operator_projections[key]
+		cached["fields"]["dirty"] = TRUE
 	if(sensitive)
 		authorization_revision++
 	if(owner)
@@ -182,6 +355,13 @@
 		return
 	dirty_nodes[address] = TRUE
 	route_reveal_dirty = TRUE
+	for(var/key in operator_projections)
+		if(key == active_projection_key)
+			continue
+		var/list/cached = operator_projections[key]
+		var/list/fields = cached["fields"]
+		fields["dirty_nodes"][address] = TRUE
+		fields["route_reveal_dirty"] = TRUE
 	authorization_revision++
 	owner?.invalidate_ui()
 
@@ -193,6 +373,16 @@
 	for(var/datum/component/netrun_node/node as anything in network.nodes)
 		if(!QDELETED(node))
 			dirty_nodes[node.address] = TRUE
+	for(var/key in operator_projections)
+		if(key == active_projection_key)
+			continue
+		var/list/cached = operator_projections[key]
+		var/list/fields = cached["fields"]
+		for(var/datum/component/netrun_node/node as anything in network.nodes)
+			if(!QDELETED(node))
+				fields["dirty_nodes"][node.address] = TRUE
+		fields["pending_network_access"][network_id] = TRUE
+		fields["route_reveal_dirty"] = TRUE
 	pending_network_access[network_id] = TRUE
 	route_reveal_dirty = TRUE
 	authorization_revision++
@@ -201,6 +391,12 @@
 /datum/netrun_map_view/proc/invalidate_inventory()
 	inventory_changed = TRUE
 	route_reveal_dirty = TRUE
+	for(var/key in operator_projections)
+		if(key == active_projection_key)
+			continue
+		var/list/cached = operator_projections[key]
+		cached["fields"]["inventory_changed"] = TRUE
+		cached["fields"]["route_reveal_dirty"] = TRUE
 	authorization_revision++
 	owner?.invalidate_ui()
 
@@ -208,6 +404,7 @@
 /// One UI request shares a path tree; clicks during a puzzle never call this method.
 /datum/netrun_map_view/proc/payload()
 	subscribe()
+	select_operator_projection()
 	// Drain revocations before deciding which pending nodes to reconcile.
 	owner.access_session.process_events()
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
@@ -225,8 +422,11 @@
 	var/list/current_context = list(owner.operator, source?.address, source?.is_online(), source?.network?.id, selected_address, waypoint_address, active_sector, active_z, owner.user_access(), owner.is_locked(), graph.transit_availability_revision)
 	var/list/changed_networks
 	var/entity_source_changed = FALSE
+	var/navigation_changed = FALSE
 	if(!netrun_snapshot_equal(context, current_context))
-		if(source_network_projection_unchanged(graph, source, current_context))
+		if(reconcile_navigation_context(graph, current_context))
+			navigation_changed = TRUE
+		else if(source_network_projection_unchanged(graph, source, current_context))
 			reconcile_route_reveals()
 		else
 			changed_networks = reconcile_entity_source_context(graph, source, current_context)
@@ -266,23 +466,38 @@
 	var/list/current_security = list(owner.operator, owner.origin == NETRUN_ORIGIN_ENTITY ? owner.host : source?.address)
 	if(!netrun_snapshot_equal(security_context, current_security))
 		security_context = current_security
-		wire_epoch++
+		advance_wire_epoch()
 	// Fully event-driven: a full rebuild only on a structural change, context change or a new
 	// graph revision; a status-only change updates just the affected nodes in place.
 	if(dirty || structure_dirty || !snapshot || snapshot["revision"] != graph.revision)
 		rebuild(graph)
 	else if(length(dirty_nodes))
 		apply_incremental(graph)
-	if(entity_source_changed && !dirty && !structure_dirty)
+	if((entity_source_changed || navigation_changed) && !dirty && !structure_dirty)
 		refresh_selected_zone()
 	if(changed_networks && !dirty && !structure_dirty)
 		refresh_network_gateways(changed_networks)
+	if(events_need_reconcile)
+		reconcile_visible_events()
 	var/list/result = snapshot.Copy()
 	result["focus"] = focus?.address
 	result["route"] = owner.map_route_payload(owner.selected_node() || focus)
 	// Readiness/stun can expire without changing the physical projection.
 	result["relay_destinations"] = relay_destinations(graph, owner.selected_node(), shown_addresses, node_entries)
 	return result
+
+/// Selecting a device or waypoint changes route disclosure and the selected APC
+/// shape. It does not change the permissions or geometry of every other device.
+/datum/netrun_map_view/proc/reconcile_navigation_context(datum/netrun_topology/graph, list/current_context)
+	if(!context || !snapshot || dirty || structure_dirty || snapshot["revision"] != graph.revision)
+		return FALSE
+	var/list/other_context = current_context.Copy()
+	other_context[5] = context[5]
+	other_context[6] = context[6]
+	if(!netrun_snapshot_equal(context, other_context))
+		return FALSE
+	reconcile_route_reveals()
+	return TRUE
 
 /// Crossing departments need not replace the projection when both LAN grants stay
 /// identical and the old APC is still in the new source's forwarding component.
@@ -480,6 +695,7 @@
 	invalidate(FALSE)
 
 /datum/netrun_map_view/proc/rebuild(datum/netrun_topology/graph)
+	events_need_reconcile = TRUE
 	var/previous_revision = state_revision
 	var/list/changed_nodes = list()
 	var/list/changed_edges = list()
@@ -1014,7 +1230,13 @@
 	return TRUE
 
 /datum/netrun_map_view/proc/encode_wire(list/full, list/session)
-	var/epoch = "[REF(src)]:[wire_epoch]:[session["id"]]"
+	// A restored operator can have an older projection than the most recently
+	// rendered viewer. Give each newly bound UI a monotonic stream generation so
+	// reusing a browser window cannot mistake that valid baseline for a late packet.
+	if(isnull(session["projection_epoch"]) || session["projection_epoch"] != wire_epoch)
+		session["projection_epoch"] = wire_epoch
+		session["stream_generation"] = ++projection_generation
+	var/epoch = "[REF(src)]:[session["stream_generation"]]:[session["id"]]"
 	var/previous = session["revision"]
 	var/list/result = full.Copy()
 	var/list/node_updates = list()
@@ -1077,6 +1299,10 @@
 
 /// Compare wire data without serializing the whole graph into another JSON string.
 /proc/netrun_snapshot_equal(first, second)
+	// Retained projections deliberately reuse unchanged entries. A shared immutable
+	// list is already equal; descending through it multiplies work by map size.
+	if(first == second)
+		return TRUE
 	if(islist(first) && islist(second))
 		var/list/left = first
 		var/list/right = second

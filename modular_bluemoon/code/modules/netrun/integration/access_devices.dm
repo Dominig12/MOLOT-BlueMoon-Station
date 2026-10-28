@@ -76,6 +76,7 @@
 
 /datum/netrun_command/session_status
 	id = "session_status"
+	read_only = TRUE
 	name = "Состояние сетевого клиента"
 	desc = "Получить состояние соединения, трассировки и памяти переносного клиента."
 	access = NETRUN_ACCESS_USER

@@ -270,6 +270,11 @@
 		return TRUE
 	if(kind == NETRUN_ICE_HUNTER && !persistent && world.time >= idle_expires_at)
 		return TRUE
+	// Empty departments have nothing to simulate or display. Real arrivals and
+	// breaches wake their own LAN immediately; a shared index avoids per-hunter
+	// client scans and native availability checks while the department sleeps.
+	if(kind == NETRUN_ICE_HUNTER && persistent && !length(node.entities) && !SSnetrun.active_defense_networks[patrol_network_id || node.network?.id])
+		return FALSE
 	if(is_stunned() || !node.is_online())
 		return FALSE
 	if(length(node.entities))
@@ -373,9 +378,9 @@
 		if(!fresh_access)
 			return TRUE
 		var/datum/netrun_console/victim = target
-		var/datum/netrun_path_tree/tree = victim.make_path_tree()
+		var/datum/netrun_path_tree/tree = victim.connection.read_path_tree(TRUE)
 		. = victim.can_route(node, tree) && valid_trace_target(victim)
-		qdel(tree)
+		victim.release_path_tree(tree)
 		return
 	if(!program.needs_target)
 		return target == src
@@ -384,9 +389,9 @@
 		return FALSE
 	if(!fresh_access || enemy_ref?.resolve() == entity)
 		return is_intruder(entity, node)
-	var/datum/netrun_path_tree/tree = entity.console?.make_path_tree()
+	var/datum/netrun_path_tree/tree = entity.console?.connection.read_path_tree(TRUE)
 	. = is_intruder(entity, node, tree)
-	qdel(tree)
+	entity.console?.release_path_tree(tree)
 
 /datum/netrun_ice/proc/begin_program(datum/netrun_program/program, datum/target)
 	if(!program || pending_program || is_stunned() || !node?.is_online() || world.time < next_attack || !(program.id in program_ids) || world.time < (program_cd[program.id] || 0))
@@ -544,10 +549,31 @@
 	/// Destroying a persistent patrol clears the LAN permanently; topology edits do not respawn it.
 	var/list/patrol_seeded_networks = list()
 	var/list/list/datum/netrun_ice/hunters_by_network = list()
+	/// LAN ids with a resident or live breach, rebuilt once per population pass.
+	var/list/active_defense_networks = list()
 	/// Лорные документы раскладываются по серверам один раз за раунд.
 	var/lore_initialized = FALSE
 	/// Узлы защиты со спящими ячейками льда: address -> сколько ячеек ещё можно пробудить.
 	var/list/defense_nests = list()
+
+/// A dormant patrol must not generate movement/log/UI traffic in an empty LAN.
+/// Read current residency and breach targets only; this never builds route trees.
+/datum/controller/subsystem/netrun/proc/collect_defense_network_interest()
+	active_defense_networks.Cut()
+	for(var/mob/camera/netrun_entity/entity as anything in entities)
+		var/network_id = entity.host_node?.network?.id
+		if(!QDELETED(entity) && network_id)
+			active_defense_networks[network_id] = TRUE
+	for(var/datum/netrun_console/console as anything in currentbreaches)
+		if(QDELETED(console))
+			continue
+		var/datum/netrun_breach/breach = console.intrusion.breach
+		if(QDELETED(breach))
+			continue
+		var/datum/component/netrun_node/target = nodes_by_address[breach.target_id]
+		var/network_id = breach.target_kind == "network" ? breach.target_id : target?.network?.id
+		if(network_id)
+			active_defense_networks[network_id] = TRUE
 
 /datum/controller/subsystem/netrun/proc/register_hunter(datum/netrun_ice/ice)
 	if(ice.kind != NETRUN_ICE_HUNTER || !ice.patrol_network_id)
