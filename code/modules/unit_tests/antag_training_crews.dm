@@ -160,6 +160,7 @@
 	var/datum/species/skeleton/space/baseline_skeleton = allocate(warmonger.species_type)
 	var/warrior_brute = baseline_skeleton.brutemod / 2
 	TEST_ASSERT(abs(body.dna.species.brutemod - warrior_brute) < 0.01, "Воин крепче обычного скелета, как у спавнера.")
+	TEST_ASSERT(findtext(warmonger.option_hints["Снаряжение: Воин"], "[round(100 * warrior_brute)]% обычного"), "Подсказка воина называет его настоящую стойкость.")
 	antag_training_crew_option(warmonger_session, "Снаряжение: Воин")
 	TEST_ASSERT(abs(body.dna.species.brutemod - warrior_brute) < 0.01, "Повторная выдача не копит стойкость.")
 	antag_training_crew_option(warmonger_session, "Снаряжение: Военачальник")
