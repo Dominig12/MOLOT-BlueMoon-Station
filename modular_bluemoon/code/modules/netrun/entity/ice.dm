@@ -492,7 +492,7 @@
 	var/trace_advice = program.role == NETRUN_PROGRAM_TRACE ? " Прервите взлом или оглушите ICE, чтобы сорвать трассировку." : ""
 	if(program.role == NETRUN_PROGRAM_TRACE && encounter?.active)
 		trace_advice = " Прервите взлом, чтобы сорвать трассировку; подавление ICE доступно в ваш ход."
-	victim?.log_line("[name] готовит [program.name], срабатывание через [telegraph / (1 SECONDS)] с.[trace_advice]", "bad")
+	victim?.combat_log("[name] готовит [program.name], срабатывание через [telegraph / (1 SECONDS)] с.[trace_advice]", "bad")
 	node.add_log("[name]: подготовка [program.name].")
 	reaction.schedule_at(attack_at)
 	victim?.finish_user_action()
@@ -546,7 +546,7 @@
 	SSnetrun.post_event("intrusion", null, node?.address)
 	if(!QDELETED(target) && istype(target, /mob/camera/netrun_entity))
 		var/mob/camera/netrun_entity/entity = target
-		entity.console?.log_line("[name]: сработала [program.name].", "bad")
+		entity.console?.combat_log("[name]: сработала [program.name].", "bad")
 		entity.console?.finish_user_action()
 
 /// Сторож без прямой цели давит на тех, кто ломает его узел или сеть.

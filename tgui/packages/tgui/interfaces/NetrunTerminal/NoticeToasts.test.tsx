@@ -94,11 +94,11 @@ test('new repeated events coalesce in place and a burst never exceeds three smal
   expect(panel.getByText('Сканирование завершено')).toBeTruthy();
 });
 
-test('dismissal is local, old IDs do not reappear, and unmount cancels the remaining timer', () => {
+test('hover dismissal is local, old IDs do not reappear, and unmount cancels the remaining timer', () => {
   const { publish, topic } = setup();
   const panel = render(<NoticeToasts />);
   publish([notice(1)]);
-  fireEvent.click(panel.getByRole('button', { name: 'Закрыть уведомление' }));
+  fireEvent.mouseEnter(panel.getByRole('status'));
   expect(panel.queryByRole('region')).toBeNull();
   expect(jest.getTimerCount()).toBe(0);
   publish([notice(1)]);
@@ -107,6 +107,24 @@ test('dismissal is local, old IDs do not reappear, and unmount cancels the remai
   expect(jest.getTimerCount()).toBe(1);
   panel.unmount();
   expect(jest.getTimerCount()).toBe(0);
+  expect(topic).not.toHaveBeenCalled();
+});
+
+test('the combat page discards combat notices without hiding file notices or replaying combat history on exit', () => {
+  const { publish, store, topic } = setup();
+  const panel = render(<NoticeToasts />);
+  const combat: NetrunNotice = { ...notice(1, 'Ваш ход'), topic: 'combat' };
+  const file = notice(2, 'Файл получен');
+  publish([combat, file]);
+  expect(panel.getByText('Ваш ход')).toBeTruthy();
+  act(() => store.dispatch(backendUpdate({ data: { workspace_view: 'combat' } })));
+  expect(panel.queryByText('Ваш ход')).toBeNull();
+  expect(panel.getByText('Файл получен')).toBeTruthy();
+  publish([combat, file, { ...combat, id: 3 }]);
+  expect(panel.queryByText('Ваш ход')).toBeNull();
+  act(() => store.dispatch(backendUpdate({ data: { workspace_view: 'map' } })));
+  expect(panel.queryByText('Ваш ход')).toBeNull();
+  expect(panel.getByText('Файл получен')).toBeTruthy();
   expect(topic).not.toHaveBeenCalled();
 });
 

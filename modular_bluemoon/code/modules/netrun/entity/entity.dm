@@ -165,7 +165,7 @@
 		return FALSE
 	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter()
 	if(encounter?.active && !encounter.spend(console, 1, TRUE))
-		console.log_line("Для выхода из боя нужен ваш ход и одно очко действий.", "bad")
+		console.combat_log("Для выхода из боя нужен ваш ход и одно очко действий.", "bad")
 		return FALSE
 	next_hop = world.time + 1 SECONDS
 	enter_node(node, following_route)

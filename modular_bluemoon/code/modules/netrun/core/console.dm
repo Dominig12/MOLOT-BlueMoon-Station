@@ -26,6 +26,7 @@
 	var/notice_serial = 0
 	var/last_notice_text
 	var/last_notice_kind
+	var/last_notice_topic
 	var/last_notice_at = -INFINITY
 	/// Последний оператор - от его ID считается легальный доступ
 	var/mob/operator
@@ -896,28 +897,32 @@
 
 // MARK: Журнал
 
-/datum/netrun_console/proc/log_line(text, kind = "label")
+/datum/netrun_console/proc/log_line(text, kind = "label", notice_topic)
 	log += list(list("time" = STATION_TIME_TIMESTAMP("hh:mm:ss", world.time), "text" = text, "kind" = kind))
 	host?.netrun_console_event(src, text, kind)
 	SEND_SIGNAL(src, COMSIG_NETRUN_CONSOLE_EVENT, text, kind)
 	if(length(log) > NETRUN_MAX_CONSOLE_LOG)
 		log.Cut(1, length(log) - NETRUN_MAX_CONSOLE_LOG + 1)
 	if(kind in list("good", "bad", "average"))
-		push_notice(text, kind, FALSE)
+		push_notice(text, kind, FALSE, notice_topic)
 	// A new log line is an event-less UI change (it can arrive from async delivery, ICE, timers);
 	// wake the console so it flushes instead of relying on a blanket per-second repaint.
 	invalidate_ui()
 
-/datum/netrun_console/proc/push_notice(text, kind = "label", immediate = TRUE)
+/datum/netrun_console/proc/combat_log(text, kind = "label")
+	return log_line(text, kind, "combat")
+
+/datum/netrun_console/proc/push_notice(text, kind = "label", immediate = TRUE, topic)
 	if(autonomous() || !istext(text) || !length(text))
 		return
 	var/clean = copytext_char(strip_html_tags(text, TRUE), 1, 321)
-	if(clean == last_notice_text && kind == last_notice_kind && world.time - last_notice_at < 1 SECONDS)
+	if(clean == last_notice_text && kind == last_notice_kind && topic == last_notice_topic && world.time - last_notice_at < 1 SECONDS)
 		return
 	last_notice_text = clean
 	last_notice_kind = kind
+	last_notice_topic = topic
 	last_notice_at = world.time
-	notices += list(list("id" = ++notice_serial, "text" = clean, "kind" = kind))
+	notices += list(list("id" = ++notice_serial, "text" = clean, "kind" = kind, "topic" = topic))
 	if(length(notices) > 8)
 		notices.Cut(1, length(notices) - 7)
 	if(immediate)

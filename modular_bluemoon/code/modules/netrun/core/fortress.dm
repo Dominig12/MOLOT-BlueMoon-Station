@@ -588,7 +588,7 @@
 		if(QDELETED(target))
 			return
 		node.add_log("Турели крепости [name] бьют по [target.real_name].")
-		target.console?.log_line("Турели крепости [name] поразили ваш процесс.", "bad")
+		target.console?.combat_log("Турели крепости [name] поразили ваш процесс.", "bad")
 		SSnetrun.post_event("intrusion", null, node.address)
 		return
 	if(!encounter?.active && world.time < next_turret)
@@ -603,7 +603,7 @@
 	turret_target_ref = WEAKREF(target)
 	turret_fire_at = world.time + NETRUN_ICE_MIN_TELEGRAPH
 	to_chat(target, span_userdanger("Турели крепости [name] наводятся на ваш процесс: [NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS)] с до выстрела. Уйдите из зоны поражения или оглушите турель."))
-	target.console?.log_line("Турели крепости [name] наводятся на вас: [NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS)] с до выстрела.", "bad")
+	target.console?.combat_log("Турели крепости [name] наводятся на вас: [NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS)] с до выстрела.", "bad")
 
 // MARK: Ловушки, сигнализация, ремонт
 
@@ -623,7 +623,7 @@
 		netrun_combatant_stun(entity, 3 SECONDS)
 		to_chat(entity, span_userdanger("Ловушка крепости [name] захлопнулась: процесс оглушён, след раскрыт!"))
 		node.add_log("Ловушка крепости [name] сработала на [entity.real_name].")
-		entity.console?.log_line("Ловушка крепости [name]: процесс оглушён, трассировка растёт.", "bad")
+		entity.console?.combat_log("Ловушка крепости [name]: процесс оглушён, трассировка растёт.", "bad")
 		entity.console?.add_trace(15)
 	if(QDELETED(entity))
 		return

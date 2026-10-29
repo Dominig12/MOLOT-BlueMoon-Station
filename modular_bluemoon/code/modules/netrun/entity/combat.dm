@@ -26,7 +26,7 @@
 	if(!isnull(turn_id) && !encounter?.accepts_input(turn_id))
 		return FALSE
 	if(!encounter?.pass(src))
-		log_line("Сейчас нельзя завершить ход: дождитесь своей очереди и окончания программы.", "bad")
+		combat_log("Сейчас нельзя завершить ход: дождитесь своей очереди и окончания программы.", "bad")
 		return FALSE
 	return TRUE
 
@@ -455,7 +455,7 @@
 	if(!isnull(turn_id) && !encounter?.accepts_input(turn_id))
 		return FALSE
 	if(!encounter?.active && world.time < next_program)
-		console.log_line("Предыдущая программа ещё выполняется: осталось [max(0, CEILING((next_program - world.time) / (1 SECONDS), 0.1))] с.", "bad")
+		console.combat_log("Предыдущая программа ещё выполняется: осталось [max(0, CEILING((next_program - world.time) / (1 SECONDS), 0.1))] с.", "bad")
 		return FALSE
 	var/builtin = findtext("[uid]", "builtin:") == 1
 	var/datum/netrun_file/file
@@ -474,16 +474,16 @@
 		return FALSE
 	var/executable_name = file?.name || program.name
 	if(!encounter?.active && world.time < (program_cd[program.id] || 0))
-		console.log_line("[executable_name]: идёт перезарядка.", "bad")
+		console.combat_log("[executable_name]: идёт перезарядка.", "bad")
 		return FALSE
 	var/datum/self = console.combat_self()
 	var/list/hp = netrun_combatant_integrity(self)
 	if(hp?["stunned"])
-		console.log_line("Ваш процесс оглушён и не может запускать программы.", "bad")
+		console.combat_log("Ваш процесс оглушён и не может запускать программы.", "bad")
 		return FALSE
 	var/datum/target = program.needs_target ? locate(target_ref) : self
 	if(!target)
-		console.log_line(program.needs_target ? "Цель недоступна." : "[executable_name]: нужна собственная сущность в сети.", "bad")
+		console.combat_log(program.needs_target ? "Цель недоступна." : "[executable_name]: нужна собственная сущность в сети.", "bad")
 		return FALSE
 	prune_contacts()
 	var/datum/netrun_path_tree/tree = console.connection.read_path_tree(TRUE)
@@ -494,15 +494,15 @@
 		denial = "Нет боевого контакта."
 	console.release_path_tree(tree)
 	if(denial)
-		console.log_line(denial, "bad")
+		console.combat_log(denial, "bad")
 		return FALSE
 	var/datum/netrun_fortress_module/module = target
 	if(istype(module) && module.fortress?.has_turn_battery())
 		if(encounter?.active && (encounter.is_waiting(console) || encounter.remaining_ap(console) < program.ap_cost || encounter.cooldown_remaining(console, program)))
-			console.log_line("Для этой атаки нужен ваш ход, готовая программа и достаточно очков действий.", "bad")
+			console.combat_log("Для этой атаки нужен ваш ход, готовая программа и достаточно очков действий.", "bad")
 			return FALSE
 		if(!module.fortress.authorize_turn_siege(console, module))
-			console.log_line("Нет действующего канала осады к этой крепости.", "bad")
+			console.combat_log("Нет действующего канала осады к этой крепости.", "bad")
 			return FALSE
 	if(!encounter)
 		// A self buff outside an encounter retains its ordinary cooldown. An
@@ -512,13 +512,13 @@
 			encounter = node?.get_combat_encounter()
 	if(encounter)
 		if(encounter.cooldown_remaining(console, program))
-			console.log_line("[executable_name]: восстановление ещё [encounter.cooldown_remaining(console, program)] ход(а).", "bad")
+			console.combat_log("[executable_name]: восстановление ещё [encounter.cooldown_remaining(console, program)] ход(а).", "bad")
 			return FALSE
 		if(!encounter.admit(console, program.ap_cost, target))
-			console.log_line("Дождитесь своего хода; для программы нужно [program.ap_cost] очк(а) действий.", "bad")
+			console.combat_log("Дождитесь своего хода; для программы нужно [program.ap_cost] очк(а) действий.", "bad")
 			return FALSE
 		if(!encounter.can_apply_program_status(program, target))
-			console.log_line(program.role == NETRUN_PROGRAM_STUN ? "Цель адаптировалась к оглушению: она должна получить полноценный ход перед повторным подавлением." : "Более сильный защитный контур уже действует.", "bad")
+			console.combat_log(program.role == NETRUN_PROGRAM_STUN ? "Цель адаптировалась к оглушению: она должна получить полноценный ход перед повторным подавлением." : "Более сильный защитный контур уже действует.", "bad")
 			return FALSE
 		if(!encounter.commit_program(console, program, TRUE))
 			return FALSE
@@ -553,7 +553,7 @@
 		SSnetrun.report_incident("combat", node, self || console, NETRUN_INCIDENT_MEDIUM, "Атака на [target_name].")
 	if(program.consumable)
 		console.delete_local_file(file)
-		console.log_line("Карточка [executable_name] израсходована.", "average")
+		console.combat_log("Карточка [executable_name] израсходована.", "average")
 	changed()
 	console.finish_user_action(node)
 	return TRUE
@@ -592,12 +592,12 @@
 	netrun_apply_program(program, target, src)
 	switch(program.role)
 		if(NETRUN_PROGRAM_ATTACK)
-			log_line("[executable_name] -> [target_name]: урон [program.power].", "good")
+			combat_log("[executable_name] -> [target_name]: урон [program.power].", "good")
 		if(NETRUN_PROGRAM_STUN)
-			log_line("[executable_name] -> [target_name]: цель оглушена.", "good")
+			combat_log("[executable_name] -> [target_name]: цель оглушена.", "good")
 		if(NETRUN_PROGRAM_SHIELD)
-			log_line("[executable_name]: защитный контур поднят.", "good")
+			combat_log("[executable_name]: защитный контур поднят.", "good")
 		if(NETRUN_PROGRAM_REPAIR)
-			log_line("[executable_name]: целостность восстановлена.", "good")
+			combat_log("[executable_name]: целостность восстановлена.", "good")
 	node.touch()
 	node.add_log("[log_source()]: запущена программа [executable_name].")

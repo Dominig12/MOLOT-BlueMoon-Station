@@ -16,7 +16,7 @@ const receiveNotices = (current: Toast[], incoming: NetrunNotice[], now: number)
   for (const notice of incoming) {
     if (!notice.text.trim()) { continue; }
     const deadline = now + (notice.kind === 'bad' ? 7000 : 5000);
-    const previous = next.find((toast) => toast.kind === notice.kind && toast.text === notice.text);
+    const previous = next.find((toast) => toast.kind === notice.kind && toast.text === notice.text && toast.topic === notice.topic);
     if (previous) {
       next = next.map((toast) => toast === previous ? { ...toast, count: toast.count + 1, deadline } : toast);
     } else {
@@ -28,7 +28,9 @@ const receiveNotices = (current: Toast[], incoming: NetrunNotice[], now: number)
 
 /** Fresh server notices only: the first snapshot is history, never a toast replay. */
 const NoticeToastsView = () => {
-  const { notices, theme } = useNetrunSelector((data) => ({ notices: data.notices, theme: data.ui_theme }));
+  const { notices, theme, inCombat } = useNetrunSelector((data) => ({
+    notices: data.notices, theme: data.ui_theme, inCombat: data.workspace_view === 'combat',
+  }));
   const cursor = useRef<number | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   useEffect(() => {
@@ -40,10 +42,14 @@ const NoticeToastsView = () => {
       return;
     }
     if (latest === cursor.current) { return; }
-    const fresh = notices.filter((notice) => notice.id > cursor.current!);
+    const fresh = notices.filter((notice) => notice.id > cursor.current! && (!inCombat || notice.topic !== 'combat'));
     cursor.current = latest;
     if (fresh.length) { setToasts((current) => receiveNotices(current, fresh, performance.now())); }
-  }, [notices]);
+  }, [notices, inCombat]);
+
+  useEffect(() => {
+    if (inCombat) { setToasts((current) => current.some((toast) => toast.topic === 'combat') ? current.filter((toast) => toast.topic !== 'combat') : current); }
+  }, [inCombat]);
 
   // One deadline timer for at most three cards; no polling or network actions.
   useEffect(() => {
@@ -55,12 +61,14 @@ const NoticeToastsView = () => {
     return () => window.clearTimeout(timer);
   }, [toasts]);
 
-  if (!toasts.length) { return null; }
+  const shown = inCombat ? toasts.filter((toast) => toast.topic !== 'combat') : toasts;
+  if (!shown.length) { return null; }
   return createPortal(
     <aside className="netrun-notices" role="region" aria-label="Уведомления" style={themeStyle(theme)}>
-      {toasts.map((toast) => (
+      {shown.map((toast) => (
         <div key={toast.id} className="netrun-notice" data-net-notice={toast.id} data-kind={toast.kind}
-          role={toast.kind === 'bad' ? 'alert' : 'status'} aria-live="polite" aria-atomic="true">
+          role={toast.kind === 'bad' ? 'alert' : 'status'} aria-live="polite" aria-atomic="true"
+          onMouseEnter={() => setToasts((current) => current.filter((entry) => entry.id !== toast.id))}>
           <Icon name={NOTICE_ICONS[toast.kind]} aria-hidden="true" />
           <div className="netrun-notice__text">
             {toast.text}

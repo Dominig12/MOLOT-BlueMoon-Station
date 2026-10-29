@@ -450,6 +450,7 @@ export type NetrunNotice = {
   id: number;
   text: string;
   kind: 'good' | 'bad' | 'average' | 'label';
+  topic?: 'combat' | null;
 };
 
 export type NetrunData = {

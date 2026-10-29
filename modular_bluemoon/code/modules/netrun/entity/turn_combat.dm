@@ -540,7 +540,7 @@
 	changed()
 	var/datum/netrun_console/acting_console = current()?.actor()
 	if(istype(acting_console) && !acting_console.autonomous())
-		acting_console.push_notice("Ваш ход: [current().ap] ОД, [NETRUN_COMBAT_DECISION_TIME / (1 SECONDS)] секунд на решение.")
+		acting_console.push_notice("Ваш ход: [current().ap] ОД, [NETRUN_COMBAT_DECISION_TIME / (1 SECONDS)] секунд на решение.", topic = "combat")
 	if(current()?.ap > 0)
 		wake_current()
 

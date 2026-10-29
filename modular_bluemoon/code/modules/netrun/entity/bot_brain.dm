@@ -597,7 +597,7 @@
 	pending_attack_at = world.time + NETRUN_ICE_MIN_TELEGRAPH
 	var/seconds = NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS)
 	to_chat(target, span_userdanger("[owner.real_name] готовит атаку на ваш процесс: [seconds] с. Щит снизит урон, уход из узла сорвёт удар."))
-	target.console?.log_line("[owner.real_name] готовит атаку: [seconds] с до удара.", "bad")
+	target.console?.combat_log("[owner.real_name] готовит атаку: [seconds] с до удара.", "bad")
 	return TRUE
 
 /// Leave through an enterable neighbour without hostile ICE.

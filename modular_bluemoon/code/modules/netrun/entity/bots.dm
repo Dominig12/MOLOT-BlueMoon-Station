@@ -152,7 +152,7 @@
 	var/datum/component/netrun_node/node = host_node
 	drop_remains(node)
 	var/datum/netrun_console/master = netrun_owner_console()
-	master?.log_line("Агент [real_name] уничтожен[node ? " в узле [node.address]" : ""].", "bad")
+	master?.combat_log("Агент [real_name] уничтожен[node ? " в узле [node.address]" : ""].", "bad")
 	node?.network?.add_log("Автономный процесс [real_name] завершён.")
 	if(node)
 		SSnetrun.post_event("purge", null, node.address)
@@ -284,7 +284,7 @@
 	node.wake_defenses()
 
 /// Nobody watches a bot terminal: keep a bounded log without waking UI machinery.
-/datum/netrun_console/entity/bot/log_line(text, kind = "label")
+/datum/netrun_console/entity/bot/log_line(text, kind = "label", notice_topic)
 	log += list(list("time" = STATION_TIME_TIMESTAMP("hh:mm:ss", world.time), "text" = text, "kind" = kind))
 	if(length(log) > NETRUN_MAX_CONSOLE_LOG)
 		log.Cut(1, length(log) - NETRUN_MAX_CONSOLE_LOG + 1)

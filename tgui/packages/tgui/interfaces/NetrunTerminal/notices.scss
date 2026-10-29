@@ -13,6 +13,7 @@
   font: 12px/1.4 Verdana, Arial, sans-serif;
 }
 .netrun-notice {
+  pointer-events: auto;
   --notice-tone: var(--net-accent);
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) 20px;
