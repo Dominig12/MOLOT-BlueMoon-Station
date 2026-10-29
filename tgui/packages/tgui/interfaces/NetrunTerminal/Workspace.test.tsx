@@ -122,6 +122,23 @@ describe('Netrun workspace pages', () => {
     expect(actions(topic, 'entity_file_accept')).toEqual([]);
   });
 
+  test('Agents is its own page and a file shortcut preserves the selected template UID', () => {
+    const template = { uid: 'bot-template', name: 'sentinel.bot', kind: 'bot', size: 8, preview: 'Страж', agent_profile: 'sentinel' };
+    const { panel, page, topic, update } = setup({ workspace_view: 'files', agent_count: 2,
+      storage: { files: [template], used: 8, capacity: 128 }, file: { ...template, source: 'local', content: null, image: null },
+    });
+    expect(panel.getByRole('tab', { name: 'Агенты' }).textContent).toContain('(2)');
+    expect(page('files').querySelector('[data-net-agents]')).toBeNull();
+    fireEvent.click(within(page('files')).getByText('К агентам: настройка и запуск'));
+    expect(actions(topic, 'workspace_view')).toEqual([{ page: 'agents' }]);
+    expect(actions(topic, 'file_select')).toEqual([]);
+    update({ workspace_view: 'agents' });
+    expect(panel.getByRole('tabpanel', { name: 'Агенты' })).toBeTruthy();
+    expect(page('agents').querySelector('[data-net-bot-launch="bot-template"]')).not.toBeNull();
+    fireEvent.click(within(page('agents')).getByText('Запустить агента'));
+    expect(actions(topic, 'bot_launch')).toEqual([{ uid: 'bot-template' }]);
+  });
+
   test('reopening after a missed breach completion restores the terminal and corrects server mode once', () => {
     const { panel, update, topic } = setup({ workspace_view: 'breach', breach: null });
     expect(panel.getByRole('tabpanel', { name: 'Терминал' })).toBeTruthy();

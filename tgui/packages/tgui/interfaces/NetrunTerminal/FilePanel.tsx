@@ -1,15 +1,16 @@
 import { memo, useEffect, useRef, useState } from 'react';
 
 import { Box, Button, Input } from '../../components';
-import { AgentBuilderPanel } from './AgentBuilderPanel';
-import { AgentsPanel } from './AgentsPanel';
 import { FileExchangePanel } from './FileExchange';
-import { NetFile, NetrunData, THEME } from './types';
+import { isTransferableFile, SESSION_FILE_REASON } from './filePermissions';
+import { NetrunData, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 /** Human labels for file kinds that are not self-explanatory in the editor header. */
 const FILE_KIND_LABELS: Record<string, string> = {
   bot: 'агент',
+  grants: 'ключ доступа',
+  access: 'снимок ID',
 };
 
 const FilePanelView = () => {
@@ -26,33 +27,13 @@ const FilePanelView = () => {
       ) : (
         <Box mt={0.5} color={THEME.muted} fontSize="11px">Выберите файл для просмотра, редактирования или печати.</Box>
       )}
-      <AgentsPanel />
-    </Box>
-  );
-};
-
-/** An agent program leaves memory as a running process at the launch site the server
- * resolves: the own entity's node, otherwise the node selected on the map. */
-const BotLaunch = (props: { file: NetFile }) => {
-  const { act, data } = useBackend<NetrunData>(['entity', 'selected']);
-  const host = data.entity?.host;
-  const site = host
-    ? `Старт: узел вашей сущности ${data.entity?.host_name || ''} ${host}.`
-    : data.selected
-      ? `Старт: выбранный на карте узел ${data.selected.name} ${data.selected.address} (нужны доступ ПОЛЬЗОВАТЕЛЯ и маршрут).`
-      : 'Старт: выберите узел на карте с доступом ПОЛЬЗОВАТЕЛЯ и маршрутом.';
-  return (
-    <Box mt={0.5} data-net-bot-launch={props.file.uid}>
-      <Button compact icon="robot" content="Запустить агента" onClick={() => act('bot_launch', { uid: props.file.uid })} />
-      <Box mt={0.5} color={THEME.muted} fontSize="11px">
-        {site} Файл переходит в агента и возвращается при отзыве.
-      </Box>
     </Box>
   );
 };
 
 const FileTransfer = ({ file }: { file: NonNullable<NetrunData['file']> }) => {
   const { act, data } = useBackend<NetrunData>(['shard', 'storage']);
+  if (!isTransferableFile(file)) { return <Box color={THEME.muted} fontSize="11px">{SESSION_FILE_REASON}</Box>; }
   if (file.source === 'shard') {
     if (!file.can_import) { return null; }
     const full = file.size > (data.storage?.capacity ?? 0) - (data.storage?.used ?? 0);
@@ -105,10 +86,12 @@ const FileEditor = (props: { onCreated?: () => void }) => {
   }, [data.file, submitted, name, content, props.onCreated]);
   return (
     <Box mt={0.5} p={0.5} style={{ background: THEME.bg }}>
-      <Input fluid value={name} onInput={(_event, value) => setName(value)} />
+      {file?.session_bound ? <input aria-label="Имя снимка ID" readOnly value={file.name}
+        style={{ width: '100%', boxSizing: 'border-box', padding: '6px', borderRadius: '6px', border: `1px solid ${THEME.line}`, background: THEME.bg, color: THEME.text }} />
+        : <Input fluid value={name} onInput={(_event, value) => setName(value)} />}
       {!!file && (
         <Box mt={0.5} color={THEME.muted} fontSize="11px">
-          {file.source === 'shard' ? 'Шард' : 'Локальная память'} · {FILE_KIND_LABELS[file.kind] || file.kind} · {file.size}
+          {file.source === 'session' ? 'Текущее погружение' : file.source === 'shard' ? 'Шард' : 'Локальная память'} · {FILE_KIND_LABELS[file.kind] || file.kind} · {file.size}
         </Box>
       )}
       {file?.kind === 'photo' && !!file.image && (
@@ -162,14 +145,14 @@ const FileEditor = (props: { onCreated?: () => void }) => {
           </>
         ) : (
           <>
-            <Button compact icon="signature" content="Переименовать" disabled={!name.trim() || name === file.name} onClick={() => act('file_rename', { uid: file.uid, name })} />
+            {!file.session_bound && <Button compact icon="signature" content="Переименовать" disabled={!name.trim() || name === file.name} onClick={() => act('file_rename', { uid: file.uid, name })} />}
             {file.kind === 'text' && <Button compact icon="save" content="Сохранить" disabled={content === file.content} onClick={() => act('file_edit', { uid: file.uid, content })} />}
             <FileTransfer file={file} />
           </>
         )}
       </Box>
-      {file?.kind === 'bot' && <BotLaunch file={file} />}
-      {!!file?.agent_builder && <AgentBuilderPanel key={file.uid} builder={file.agent_builder} />}
+      {file?.kind === 'bot' && <Button mt={0.5} compact icon="robot" content="К агентам: настройка и запуск"
+        onClick={() => act('workspace_view', { page: 'agents' })} />}
       {!file && !!submitted && (
         <Box mt={0.5} color={THEME.muted} fontSize="11px">
           Запрос отправлен. До подтверждения создания текст остаётся в редакторе; результат — в журнале.

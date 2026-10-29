@@ -37,6 +37,7 @@
 	if(start)
 		// Initial residency authorizes only this host, without opening its LAN.
 		console.access_session.node_access[start.address] = NETRUN_ACCESS_USER
+		console.access_session.residency_address = start.address
 		enter_node(start)
 
 /mob/camera/netrun_entity/Destroy()
@@ -479,15 +480,11 @@
 	if(!fresh && access_cache)
 		return access_cache
 	. = credential_access(fresh)
-	var/mob/camera/netrun_entity/entity = host
-	if(!QDELETED(entity?.dive_link?.body))
-		. |= netrun_mob_access(entity.dive_link.body)
 
 /datum/netrun_console/entity/add_ui_context_sources(list/targets)
-	var/mob/camera/netrun_entity/entity = host
-	var/mob/living/carbon/body = entity?.dive_link?.body
-	if(!QDELETED(body))
-		targets |= body
+	// Body lifecycle and cable continuity belong to dive_link. Its ID was captured
+	// on entry, so equipment changes in the unconscious body are not UI inputs.
+	return
 
 /// A connected shard remains in the unconscious body's implant, not in the process.
 /datum/netrun_console/entity/eject_shard(mob/user)

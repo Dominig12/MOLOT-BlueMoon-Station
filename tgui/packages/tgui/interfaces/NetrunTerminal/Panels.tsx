@@ -1,7 +1,9 @@
 import { memo } from 'react';
 
 import { Box, Button, Icon, Input, Section } from '../../components';
+import { AccessExport } from './AccessExport';
 import { FilePanel } from './FilePanel';
+import { isTransferableFile, SESSION_FILE_REASON } from './filePermissions';
 import { fileFormat, fileIcon } from './NodePanel';
 import { NetFile, NetrunData, THEME } from './types';
 import { useFollowOutput } from './useFollowOutput';
@@ -27,6 +29,7 @@ const StoragePanelView = () => {
               <FileList files={shard.files} canUpload={canUpload} source="shard" />
             </Box>
           )}
+          <AccessExport />
         </div>
         <div className="netrun-files-preview">
           <Box bold mb={1} color={THEME.text}>Просмотр и редактирование</Box>
@@ -67,6 +70,7 @@ const FileList = (props: { files: NetFile[]; canUpload: boolean; source: 'local'
             {file.name}
             <Box inline ml={1} color={THEME.muted} fontSize="9px">
               {fileFormat(file.name, file.kind)} · {file.size}
+              {file.session_bound && <span title={SESSION_FILE_REASON}> · сеанс</span>}
             </Box>
           </Box>
           <div className="netrun-file-actions" data-net-file-actions={props.source}
@@ -75,11 +79,11 @@ const FileList = (props: { files: NetFile[]; canUpload: boolean; source: 'local'
               <Button compact icon="eye" tooltip="Открыть" style={{ gridColumn: 1 }}
                 onClick={(e) => { e.stopPropagation(); act('read', { uid: file.uid }); }} />
             )}
-            {props.canUpload && (
+            {props.canUpload && isTransferableFile(file) && (
               <Button compact icon="upload" tooltip="Загрузить на узел" style={{ gridColumn: 2 }}
                 onClick={(e) => { e.stopPropagation(); act('upload', { uid: file.uid }); }} />
             )}
-            <Button compact icon="trash" color="transparent" tooltip="Удалить" style={{ gridColumn: 3 }}
+            <Button compact icon={file.session_bound ? 'ban' : 'trash'} color="transparent" tooltip={file.session_bound ? 'Отозвать доступ ID' : 'Удалить'} style={{ gridColumn: 3 }}
               onClick={(e) => { e.stopPropagation(); act('delete_local', { uid: file.uid }); }} />
           </div>
         </Box>

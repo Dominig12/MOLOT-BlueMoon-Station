@@ -14,6 +14,7 @@
 	var/list/datum/component/netrun_node/watched_nodes = list()
 	/// The resident gets USER at its initial host for residency, not as a transferable hack.
 	var/initial_residency_only = FALSE
+	var/datum/netrun_file/access/session_snapshot/identity_snapshot
 
 /datum/netrun_dive_link/New(mob/camera/netrun_entity/owner)
 	src.owner = owner
@@ -31,6 +32,11 @@
 	release_body()
 	body = new_body
 	returning = FALSE
+	identity_snapshot = new("dive-id.access", body.netrun_credential_access(), src)
+	if(!owner.console.inventory.mount_session_file(identity_snapshot))
+		QDEL_NULL(identity_snapshot)
+		body = null
+		return FALSE
 	entry_address = entry.address
 	route_chain = list(entry.address)
 	RegisterSignal(body, COMSIG_MOB_APPLY_DAMAGE, PROC_REF(on_body_damage))
@@ -46,10 +52,13 @@
 	RegisterSignal(client, COMSIG_PARENT_QDELETING, PROC_REF(on_client_deleted))
 	client.access_session.process_events()
 	var/datum/netrun_access_session/resident = owner.console.access_session
-	initial_residency_only = !client.access_session.node_access[entry_address]
+	initial_residency_only = !client.access_session.direct_node_level(SSnetrun.find_node(entry_address))
 	for(var/address in client.access_session.node_access)
-		resident.node_access[address] = max(resident.node_access[address] || 0, client.access_session.node_access[address])
-	resident.network_access = client.access_session.network_access.Copy()
+		var/datum/component/netrun_node/node = SSnetrun.find_node(address)
+		resident.grant_node(node, client.access_session.direct_node_level(node), client.access_session.exportable_node_level(node))
+	for(var/id in client.access_session.network_access)
+		var/datum/netrun_network/network = SSnetrun.networks[id]
+		resident.grant_network(network, client.access_session.direct_network_level(network), client.access_session.exportable_network_level(network))
 	resident.server_passwords = client.access_session.server_passwords.Copy()
 	owner.console.inventory.borrow_from(client.inventory)
 	// Establish the physical return path once; later ticks borrow its retained route table.
@@ -64,12 +73,14 @@
 	target.process_events()
 	resident.process_events()
 	for(var/address in resident.node_access)
-		var/level = resident.node_access[address]
+		var/datum/component/netrun_node/node = SSnetrun.find_node(address)
+		var/level = resident.direct_node_level(node)
 		if(initial_residency_only && address == entry_address && level <= NETRUN_ACCESS_USER)
 			continue
-		target.node_access[address] = max(target.node_access[address] || 0, level)
+		target.grant_node(node, level, resident.exportable_node_level(node))
 	for(var/network_id in resident.network_access)
-		target.network_access[network_id] = max(target.network_access[network_id] || 0, resident.network_access[network_id])
+		var/datum/netrun_network/network = SSnetrun.networks[network_id]
+		target.grant_network(network, resident.direct_network_level(network), resident.exportable_network_level(network))
 	for(var/address in resident.server_passwords)
 		target.server_passwords[address] = resident.server_passwords[address]
 	client.invalidate_projection_caches()
@@ -77,6 +88,9 @@
 
 /datum/netrun_dive_link/proc/release_body()
 	cancel_delivery()
+	// Expire before transferring control or releasing the body. Copies and moves
+	// were never allowed, so no other disk can retain this session's authority.
+	expire_identity_snapshot()
 	if(body)
 		UnregisterSignal(body, list(COMSIG_MOB_APPLY_DAMAGE, COMSIG_LIVING_DEATH, COMSIG_PARENT_QDELETING, COMSIG_MOVABLE_MOVED))
 	var/datum/netrun_console/implant/client = entry_client_ref?.resolve()
@@ -91,6 +105,10 @@
 	entry_client_ref = null
 	entry_jack_ref = null
 	initial_residency_only = FALSE
+
+/datum/netrun_dive_link/proc/expire_identity_snapshot()
+	owner?.console?.inventory.clear_session_store()
+	QDEL_NULL(identity_snapshot)
 
 /datum/netrun_dive_link/proc/on_node_changed(datum/source, datum/component/netrun_node/old_node, datum/component/netrun_node/new_node)
 	SIGNAL_HANDLER
@@ -119,6 +137,7 @@
 
 /datum/netrun_dive_link/proc/on_body_death(datum/source)
 	SIGNAL_HANDLER
+	expire_identity_snapshot()
 	INVOKE_ASYNC(owner, TYPE_PROC_REF(/mob/camera/netrun_entity, return_to_body))
 
 /datum/netrun_dive_link/proc/on_body_deleted(datum/source)

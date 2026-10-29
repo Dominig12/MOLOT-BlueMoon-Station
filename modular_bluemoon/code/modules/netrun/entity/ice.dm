@@ -155,7 +155,7 @@
 		return null
 	return list("name" = pending_program.name, "role" = pending_program.role,
 		"power" = pending_program.role == NETRUN_PROGRAM_ATTACK ? round(pending_program.power * damage_factor) : pending_program.power,
-		"remaining" = max(0, CEILING((attack_at - world.time) / (1 SECONDS), 0.1)))
+		"remaining" = max(0, CEILING(round((attack_at - world.time) / (1 SECONDS), 0.01), 0.1)))
 
 /datum/netrun_ice/proc/is_stunned()
 	return world.time < combat_stun_until
@@ -251,13 +251,9 @@
 	if(!QDELETED(node))
 		// Debris is recoverable without USER privileges on the host machine.
 		// Bounded separately: defeating ICE never expands the machine's disk.
-		while(length(node.salvage) >= NETRUN_MAX_SALVAGE_FILES)
-			var/datum/netrun_file/expired = node.salvage[1]
-			node.salvage.Cut(1, 2)
-			node.add_log("Старые обломки [expired.name] вытеснены новой добычей.")
-			qdel(expired)
-		node.salvage += loot
-		node.add_log("В обломках процесса остался файл: [loot.name].")
+		if(!node.leave_salvage(loot, name))
+			qdel(loot)
+			return
 		killer?.log_line("Нет места в памяти. [loot.name] можно забрать из обломков в узле [node.address].", "average")
 		return
 	// Нет места нигде в сети - роняем физический шард рядом с убившим (у кого есть тело/машина).
@@ -391,7 +387,7 @@
 	if(agent?.profile.illegal && is_deployer(console))
 		return FALSE
 	var/datum/netrun_breach/breach = console?.intrusion.breach
-	return !QDELETED(console) && !console.is_locked() && breach && ((breach.target_kind == "network" && node?.network && breach.target_id == node.network.id) || (breach.target_kind != "network" && breach.target_id == node?.address))
+	return !console.is_locked() && !QDELETED(breach) && ((breach.target_kind == "network" && node?.network && breach.target_id == node.network.id) || (breach.target_kind != "network" && breach.target_id == node?.address))
 
 /// Recheck authority and presence at both ends of the telegraph, not just at acquisition.
 /datum/netrun_ice/proc/valid_program_target(datum/netrun_program/program, datum/target, fresh_access = FALSE)

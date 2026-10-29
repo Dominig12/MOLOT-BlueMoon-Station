@@ -158,16 +158,25 @@
 			returned = TRUE
 	TEST_ASSERT(returned, "The agent program returns to the owner's memory")
 
-/// Destroyed rogue processes leave something to recover; station processes do not.
+/// Death leaves real inventory for both visiting and station processes.
 /datum/unit_test/netrun_bot_remains/Run()
 	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_salvage_test_observer/observer = allocate(/datum/netrun_salvage_test_observer)
 	var/mob/camera/netrun_entity/bot/raider = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_a, NETRUN_BOT_RAIDER)
+	var/list/raider_files = raider.console.inventory.local_store.files.Copy()
 	raider.take_integrity(1000, "test")
 	TEST_ASSERT(QDELETED(raider), "A destroyed bot is removed")
-	TEST_ASSERT_EQUAL(length(scene.node_a.salvage), 1, "A rogue process leaves one program in the debris")
+	TEST_ASSERT_EQUAL(observer.changes, 1, "A full dead inventory publishes one debris fact rather than one per file")
+	TEST_ASSERT_EQUAL(length(scene.node_a.salvage), min(NETRUN_MAX_SALVAGE_FILES, length(raider_files)), "A rogue leaves its existing loadout within the debris bound")
+	for(var/datum/netrun_file/file as anything in scene.node_a.salvage)
+		TEST_ASSERT(file in raider_files, "A death reward is the original owned file, not a minted replacement")
 	var/mob/camera/netrun_entity/bot/custodian = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_b, NETRUN_BOT_CUSTODIAN)
+	var/list/station_files = custodian.console.inventory.local_store.files.Copy()
 	custodian.take_integrity(1000, "test")
-	TEST_ASSERT_EQUAL(length(scene.node_b.salvage), 0, "Station processes leave no loot")
+	TEST_ASSERT_EQUAL(observer.changes, 2, "Station death also batches its inventory into one collector wakeup")
+	TEST_ASSERT_EQUAL(length(scene.node_b.salvage), min(NETRUN_MAX_SALVAGE_FILES, length(station_files)), "Station processes also leave their real inventory")
+	for(var/datum/netrun_file/file as anything in scene.node_b.salvage)
+		TEST_ASSERT(file in station_files, "Station loot also preserves file identity")
 
 /// A custodian repairs station works in its jurisdiction with the ordinary command.
 /datum/unit_test/netrun_bot_custodian_repair/Run()
@@ -318,12 +327,13 @@
 
 /datum/unit_test/netrun_bot_round_population/Run()
 	original_state = list()
-	for(var/field in list("bots", "bots_enabled", "next_bot_census", "rogue_wave_at", "police_respawn_at", "custodian_respawn_at", "bot_spawn_pools", "bot_spawn_revision", "bot_spawn_index_builds", "bot_spawn_candidate_checks"))
+	for(var/field in list("bots", "bots_enabled", "next_bot_census", "rogue_wave_at", "police_respawn_at", "custodian_respawn_at", "recycler_respawn_at", "bot_spawn_pools", "bot_spawn_revision", "bot_spawn_index_builds", "bot_spawn_candidate_checks"))
 		original_state[field] = SSnetrun.vars[field]
 	SSnetrun.bots = list()
 	SSnetrun.bots_enabled = TRUE
 	SSnetrun.police_respawn_at = world.time
 	SSnetrun.custodian_respawn_at = INFINITY
+	SSnetrun.recycler_respawn_at = INFINITY
 	SSnetrun.rogue_wave_at = world.time - 1
 	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
 	var/obj/machinery/ntnet_relay/relay = scene.machine(/obj/machinery/ntnet_relay, run_loc_floor_bottom_left)
@@ -336,13 +346,13 @@
 	for(var/mob/camera/netrun_entity/bot/bot as anything in SSnetrun.bots)
 		TEST_ASSERT(istype(bot.host_node?.parent, /obj/machinery/ntnet_relay), "Visitors enter through a real functioning network relay")
 		TEST_ASSERT(bot.expires_at > world.time, "A police visit has a finite patrol lifetime")
-	for(var/index in 1 to NETRUN_ROGUE_QUOTA)
+	for(var/index in 1 to 4)
 		SSnetrun.rogue_wave_at = world.time - 1
 		census()
-	TEST_ASSERT_EQUAL(SSnetrun.count_bot_faction(NETRUN_FACTION_ROGUE), NETRUN_ROGUE_QUOTA, "Timed waves populate the round up to a shared rogue quota")
+	TEST_ASSERT_EQUAL(SSnetrun.count_network_visitors(), 8, "Timed waves populate the shared quota across all visitor factions")
 	SSnetrun.rogue_wave_at = world.time - 1
 	census()
-	TEST_ASSERT_EQUAL(SSnetrun.count_bot_faction(NETRUN_FACTION_ROGUE), NETRUN_ROGUE_QUOTA, "A new due wave cannot bypass the quota")
+	TEST_ASSERT_EQUAL(SSnetrun.count_network_visitors(), 8, "A new due wave cannot bypass the shared visitor quota")
 	var/index_builds = SSnetrun.bot_spawn_index_builds
 	var/candidate_checks = SSnetrun.bot_spawn_candidate_checks
 	for(var/index in 1 to 16)
@@ -351,7 +361,7 @@
 	TEST_ASSERT_EQUAL(SSnetrun.bot_spawn_candidate_checks, candidate_checks, "An undued census does not poll native nodes")
 	var/mob/camera/netrun_entity/bot/departing
 	for(var/mob/camera/netrun_entity/bot/bot as anything in SSnetrun.bots)
-		if(bot.net_faction == NETRUN_FACTION_ROGUE)
+		if(SSnetrun.get_netrun_faction(bot.net_faction)?.arrival_weight)
 			departing = bot
 			break
 	departing.expires_at = world.time - 1
@@ -359,7 +369,7 @@
 	TEST_ASSERT(QDELETED(departing), "A visitor actually leaves when its lifetime expires")
 	SSnetrun.rogue_wave_at = world.time - 1
 	census()
-	TEST_ASSERT_EQUAL(SSnetrun.count_bot_faction(NETRUN_FACTION_ROGUE), NETRUN_ROGUE_QUOTA, "A later native wave replaces departed visitors during the round")
+	TEST_ASSERT_EQUAL(SSnetrun.count_network_visitors(), 8, "A later native wave replaces departed visitors during the round")
 
 /datum/unit_test/netrun_bot_round_population/Destroy()
 	if(original_state)

@@ -33,6 +33,8 @@
 	var/offline_until = 0
 	/// До этого времени на узле поднят сетевой экран (усиленная защита)
 	var/firewall_until = 0
+	/// Exported acquired grants retain this generation, never just the address.
+	var/access_key_epoch = 0
 	/// Ограниченный журнал самого узла, сохраняется при переходе между ЛВС.
 	var/list/logs = list()
 	/// Packet metadata has its own bounded journal; payloads and datum refs are never retained.
@@ -81,6 +83,8 @@
 	RegisterSignal(file_store, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_storage_changed))
 	address = SSnetrun.make_address()
 	SSnetrun.nodes_by_address[address] = src
+	if(node_type == NETRUN_NODE_SERVER)
+		SSnetrun.recycling_servers[address] = src
 	topology_turf = physical_turf()
 	// Publish registry event: topology listens and indexes APC/relay membership.
 	SSnetrun.get_topology()
@@ -111,6 +115,10 @@
 	subscribed_state_signals = null
 
 /datum/component/netrun_node/Destroy()
+	SSnetrun.salvage_nodes -= address
+	SSnetrun.recycling_servers -= address
+	if(length(salvage))
+		SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_SALVAGE_CHANGED, src)
 	QDEL_NULL(security_audit)
 	clear_physical_carrier()
 	var/atom/host = parent
@@ -304,6 +312,8 @@
 	notify_changed(NETRUN_CHANGED_STATE, FALSE, availability_changed)
 
 /datum/component/netrun_node/proc/notify_changed(flags = NETRUN_CHANGED_STATE, check_native_state = TRUE, availability_changed = FALSE)
+	if(flags & NETRUN_CHANGED_BINDING)
+		access_key_epoch++
 	// Availability is a separate routing generation: occupant/activity changes do not
 	// rebuild shortest paths, while power/EMP changes invalidate retained display paths.
 	// Reconciliation already sampled native state and the worker tracks timers once.
@@ -357,6 +367,7 @@
 
 /// Поднять сетевой экран: сбросить взломанные доступы к узлу и прервать взлом цели.
 /datum/component/netrun_node/proc/raise_firewall(duration = 20 SECONDS)
+	access_key_epoch++
 	firewall_until = world.time + duration
 	add_log("Поднят сетевой экран.")
 	network?.add_log("Узел [address]: активирован сетевой экран.")

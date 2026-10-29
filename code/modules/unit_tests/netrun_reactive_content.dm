@@ -61,6 +61,7 @@
 	TEST_ASSERT(!guard.dormant && guard.has_reactive_threat(), "Breach intent wakes the local guard and retains its real target")
 	SSnetrun.get_task_scheduler().cancel("ice", guard)
 	qdel(intruder.console.intrusion.breach)
+	TEST_ASSERT(!guard.valid_trace_target(intruder.console), "A deleted breach retained by the session is no longer an attack target")
 	guard.cancel_program()
 	guard.reactive_sleep_at = world.time
 	guard.process_ai(0)
@@ -86,6 +87,10 @@
 	var/obj/machinery/netrun_server/server = scene.machine(/obj/machinery/netrun_server/netrun_archive_preload_test, get_step(run_loc_floor_bottom_left, EAST))
 	var/datum/component/netrun_node/node = server.GetComponent(/datum/component/netrun_node)
 	var/datum/component/netrun_server_archive/archive = server.GetComponent(/datum/component/netrun_server_archive)
+	var/expected_capacity = 80 * NETRUN_STORAGE_SCALE
+	for(var/obj/item/stock_parts/matter_bin/bin in server.component_parts)
+		expected_capacity += bin.rating * 10 * NETRUN_STORAGE_SCALE
+	TEST_ASSERT_EQUAL(node.file_store.capacity, expected_capacity, "The real data server has enlarged base memory and retains stock-part upgrades")
 	TEST_ASSERT_NOTNULL(archive, "Real server registration admits exactly one physical-host archive")
 	TEST_ASSERT(!archive.seeded, "Authored Initialize preloads finish before the archive task runs")
 	var/initial_files = length(node.file_store.files)

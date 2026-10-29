@@ -238,6 +238,7 @@
 	src.action = action
 	src.to_shard = to_shard
 	operation.capture(list("action" = action, "file_uid" = file_uid, "to_shard" = to_shard))
+	console.track_file_packet(src)
 
 /datum/netrun_request/file/execute()
 	. = console.deliver_file_request(action, node, file_uid, to_shard, sent_network, sender, operation)
@@ -248,6 +249,6 @@
 	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
 	required = max(required, node.fortress?.file_access_level(console) || 0)
 	if(console.compute_legit_node_level(node, TRUE) < required)
-		var/list/labels = list("download" = "Скачивание файла", "upload" = "Загрузка файла", "delete" = "Удаление файла", "read" = "Чтение файла")
+		var/list/labels = list("download" = "Скачивание файла", "upload" = "Загрузка файла", "deposit" = "Разгрузка файла", "delete" = "Удаление файла", "read" = "Чтение файла")
 		console.report_illegal_activity(node, labels[action] || "Файловая операция", required)
 	return .

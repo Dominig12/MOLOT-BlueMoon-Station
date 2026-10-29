@@ -20,7 +20,7 @@
 	TEST_ASSERT(defender.console.store_file(scene.key_file()), "The pursuer has a real LAN traversal key")
 	TEST_ASSERT(attacker.console.start_breach("node", scene.node_a.address, FALSE), "The attacker starts an ordinary breach")
 	var/list/before = defender.console.security_session.payload()
-	TEST_ASSERT_EQUAL(length(before["entries"]), 1, "The defended node observes the actual attempt")
+	TEST_ASSERT(length(before["entries"]) >= 1, "The defended node observes the actual attempt alongside LAN history")
 	TEST_ASSERT(!findtext(json_encode(before), "TRACE-UNKNOWN"), "Before attribution the payload does not identify its actor")
 	TEST_ASSERT(!findtext(json_encode(before), scene.node_b.address), "Before attribution the source address is not disclosed")
 	TEST_ASSERT(defender.console.run_command(scene.node_a, "countertrace"), "Legal protection queues a native countertrace packet")
@@ -50,6 +50,9 @@
 	var/mob/camera/netrun_entity/attacker = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_b)
 	scene.node_a.observe_attack(attacker.console, "intrusion")
 	var/datum/netrun_attack_observation/observation = scene.node_a.security_audit.observations[1]
+	scene.node_b.observe_attack(attacker.console, "intrusion")
+	var/datum/netrun_attack_observation/foreign = scene.node_b.security_audit.observations[1]
+	TEST_ASSERT(!defender.console.security_session.capture(foreign, scene.node_a), "A legal node cannot launder evidence from another defended scope")
 	TEST_ASSERT(defender.console.security_session.capture(observation, scene.node_a), "Legal credentials may capture recent attack evidence")
 	var/datum/netrun_console/entity/security_fixture/console = defender.console
 	console.credentials_enabled = FALSE

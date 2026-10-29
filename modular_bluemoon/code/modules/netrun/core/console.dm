@@ -331,7 +331,7 @@
 	if(!owner.can_reach(network, tree) || owner.is_locked())
 		. = NETRUN_ACCESS_NONE
 	else
-		. = max(network_access[network.id] || 0, owner.legit_network_level(network, !ui_read))
+		. = max(acquired_network_level(network), owner.legit_network_level(network, !ui_read))
 		if(owner.is_home_network(network, tree))
 			. = max(., NETRUN_ACCESS_GUEST)
 	if(ui_read && owner.network_level_cache)
@@ -403,7 +403,7 @@
 	var/net_level = owner.network_level(node.network, tree)
 	var/atom/target = node.parent
 	var/owner_level = target.netrun_owner_access(owner)
-	var/acquired_level = node_access[node.address] || 0
+	var/acquired_level = acquired_node_level(node)
 	var/local_endpoint = node == (tree ? tree.source : owner.route_source())
 	if(net_level < NETRUN_ACCESS_GUEST && !local_endpoint && (!(owner_level || acquired_level) || !owner.can_route(node, tree)))
 		. = NETRUN_ACCESS_NONE
@@ -822,10 +822,10 @@
 		owner.add_trace(25)
 	else
 		if(finished.target_kind == "network")
-			owner.access_session.network_access[finished.target_id] = max(owner.access_session.network_access[finished.target_id] || 0, reward)
+			owner.access_session.grant_network(SSnetrun.networks[finished.target_id], reward, reward)
 			owner.map_view.invalidate_network_access(finished.target_id)
 		else
-			owner.access_session.node_access[finished.target_id] = max(owner.access_session.node_access[finished.target_id] || 0, reward)
+			owner.access_session.grant_node(SSnetrun.find_node(finished.target_id), reward, reward)
 			owner.map_view.invalidate_node_access(finished.target_id)
 		owner.log_line("Взлом завершён: [finished.target_name], уровень [netrun_access_name(reward)].", "good")
 		if(clean)

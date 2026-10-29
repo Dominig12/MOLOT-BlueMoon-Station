@@ -80,7 +80,7 @@
 		schedule(max(NETRUN_EXECUTION_MIN_INTERVAL, command_deadline - world.time))
 		return
 	var/datum/netrun_bot_goal/guard/guard = current_goal()
-	if(istype(guard) && at_post() && !in_combat)
+	if(istype(guard) && owner.host_node == guard.post_ref?.resolve() && !in_combat)
 		schedule(max(NETRUN_EXECUTION_MIN_INTERVAL, guard.expires_at - world.time))
 		return
 	var/datum/netrun_bot_program/program = owner.program
@@ -174,7 +174,7 @@
 		SEND_SIGNAL(owner, COMSIG_NETRUN_ENTITY_COMMAND_FINISHED, operation.id)
 
 /datum/netrun_bot_brain/proc/clear_command()
-	var/datum/netrun_request/command/packet = command_packet_ref?.resolve()
+	var/datum/netrun_request/delivery/packet = command_packet_ref?.resolve()
 	command_packet_ref = null
 	if(!QDELETED(packet) && !packet.delivering)
 		packet.cancelled = TRUE
@@ -319,7 +319,18 @@
 	console.release_path_tree(tree)
 
 /datum/netrun_bot_brain/proc/node_has_salvage(datum/component/netrun_node/node)
-	return length(node.salvage) > 0
+	if(!node.is_online())
+		return FALSE
+	for(var/datum/netrun_file/file as anything in node.salvage)
+		if(owner.console.inventory.local_store.can_fit(file))
+			return TRUE
+	return FALSE
+
+/// Recovery is a local action too: the current node is absent from nearby BFS.
+/datum/netrun_bot_brain/proc/find_salvage(list/scope)
+	if(owner?.host_node && node_has_salvage(owner.host_node))
+		return owner.host_node
+	return find_nearby_node(PROC_REF(node_has_salvage), scope)
 
 /datum/netrun_bot_brain/proc/node_has_ice(datum/component/netrun_node/node)
 	return LAZYLEN(node.netrun_ice) > 0

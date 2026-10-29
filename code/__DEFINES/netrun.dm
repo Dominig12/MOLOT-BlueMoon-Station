@@ -134,7 +134,10 @@
 #define NETRUN_PROGRAM_PURGE "purge"
 #define NETRUN_PROGRAM_TRACE "trace"
 /// Bounded recoverable files left by defeated processes, separate from machine storage.
-#define NETRUN_MAX_SALVAGE_FILES 4
+#define NETRUN_MAX_SALVAGE_FILES 12
+/// SSnetrun: (node); entity: (file, node), after actual ownership changes.
+#define COMSIG_NETRUN_SALVAGE_CHANGED "netrun_salvage_changed"
+#define COMSIG_NETRUN_SALVAGE_RECOVERED "netrun_salvage_recovered"
 
 // Враждебные процессы (ICE)
 #define NETRUN_ICE_SENTRY "sentry"
@@ -212,6 +215,7 @@
 // Автономные сетевые боты: архетипы поведения
 #define NETRUN_BOT_RAIDER "raider"
 #define NETRUN_BOT_CUSTODIAN "custodian"
+#define NETRUN_BOT_RECYCLER "recycler"
 #define NETRUN_BOT_POLICE "police"
 #define NETRUN_BOT_MENDER "mender"
 #define NETRUN_BOT_SENTINEL "sentinel"
@@ -235,6 +239,7 @@
 #define NETRUN_POLICE_QUOTA 2
 #define NETRUN_ROGUE_QUOTA 2
 #define NETRUN_CUSTODIAN_QUOTA 3
+#define NETRUN_RECYCLER_QUOTA 2
 
 // Модули сетевых крепостей
 #define NETRUN_FORT_WALL "wall"

@@ -193,7 +193,9 @@
 	wake_behavior()
 
 /datum/netrun_entity_module/hacking/proc/cancel_goal(datum/netrun_bot_goal/hack/goal)
-	if(goal && goal_ref?.resolve() != goal)
+	// Destroy runs after qdel marks the goal dead, so resolve() already returns
+	// null there. Compare the owned weak reference before the goal's base cleanup.
+	if(goal && !IS_WEAKREF_OF(goal, goal_ref))
 		return
 	var/datum/netrun_breach/breach = breach_ref?.resolve()
 	var/datum/netrun_bot_goal/hack/current = goal_ref?.resolve()

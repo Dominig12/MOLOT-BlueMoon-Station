@@ -470,6 +470,8 @@
 			log_line("Нет места для [file.name]. Освободите память.", "bad")
 			return FALSE
 		node.salvage -= file
+		node.refresh_salvage()
+		SEND_SIGNAL(entity, COMSIG_NETRUN_SALVAGE_RECOVERED, file, node)
 		log_line("Получено из обломков: [file.name].", "good")
 		return TRUE
 	return FALSE

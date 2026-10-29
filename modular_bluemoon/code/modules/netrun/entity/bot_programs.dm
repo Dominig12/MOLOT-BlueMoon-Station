@@ -115,7 +115,7 @@
 	lifetime = 12 MINUTES
 
 /datum/netrun_bot_program/raider/plan(datum/netrun_bot_brain/brain)
-	var/datum/component/netrun_node/salvage = brain.find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_has_salvage))
+	var/datum/component/netrun_node/salvage = brain.find_salvage()
 	if(salvage)
 		brain.push_goal(new /datum/netrun_bot_goal/salvage(brain, salvage))
 		return
@@ -140,7 +140,7 @@
 	flee_ratio = 0.5
 
 /datum/netrun_bot_program/scavenger/plan(datum/netrun_bot_brain/brain)
-	var/datum/component/netrun_node/salvage = brain.find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_has_salvage))
+	var/datum/component/netrun_node/salvage = brain.find_salvage()
 	if(salvage)
 		brain.push_goal(new /datum/netrun_bot_goal/salvage(brain, salvage))
 		return
@@ -286,7 +286,7 @@
 	if(brain.order == "guard")
 		brain.push_goal(new /datum/netrun_bot_goal/guard(brain, brain.post_node()))
 		return
-	var/datum/component/netrun_node/salvage = brain.find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_has_salvage))
+	var/datum/component/netrun_node/salvage = brain.find_salvage()
 	if(salvage)
 		brain.push_goal(new /datum/netrun_bot_goal/salvage(brain, salvage))
 	else

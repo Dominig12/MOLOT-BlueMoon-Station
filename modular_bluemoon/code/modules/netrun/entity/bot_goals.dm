@@ -179,8 +179,7 @@
 	var/datum/netrun_console/console = brain.owner.console
 	for(var/datum/netrun_file/file as anything in node.salvage)
 		if(console.inventory.local_store.can_fit(file))
-			console.recover_salvage(file.uid)
-			return NETRUN_BOT_GOAL_CONTINUE
+			return console.recover_salvage(file.uid) ? NETRUN_BOT_GOAL_CONTINUE : NETRUN_BOT_GOAL_FAILED
 	brain.blacklist(node.address, 5 MINUTES)
 	return NETRUN_BOT_GOAL_DONE
 

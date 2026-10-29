@@ -29,6 +29,7 @@ const LABELS: Record<string, string> = {
   cli: 'Команда терминала', web_site: 'Открытие сайта', web_page: 'Открытие страницы', web_back: 'Навигация WEB',
   entity_signal: 'Сигнал сущности', entity_message: 'Личное сообщение сущности',
   entity_file_offer: 'Предложить копию файла', entity_file_accept: 'Принять файл в память', entity_file_reject: 'Отклонить файл',
+  access_export: 'Создание ключа доступа',
   set_theme: 'Тема интерфейса', appearance_update: 'Профиль сущности',
 };
 

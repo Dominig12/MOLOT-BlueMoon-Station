@@ -95,6 +95,10 @@ export type NetFile = {
   size: number;
   preview: string | null;
   selected?: boolean;
+  agent_profile?: string | null;
+  packed_files?: number;
+  session_bound?: boolean;
+  transferable?: boolean;
 };
 
 export type Storage = {
@@ -324,7 +328,7 @@ export type SearchResult = {
   visible: boolean;
 };
 
-export type WorkspaceView = 'terminal' | 'map' | 'files' | 'pinned' | 'combat' | 'breach' | 'web';
+export type WorkspaceView = 'terminal' | 'map' | 'files' | 'agents' | 'pinned' | 'combat' | 'breach' | 'web';
 
 export type NetOperation = {
   id: string;
@@ -395,6 +399,7 @@ export type NetrunData = {
   operations?: NetOperation[];
   security?: SecurityState | null;
   file_exchange?: { incoming: IncomingFileOffer[]; max_offers: number } | null;
+  access_export?: { node_count: number; network_count: number; can_export: boolean; reason?: string | null } | null;
   /** Receipt of a UI request; it does not imply the game action succeeded. */
   input_ack?: string | null;
   workspace_view?: WorkspaceView;
@@ -437,6 +442,7 @@ export type NetrunData = {
   ping_route: PingHop[] | null;
   ping?: { id: number; remaining_ms: number } | null;
   agents?: AgentState[] | null;
+  agent_count?: number;
   events?: NetEvent[] | null;
   waypoint?: Waypoint | null;
   search?: SearchResult[] | null;
@@ -445,7 +451,7 @@ export type NetrunData = {
     image: string | null;
     width?: number;
     height?: number;
-    source: 'local' | 'shard';
+    source: 'local' | 'shard' | 'session';
     can_import?: boolean;
     agent_builder?: AgentBuilder | null;
   }) | null;

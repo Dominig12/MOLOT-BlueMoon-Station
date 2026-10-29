@@ -14,16 +14,16 @@
 /proc/netrun_node_storage_capacity(node_type)
 	switch(node_type)
 		if(NETRUN_NODE_AI)
-			return 24 * NETRUN_STORAGE_SCALE
+			return 48 * NETRUN_STORAGE_SCALE
 		if(NETRUN_NODE_SERVER)
-			return 16 * NETRUN_STORAGE_SCALE
+			return 32 * NETRUN_STORAGE_SCALE
 		if(NETRUN_NODE_TERMINAL)
-			return 12 * NETRUN_STORAGE_SCALE
+			return 24 * NETRUN_STORAGE_SCALE
 		if(NETRUN_NODE_GATEWAY)
-			return 8 * NETRUN_STORAGE_SCALE
+			return 16 * NETRUN_STORAGE_SCALE
 		if(NETRUN_NODE_APC)
-			return 6 * NETRUN_STORAGE_SCALE
-	return 4 * NETRUN_STORAGE_SCALE
+			return 12 * NETRUN_STORAGE_SCALE
+	return 8 * NETRUN_STORAGE_SCALE
 
 /datum/netrun_file_store/Destroy()
 	owner_ref = null
@@ -34,11 +34,11 @@
 	return netrun_storage_used(files)
 
 /datum/netrun_file_store/proc/can_fit(datum/netrun_file/file)
-	return !QDELETED(file) && used() + file.size <= capacity
+	return !QDELETED(file) && file.can_store(src) && used() + file.size <= capacity
 
 /// Map preloads may intentionally exceed the writable capacity of a disk.
 /datum/netrun_file_store/proc/insert(datum/netrun_file/file, preload = FALSE)
-	if(QDELETED(file))
+	if(QDELETED(file) || !file.can_store(src))
 		return FALSE
 	if(file in files)
 		return TRUE
@@ -76,7 +76,7 @@
 
 /// Check both disks before moving so a failed write never loses the original file.
 /datum/netrun_file_store/proc/transfer_to(datum/netrun_file_store/destination, datum/netrun_file/file, move = FALSE)
-	if(QDELETED(destination) || !(file in files) || (move && destination == src) || !destination.can_fit(file))
+	if(QDELETED(file) || QDELETED(destination) || !(file in files) || (move && destination == src) || !file.can_transfer(destination, move) || (!move && !file.can_copy()) || !destination.can_fit(file))
 		return null
 	var/datum/netrun_file/result = move ? file : file.copy()
 	// A free firmware source produces an ordinary charged text copy that can grow.
@@ -103,6 +103,10 @@
 	var/datum/netrun_file_store/local_store
 	/// A dive can borrow the implant disk without taking ownership of its files.
 	var/datum/netrun_file_store/owned_store
+	/// Private ephemeral credentials never enter the borrowed implant disk.
+	var/datum/netrun_file_store/session_store
+	/// Membership only; scope validity is checked live for every authority read.
+	var/list/datum/netrun_file/acquired_key/acquired_keys
 	var/datum/weakref/borrowed_inventory_ref
 	var/obj/item/netrun_shard/shard
 	var/selected_file_uid
@@ -114,6 +118,8 @@
 	RegisterSignal(local_store, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_store_changed))
 
 /datum/netrun_inventory/Destroy()
+	acquired_keys = null
+	clear_session_store()
 	stop_borrowing()
 	set_shard(null)
 	UnregisterSignal(local_store, COMSIG_NETRUN_STORAGE_CHANGED)
@@ -169,6 +175,8 @@
 	. = local_store.files.Copy()
 	if(!QDELETED(shard))
 		. += shard.file_store.files
+	if(session_store)
+		. += session_store.files
 
 /datum/netrun_inventory/proc/store_for(datum/netrun_file/file)
 	RETURN_TYPE(/datum/netrun_file_store)
@@ -176,13 +184,34 @@
 		return local_store
 	if(!QDELETED(shard) && (file in shard.file_store.files))
 		return shard.file_store
+	if(session_store && (file in session_store.files))
+		return session_store
 
 /datum/netrun_inventory/proc/find_file(uid)
 	// Execution resolves actual disk membership, never a retained UI file list.
 	var/datum/netrun_file/file = local_store.find_file(uid)
 	if(file)
 		return file
-	return shard?.file_store.find_file(uid)
+	file = shard?.file_store.find_file(uid)
+	if(file)
+		return file
+	return session_store?.find_file(uid)
+
+/// A dedicated, non-writable mount keeps session authority out of physical media.
+/datum/netrun_inventory/proc/mount_session_file(datum/netrun_file/file)
+	if(QDELETED(file))
+		return FALSE
+	if(!session_store)
+		session_store = new(src, 0)
+		RegisterSignal(session_store, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_store_changed))
+	return session_store.insert(file, TRUE)
+
+/datum/netrun_inventory/proc/clear_session_store()
+	if(!session_store)
+		return
+	UnregisterSignal(session_store, COMSIG_NETRUN_STORAGE_CHANGED)
+	QDEL_NULL(session_store)
+	notify_changed()
 
 /datum/netrun_inventory/proc/store_file(datum/netrun_file/file, to_shard = FALSE)
 	var/datum/netrun_file_store/destination = to_shard ? shard?.file_store : local_store
@@ -234,6 +263,7 @@
 	notify_changed()
 
 /datum/netrun_inventory/proc/notify_changed()
+	acquired_keys = null
 	// A loadout change invalidates all derived authorization, including a UI
 	// serialization that yielded while a shard was removed or a file was revoked.
 	if(owner)

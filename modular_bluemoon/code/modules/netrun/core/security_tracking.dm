@@ -130,19 +130,19 @@
 	updated_at = world.time
 	session?.owner?.invalidate_ui()
 
-/datum/netrun_security_contact/proc/valid()
-	return world.time < expires_at && session?.can_defend(defended_ref?.resolve())
+/datum/netrun_security_contact/proc/valid(check_authority = TRUE)
+	return world.time < expires_at && !QDELETED(session?.owner) && (!check_authority || session.can_defend(defended_ref?.resolve()))
 
-/datum/netrun_security_contact/proc/map_denial()
-	if(!valid())
+/datum/netrun_security_contact/proc/map_denial(check_authority = TRUE)
+	if(!valid(check_authority))
 		return "След истёк или право защищать узел утрачено."
 	var/datum/component/netrun_node/source = source_ref?.resolve()
-	if(!source || !session.owner.can_route(source) || !session.owner.node_visible(source))
+	if(!source || !session.owner.node_visible(source))
 		return "Источник недоступен по вашим маршрутам и доступам."
 	return null
 
-/datum/netrun_security_contact/proc/pursuit_denial()
-	var/reason = map_denial()
+/datum/netrun_security_contact/proc/pursuit_denial(map_reason, map_checked = FALSE)
+	var/reason = map_checked ? map_reason : map_denial()
 	if(reason)
 		return reason
 	var/mob/camera/netrun_entity/pursuer = session.owner.combat_self()
@@ -183,12 +183,14 @@
 
 /datum/netrun_security_session/proc/observations(datum/component/netrun_node/node)
 	var/list/result = list()
-	result |= node?.security_audit?.observations
-	result |= node?.network?.security_audit?.observations
+	if(node?.security_audit)
+		result |= node.security_audit.observations
+	if(node?.network?.security_audit)
+		result |= node.network.security_audit.observations
 	return result
 
 /datum/netrun_security_session/proc/capture(datum/netrun_attack_observation/observation, datum/component/netrun_node/node)
-	if(!can_defend(node) || !observation?.traceable() || observation.attacker_ref?.resolve() == owner)
+	if(!can_defend(node) || !(observation in observations(node)) || !observation?.traceable() || observation.attacker_ref?.resolve() == owner)
 		return FALSE
 	var/datum/netrun_security_contact/old = contacts[observation.id]
 	if(old)
@@ -234,12 +236,20 @@
 	var/datum/component/netrun_node/node = defended_node()
 	var/list/entries = list()
 	var/list/seen = list()
+	// The same protected node commonly owns every contact. Check its authority
+	// once in this serialization; action handlers still perform live checks.
+	var/list/defense_cache = list()
 	for(var/id in contacts)
 		var/datum/netrun_security_contact/contact = contacts[id]
-		if(!contact.valid())
+		var/datum/component/netrun_node/defended = contact.defended_ref?.resolve()
+		if(!defended || !contact.valid(FALSE))
 			continue
-		var/reason = contact.map_denial()
-		var/pursuit_reason = contact.pursuit_denial()
+		if(!(defended.address in defense_cache))
+			defense_cache[defended.address] = can_defend(defended)
+		if(!defense_cache[defended.address])
+			continue
+		var/reason = contact.map_denial(FALSE)
+		var/pursuit_reason = contact.pursuit_denial(reason, TRUE)
 		var/datum/component/netrun_node/source = reason ? null : contact.source_ref?.resolve()
 		var/datum/netrun_breach/active_breach = contact.breach_ref?.resolve()
 		var/datum/netrun_console/attacker = contact.attacker_ref?.resolve()

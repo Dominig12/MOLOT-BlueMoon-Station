@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
+import { isTransferableFile } from './filePermissions';
 import { EntityContact, THEME } from './types';
 import { useNetrunBackend } from './useNetrunBackend';
 
@@ -43,7 +44,7 @@ export const FileOffer = ({ address, contact, pending }: { address: string; cont
 const FileOfferForm = ({ address, contact, allowed }: { address: string; contact: EntityContact; allowed: boolean }) => {
   const { act, data } = useNetrunBackend(['storage', 'shard']);
   const [uid, setUid] = useState('');
-  const files = [...new Map([...(data.storage?.files || []), ...(data.shard?.files || [])].map((file) => [file.uid, file])).values()];
+  const files = [...new Map([...(data.storage?.files || []), ...(data.shard?.files || [])].filter(isTransferableFile).map((file) => [file.uid, file])).values()];
   const file = files.find((entry) => entry.uid === uid);
   const offer = () => {
     if (allowed && file) { act('entity_file_offer', { ref: contact.ref, address, uid: file.uid }); }

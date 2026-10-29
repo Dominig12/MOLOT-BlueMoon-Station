@@ -3,6 +3,7 @@ import './netrun-workspace.scss';
 import { memo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
 import { Box, Button, Icon, Tabs } from '../../components';
+import { AgentsWorkspace } from './AgentsWorkspace';
 import { AppearancePanel } from './AppearancePanel';
 import { CombatPanel } from './CombatPanel';
 import { MatrixPanel } from './Matrix';
@@ -26,7 +27,7 @@ const ORIGIN_NAMES: Record<string, string> = {
 };
 
 const PAGE_NAMES: Record<WorkspaceView, string> = {
-  terminal: 'Терминал', map: 'Карта', files: 'Файлы', pinned: 'Закреплённые узлы',
+  terminal: 'Терминал', map: 'Карта', files: 'Файлы', agents: 'Агенты', pinned: 'Закреплённые узлы',
   combat: 'Бой', breach: 'Взлом', web: 'WEB',
 };
 
@@ -76,6 +77,7 @@ const NetrunWorkspace = () => {
     workspace_view: state.workspace_view, breach: !!state.breach, web: !!state.web,
     hasWindow: !!state.window, windowCount: state.windows?.length ?? 0,
     fileOfferCount: state.file_exchange?.incoming?.length ?? 0,
+    agentCount: state.agent_count ?? 0,
     incomingCount: state.combat?.incoming?.length ?? 0,
     webAvailable: !!state.networks?.some((network) => network.id === 'web') || !!state.web,
   }));
@@ -137,6 +139,7 @@ const NetrunWorkspace = () => {
     { id: 'terminal', icon: 'terminal' },
     { id: 'map', icon: 'diagram-project' },
     { id: 'files', icon: 'folder-open', count: data.fileOfferCount },
+    { id: 'agents', icon: 'robot', count: data.agentCount },
     { id: 'pinned', icon: 'thumbtack', count: data.windowCount },
   ];
   // Keep the tab in a fixed place; a new ICE cast must not insert/remove controls.
@@ -201,6 +204,7 @@ const NetrunWorkspace = () => {
           </div>
         </WorkspacePage>
         <WorkspacePage id="files" active={page} scrollable><StoragePanel /></WorkspacePage>
+        <WorkspacePage id="agents" active={page} scrollable><AgentsWorkspace /></WorkspacePage>
         <WorkspacePage id="pinned" active={page}>
           <PinnedWorkspace active={page === 'pinned'} />
         </WorkspacePage>

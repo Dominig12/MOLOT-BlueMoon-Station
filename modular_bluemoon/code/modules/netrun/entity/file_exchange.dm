@@ -105,7 +105,7 @@
 	var/datum/netrun_file/file = find_local_file(uid)
 	var/datum/netrun_path_tree/tree = make_path_tree()
 	var/reason = entity_contact_denial(node, recipient, tree)
-	if(reason || QDELETED(file) || !inventory.store_for(file))
+	if(reason || QDELETED(file) || !inventory.store_for(file) || !file.can_copy())
 		qdel(tree)
 		log_line("Нельзя предложить файл: [reason || "файл не принадлежит отправителю"].", "bad")
 		return FALSE
@@ -139,7 +139,7 @@
 	var/datum/netrun_file/file = console.find_local_file(file_uid)
 	var/datum/netrun_path_tree/tree = console.make_path_tree()
 	var/reason = console.entity_contact_denial(node, recipient, tree)
-	if(reason || QDELETED(file) || !console.inventory.store_for(file) || sender != console.operator || node.network != sent_network || !console.combat_self())
+	if(reason || QDELETED(file) || !console.inventory.store_for(file) || !file.can_copy() || sender != console.operator || node.network != sent_network || !console.combat_self())
 		qdel(tree)
 		return reject("Получатель, файл, маршрут или отправитель изменились.")
 	operation.receive(tree.addresses_to(node.address))

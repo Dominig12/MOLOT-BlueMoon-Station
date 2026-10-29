@@ -1,9 +1,10 @@
-import { memo, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
 import { Meter } from './CombatPanel';
 import { EntityAvatar, PERSONA_ACCENTS, PERSONA_AVATAR_OPTIONS } from './EntityAvatar';
 import { BotAvatar, botKindLabel } from './EntityContacts';
+import { isTransferableFile } from './filePermissions';
 import { NETRUN_THEMES } from './themes';
 import { AgentState, NetFile, NetrunData, SelectedNode, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
@@ -138,17 +139,20 @@ const AgentCard = (props: { agent: AgentState; selected: SelectedNode | null; fi
 
 /** Agents launched from `.bot` files by this console. */
 const AgentsPanelView = () => {
-  const { act, data } = useBackend<NetrunData>(['agents', 'selected', 'storage']);
-  const agents = data.agents ?? [];
+  const { act, data } = useBackend<NetrunData>(['workspace_view', 'agents', 'selected', 'storage']);
+  const confirmed = useRef<AgentState[]>([]);
+  if (!data.workspace_view || data.workspace_view === 'agents') { confirmed.current = data.agents || []; }
+  const agents = data.workspace_view && data.workspace_view !== 'agents' ? confirmed.current : data.agents || [];
   if (!agents.length) {
-    return null;
+    return <Box mt={1} color={THEME.muted}>Запущенных агентов пока нет. Выберите шаблон ниже, чтобы создать или запустить агента.</Box>;
   }
   return (
     <Box mt={2} data-net-agents>
-      <Box bold mb={0.5} color={THEME.text}>Агенты</Box>
-      {agents.map((agent) => (
-        <AgentCard key={agent.ref} agent={agent} selected={data.selected ?? null} files={data.storage?.files || []} act={act} />
+      <Box bold mb={0.5} color={THEME.text}>Активные агенты ({agents.length})</Box>
+      <div className="netrun-agent-grid">{agents.map((agent) => (
+        <AgentCard key={agent.ref} agent={agent} selected={data.selected ?? null} files={(data.storage?.files || []).filter(isTransferableFile)} act={act} />
       ))}
+      </div>
     </Box>
   );
 };

@@ -986,6 +986,17 @@
 .netrun-security__actions small { display: block; color: var(--net-muted); font-size: 10px; margin-top: 3px; }
 .netrun-file-offers { margin-bottom: 14px; }
 .netrun-file-offers__entry { margin-top: 7px; padding: 9px; border: 1px solid var(--net-border); border-radius: 6px; background: var(--net-bg); overflow-wrap: anywhere; }
+.netrun-agents-workspace { padding: 14px; min-width: 0; }
+.netrun-agent-context { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 10px; margin: 12px 0; border: 1px solid var(--net-border); border-radius: 7px; background: var(--net-bg); }
+.netrun-agent-context > div { flex: 1 1 220px; }
+.netrun-agent-context > div:last-child { flex-basis: 100%; }
+.netrun-agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); align-items: start; gap: 10px; }
+.netrun-agent-launcher { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--net-border); }
+.netrun-agent-template-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 6px; }
+.netrun-shell .Button.netrun-agent-template { display: flex; align-items: center; gap: 8px; margin: 0; padding: 9px; white-space: normal; text-align: left; }
+.netrun-agent-template > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.netrun-agent-template small { display: block; margin-top: 4px; color: var(--net-muted); font-size: 10px; }
+.netrun-agent-launch-card { margin-top: 10px; padding: 12px; background: var(--net-bg); border: 1px solid var(--net-border); border-radius: 7px; }
 .netrun-agent-file { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 5px 0; }
 .netrun-agent-file > span { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
 .netrun-agent-file small { display: block; color: var(--net-muted); font-size: 10px; }

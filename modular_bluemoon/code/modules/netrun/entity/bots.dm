@@ -17,6 +17,8 @@
 	var/home_address
 	var/expires_at = 0
 	var/return_pending = FALSE
+	/// Dissolution can be triggered by combat and lifecycle in the same dispatch.
+	var/remains_dropped = FALSE
 	var/static/serial = 0
 
 /mob/camera/netrun_entity/bot/entity_module_types()
@@ -124,30 +126,39 @@
 		SSnetrun.post_event("purge", null, node.address)
 	qdel(src)
 
-/// Rogue processes leave one combat program in the debris; agents leave their program file.
+/// Death transfers existing files, never a freshly generated copy of the loadout.
 /mob/camera/netrun_entity/bot/proc/drop_remains(datum/component/netrun_node/node)
-	if(QDELETED(node))
+	if(remains_dropped || QDELETED(node))
 		return
-	var/list/remains = list()
-	if(agent_file)
-		remains += agent_file
+	remains_dropped = TRUE
+	var/datum/netrun_file_store/store = console?.inventory.local_store
+	if(!QDELETED(agent_file))
+		var/datum/netrun_file/file = agent_file
 		agent_file = null
-	if(SSnetrun.get_netrun_faction(net_faction)?.arrival_weight)
-		var/list/programs = list()
-		for(var/datum/netrun_file/file as anything in console.inventory.local_store.files)
-			if(file.kind == NETRUN_FILE_PROGRAM)
-				programs += file
-		if(length(programs))
-			var/datum/netrun_file/loot = pick(programs)
-			console.inventory.local_store.remove(loot)
-			remains += loot
-	for(var/datum/netrun_file/file as anything in remains)
-		while(length(node.salvage) >= NETRUN_MAX_SALVAGE_FILES)
-			var/datum/netrun_file/expired = node.salvage[1]
-			node.salvage.Cut(1, 2)
-			qdel(expired)
-		node.salvage += file
-		node.add_log("В обломках процесса [real_name] остался файл: [file.name].")
+		if(!istype(file, /datum/netrun_file/bot))
+			var/datum/netrun_file/bot/container = new(file.name, file.kind, file.content, file.size, file.network_id)
+			qdel(file)
+			file = container
+		if(!QDELETED(store))
+			brain?.clear_goals()
+			var/datum/netrun_file/bot/saved = file
+			saved.size = program.file_size + store.used()
+			saved.remember_agent(src)
+		if(!node.leave_salvage(file, real_name))
+			qdel(file)
+		return
+	if(QDELETED(store))
+		return
+	var/changed = FALSE
+	for(var/datum/netrun_file/file as anything in store.files.Copy())
+		if(!file.can_transfer(null, TRUE) || !store.remove(file))
+			continue
+		if(!node.leave_salvage(file, real_name, FALSE))
+			qdel(file)
+		else
+			changed = TRUE
+	if(changed)
+		node.refresh_salvage()
 
 /// Recall: the agent becomes a file in its owner's memory again (or debris when there is no room).
 /mob/camera/netrun_entity/bot/proc/return_to_owner()
@@ -363,9 +374,13 @@
 			return FALSE
 	// A snapshot of the owner's acquired grants; legal ID access is never copied.
 	for(var/address_key in access_session.node_access)
-		agent.console.access_session.node_access[address_key] = max(agent.console.access_session.node_access[address_key] || 0, min(access_session.node_access[address_key], NETRUN_ACCESS_USER))
+		var/datum/component/netrun_node/known_node = SSnetrun.find_node(address_key)
+		if(known_node)
+			agent.console.access_session.grant_node(known_node, min(access_session.direct_node_level(known_node), NETRUN_ACCESS_USER), min(access_session.exportable_node_level(known_node), NETRUN_ACCESS_USER))
 	for(var/network_key in access_session.network_access)
-		agent.console.access_session.network_access[network_key] = access_session.network_access[network_key]
+		var/datum/netrun_network/known_network = SSnetrun.networks[network_key]
+		if(known_network)
+			agent.console.access_session.grant_network(known_network, access_session.direct_network_level(known_network), access_session.exportable_network_level(known_network))
 	log_line("Агент [agent.real_name] запущен в узле [site.get_name()] [site.address].", "good")
 	site.add_log("[log_source()]: запущен агент [agent.real_name].")
 	return TRUE
@@ -636,6 +651,7 @@
 	var/rogue_wave_at = 0
 	var/police_respawn_at = 0
 	var/custodian_respawn_at = 0
+	var/recycler_respawn_at = 0
 	/// Spawn candidates are addresses cached at a topology boundary, not polled every census.
 	var/list/bot_spawn_pools
 	var/bot_spawn_revision = -1
@@ -657,6 +673,8 @@
 			police_respawn_at = world.time + 5 MINUTES
 		if(NETRUN_BOT_CUSTODIAN)
 			custodian_respawn_at = world.time + 8 MINUTES
+		if(NETRUN_BOT_RECYCLER)
+			recycler_respawn_at = world.time + 4 MINUTES
 
 /datum/controller/subsystem/netrun/proc/count_bots(kind)
 	. = 0
@@ -736,6 +754,8 @@
 			return
 	if(world.time >= custodian_respawn_at && count_bots(NETRUN_BOT_CUSTODIAN) < NETRUN_CUSTODIAN_QUOTA)
 		spawn_custodian()
+	if(world.time >= recycler_respawn_at && count_bots(NETRUN_BOT_RECYCLER) < NETRUN_RECYCLER_QUOTA)
+		spawn_bot(NETRUN_BOT_RECYCLER, bot_spawn_node())
 	if(world.time >= rogue_wave_at)
 		rogue_wave_at = world.time + rand(90 SECONDS, 180 SECONDS)
 		spawn_visitor_wave()

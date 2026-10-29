@@ -21,7 +21,8 @@
 	var/datum/netrun_breach/job = console.intrusion.breach
 	data = console.ui_data(null)
 	var/list/file = data["file"]
-	TEST_ASSERT_EQUAL(file["uid"], uid, "A puzzle must not discard the selected file payload")
+	TEST_ASSERT_NULL(file, "A puzzle must not serialize a hidden file editor or photo preview")
+	TEST_ASSERT_EQUAL(console.inventory.selected_file_uid, uid, "A puzzle preserves file selection without serializing its content")
 	console.workspace_view = "map"
 	data = console.ui_data(null)
 	TEST_ASSERT_NOTNULL(data["map"], "The map page must be available while a breach is running")
@@ -38,6 +39,12 @@
 	TEST_ASSERT_EQUAL(file["uid"], uid, "The file workspace must retain the selected local file")
 	TEST_ASSERT_NOTNULL(data["selected"], "File upload controls need the selected remote node's permissions")
 	TEST_ASSERT_EQUAL(console.remote_session.active_window, node.address, "Leaving the pinned page must preserve its active node")
+	console.workspace_view = "agents"
+	data = console.ui_data(null)
+	file = data["file"]
+	TEST_ASSERT_EQUAL(file["uid"], uid, "The agent workspace shares the preserved file selection")
+	TEST_ASSERT_NOTNULL(data["selected"], "Addressed agent orders retain their selected-node context")
+	TEST_ASSERT_NULL(data["selected"]["files"], "Agent controls do not serialize the hidden remote disk")
 
 /// Highlighting an APC transmits actual area tiles rather than its bounding rectangle.
 /datum/unit_test/netrun_apc_geographic_area/Run()
