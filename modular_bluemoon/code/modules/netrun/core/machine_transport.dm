@@ -83,25 +83,26 @@
 		replaceable_packets[key] = packet
 	return packet.send()
 
-/datum/netrun_machine_transport/proc/record_flow(datum/netrun_machine_service/source, datum/netrun_machine_service/target, kind, list/path)
-	// Bound visualization work independently of the number of delivered packets.
+/// Machine traffic is drawn at dispatch, bounded independently of the number of packets.
+/datum/netrun_machine_transport/proc/record_flow(datum/netrun_machine_service/source, datum/netrun_machine_service/target, datum/netrun_packet_context/operation)
 	if(world.time >= flow_window)
 		flow_window = world.time + 1 SECONDS
 		flow_count = 0
-	if(flow_count >= 20)
-		return
-	var/from = source.resolve_node()?.address
-	var/destination = target.resolve_node()?.address
+	if(flow_count >= NETRUN_MAX_MACHINE_FLIGHTS)
+		return FALSE
+	var/from = source?.resolve_node()?.address
+	var/destination = target?.resolve_node()?.address
 	if(!from || !destination || from == destination)
-		return
+		return FALSE
 	var/pair = "[from]>[destination]"
 	if(last_flow[pair] > world.time)
-		return
+		return FALSE
 	if(length(last_flow) > 2048)
 		last_flow.Cut()
-	last_flow[pair] = world.time + 1 SECONDS
+	last_flow[pair] = world.time + 2 SECONDS
 	flow_count++
-	SSnetrun.post_event(kind, from, destination, path)
+	operation.quiet_success = TRUE
+	return operation.announce_flight()
 
 /// A cancellable packet checks the current route again when its latency elapses.
 /datum/netrun_machine_packet
@@ -156,19 +157,20 @@
 	// Rejected admissions/routes must not serialize a payload that never left.
 	capture_payload()
 	transport.packets |= src
-	operation.queued(route.hops)
-	var/mob/user = interest_user()
-	var/mob/camera/netrun_entity/entity = user
-	if(user?.client || (istype(entity) && entity.dive_link?.body?.client))
-		interest_route = route.hops.Copy()
-		transport.interactive_packets |= src
-		SSnetrun.retain_route_interest(interest_route, world.time + NETRUN_NODE_INTEREST_LEASE)
 	var/delay = clamp(route.latency * NETRUN_MACHINE_LATENCY_SCALE, 0, NETRUN_MACHINE_MAX_LATENCY)
 	// Scaled local hops are shorter than one representable world tick. Admit
 	// them asynchronously to MC directly instead of adding a timer tick and a
 	// second dispatch tick at every native telecomms stage.
 	if(delay < world.tick_lag)
 		delay = 0
+	operation.queued(route.hops, delay, FALSE)
+	transport.record_flow(source, recipient, operation)
+	var/mob/user = interest_user()
+	var/mob/camera/netrun_entity/entity = user
+	if(user?.client || (istype(entity) && entity.dive_link?.body?.client))
+		interest_route = route.hops.Copy()
+		transport.interactive_packets |= src
+		SSnetrun.retain_route_interest(interest_route, world.time + NETRUN_NODE_INTEREST_LEASE)
 	sent_at = world.time
 	due_at = world.time + delay
 	qdel(route)
@@ -199,7 +201,6 @@
 	capture_payload()
 	operation.running()
 	operation.receive(route.hops)
-	SSnetrun.get_machine_transport().record_flow(source, recipient, kind, route.hops)
 	qdel(route)
 	execute()
 	if(!operation.finished)

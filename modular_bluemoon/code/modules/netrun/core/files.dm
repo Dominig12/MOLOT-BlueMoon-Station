@@ -101,7 +101,7 @@
 	w_class = WEIGHT_CLASS_TINY
 	var/datum/netrun_file_store/file_store
 	/// Initial configuration only; writable state lives in file_store.capacity.
-	var/initial_capacity = 8
+	var/initial_capacity = 8 * NETRUN_STORAGE_SCALE
 	/// Что записано на шард при создании: list(тип файла = содержимое) или id демонов
 	var/list/preload_daemons
 	/// Боевые программы, записанные на шард при создании (id из реестра /datum/netrun_program)

@@ -6,7 +6,12 @@ export type PixiLibrary = typeof import('pixi.js');
 export const pixiColor = (value: string | undefined, fallback: number) =>
   value && /^#[0-9a-f]{6}$/i.test(value) ? Number.parseInt(value.slice(1), 16) : fallback;
 export const edgeColor = (kind: string, online = true) => !online ? 0x52636e
-  : kind === 'relay' ? 0x3fb8ad : kind === 'apc' ? 0x3d6d86 : 0x274a5f;
+  : kind === 'relay' ? 0x46c9bd : kind === 'apc' ? 0x4f86a3 : 0x3a6a85;
+/** World-unit cable widths at working zoom (GRAPH_TILE is 144 units, default zoom .7). */
+export const edgeWidth = (kind: string) => kind === 'relay' ? 3.4 : kind === 'apc' ? 2.2 : 1.6;
+export const edgeAlpha = (kind: string, online = true) => !online ? .2 : kind === 'endpoint' ? .2 : kind === 'apc' ? .4 : .48;
+/** Quantized zoom level for strokes: below .6 widths double per halving so links stay visible. */
+export const strokeLod = (zoom: number) => Math.max(1, 2 ** Math.ceil(Math.log2(.6 / Math.max(zoom, 1e-6))));
 
 export function markerPath(graphic: Graphics, type: string, x: number, y: number, scale = 1) {
   if (type === 'apc') { graphic.rect(x - 11 * scale, y - 11 * scale, 22 * scale, 22 * scale); }

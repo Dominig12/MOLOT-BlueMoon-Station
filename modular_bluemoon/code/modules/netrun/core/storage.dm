@@ -21,6 +21,9 @@
 		return null
 	var/list/payload = file.ui_entry(inventory.selected_file_uid)
 	payload["source"] = (file in inventory.local_store.files) ? "local" : "shard"
+	payload["can_import"] = inventory.store_for(file) == inventory.shard?.file_store
+	if(file.kind == NETRUN_FILE_BOT)
+		payload["agent_builder"] = agent_builder_payload(file)
 	payload["content"] = file.kind == NETRUN_FILE_TEXT ? file.content : null
 	payload["image"] = null
 	if(file.kind == NETRUN_FILE_PHOTO && file.picture)
@@ -32,8 +35,15 @@
 
 /// Все операции ограничены носителями этой консоли; UID удалённого узла сюда не проходит.
 /datum/netrun_console/proc/file_act(action, list/params, mob/user)
-	if(!(action in list("file_select", "file_new", "file_edit", "file_rename", "file_copy", "file_move")))
+	if(!(action in list("file_select", "file_new", "file_edit", "file_rename", "file_copy", "file_move", "file_import", "agent_create")))
 		return FALSE
+	if(action == "agent_create")
+		create_agent_file(params, user)
+		return TRUE
+	if(action == "file_import")
+		var/datum/netrun_file/imported = inventory.import_from_shard(params["uid"], !!params["move"])
+		log_line(imported ? "Агент или файл [imported.name] [params["move"] ? "перемещён" : "скопирован"] в локальную память." : "Импорт отклонён: шард, файл или свободная память недоступны.", imported ? "good" : "bad")
+		return TRUE
 	var/datum/netrun_file/file = find_local_file(params["uid"])
 	if(action == "file_new")
 		create_text_file(params["name"], params["content"], !!params["to_shard"])

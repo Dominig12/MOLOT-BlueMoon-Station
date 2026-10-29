@@ -24,6 +24,28 @@
 /datum/netrun_console/proc/combat_targets()
 	return combat_context.targets()
 
+/// The same action facade is used by the combat panel and CLI.
+/datum/netrun_console/proc/start_pursuit(target_ref)
+	var/mob/camera/netrun_entity/entity = host
+	if(!istype(entity) || !entity.navigation)
+		log_line("Преследовать цель может только сетевая сущность.", "bad")
+		return FALSE
+	if(!istext(target_ref))
+		return FALSE
+	var/mob/camera/netrun_entity/target = locate(target_ref)
+	if(!istype(target))
+		log_line("Для преследования выберите процесс, а не ICE или укрепление.", "bad")
+		return FALSE
+	return entity.navigation.pursue(target)
+
+/datum/netrun_console/proc/stop_pursuit()
+	var/mob/camera/netrun_entity/entity = host
+	if(!istype(entity) || !entity.navigation)
+		return FALSE
+	entity.navigation.cancel()
+	log_line("Преследование остановлено.")
+	return TRUE
+
 /datum/netrun_console/proc/combat_programs()
 	return combat_context.programs()
 
@@ -94,10 +116,10 @@
 
 /datum/netrun_combat_context/New(datum/netrun_console/console)
 	src.console = console
-	RegisterSignal(SSnetrun, COMSIG_NETRUN_ICE_CAST_STARTED, PROC_REF(on_cast_started))
+	RegisterSignal(console, COMSIG_NETRUN_ICE_CAST_STARTED, PROC_REF(on_cast_started))
 
 /datum/netrun_combat_context/Destroy()
-	UnregisterSignal(SSnetrun, COMSIG_NETRUN_ICE_CAST_STARTED)
+	UnregisterSignal(console, COMSIG_NETRUN_ICE_CAST_STARTED)
 	clear_contacts()
 	for(var/id in observed_ice)
 		var/datum/weakref/reference = observed_ice[id]
@@ -123,7 +145,7 @@
 
 /datum/netrun_combat_context/proc/on_cast_started(datum/source, datum/netrun_ice/ice, datum/netrun_console/victim)
 	SIGNAL_HANDLER
-	if(victim != console)
+	if(victim != console || QDELETED(ice))
 		return
 	observe(ice)
 	if(!console.combat_self() && ice.pending_program?.role == NETRUN_PROGRAM_TRACE)
@@ -190,7 +212,13 @@
 	if(console.is_locked())
 		return "Точка подключения заблокирована."
 	// During one combat payload the local node has already been resolved once.
-	if(node == (local_known ? local_node : console.combat_node(tree)))
+	var/datum/component/netrun_node/local = local_known ? local_node : console.combat_node(tree)
+	if(node == local)
+		return null
+	// Structures may be engaged from a neighbouring node (siege of fortress outer works).
+	if(combatant.allows_remote_attack(console, local))
+		if(!node.is_online(node != console.connection.jack))
+			return "Узел противника не отвечает."
 		return null
 	var/datum/netrun_combat_contact/contact = contacts[REF(target)]
 	if(!contact?.valid_for(console))
@@ -212,6 +240,11 @@
 	if(node)
 		candidates |= node.entities || list()
 		candidates |= node.netrun_ice || list()
+		candidates |= node.fortress?.combat_targets() || list()
+		// A resident process can lay siege to the outer works of fortresses next door.
+		if(console.combat_self())
+			for(var/datum/component/netrun_node/neighbor as anything in netrun_adjacent_fortress_nodes(node))
+				candidates |= neighbor.fortress.siege_targets()
 	for(var/id in contacts)
 		var/datum/netrun_combat_contact/contact = contacts[id]
 		var/datum/netrun_ice/ice = contact.ice_ref.resolve()
@@ -332,6 +365,9 @@
 		"self" = hp ? list("integrity" = hp["cur"], "max_integrity" = hp["max"], "stunned" = hp["stunned"], "shielded" = hp["shielded"]) : null,
 		"targets" = target_entries, "programs" = programs(), "incoming" = incoming_entries, "loot" = loot,
 		"action_ready_in" = max(0, CEILING((next_program - world.time) / (1 SECONDS), 0.1)))
+	var/mob/camera/netrun_entity/entity = self
+	result["pursuit_available"] = istype(entity) && !!entity.navigation
+	result["pursuit"] = istype(entity) ? entity.navigation?.pursuit_payload() : null
 	if(owns_tree)
 		console.release_path_tree(tree)
 	if(measuring)
@@ -405,6 +441,8 @@
 	if(program.trace)
 		console.add_trace(program.trace)
 	SSnetrun.post_event("intrusion", node.network?.id, node.address)
+	if((program.role == NETRUN_PROGRAM_ATTACK || program.role == NETRUN_PROGRAM_STUN) && combatant?.protected_by_station())
+		SSnetrun.report_incident("combat", node, self || console, NETRUN_INCIDENT_MEDIUM, "Атака на [combatant.display_name()].")
 	if(program.consumable)
 		console.delete_local_file(file)
 		console.log_line("Карточка [executable_name] израсходована.", "average")

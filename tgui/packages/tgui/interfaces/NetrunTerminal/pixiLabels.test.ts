@@ -21,6 +21,9 @@ test('viewport occupancy limits captions naturally rather than truncating the ma
   const first = captions[0];
   labels.update(scene, state, view, 1700, 1700, (node) => node);
   expect(layer.children.filter((entry) => entry instanceof MockText)[0]).toBe(first);
+  view.zoom = .7; labels.update(scene, state, view, 1700, 1700, (node) => node);
+  // Below close-up zoom only important nodes (here the selected one) keep captions.
+  expect(layer.children.filter((entry) => entry instanceof MockText).map((entry) => (entry as MockText).text)).toEqual(['Node 0']);
   view.zoom = .1; labels.update(scene, state, view, 1700, 1700, (node) => node);
   expect(layer.children).toHaveLength(0); expect(first.destroyed).toBe(true);
   labels.destroy(); expect(MockContainer.instances.every((entry) => entry.destroyed)).toBe(true);

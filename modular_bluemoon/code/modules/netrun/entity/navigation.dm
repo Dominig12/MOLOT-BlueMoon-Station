@@ -7,6 +7,11 @@
 	var/expected_source
 	var/timer
 	var/generation = 0
+	/// A combat lock observes one live process; it never retains that process.
+	var/datum/weakref/pursuit_target_ref
+	var/pursuit_name
+	var/pursuit_node
+	var/pursuit_status
 
 /datum/netrun_entity_navigation/New(mob/camera/netrun_entity/entity)
 	owner = entity
@@ -19,7 +24,7 @@
 /datum/netrun_entity_navigation/proc/is_active()
 	return !!length(queue)
 
-/datum/netrun_entity_navigation/proc/cancel()
+/datum/netrun_entity_navigation/proc/cancel(clear_pursuit = TRUE)
 	generation++
 	if(timer)
 		deltimer(timer)
@@ -27,7 +32,81 @@
 	queue.Cut()
 	destination = null
 	expected_source = null
+	if(clear_pursuit)
+		var/mob/camera/netrun_entity/target = pursuit_target_ref?.resolve()
+		if(target)
+			UnregisterSignal(target, list(COMSIG_NETRUN_ENTITY_NODE_CHANGED, COMSIG_PARENT_QDELETING))
+		pursuit_target_ref = null
+		pursuit_name = null
+		pursuit_node = null
+		pursuit_status = null
 	owner?.console?.invalidate_ui()
+
+/// A lock can only be acquired from an actual combat contact, never an arbitrary REF.
+/datum/netrun_entity_navigation/proc/pursue(mob/camera/netrun_entity/target)
+	if(QDELETED(owner) || !istype(target) || QDELETED(target) || target == owner || owner.is_stunned())
+		return FALSE
+	var/reason = owner.console.combat_context.target_denial(target)
+	if(reason)
+		owner.console.log_line("Захват цели невозможен: [reason]", "bad")
+		return FALSE
+	cancel()
+	pursuit_target_ref = WEAKREF(target)
+	pursuit_name = target.real_name
+	pursuit_node = target.host_node.address
+	RegisterSignal(target, COMSIG_NETRUN_ENTITY_NODE_CHANGED, PROC_REF(on_pursuit_moved))
+	RegisterSignal(target, COMSIG_PARENT_QDELETING, PROC_REF(on_pursuit_deleted))
+	refresh_pursuit()
+	owner.console.log_line("Цель зафиксирована: [pursuit_name]. Переходы выполняются по разрешённому маршруту, боевые программы запускайте вручную.")
+	return TRUE
+
+/datum/netrun_entity_navigation/proc/on_pursuit_moved(datum/source)
+	SIGNAL_HANDLER
+	// Leaving and entering are two signals in one hop. One owned callback sees
+	// the settled destination and coalesces further movement during our cooldown.
+	if(!timer && pursuit_target_ref)
+		schedule_step()
+
+/datum/netrun_entity_navigation/proc/on_pursuit_deleted(datum/source)
+	SIGNAL_HANDLER
+	UnregisterSignal(source, list(COMSIG_NETRUN_ENTITY_NODE_CHANGED, COMSIG_PARENT_QDELETING))
+	cancel()
+	owner?.console?.log_line("Преследование завершено: цель удалена.", "average")
+
+/// Replan only after a target changes nodes or a route stops being usable.
+/datum/netrun_entity_navigation/proc/refresh_pursuit()
+	var/mob/camera/netrun_entity/target = pursuit_target_ref?.resolve()
+	var/datum/component/netrun_node/node = target?.host_node
+	if(QDELETED(target) || QDELETED(node) || QDELETED(owner) || !owner.host_node || owner.console.is_locked())
+		cancel()
+		owner?.console?.log_line("Преследование остановлено: цель или подключение недоступны.", "average")
+		return FALSE
+	if(node == owner.host_node)
+		cancel(FALSE)
+		pursuit_node = node.address
+		pursuit_status = "Цель в вашем узле: можно атаковать."
+		return FALSE
+	var/datum/component/netrun_node/next = length(queue) ? SSnetrun.find_node(queue[1]) : null
+	if(destination != node.address || !is_active() || !owner.can_enter(next))
+		var/list/path = path_to(node)
+		if(!length(path))
+			cancel()
+			owner.console.log_line("Преследование остановлено: нет разрешённого пути к цели.", "average")
+			return FALSE
+		cancel(FALSE)
+		queue = path
+		destination = node.address
+		expected_source = owner.host_node.address
+	pursuit_node = node.address
+	pursuit_status = "Преследование по узлам."
+	return TRUE
+
+/datum/netrun_entity_navigation/proc/pursuit_payload()
+	var/mob/camera/netrun_entity/target = pursuit_target_ref?.resolve()
+	if(!target)
+		return null
+	return list("target_ref" = REF(target), "name" = pursuit_name, "node" = pursuit_node,
+		"following" = is_active(), "status" = pursuit_status)
 
 /// Search the entire reachable graph once. One request-owned path tree keeps permission
 /// checks fresh without rebuilding Dijkstra for each candidate or imposing a 200-node cap.
@@ -95,9 +174,13 @@
 	qdel(tree)
 
 /datum/netrun_entity_navigation/proc/advance_route(expected_generation)
-	if(expected_generation != generation || QDELETED(owner) || !is_active())
+	if(expected_generation != generation || QDELETED(owner) || (!is_active() && !pursuit_target_ref))
 		return
 	timer = null
+	if(pursuit_target_ref)
+		if(!refresh_pursuit())
+			return
+		expected_generation = generation
 	if(owner.host_node?.address != expected_source)
 		cancel()
 		return
@@ -128,9 +211,13 @@
 	if(is_active())
 		schedule_step()
 	else
-		cancel()
-		owner.console.log_line("Автопроход завершён.", "good")
-		to_chat(owner, span_notice("Автопроход завершён."))
+		if(pursuit_target_ref)
+			if(refresh_pursuit())
+				schedule_step()
+		else
+			cancel()
+			owner.console.log_line("Автопроход завершён.", "good")
+			to_chat(owner, span_notice("Автопроход завершён."))
 	owner.console.invalidate_ui()
 
 /datum/netrun_entity_navigation/proc/ui_payload()

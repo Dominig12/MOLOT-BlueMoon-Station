@@ -36,7 +36,7 @@
 	return istype(eyes) && eyes.netrun_is_cyber()
 
 /mob/living/carbon/netrun_view_target()
-	if(stat == DEAD || !netrun_view_capable())
+	if(stat == DEAD || !netrun_cyber_uplink_available() || !netrun_view_capable())
 		return null
 	var/obj/item/organ/eyes/eyes = getorganslot(ORGAN_SLOT_EYES)
 	if(eyes.owner != src || (eyes.organ_flags & ORGAN_FAILING) || eyes.netrun_suppressed())

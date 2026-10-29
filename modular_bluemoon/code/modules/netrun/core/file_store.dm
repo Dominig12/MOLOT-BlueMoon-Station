@@ -2,12 +2,28 @@
 /datum/netrun_file_store
 	var/datum/weakref/owner_ref
 	var/list/datum/netrun_file/files = list()
-	var/capacity = 0
+	var/capacity = 8 * NETRUN_STORAGE_SCALE
 	var/revision = 0
 
-/datum/netrun_file_store/New(datum/owner, capacity = 0)
+/datum/netrun_file_store/New(datum/owner, capacity = 8 * NETRUN_STORAGE_SCALE)
 	owner_ref = owner ? WEAKREF(owner) : null
 	src.capacity = capacity
+
+/// Every addressable endpoint has writable memory. Explicit capacities (including
+/// zero for read-only media) override these defaults and are already scaled.
+/proc/netrun_node_storage_capacity(node_type)
+	switch(node_type)
+		if(NETRUN_NODE_AI)
+			return 24 * NETRUN_STORAGE_SCALE
+		if(NETRUN_NODE_SERVER)
+			return 16 * NETRUN_STORAGE_SCALE
+		if(NETRUN_NODE_TERMINAL)
+			return 12 * NETRUN_STORAGE_SCALE
+		if(NETRUN_NODE_GATEWAY)
+			return 8 * NETRUN_STORAGE_SCALE
+		if(NETRUN_NODE_APC)
+			return 6 * NETRUN_STORAGE_SCALE
+	return 4 * NETRUN_STORAGE_SCALE
 
 /datum/netrun_file_store/Destroy()
 	owner_ref = null
@@ -91,7 +107,7 @@
 	var/obj/item/netrun_shard/shard
 	var/selected_file_uid
 
-/datum/netrun_inventory/New(datum/netrun_console/owner, capacity = 6)
+/datum/netrun_inventory/New(datum/netrun_console/owner, capacity = 6 * NETRUN_STORAGE_SCALE)
 	src.owner = owner
 	local_store = new(src, capacity)
 	owned_store = local_store
@@ -175,6 +191,20 @@
 /datum/netrun_inventory/proc/delete_file(datum/netrun_file/file)
 	var/datum/netrun_file_store/source = store_for(file)
 	return source?.delete_file(file) || FALSE
+
+/// Explicit local import resolves the live physical disk, never a cached UI
+/// entry. A failed copy/move preserves both the removable file and its UID.
+/datum/netrun_inventory/proc/import_from_shard(uid, move = FALSE)
+	RETURN_TYPE(/datum/netrun_file)
+	if(QDELETED(shard) || QDELETED(shard.file_store) || QDELETED(local_store))
+		return null
+	var/datum/netrun_file/file = shard.file_store.find_file(uid)
+	if(QDELETED(file))
+		return null
+	var/datum/netrun_file/imported = shard.file_store.transfer_to(local_store, file, move)
+	if(imported)
+		selected_file_uid = imported.uid
+	return imported
 
 /datum/netrun_inventory/proc/set_shard(obj/item/netrun_shard/new_shard)
 	if(shard == new_shard)

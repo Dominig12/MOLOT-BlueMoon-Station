@@ -13,7 +13,7 @@ import { OperationsPanel } from './OperationsPanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
 import { SessionStatus } from './SessionStatus';
 import { themeId, themeStyle } from './themes';
-import { ACCESS_COLORS, ACCESS_NAMES, NetrunData, THEME, WorkspaceView } from './types';
+import { NetrunData, THEME, WorkspaceView } from './types';
 import { NetrunFeedbackProvider, useNetrunBackend as useBackend, useNetrunSelector } from './useNetrunBackend';
 import { WebPanel } from './WebPanel';
 import { WindowPanel } from './WindowPanel';
@@ -194,7 +194,6 @@ const NetrunWorkspace = () => {
               <NodeSidebar suspended={page !== 'map'} />
             </div>
           </div>
-          <Legend />
         </WorkspacePage>
         <WorkspacePage id="files" active={page} scrollable><StoragePanel /></WorkspacePage>
         <WorkspacePage id="pinned" active={page}>
@@ -313,18 +312,3 @@ const Header = memo(({ onAppearance }: { onAppearance: () => void }) => {
   );
 });
 
-const Legend = () => (
-  <Box mt={0.5} fontSize="10px" color={THEME.muted} style={{ fontFamily: 'monospace' }}>
-    {ACCESS_NAMES.map((name, i) => (
-      <Box inline key={name} mr={1.5}>
-        <span style={{ color: ACCESS_COLORS[i] }}>●</span> {name}
-      </Box>
-    ))}
-    <Box inline mr={1.5}>
-      <span style={{ color: THEME.warn }}>◌</span> активность
-    </Box>
-    <Box inline>
-      <span style={{ color: '#d05090' }}>○</span> резидентный процесс
-    </Box>
-  </Box>
-);

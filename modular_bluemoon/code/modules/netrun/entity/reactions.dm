@@ -72,7 +72,11 @@
 			ice.reaction.wake()
 	if(!network)
 		return
-	var/has_threat = length(entities)
+	var/has_threat = FALSE
+	for(var/mob/camera/netrun_entity/entity as anything in entities)
+		if(entity.defense_threat())
+			has_threat = TRUE
+			break
 	if(!has_threat)
 		for(var/datum/netrun_console/console as anything in SSnetrun.currentbreaches)
 			var/datum/netrun_breach/breach = console.intrusion.breach

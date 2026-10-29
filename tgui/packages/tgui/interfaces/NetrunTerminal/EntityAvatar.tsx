@@ -9,6 +9,7 @@ const avatars: Record<string, { name: string; art: ReactNode }> = {
   eye: { name: 'Наблюдатель', art: <><path d="M3 24s9-13 21-13 21 13 21 13-9 13-21 13S3 24 3 24Z" /><circle cx="24" cy="24" r="8" /><circle cx="24" cy="24" r="2" fill="currentColor" /><path d="M24 3v4m0 34v4M9 7l3 4m24 26 3 4" opacity=".4" /></> },
   orb: { name: 'Орбита', art: <><circle cx="24" cy="24" r="13" /><ellipse cx="24" cy="24" rx="23" ry="8" transform="rotate(-35 24 24)" /><path d="M24 11c-8 9-8 17 0 26m0-26c8 9 8 17 0 26" opacity=".45" /><circle cx="39" cy="12" r="3" fill="currentColor" stroke="none" /></> },
 };
+export const PERSONA_AVATAR_OPTIONS = Object.entries(avatars).map(([id, glyph]) => ({ id, name: glyph.name }));
 
 /** Curated vector identities remain sharp at HUD, contact-card and profile sizes. */
 export const EntityAvatar = ({ avatar = 'cipher', accent = 'cyan', size = 48 }: { avatar?: string; accent?: string; size?: number }) => {

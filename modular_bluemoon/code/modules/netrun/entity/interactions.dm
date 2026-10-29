@@ -24,7 +24,7 @@
 		entry["can_message"] = entry["can_signal"]
 		if(istype(occupant, /mob/camera/netrun_entity))
 			var/mob/camera/netrun_entity/entity = occupant
-			entry["state"] = entity.is_stunned() ? "оглушён" : (entity.dive_link?.body ? "погружение" : "резидент")
+			entry["state"] = entity.contact_state()
 		else if(istype(occupant, /datum/netrun_ice))
 			var/datum/netrun_ice/ice = occupant
 			entry["state"] = ice.is_stunned() ? "оглушён" : (ice.pending_program ? "готовит атаку" : (ice.enemy_ref?.resolve() ? "преследует" : (ice.kind == NETRUN_ICE_HUNTER ? "патрулирует" : "охраняет узел")))
@@ -34,6 +34,8 @@
 
 /// Describe the viewer's actual risk without granting access to undiscovered residents.
 /datum/netrun_console/proc/ice_contact_threat(datum/netrun_ice/ice, datum/component/netrun_node/node)
+	if(ice.agent?.profile.illegal)
+		return "Нелегальный BLACK ICE: доступ USER не защищает. Нейронная обратная связь повреждает тело при нейроподключении. Щит ослабляет удар, выход из узла или отмена взлома срывают доставку."
 	var/mob/camera/netrun_entity/entity = combat_self()
 	if(!istype(entity))
 		return "Атакует процессы без доступа ПОЛЬЗОВАТЕЛЯ. Трассирует активный взлом своего узла или ЛВС."

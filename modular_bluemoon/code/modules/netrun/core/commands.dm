@@ -20,6 +20,13 @@
 	/// Diagnostic execution does not mutate the target's native state. Its logs and
 	/// operator UI still update, without an extra native power/binding reconciliation.
 	var/read_only = FALSE
+	/// Interface section that renders this command instead of the generic list (e.g. "fortress").
+	var/group
+	/// Optional executable requirement, shared by cards and late delivery checks.
+	var/required_daemon
+
+/datum/netrun_command/proc/visible_to(datum/netrun_console/console)
+	return !required_daemon || !!console.daemon_bonus(required_daemon)
 
 /// Выполнить команду. Возвращает текст результата или null при неудаче (причину пишет в консоль сам)
 /datum/netrun_command/proc/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
@@ -45,6 +52,8 @@
 	var/reason
 	if(console.is_locked())
 		reason = "Сетевой клиент заблокирован."
+	else if(required_daemon && !console.daemon_bonus(required_daemon))
+		reason = "Нужна программа [required_daemon].exe."
 	else if(!reachable)
 		reason = "Нет действующего маршрута к узлу."
 	else if(!online)
@@ -66,6 +75,7 @@
 		"allowed" = !reason,
 		"illegal" = legit < access,
 		"trace" = legit < access ? round(trace * node.get_security() * console.effective_trace_mult()) : 0,
+		"group" = group,
 	)
 
 /datum/netrun_command/proc/help_text(datum/component/netrun_node/node, datum/netrun_console/console, full_id)
@@ -159,6 +169,8 @@
 	works_offline = TRUE
 
 /datum/netrun_command/scan/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	node.observe_location(TRUE)
+	node.queue_presentation(NETRUN_CHANGED_STATE)
 	var/atom/A = node.parent
 	var/list/lines = list("[node.get_name()] [node.address] — [node.is_online() ? "в сети" : "НЕ ОТВЕЧАЕТ"], защита [node.get_security()]")
 	lines += A.netrun_status()
@@ -226,7 +238,16 @@
 	trace = 4
 	icon = "download"
 
+/datum/netrun_command/siphon/ui_entry(datum/component/netrun_node/node, datum/netrun_console/console, full_id)
+	. = ..()
+	if(.["allowed"] && console.node_level(node) < (node.fortress?.file_access_level(console) || 0))
+		.["allowed"] = FALSE
+		.["unavailable_reason"] = "Хранилище крепости требует доступа ROOT."
+
 /datum/netrun_command/siphon/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	if(console.node_level(node) < max(NETRUN_ACCESS_USER, node.fortress?.file_access_level(console) || 0))
+		console.log_line("Хранилище крепости требует доступа ROOT.", "bad")
+		return null
 	if(!console.daemon_bonus("siphon"))
 		return "Для массового слива нужен siphon.exe в памяти."
 	if(!node.file_store || !length(node.file_store.files))

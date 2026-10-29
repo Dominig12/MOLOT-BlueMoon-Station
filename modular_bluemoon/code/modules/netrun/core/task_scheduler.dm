@@ -184,8 +184,12 @@
 	graph.refresh_route_tables(limits.route_refresh_interval, limits.route_expiry_interval)
 	if(!graph.dirty && graph.revision != worker.patrol_topology_revision && length(worker.networks))
 		worker.initialize_patrol()
+	if(!graph.dirty && graph.revision != worker.fortress_topology_revision && length(worker.networks))
+		worker.initialize_fortresses()
 	if(!worker.lore_initialized && length(worker.nodes_by_address))
 		worker.initialize_lore()
+	if(!graph.dirty && length(worker.networks))
+		worker.maintain_bots()
 	return TRUE
 
 /// Bounded upstream topology preparation stays behind its own task implementation.

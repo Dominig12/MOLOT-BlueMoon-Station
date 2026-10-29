@@ -102,8 +102,16 @@
 #define NETRUN_MACHINE_LATENCY_SCALE 0.02
 #define NETRUN_MACHINE_MAX_LATENCY (0.25 SECONDS)
 #define NETRUN_MAX_PACKET_LOG 100
+/// Shared map event ring: arrivals, alerts and packet flights (send/done/fail).
+#define NETRUN_MAX_MAP_EVENTS 96
+/// Minimum display lifetime of a map event; a flight additionally lives for its transit time.
+#define NETRUN_MAP_EVENT_LIFETIME (4 SECONDS)
+/// Arrival ring shown after a flight reaches its destination.
+#define NETRUN_MAP_EVENT_TAIL (2 SECONDS)
 #define NETRUN_MAX_PENDING_REQUESTS 2048
 #define NETRUN_MAX_MACHINE_PACKETS 2048
+/// Machine flights drawn on maps per second; one station pair is drawn at most every two seconds.
+#define NETRUN_MAX_MACHINE_FLIGHTS 8
 #define NETRUN_APC_NEIGHBORS 3
 
 // Типы файлов
@@ -131,6 +139,9 @@
 // Враждебные процессы (ICE)
 #define NETRUN_ICE_SENTRY "sentry"
 #define NETRUN_ICE_HUNTER "hunter"
+#define NETRUN_ICE_BLACK "black"
+#define COMSIG_NETRUN_ICE_PROGRAM_RESOLVED "netrun_ice_program_resolved"
+#define COMSIG_NETRUN_ENTITY_SPEAK "netrun_entity_speak"
 /// Сколько персистентных патрульных процессов поднимается в начале раунда
 #define NETRUN_MAX_PATROLS 400
 /// Сколько лорных документов раскладывается по серверам станции в начале раунда
@@ -139,6 +150,9 @@
 /// События расширений: источник сигнала — сущность или её консоль.
 #define COMSIG_NETRUN_ENTITY_NODE_CHANGED "netrun_entity_node_changed"
 #define COMSIG_NETRUN_ENTITY_TICK "netrun_entity_tick"
+#define COMSIG_NETRUN_ENTITY_GOALS_CHANGED "netrun_entity_goals_changed"
+#define COMSIG_NETRUN_ENTITY_COMMAND_FINISHED "netrun_entity_command_finished"
+#define COMSIG_NETRUN_ENTITY_MODULE_READY "netrun_entity_module_ready"
 #define COMSIG_NETRUN_ENTITY_INTEGRITY "netrun_entity_integrity"
 #define COMSIG_NETRUN_CONSOLE_EVENT "netrun_console_event"
 /// Нелегальный сетевой доступ к кибернетическому узлу носителя: (datum/netrun_console, datum/component/netrun_node)
@@ -181,6 +195,76 @@
 #define NETRUN_CHANGED_REMOVED (1<<3)
 /// Journals and file contents change selected-device panels, never map markers or routing.
 #define NETRUN_CHANGED_DETAILS (1<<4)
+
+/// Storage capacities are authored in base cells and scaled once by this factor.
+#define NETRUN_STORAGE_SCALE 8
+
+/// Autonomous round content (bot population, fortress presets). Unit tests create it explicitly
+/// so ambient processes never interfere with unrelated assertions.
+#ifdef UNIT_TESTS
+#define NETRUN_AUTONOMOUS_CONTENT FALSE
+#else
+#define NETRUN_AUTONOMOUS_CONTENT TRUE
+#endif
+
+// Автономные сетевые боты: архетипы поведения
+#define NETRUN_BOT_RAIDER "raider"
+#define NETRUN_BOT_CUSTODIAN "custodian"
+#define NETRUN_BOT_POLICE "police"
+#define NETRUN_BOT_MENDER "mender"
+#define NETRUN_BOT_SENTINEL "sentinel"
+// Стороны ботов и крепостей
+#define NETRUN_FACTION_ROGUE "rogue"
+#define NETRUN_FACTION_STATION "station"
+#define NETRUN_FACTION_OWNER "owner"
+/// Запускаемая программа-агент: содержимое файла — id архетипа бота
+#define NETRUN_FILE_BOT "bot"
+/// Result of one bot goal step.
+#define NETRUN_BOT_GOAL_CONTINUE 0
+#define NETRUN_BOT_GOAL_DONE 1
+#define NETRUN_BOT_GOAL_FAILED 2
+/// Result of one movement action toward a node.
+#define NETRUN_BOT_MOVE_PROGRESS 0
+#define NETRUN_BOT_MOVE_ARRIVED 1
+#define NETRUN_BOT_MOVE_BLOCKED 2
+/// Autonomous processes alive at once, including player agents.
+#define NETRUN_MAX_BOTS 12
+#define NETRUN_MAX_AGENTS_PER_CONSOLE 2
+#define NETRUN_POLICE_QUOTA 2
+#define NETRUN_ROGUE_QUOTA 2
+#define NETRUN_CUSTODIAN_QUOTA 3
+
+// Модули сетевых крепостей
+#define NETRUN_FORT_WALL "wall"
+#define NETRUN_FORT_GATE "gate"
+#define NETRUN_FORT_TURRET "turret"
+#define NETRUN_FORT_TRAP "trap"
+#define NETRUN_FORT_ALARM "alarm"
+#define NETRUN_FORT_VAULT "vault"
+#define NETRUN_FORT_REGEN "regen"
+/// Intact walls add at most this much to a node's effective security (still capped at 5).
+#define NETRUN_FORT_MAX_SECURITY_BONUS 2
+#define NETRUN_FORT_MODULE_BUILDING "building"
+#define NETRUN_FORT_MODULE_ONLINE "online"
+#define NETRUN_FORT_MODULE_DESTROYED "destroyed"
+/// Extra node storage while an intact vault stands.
+#define NETRUN_FORT_VAULT_STORAGE (16 * NETRUN_STORAGE_SCALE)
+#define NETRUN_FORT_TRAP_REARM (30 SECONDS)
+/// Round-start/new important nodes fortified automatically, at most.
+#define NETRUN_MAX_FORTRESS_PRESETS 24
+
+/// Police incident registry is bounded; the oldest closed record is evicted first.
+#define NETRUN_MAX_INCIDENTS 32
+#define NETRUN_INCIDENT_LOW 1
+#define NETRUN_INCIDENT_MEDIUM 2
+#define NETRUN_INCIDENT_HIGH 3
+/// An incident without new reports for this long is no longer worth a police response.
+#define NETRUN_INCIDENT_STALE_AFTER (3 MINUTES)
+
+/// SSnetrun: (datum/netrun_incident) after a new incident is registered or an open one escalates.
+#define COMSIG_NETRUN_INCIDENT_REPORTED "netrun_incident_reported"
+/// SSnetrun: (datum/component/netrun_node) after a fortress is built, damaged, repaired or removed.
+#define COMSIG_NETRUN_FORTRESS_CHANGED "netrun_fortress_changed"
 
 #define NETRUN_TRACE_MAX 100
 /// Сколько трассировки спадает за секунду простоя

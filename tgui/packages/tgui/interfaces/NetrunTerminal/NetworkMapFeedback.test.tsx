@@ -37,6 +37,16 @@ const setup = () => {
 };
 beforeEach(() => { mount.mockImplementation(async (host) => makePixiSurfaceMock(host)); });
 
+test('device cables are visible by default and can be hidden explicitly', async () => {
+  const { panel } = setup();
+  await waitFor(() => expect(panel.getByLabelText('Карта сети').getAttribute('data-net-runtime')).toBe('ready'));
+  const surface = await mount.mock.results[0].value;
+  expect(surface.updateActors).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ showEndpointLinks: true }));
+  fireEvent.click(panel.getByText('Фильтры'));
+  fireEvent.click(panel.getByText('Кабели устройств'));
+  expect(surface.updateActors).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ showEndpointLinks: false }));
+});
+
 test('keyboard selection gives immediate GPU feedback and only the matching server receipt can reject it', async () => {
   const { panel, store, selection, update } = setup();
   await waitFor(() => expect(panel.getByLabelText('Карта сети').getAttribute('data-net-runtime')).toBe('ready'));

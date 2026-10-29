@@ -8,6 +8,7 @@
 	return LoadComponent(/datum/component/netrun_combatant/entity)
 
 /datum/netrun_ice/get_netrun_combatant()
+	RETURN_TYPE(/datum/component/netrun_combatant)
 	return LoadComponent(/datum/component/netrun_combatant/ice)
 
 /datum/component/netrun_combatant
@@ -34,6 +35,14 @@
 
 /datum/component/netrun_combatant/proc/heal(amount)
 	return
+
+/// Structures can be engaged from outside their node (fortress outer works from a neighbour).
+/datum/component/netrun_combatant/proc/allows_remote_attack(datum/netrun_console/console, datum/component/netrun_node/local_node)
+	return FALSE
+
+/// Attacking this target is an incident for the network police (station defenses).
+/datum/component/netrun_combatant/proc/protected_by_station()
+	return FALSE
 
 /datum/component/netrun_combatant/proc/ui_entry()
 	var/list/hp = integrity_payload()
@@ -116,11 +125,17 @@
 	var/datum/netrun_ice/ice = parent
 	ice.apply_heal(amount)
 
+/datum/component/netrun_combatant/ice/protected_by_station()
+	var/datum/netrun_ice/ice = parent
+	return !ice.agent?.profile.illegal
+
 /datum/component/netrun_combatant/ice/ui_entry()
 	. = ..()
 	var/datum/netrun_ice/ice = parent
 	.["programs"] = ice.program_payload()
 	.["casting"] = ice.casting_payload()
+	.["ice_kind"] = ice.kind
+	.["state"] = ice.agent?.state
 
 /// Compatibility helpers route effects through the owner's polymorphic component.
 /proc/netrun_combatant_integrity(datum/thing)

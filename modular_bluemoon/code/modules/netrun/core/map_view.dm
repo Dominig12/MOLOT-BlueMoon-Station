@@ -302,10 +302,10 @@
 	if(owner)
 		owner.invalidate_ui()
 
-/datum/netrun_map_view/proc/on_event_posted(datum/source, kind, from_ref, to_ref, list/route)
+/datum/netrun_map_view/proc/on_event_posted(datum/source, kind, from_ref, to_ref, list/route, lifetime = NETRUN_MAP_EVENT_LIFETIME)
 	SIGNAL_HANDLER
 	if(subscribed && owner && event_visible(from_ref, to_ref, route))
-		event_refresh_until = max(event_refresh_until, world.time + 4 SECONDS)
+		event_refresh_until = max(event_refresh_until, world.time + lifetime)
 		owner.invalidate_ui()
 
 /// Events only animate visible endpoints and route segments. A packet elsewhere
@@ -336,8 +336,8 @@
 /// subscription. Initialize its fade once from the bounded recent-event history.
 /datum/netrun_map_view/proc/reconcile_visible_events()
 	events_need_reconcile = FALSE
-	for(var/list/event as anything in SSnetrun.events)
-		var/until = event["t"] + 4 SECONDS
+	for(var/list/event as anything in SSnetrun.map_event_snapshot())
+		var/until = event["until"] || event["t"] + NETRUN_MAP_EVENT_LIFETIME
 		if(until <= world.time || !event_visible(event["from"], event["to"], event["route"]))
 			continue
 		event_refresh_until = max(event_refresh_until, until)
@@ -867,13 +867,13 @@
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(QDELETED(node))
 			continue
-		var/turf/position = node.physical_turf()
+		var/turf/position = node.observe_location()
 		// Known offscreen nodes still contribute to the sector catalog. A move
 		// across floors/LANs must revoke that catalog, even while another floor is viewed.
-		if(previous && !index && (previous["sector"] != node.binding_sector || previous["z"] != position?.z || previous["network"] != node.network?.id))
+		if(previous && !index && (previous["sector"] != node.last_known_sector || previous["z"] != position?.z || previous["network"] != node.last_known_network))
 			rebuild(graph)
 			return
-		var/now_shown = node.binding_sector == active_sector && position?.z == active_z && owner.can_route(node) && (owner.daemon_bonus("mapper") || (address in revealed_addresses) || owner.node_visible(node))
+		var/now_shown = node.last_known_sector == active_sector && position?.z == active_z && owner.can_route(node) && (owner.daemon_bonus("mapper") || (address in revealed_addresses) || owner.node_visible(node))
 		// Floor changes and a personal endpoint changing owner can change visibility
 		// without changing its APC attachment. Ordinary same-floor motion stays local.
 		if(!!index != !!now_shown)
@@ -1005,9 +1005,9 @@
 			continue
 		var/list/previous = node_entries[address]
 		var/index = node_indexes[address]
-		var/turf/position = node.physical_turf()
+		var/turf/position = node.observe_location()
 		var/permitted = owner.can_route(node) && (reveal_all || (address in revealed_addresses) || owner.node_visible(node))
-		if(node.binding_sector != active_sector || position?.z != active_z)
+		if(node.last_known_sector != active_sector || position?.z != active_z)
 			// Other floors contribute to the sector catalog and relay chooser.
 			if(!!previous != !!permitted)
 				return FALSE
@@ -1123,8 +1123,8 @@
 /// One serialization seam makes incremental work measurable without constructing fake topology.
 /datum/netrun_map_view/proc/project_entry(datum/component/netrun_node/node, neighbor_count)
 	var/list/entry = node.ui_entry(owner)
-	entry["network"] = node.network?.id
-	entry["sector"] = node.binding_sector
+	entry["network"] = node.last_known_network
+	entry["sector"] = node.last_known_sector
 	entry["neighbor_count"] = neighbor_count
 	return entry
 

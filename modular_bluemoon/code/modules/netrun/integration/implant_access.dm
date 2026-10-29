@@ -62,7 +62,7 @@
 		return FALSE
 	if(action == "node_interact" && params["id"] != "dive")
 		return FALSE
-	if(!(action in list("choose_entry", "choose_connection", "unjack", "eject_shard", "node_interact", "file_select", "file_new", "file_edit", "file_rename", "file_copy", "file_move", "delete_local", "read")))
+	if(!(action in list("choose_entry", "choose_connection", "unjack", "insert_shard", "eject_shard", "node_interact", "file_select", "file_new", "file_edit", "file_rename", "file_copy", "file_move", "file_import", "agent_create", "delete_local", "read")))
 		return FALSE
 	return ..()
 
@@ -209,8 +209,15 @@
 /datum/netrun_console/implant/host_actions()
 	. = ..()
 	. += list(list("id" = "choose_entry", "name" = "Выбрать узел погружения", "icon" = "person-walking-arrow-right"))
+	if(!inventory.shard)
+		. += list(list("id" = "insert_shard", "name" = "Подключить шард из руки", "icon" = "sd-card"))
 
 /datum/netrun_console/implant/host_act(action, list/params, mob/user)
+	if(action == "insert_shard")
+		var/obj/item/organ/cyberimp/brain/netlink/implant = host
+		if(available_to(user))
+			INVOKE_ASYNC(implant, TYPE_PROC_REF(/obj/item/organ/cyberimp/brain/netlink, insert_held_shard), user)
+		return TRUE
 	if(action == "choose_entry")
 		if(available_to(user))
 			INVOKE_ASYNC(src, PROC_REF(choose_entry), user)

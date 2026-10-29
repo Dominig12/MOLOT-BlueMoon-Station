@@ -1,5 +1,6 @@
 import { GraphOverlay } from './graphPresentation';
 import { GraphScene, PlacedNode } from './graphScene';
+import { glyphRadius } from './nodeGlyphs';
 import { PixiActors } from './pixiActors';
 import { MockContainer, MockGraphics, mockPixi, resetPixiMock } from './testSupport/pixiLibraryMock';
 
@@ -78,10 +79,102 @@ test('zoomed-out Pixi actors keep device bodies small and enlarge ICE/entity rin
   const layer = new PixiActors(mockPixi);
   layer.update(scene, overlay(), [], scene.adjacency, 0);
   layer.setViewport({ left: -100, right: 300, top: -100, bottom: 100 }, .2);
+  const camera = MockContainer.instances.find((entry) => entry.label === 'device:CAM').children[0] as MockGraphics;
+  const reach = Math.max(...camera.calls.filter((call) => call.op === 'moveTo' || call.op === 'lineTo')
+    .map((call) => Math.hypot(Number(call.args[0]), Number(call.args[1]))));
+  expect(reach).toBeLessThanOrEqual(glyphRadius('camera') * 1.5); // The device body is never inflated.
   const radii = MockGraphics.graphics.flatMap((graphic) => graphic.calls
     .filter((call) => call.op === 'circle').map((call) => call.args[2]));
-  expect(radii).toContain(8);
   expect(radii.some((radius) => Number(radius) >= 46)).toBe(true);
+});
+
+test('a sent packet flies its hop route for its real transit time, then reports its outcome', () => {
+  const scene = new GraphScene();
+  scene.update([node('A'), node('B', 0, 100), node('C', 100, 100)], [
+    { id: 'AB', from: 'A', to: 'B', kind: 'apc' }, { id: 'BC', from: 'B', to: 'C', kind: 'apc' },
+  ]);
+  const layer = new PixiActors(mockPixi);
+  const sent = { kind: 'packet' as const, id: 'p1', packet: 'command', phase: 'send' as const, from: 'A', to: 'C', age: 0, duration: 2, route: ['A', 'B', 'C'] };
+  layer.update(scene, overlay({ events: [sent] }), [], scene.adjacency, 0);
+  expect(layer.animate(1000)).toBe(true);
+  const effects = MockGraphics.graphics.find((entry) => entry.label === 'traffic-and-ping');
+  // Halfway through a two-second flight the packet sits at the B corner of the A-B-C route.
+  expect(effects.calls.filter((call) => call.op === 'circle').some((call) => call.args[0] === 0 && call.args[1] === 100)).toBe(true);
+  // A repeated push of the same packet keeps its clock instead of restarting the flight.
+  layer.update(scene, overlay({ events: [{ ...sent, age: 1.5 }] }), [], scene.adjacency, 1500);
+  layer.animate(1500);
+  expect(effects.calls.filter((call) => call.op === 'circle').some((call) => call.args[0] === 50 && call.args[1] === 100)).toBe(true);
+  expect(layer.animate(2500)).toBe(true); // Arrival ring after the transit time.
+  expect(layer.animate(4000)).toBe(false);
+  layer.update(scene, overlay({ events: [{ ...sent, id: 'p2', phase: 'fail', age: 0 }] }), [], scene.adjacency, 5000);
+  expect(layer.animate(5100)).toBe(true);
+  expect(effects.calls.some((call) => call.op === 'lineTo')).toBe(true); // A failed delivery is crossed out at the target.
+  expect(layer.animate(6300)).toBe(false);
+});
+
+test('a fast packet first observed with its receipt traverses its actual path once within its original expiry', () => {
+  const scene = new GraphScene();
+  scene.update([node('A'), node('B', 0, 100), node('C', 100, 100)], [
+    { id: 'AB', from: 'A', to: 'B', kind: 'apc' }, { id: 'BC', from: 'B', to: 'C', kind: 'apc' },
+  ]);
+  const sent = { kind: 'packet' as const, id: 'fast', packet: 'command', from: 'A', to: 'C', own: true,
+    route: ['A', 'B', 'C'], phase: 'send' as const, duration: .01, age: .2, remaining_ms: 0, lifetime_ms: 1000 };
+  const layer = new PixiActors(mockPixi);
+  layer.update(scene, overlay({ events: [sent, { ...sent, phase: 'done', age: .19 }] }), [], scene.adjacency, 0);
+  layer.animate(325);
+  const effects = MockGraphics.graphics.find((entry) => entry.label === 'traffic-and-ping');
+  expect(effects.calls.filter((call) => call.op === 'lineTo').map((call) => call.args)).toEqual([[0, 100], [100, 100]]);
+  expect(effects.calls.filter((call) => call.op === 'circle').at(-1).args.slice(0, 2)).toEqual([0, 100]);
+  layer.update(scene, overlay({ events: [{ ...sent, phase: 'done', age: .69, lifetime_ms: 500 }] }), [], scene.adjacency, 500);
+  layer.animate(650);
+  expect(effects.calls.filter((call) => call.op === 'circle')).toHaveLength(1); // One outcome, no restarted comet.
+  expect(effects.calls.filter((call) => call.op === 'circle')[0].args.slice(0, 2)).toEqual([100, 100]);
+  expect(layer.animate(1100)).toBe(false);
+});
+
+test('a receipt continues an already drawn dispatch and never replays it from the source', () => {
+  const scene = new GraphScene(); scene.update([node('A'), node('B', 200)], [{ id: 'AB', from: 'A', to: 'B', kind: 'apc' }]);
+  const layer = new PixiActors(mockPixi);
+  const sent = { kind: 'packet' as const, id: 'seen', from: 'A', to: 'B', route: ['A', 'B'], phase: 'send' as const, duration: 2, age: 0 };
+  layer.update(scene, overlay({ events: [sent] }), [], scene.adjacency, 0); layer.animate(1000);
+  layer.update(scene, overlay({ events: [{ ...sent, phase: 'done' }] }), [], scene.adjacency, 1000); layer.animate(1000);
+  const effects = MockGraphics.graphics.find((entry) => entry.label === 'traffic-and-ping');
+  expect(effects.calls.filter((call) => call.op === 'circle').at(-1).args.slice(0, 2)).toEqual([100, 0]);
+  layer.animate(1325);
+  expect(effects.calls.filter((call) => call.op === 'circle')).toHaveLength(1);
+  expect(effects.calls.filter((call) => call.op === 'circle')[0].args.slice(0, 2)).toEqual([200, 0]);
+});
+
+test('completed paths retain private gaps and missing route metadata never invents a BFS path', () => {
+  const scene = new GraphScene(); scene.update([node('A'), node('B', 100), node('C', 200), node('D', 300)], [
+    { id: 'AB', from: 'A', to: 'B', kind: 'apc' }, { id: 'BC', from: 'B', to: 'C', kind: 'apc' }, { id: 'CD', from: 'C', to: 'D', kind: 'apc' },
+  ]);
+  const layer = new PixiActors(mockPixi);
+  layer.update(scene, overlay({ events: [{ kind: 'packet', id: 'gap', from: 'A', to: 'D', phase: 'done', age: 0,
+    route: ['A', 'B', '', 'C', 'D'] }] }), [], scene.adjacency, 0); layer.animate(325);
+  const effects = MockGraphics.graphics.find((entry) => entry.label === 'traffic-and-ping');
+  expect(effects.calls.filter((call) => call.op === 'lineTo').map((call) => call.args)).toEqual([[100, 0], [300, 0]]);
+  expect(effects.calls.filter((call) => call.op === 'circle')).toHaveLength(0);
+  layer.update(scene, overlay({ events: [{ kind: 'packet', id: 'legacy', from: 'A', to: 'D', phase: 'done', age: 0 }] }), [], scene.adjacency, 2000);
+  layer.animate(2100);
+  expect(effects.calls.some((call) => call.op === 'lineTo')).toBe(false);
+});
+
+test('explicit redacted packet routes never fall back to a fabricated visible BFS route', () => {
+  const scene = new GraphScene();
+  scene.update([node('A'), node('B', 0, 100), node('C', 100, 100)], [
+    { id: 'AB', from: 'A', to: 'B', kind: 'apc' }, { id: 'BC', from: 'B', to: 'C', kind: 'apc' },
+  ]);
+  const layer = new PixiActors(mockPixi);
+  layer.update(scene, overlay({ events: [{ kind: 'packet', id: 'private', from: 'A', to: 'C', own: true,
+    route: ['A', '', 'C'], phase: 'send', duration: 2, age: 0 }] }), [], scene.adjacency, 0);
+  layer.animate(500);
+  const effects = MockGraphics.graphics.find((entry) => entry.label === 'traffic-and-ping');
+  expect(effects.calls.some((call) => call.op === 'lineTo')).toBe(false);
+  const revoked = new GraphScene(); revoked.update([], []);
+  layer.update(revoked, overlay(), [], revoked.adjacency, 600);
+  expect(layer.animate(600)).toBe(false);
+  expect(effects.calls).toEqual([]);
 });
 
 test('a ping clears its route geometry at expiry without clearing stored or waypoint routes', () => {

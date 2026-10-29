@@ -52,6 +52,63 @@
 	TEST_ASSERT(!navigation.is_active() && !navigation.timer, "A failed route must release its timer and queue")
 	TEST_ASSERT_NULL(navigation.ui_payload(), "Finished/cancelled navigation must clear the HUD")
 
+/// One contact lock follows the moving process by real hops, preserving manual combat.
+/datum/unit_test/netrun_navigation_pursuit/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/mob/camera/netrun_entity/hunter = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
+	var/mob/camera/netrun_entity/target = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
+	hunter.console.operator = hunter
+	TEST_ASSERT(hunter.console.store_file(scene.key_file()), "The hunter has the same traversal key a player needs")
+	TEST_ASSERT(hunter.console.start_pursuit(REF(target)), "An actual local combat contact can be locked")
+	var/datum/netrun_entity_navigation/navigation = hunter.navigation
+	TEST_ASSERT(!navigation.is_active() && !navigation.timer, "A stationary contact needs no polling timer")
+	var/list/lock = navigation.pursuit_payload()
+	TEST_ASSERT_EQUAL(lock["target_ref"], REF(target), "Combat retains the identity of the selected process")
+	var/before = target.integrity
+	target.enter_node(scene.node_b)
+	TEST_ASSERT(navigation.timer, "A target movement signal schedules one owned follow-up")
+	deltimer(navigation.timer)
+	navigation.advance_route(navigation.generation)
+	TEST_ASSERT_EQUAL(hunter.host_node, scene.apc_node, "The first step crosses the real APC instead of teleporting to the target")
+	TEST_ASSERT_EQUAL(target.integrity, before, "Pursuit never fires a combat program automatically")
+	target.enter_node(scene.node_a)
+	hunter.next_hop = world.time
+	deltimer(navigation.timer)
+	navigation.advance_route(navigation.generation)
+	TEST_ASSERT_EQUAL(hunter.host_node, scene.node_a, "The next step replans to the target's new node")
+	TEST_ASSERT_NOTNULL(navigation.pursuit_payload(), "Meeting the target preserves the combat lock")
+	TEST_ASSERT(!navigation.timer, "A caught stationary target does not keep scheduling route scans")
+	var/datum/netrun_file/weapon = netrun_program_file("strike")
+	TEST_ASSERT(hunter.console.store_file(weapon), "The player's ordinary attack program fits")
+	TEST_ASSERT(hunter.console.program_use(weapon.uid, REF(target)), "The same selected target can be attacked after following")
+	TEST_ASSERT(target.integrity < before, "Combat still uses the actual attack program")
+	hunter.console.stop_pursuit()
+	TEST_ASSERT_NULL(navigation.pursuit_payload(), "Stopping removes the lock")
+	target.enter_node(scene.node_b)
+	TEST_ASSERT(!navigation.timer, "A stopped lock releases the target movement subscription")
+
+/// A lock is not a tracker for unseen objects and cannot bypass later access loss.
+/datum/unit_test/netrun_navigation_pursuit_access/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/mob/camera/netrun_entity/hunter = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
+	var/mob/camera/netrun_entity/target = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_b)
+	TEST_ASSERT(!hunter.console.start_pursuit(REF(target)), "A guessed REF to a non-contact process must not start a tracker")
+	target.enter_node(scene.node_a)
+	TEST_ASSERT(hunter.console.start_pursuit(REF(target)), "The process becomes lockable when it is an actual contact")
+	target.enter_node(scene.node_b)
+	var/list/lock = hunter.navigation.pursuit_payload()
+	TEST_ASSERT_EQUAL(lock["node"], scene.node_a.address, "An unvalidated movement never discloses the hidden destination")
+	deltimer(hunter.navigation.timer)
+	hunter.navigation.advance_route(hunter.navigation.generation)
+	TEST_ASSERT_EQUAL(hunter.host_node, scene.node_a, "The hunter cannot cross nodes without USER or a traversal key")
+	TEST_ASSERT_NULL(hunter.navigation.pursuit_payload(), "No authorized route ends the pursuit instead of revealing the target")
+	target.enter_node(scene.node_a)
+	TEST_ASSERT(!hunter.navigation.timer, "Failed pursuit releases its timer and target subscription")
+	TEST_ASSERT(hunter.console.start_pursuit(REF(target)), "A new visible encounter can be locked again")
+	qdel(target)
+	TEST_ASSERT_NULL(hunter.navigation.pursuit_payload(), "Deleting the target releases the weak lock immediately")
+	TEST_ASSERT(!hunter.navigation.timer, "Target deletion cancels all follow callbacks")
+
 /// A station can have hundreds of endpoints; discover a permitted destination after 200 leaves.
 /datum/unit_test/netrun_navigation_large_network/Run()
 	var/turf/origin = run_loc_floor_bottom_left

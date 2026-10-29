@@ -17,7 +17,7 @@ const setup = () => {
   const update = (file: Partial<typeof original>) => act(() => store.dispatch(backendUpdate({ data: { file: { ...original, ...file } } })));
   const editText = (value: string) => fireEvent.change(textarea(), { target: { value } });
   const editName = (value: string) => fireEvent.input(name(), { target: { value } });
-  return { panel, textarea, name, update, editText, editName, topic };
+  return { panel, textarea, name, update, editText, editName, topic, store };
 };
 
 test('clean fields follow external edits to the same file without remounting its editor', () => {
@@ -64,4 +64,16 @@ test('selecting another file starts its own editor even when the old file has un
   update({ uid: 'file:two', name: 'other.txt', content: 'Другой файл' });
   expect(textarea().value).toBe('Другой файл');
   expect(name().value).toBe('other.txt');
+});
+
+test('a shard file can be copied or moved explicitly into local memory', () => {
+  const { panel, topic, store } = setup();
+  act(() => store.dispatch(backendUpdate({ data: {
+    file: { ...original, source: 'shard', can_import: true },
+    shard: { name: 'Шард', used: 1, capacity: 10, files: [original] }, storage: { used: 0, capacity: 10, files: [] },
+  } })));
+  fireEvent.click(panel.getByText('Копировать в память'));
+  fireEvent.click(panel.getByText('Перенести в память'));
+  expect(topic.mock.calls.filter(([message]) => message.type === 'act/file_import').map(([message]) => JSON.parse(message.payload)))
+    .toEqual([{ uid: original.uid, move: false }, { uid: original.uid, move: true }]);
 });

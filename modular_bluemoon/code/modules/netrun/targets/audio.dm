@@ -51,6 +51,7 @@
 
 /obj/item/radio/intercom/Initialize(mapload, ndir, building)
 	. = ..()
+	AddComponent(/datum/component/netrun_audio_transceiver/intercom)
 	AddComponent(/datum/component/netrun_node, NETRUN_NODE_INTERCOM, list("mic_toggle", "audio_log", "listen", "audio_tap"), 1, list(ACCESS_TCOMSAT))
 
 /obj/item/radio/intercom/netrun_online(remote = TRUE)

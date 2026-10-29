@@ -59,13 +59,13 @@
 	return world.time >= burnt_until
 
 /obj/item/netrun_deck/netrun_status()
-	return list("Память: [netrun_storage_used(console.inventory.local_store.files)]/[storage_capacity]", "Кабель: [console.connection.jack ? console.connection.jack.address : "не подключён"]")
+	return list("Память: [netrun_storage_used(console.inventory.local_store.files)]/[console.inventory.local_store.capacity]", "Кабель:[console.connection.jack ? console.connection.jack.address : "не подключён"]")
 
 /obj/item/organ/cyberimp/brain/netlink/netrun_owner_access(datum/netrun_console/source)
 	return owner && netrun_console_owner(source) == owner ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_NONE
 
 /obj/item/organ/cyberimp/brain/netlink/netrun_online(remote = TRUE)
-	return owner && owner.stat != DEAD && !netrun_suppressed()
+	return owner && owner.stat != DEAD && !netrun_suppressed() && owner.netrun_network_enabled()
 
 /obj/item/organ/cyberimp/brain/netlink/netrun_name()
 	return "[owner ? owner.name : name] — нейролинк"

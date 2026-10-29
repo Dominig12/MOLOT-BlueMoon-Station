@@ -20,13 +20,29 @@
 
 /datum/unit_test/netrun_zero_capacity_manual/Run()
 	var/obj/item/endpoint = allocate(/obj/item)
-	var/datum/component/netrun_node/node = endpoint.AddComponent(/datum/component/netrun_node, NETRUN_NODE_ATMOS)
+	var/datum/component/netrun_node/node = endpoint.AddComponent(/datum/component/netrun_node, NETRUN_NODE_ATMOS, list(), 1, list(), 0)
 	TEST_ASSERT_NOTNULL(node.file_store, "Storage-less nodes still need their built-in documentation")
 	TEST_ASSERT_EQUAL(node.file_store.capacity, 0, "Documentation must not grant a new writable disk")
 	TEST_ASSERT_EQUAL(length(node.file_store.files), 1, "A storage-less endpoint must contain only its manual")
 	var/datum/netrun_file/manual = node.file_store.files[1]
 	TEST_ASSERT_EQUAL(manual.name, "readme.txt", "The built-in manual needs the expected filename")
 	TEST_ASSERT(findtext(manual.content, "атмос"), "An atmospheric endpoint needs its own usage instructions")
+
+/// Writable memory now covers every endpoint, not only purpose-built netrun terminals.
+/datum/unit_test/netrun_storage_all_endpoints/Run()
+	for(var/node_type in list(NETRUN_NODE_AI, NETRUN_NODE_SERVER, NETRUN_NODE_TERMINAL, NETRUN_NODE_GATEWAY, NETRUN_NODE_APC, NETRUN_NODE_CAMERA, NETRUN_NODE_ATMOS, NETRUN_NODE_IMPLANT, NETRUN_NODE_DECK))
+		var/obj/item/host = allocate(/obj/item)
+		var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, node_type)
+		TEST_ASSERT_EQUAL(node.file_store.capacity, netrun_node_storage_capacity(node_type), "Omitted capacity must use the endpoint's scaled writable memory")
+		TEST_ASSERT(node.file_store.capacity >= 4 * NETRUN_STORAGE_SCALE, "Even ordinary native endpoints need useful writable storage")
+		var/datum/netrun_file/file = new("payload.txt", NETRUN_FILE_TEXT, "payload", node.file_store.capacity)
+		TEST_ASSERT(node.file_store.insert(file), "Firmware documentation must leave the entire endpoint payload memory available")
+	for(var/datum/netrun_console/path as anything in typesof(/datum/netrun_console))
+		TEST_ASSERT(initial(path.initial_storage_capacity) >= NETRUN_STORAGE_SCALE, "Every client subtype, including circuits and entities, must inherit expanded memory")
+	var/obj/item/netrun_shard/shard = allocate(/obj/item/netrun_shard)
+	var/obj/item/netrun_deck/deck = allocate(/obj/item/netrun_deck)
+	TEST_ASSERT_EQUAL(shard.file_store.capacity, 8 * NETRUN_STORAGE_SCALE, "Removable media must use the same expansion factor")
+	TEST_ASSERT_EQUAL(deck.console.inventory.local_store.capacity, 8 * NETRUN_STORAGE_SCALE, "The physical deck must expose its actual expanded client memory")
 
 /datum/unit_test/netrun_manual_live_contracts/Run()
 	var/obj/item/netrun_provider_test/endpoint = allocate(/obj/item/netrun_provider_test)
@@ -109,6 +125,7 @@
 	var/datum/netrun_entity_contact_scene/scene = allocate(/datum/netrun_entity_contact_scene, run_loc_floor_bottom_left)
 	scene.authorize()
 	scene.console.access_session.node_access[scene.target_node.address] = NETRUN_ACCESS_USER
+	scene.target_node.file_store.capacity = 0
 	var/datum/netrun_file/manual = scene.source_node.file_store.files[1]
 	TEST_ASSERT(scene.source_node.file_store.remove(manual), "The fixture must transfer actual ownership of a firmware file")
 	TEST_ASSERT(scene.console.inventory.local_store.insert(manual), "The sender must actually own the file before upload")
@@ -201,7 +218,8 @@
 	TEST_ASSERT_EQUAL(shard.loc, scene.implant, "A process cannot teleport a shard out of the unconscious body's implant")
 	TEST_ASSERT_EQUAL(inventory.shard, shard, "A rejected remote eject must leave the physical shard attached")
 	TEST_ASSERT(inventory.delete_file(deleted), "Deleting in the dive must affect the original implant disk")
-	var/datum/netrun_file/downloaded = new("downloaded.txt", NETRUN_FILE_TEXT, "download", 5)
+	// Fill exactly the real remaining implant capacity, whatever the configured size.
+	var/datum/netrun_file/downloaded = new("downloaded.txt", NETRUN_FILE_TEXT, "download", inventory.local_store.capacity - inventory.local_store.used())
 	TEST_ASSERT(inventory.store_file(downloaded), "A file downloaded in the dive must fit the actual implant capacity")
 	var/datum/netrun_file/overflow = new("overflow.txt", NETRUN_FILE_TEXT, "overflow", 1)
 	TEST_ASSERT(!inventory.store_file(overflow), "The resident must not gain extra capacity that would lose files on return")

@@ -51,9 +51,9 @@ DM runner автоматически выбирает подключённые `
 Дополнительные проверки интерфейса из `tgui/`:
 
 ```powershell
-node .yarn/releases/yarn-4.15.0.cjs tsc --noEmit
-node .yarn/releases/yarn-4.15.0.cjs eslint packages/tgui/interfaces/NetrunTerminal --ext .ts,.tsx
-node .yarn/releases/yarn-4.15.0.cjs run tgui:build
+node .yarn/releases/yarn-4.18.1.cjs tsc --noEmit
+node .yarn/releases/yarn-4.18.1.cjs eslint packages/tgui/interfaces/NetrunTerminal --ext .ts,.tsx
+node .yarn/releases/yarn-4.18.1.cjs run tgui:build
 ```
 
 Логи DM находятся в `data/logs/ci-hermetic/`, выборка — в
@@ -105,6 +105,9 @@ flowchart LR
 | `entity/navigation.dm` | Поиск разрешённого пути, отмена/замена маршрута и cooldown |
 | `entity/reactions.dm` | Событийная реакция ICE и единственный отменяемый таймер боевого дедлайна |
 | `integration/atmospherics.dm` | Воздушная сигнализация и два вида насосов |
+| `core/incidents.dm` | Ограниченный журнал инцидентов для сетевой полиции |
+| `core/fortress*.dm` | Крепость узла, модули и их боевой компонент, команды и `forge.exe`, готовые шаблоны |
+| `entity/bots.dm`, `entity/bot_*.dm`, `entity/police.dm` | Моб и автономная консоль бота, мозг (задача `bot`), цели, программы, население, агенты игрока, полиция |
 
 Расширяйте соответствующий контракт подтипом. Новому виду задачи нужен
 `/datum/netrun_task` с уникальным `kind` и `execute(worker, limits)`; менять switch
