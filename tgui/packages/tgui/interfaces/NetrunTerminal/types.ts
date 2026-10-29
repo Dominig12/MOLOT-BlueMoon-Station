@@ -48,6 +48,10 @@ export type FortressModule = {
   status: 'online' | 'building' | 'destroyed' | 'offline';
   /** Remaining construction or re-arm time, seconds. */
   remaining?: number | null;
+  id?: string;
+  jammed?: boolean;
+  repair_command?: string;
+  dismantle_command?: string;
 };
 
 export type FortressDetails = {
@@ -62,6 +66,7 @@ export type FortressDetails = {
   /** The viewer may build, repair or dismantle (ROOT and forge.exe). */
   can_manage: boolean;
   manage_reason?: string | null;
+  storage?: { used: number; capacity: number; vault_bonus: number; required_access: number };
 };
 
 export type NetCommand = {
@@ -398,6 +403,11 @@ export type NetEvent = {
   to: string | null;
   /** Seconds since the server posted the event. */
   age: number;
+  /** Stable server event identity, independent of repeated UI pushes. */
+  event_id?: string | number;
+  /** Remaining real transit / visibility lifetime at serialization, in milliseconds. */
+  remaining_ms?: number;
+  lifetime_ms?: number;
   /** Hop addresses; undisclosed hops are "". */
   route?: string[] | null;
   /** Packet flight id (kind === 'packet'). */
@@ -426,7 +436,11 @@ export type AgentState = {
   state: string;
   goal: string | null;
   storage: { used: number; capacity: number };
-  orders: { id: string; name: string; needs_node?: boolean }[];
+  persona?: Persona;
+  programs?: CombatProgram[];
+  files?: NetFile[];
+  goals?: { id: string; name: string; desc: string; selected?: boolean }[];
+  orders: { id: string; name: string; needs_node?: boolean; enabled?: boolean; reason?: string }[];
 };
 
 export type Gateway = {

@@ -24,6 +24,20 @@
 	/// Custodians report rogue processes they meet.
 	var/watch_for_rogues = FALSE
 	var/next_rogue_report = 0
+	/// Exactly one ordinary command may be outstanding for this brain.
+	var/command_serial = 0
+	var/command_nonce
+	var/command_address
+	var/command_id
+	var/command_phase
+	var/command_result
+	var/command_deadline = 0
+	var/datum/weakref/command_packet_ref
+	var/order_command
+	var/order_command_address
+	/// A rotating itinerary includes distant nodes without re-scanning the station each think.
+	var/list/patrol_candidates
+	var/patrol_cursor = 1
 
 /datum/netrun_bot_brain/New(mob/camera/netrun_entity/bot/owner)
 	src.owner = owner
@@ -36,6 +50,7 @@
 	QDEL_LIST(goals)
 	pending_attack_ref = null
 	order_node_ref = null
+	release_incident()
 	owner = null
 	return ..()
 
@@ -79,6 +94,9 @@
 		owner.console.log_line("Связь с владельцем потеряна.", "bad")
 		owner.dissolve()
 		return
+	if(owner.expires_at && world.time >= owner.expires_at)
+		owner.retire()
+		return
 	if(!owner.host_node)
 		state = "без узла"
 		return
@@ -90,6 +108,9 @@
 	if(combat_step())
 		return
 	var/datum/netrun_bot_goal/goal = current_goal()
+	if(goal && world.time >= goal.expires_at)
+		finish_goal(goal)
+		goal = null
 	if(!goal)
 		owner.program.plan(src)
 		goal = current_goal()
@@ -99,7 +120,7 @@
 	var/result = goal.advance()
 	if(QDELETED(src) || QDELETED(goal))
 		return
-	if(result != NETRUN_BOT_GOAL_CONTINUE || world.time > goal.expires_at)
+	if(result != NETRUN_BOT_GOAL_CONTINUE || world.time >= goal.expires_at)
 		finish_goal(goal)
 
 // MARK: Цели
@@ -117,17 +138,74 @@
 	return length(goals) ? goals[1] : null
 
 /datum/netrun_bot_brain/proc/finish_goal(datum/netrun_bot_goal/goal)
+	if(istype(goal, /datum/netrun_bot_goal/command) && order == "command")
+		order = "guard"
+		order_command = null
+		order_command_address = null
+	owner?.navigation?.cancel()
+	clear_command()
 	goals -= goal
 	qdel(goal)
 
 /datum/netrun_bot_brain/proc/clear_goals()
+	// A one-shot device mutation must never replay after recall/relaunch.
+	if(order == "command")
+		order = "guard"
+		order_command = null
+		order_command_address = null
 	QDEL_LIST(goals)
 	goals = list()
 	owner?.navigation?.cancel()
+	clear_command()
+	release_incident()
 
 /datum/netrun_bot_brain/proc/goal_text()
 	var/datum/netrun_bot_goal/goal = current_goal()
 	return goal ? goal.describe() : null
+
+/// Retain only the delivered response of this brain's own command, never a live node journal.
+/datum/netrun_bot_brain/proc/command_updated(datum/netrun_packet_context/operation)
+	if(!command_nonce || operation.nonce != command_nonce)
+		return
+	command_phase = operation.phase
+	if(operation.finished)
+		command_result = operation.result
+		wake_now()
+
+/datum/netrun_bot_brain/proc/clear_command()
+	var/datum/netrun_request/command/packet = command_packet_ref?.resolve()
+	command_packet_ref = null
+	if(!QDELETED(packet) && !packet.delivering)
+		packet.cancelled = TRUE
+		qdel(packet)
+	command_nonce = null
+	command_address = null
+	command_id = null
+	command_phase = null
+	command_result = null
+	command_deadline = 0
+
+/// Ordinary entity commands retain their normal dispatch, latency and delivery-time ACL checks.
+/datum/netrun_bot_brain/proc/command_step(datum/component/netrun_node/node, id)
+	if(QDELETED(node) || QDELETED(owner?.console))
+		return NETRUN_BOT_GOAL_FAILED
+	if(command_nonce)
+		if(command_address != node.address || command_id != id)
+			return NETRUN_BOT_GOAL_FAILED
+		if(command_phase == "completed")
+			return NETRUN_BOT_GOAL_DONE
+		if(command_phase in list("rejected", "cancelled") || world.time >= command_deadline)
+			return NETRUN_BOT_GOAL_FAILED
+		return NETRUN_BOT_GOAL_CONTINUE
+	if(world.time < owner.console.next_command)
+		return NETRUN_BOT_GOAL_CONTINUE
+	command_nonce = "bot-[++command_serial]"
+	command_address = node.address
+	command_id = id
+	command_deadline = world.time + 30 SECONDS
+	if(!owner.console.run_command(node, id, command_nonce))
+		return NETRUN_BOT_GOAL_FAILED
+	return NETRUN_BOT_GOAL_CONTINUE
 
 // MARK: Память
 
@@ -185,6 +263,11 @@
 	if(navigation.is_active())
 		if(navigation.destination == target.address)
 			state = "в пути"
+			if(world.time >= owner.next_hop)
+				navigation.advance_route(navigation.generation)
+			if(owner.host_node == target)
+				remember_visit(target.address)
+				return NETRUN_BOT_MOVE_ARRIVED
 			return NETRUN_BOT_MOVE_PROGRESS
 		navigation.cancel()
 	if(world.time < owner.next_hop)
@@ -243,9 +326,41 @@
 /datum/netrun_bot_brain/proc/node_is_patrol_point(datum/component/netrun_node/node)
 	return node.is_online() && !node.is_dynamic() && world.time - (visited[node.address] || -INFINITY) > 2 MINUTES
 
-/// The least recently visited stationary node around the bot.
-/datum/netrun_bot_brain/proc/patrol_destination(list/scope)
-	return find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_is_patrol_point), scope)
+/// Inspect at most24 itinerary entries per plan; the cursor eventually covers every
+/// reachable node, including destinations beyond the nearby tactical search radius.
+/datum/netrun_bot_brain/proc/patrol_destination(list/scope, police = FALSE)
+	var/datum/netrun_console/console = owner.console
+	var/datum/netrun_path_tree/tree = console.connection.read_path_tree(TRUE)
+	if(!length(patrol_candidates) || patrol_cursor > length(patrol_candidates))
+		patrol_candidates = shuffle(tree.reached.Copy())
+		patrol_cursor = 1
+	var/best_index
+	var/best_time = INFINITY
+	var/best_activity = -INFINITY
+	var/end = min(length(patrol_candidates), patrol_cursor + 23)
+	for(var/index = patrol_cursor, index <= end, index++)
+		var/address = patrol_candidates[index]
+		var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
+		if(QDELETED(node) || !tree.reached[address] || node.network?.isolated || node.is_dynamic() || !node.is_online() || is_blacklisted(address))
+			continue
+		if(scope && !(node.network?.id in scope))
+			continue
+		if(console.node_level(node, tree) < NETRUN_ACCESS_USER && (police || !console.has_key(node.network, TRUE)))
+			continue
+		var/inspected = police ? SSnetrun.police_inspected[address] : visited[address]
+		var/score = isnull(inspected) ? -INFINITY : inspected
+		if(!best_index || score < best_time || (score == best_time && node.last_activity > best_activity))
+			best_index = index
+			best_time = score
+			best_activity = node.last_activity
+	if(best_index)
+		var/address = patrol_candidates[best_index]
+		. = SSnetrun.nodes_by_address[address]
+		patrol_candidates[best_index] = patrol_candidates[patrol_cursor]
+		patrol_candidates[patrol_cursor++] = address
+	else
+		patrol_cursor = end + 1
+	console.release_path_tree(tree)
 
 // MARK: Бой
 
@@ -271,6 +386,9 @@
 		return FALSE
 	in_combat = TRUE
 	state = "бой"
+	// Navigation must not carry a fighting process away between two brain tasks.
+	if(owner.navigation.is_active())
+		owner.navigation.cancel()
 	var/ratio = owner.integrity / max(1, owner.max_integrity)
 	if(ratio < owner.program.flee_ratio && try_flee())
 		return TRUE
@@ -283,10 +401,13 @@
 		var/datum/netrun_ice/ice = target
 		if(ice.pending_program && use_role(NETRUN_PROGRAM_STUN, ice))
 			return TRUE
-		return use_role(NETRUN_PROGRAM_ATTACK, ice)
+		use_role(NETRUN_PROGRAM_ATTACK, ice)
+		return TRUE
 	if(!istype(target, /mob/camera/netrun_entity/bot))
-		return telegraphed_attack(target)
-	return use_role(NETRUN_PROGRAM_ATTACK, target)
+		telegraphed_attack(target)
+		return TRUE
+	use_role(NETRUN_PROGRAM_ATTACK, target)
+	return TRUE
 
 /datum/netrun_bot_brain/proc/pick_target(list/foes)
 	var/datum/pending = pending_attack_ref?.resolve()
@@ -403,3 +524,18 @@
 	if(!QDELETED(brain))
 		brain.schedule_next()
 	return TRUE
+
+/// Bot movement shares the brain's common-worker budget. Timers only admit a step.
+/datum/netrun_entity_navigation/bot/schedule_step()
+	if(timer)
+		deltimer(timer)
+	timer = addtimer(CALLBACK(src, PROC_REF(wake_brain)), max(1, owner.next_hop - world.time), TIMER_STOPPABLE)
+
+/datum/netrun_entity_navigation/bot/proc/wake_brain()
+	timer = null
+	var/mob/camera/netrun_entity/bot/bot = owner
+	bot?.brain?.wake_now()
+
+/// These bots deliberately engage ICE; each hop still revalidates the entity's actual authority.
+/datum/netrun_entity_navigation/bot/threat_at(datum/component/netrun_node/next)
+	return null

@@ -27,6 +27,8 @@
 	var/file_size = 0
 	/// The spawn LAN's key file lets the bot move freely inside that LAN, like a patrol.
 	var/carries_lan_key = FALSE
+	/// Round visitors depart and can be replaced by later arrivals; owned agents have no expiry.
+	var/lifetime = 0
 
 /datum/netrun_bot_program/proc/equip(mob/camera/netrun_entity/bot/bot)
 	for(var/id in programs)
@@ -80,7 +82,7 @@
 	var/datum/netrun_bot_program/program = SSnetrun.get_bot_program(id)
 	if(!program?.file_size)
 		return null
-	return new /datum/netrun_file("[id].bot", NETRUN_FILE_BOT, id, program.file_size)
+	return new /datum/netrun_file/bot("[id].bot", NETRUN_FILE_BOT, id, program.file_size)
 
 // MARK: Дикие процессы
 
@@ -98,6 +100,7 @@
 	tagline = "ищет драку"
 	flee_ratio = 0.2
 	carries_lan_key = TRUE
+	lifetime = 12 MINUTES
 
 /datum/netrun_bot_program/raider/plan(datum/netrun_bot_brain/brain)
 	var/datum/component/netrun_node/salvage = brain.find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_has_salvage))
@@ -107,6 +110,27 @@
 	var/datum/component/netrun_node/prey = brain.find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_has_ice))
 	if(prey)
 		brain.push_goal(new /datum/netrun_bot_goal/travel(brain, prey))
+		return
+	return ..()
+
+/// A second visiting personality gathers real recoverable files rather than hunting ICE.
+/datum/netrun_bot_program/scavenger
+	id = "scavenger"
+	name = "Сборщик обломков"
+	desc = "Залётный процесс: ищет брошенные файлы, хранит добычу и отступает при угрозе."
+	programs = list("strike", "barrier", "patch")
+	name_prefix = "SCRAP"
+	avatar = "moth"
+	accent = "amber"
+	tagline = "чужих файлов не бывает"
+	carries_lan_key = TRUE
+	lifetime = 10 MINUTES
+	flee_ratio = 0.5
+
+/datum/netrun_bot_program/scavenger/plan(datum/netrun_bot_brain/brain)
+	var/datum/component/netrun_node/salvage = brain.find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_has_salvage))
+	if(salvage)
+		brain.push_goal(new /datum/netrun_bot_goal/salvage(brain, salvage))
 		return
 	return ..()
 
@@ -164,6 +188,9 @@
 	file_size = 4
 
 /datum/netrun_bot_program/sentinel/plan(datum/netrun_bot_brain/brain)
+	if(brain.order == "patrol")
+		brain.push_goal(new /datum/netrun_bot_goal/patrol(brain))
+		return
 	brain.push_goal(new /datum/netrun_bot_goal/guard(brain, brain.post_node()))
 
 /datum/netrun_bot_program/sentinel/is_enemy(datum/netrun_bot_brain/brain, mob/camera/netrun_entity/entity)
@@ -187,6 +214,9 @@
 	file_size = 4
 
 /datum/netrun_bot_program/mender/plan(datum/netrun_bot_brain/brain)
+	if(brain.order == "patrol")
+		brain.push_goal(new /datum/netrun_bot_goal/patrol(brain))
+		return
 	var/datum/component/netrun_node/post = brain.post_node()
 	if(post?.fortress && length(post.fortress.damaged_modules()))
 		brain.push_goal(new /datum/netrun_bot_goal/repair(brain, post))

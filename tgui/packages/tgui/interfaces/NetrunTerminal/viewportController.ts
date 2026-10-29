@@ -43,6 +43,7 @@ export class NetworkViewportController {
   private lastBase: GraphScene | null = null;
   private lastGateways: GraphOverlay['gateways'] | null = null;
   private lastZones: GraphOverlay['apcZones'];
+  private lastEndpointLinks: GraphOverlay['showEndpointLinks'];
   private hover: ViewportHover = null;
   private hud: ViewportHUD = { nodes: -1, zoom: -1 };
   private press: { pointer: number; x: number; y: number; moved: boolean;
@@ -202,7 +203,7 @@ export class NetworkViewportController {
     this.abort?.abort(); this.abort = null;
     const surface = this.surface; this.surface = null;
     this.contextLost = false;
-    this.lastBase = null; this.lastGateways = null; this.lastZones = undefined;
+    this.lastBase = null; this.lastGateways = null; this.lastZones = undefined; this.lastEndpointLinks = undefined;
     try { surface?.destroy(); } catch { /* Lost contexts must still release the controller. */ }
   }
 
@@ -253,9 +254,11 @@ export class NetworkViewportController {
       surface.setSuspended(false);
       if (!surface.resize(width, height)) { this.fail(); return false; }
       const { scene, overlay } = this.snapshot;
-      if (scene !== this.lastBase || overlay.gateways !== this.lastGateways || overlay.apcZones !== this.lastZones) {
+      if (scene !== this.lastBase || overlay.gateways !== this.lastGateways || overlay.apcZones !== this.lastZones
+        || overlay.showEndpointLinks !== this.lastEndpointLinks) {
         if (!surface.updateScene(scene, overlay)) { this.fail(); return false; }
         this.lastBase = scene; this.lastGateways = overlay.gateways; this.lastZones = overlay.apcZones;
+        this.lastEndpointLinks = overlay.showEndpointLinks;
       }
       surface.updateActors(scene, this.presentation());
       surface.updateCamera(this.camera);

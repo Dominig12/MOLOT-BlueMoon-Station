@@ -368,7 +368,7 @@
 		selected["packets"] = level >= NETRUN_ACCESS_USER ? node.packet_headers_payload() : list()
 		var/atom/A = node.parent
 		selected["status"] = level >= NETRUN_ACCESS_USER ? A.netrun_status() : list()
-		if(node.file_store && level >= NETRUN_ACCESS_USER)
+		if(node.file_store && level >= max(NETRUN_ACCESS_USER, node.fortress?.file_access_level(src) || 0))
 			var/list/files = list()
 			for(var/datum/netrun_file/file as anything in node.file_store.files)
 				files += list(file.ui_entry())
@@ -721,7 +721,7 @@
 			launch_bot_file(params["uid"], params["address"])
 			return TRUE
 		if("agent_order")
-			agent_order(params["ref"], params["order"], params["address"])
+			agent_order(params["ref"], params["order"], params["address"], params)
 			return TRUE
 		if("download")
 			transfer_from_node(params["uid"], !!params["to_shard"], input_nonce = input_nonce)
@@ -814,7 +814,7 @@
 /datum/netrun_console/proc/transfer_from_node(uid, to_shard, datum/component/netrun_node/node, delivered = FALSE, input_nonce)
 	if(!delivered)
 		return queue_file_request("download", selected_node(), uid, to_shard, input_nonce)
-	if(!node?.file_store?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != connection.jack) || !can_route(node))
+	if(!node?.file_store?.files || node_level(node) < max(NETRUN_ACCESS_USER, node.fortress?.file_access_level(src) || 0) || !node.is_online(node != connection.jack) || !can_route(node))
 		return
 	var/datum/netrun_file/file = remote_file(node, uid)
 	if(!file)
@@ -836,7 +836,7 @@
 /datum/netrun_console/proc/transfer_to_node(uid, datum/component/netrun_node/node, delivered = FALSE, input_nonce)
 	if(!delivered)
 		return queue_file_request("upload", selected_node(), uid, input_nonce = input_nonce)
-	if(!node?.file_store?.files || node_level(node) < NETRUN_ACCESS_USER || !node.is_online(node != connection.jack) || !can_route(node))
+	if(!node?.file_store?.files || node_level(node) < max(NETRUN_ACCESS_USER, node.fortress?.file_access_level(src) || 0) || !node.is_online(node != connection.jack) || !can_route(node))
 		return
 	var/datum/netrun_file/file = find_local_file(uid)
 	if(!file)
@@ -921,7 +921,7 @@
 		if("delete")
 			. = delete_from_node(uid, node, TRUE)
 		if("read")
-			if(node_level(node) < NETRUN_ACCESS_USER)
+			if(node_level(node) < max(NETRUN_ACCESS_USER, node.fortress?.file_access_level(src) || 0))
 				operation?.finish("rejected", "Недостаточно прав для чтения файла.")
 				return FALSE
 			var/datum/netrun_file/file = remote_file(node, uid)

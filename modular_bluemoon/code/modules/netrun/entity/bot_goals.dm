@@ -77,6 +77,31 @@
 	brain.state = "патруль"
 	return NETRUN_BOT_GOAL_CONTINUE
 
+/// A user or behavior program may request an ordinary command at an authorized node.
+/datum/netrun_bot_goal/command
+	name = "команда устройства"
+	var/datum/weakref/node_ref
+	var/command_id
+	var/node_name
+
+/datum/netrun_bot_goal/command/New(datum/netrun_bot_brain/brain, datum/component/netrun_node/node, command_id)
+	..(brain, 2 MINUTES)
+	node_ref = WEAKREF(node)
+	src.command_id = command_id
+	node_name = node?.get_name()
+
+/datum/netrun_bot_goal/command/describe()
+	return "[command_id] @ [node_name || "?"]"
+
+/datum/netrun_bot_goal/command/advance()
+	var/datum/component/netrun_node/node = node_ref?.resolve()
+	if(QDELETED(node))
+		return NETRUN_BOT_GOAL_FAILED
+	if(brain.owner.host_node != node)
+		return approach(node) == NETRUN_BOT_MOVE_BLOCKED ? NETRUN_BOT_GOAL_FAILED : NETRUN_BOT_GOAL_CONTINUE
+	brain.state = "команда устройства"
+	return brain.command_step(node, command_id)
+
 /// Stay on a node; combat against trespassers is handled by the brain's combat step.
 /datum/netrun_bot_goal/guard
 	name = "охрана"
@@ -124,8 +149,12 @@
 		return approach(node) == NETRUN_BOT_MOVE_BLOCKED ? NETRUN_BOT_GOAL_FAILED : NETRUN_BOT_GOAL_CONTINUE
 	brain.state = "ремонт"
 	var/datum/netrun_console/console = brain.owner.console
-	if(world.time >= console.next_command && world.time >= node.fortress.next_repair)
-		console.run_command(node, "fort_repair")
+	if(brain.command_nonce || (world.time >= console.next_command && world.time >= node.fortress.next_repair))
+		var/result = brain.command_step(node, "fort_repair")
+		if(result == NETRUN_BOT_GOAL_FAILED)
+			return NETRUN_BOT_GOAL_FAILED
+		if(result == NETRUN_BOT_GOAL_DONE)
+			brain.clear_command()
 	return NETRUN_BOT_GOAL_CONTINUE
 
 /// Pick up debris files left by defeated processes.

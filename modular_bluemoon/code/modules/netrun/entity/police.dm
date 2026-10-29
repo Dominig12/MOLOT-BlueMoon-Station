@@ -19,6 +19,7 @@
 	console_type = /datum/netrun_console/entity/bot/police
 	think_idle = 3 SECONDS
 	flee_ratio = 0.15
+	lifetime = 8 MINUTES
 
 /datum/netrun_bot_program/police/on_spawn(mob/camera/netrun_entity/bot/bot)
 	bot.brain.listen_incidents()
@@ -67,7 +68,16 @@
 		return
 	var/datum/claimer = incident.claimed_by()
 	if(!claimer || claimer == src)
+		if(istype(current_goal(), /datum/netrun_bot_goal/police_patrol))
+			clear_goals()
 		wake_now()
+
+/// Cancellation/expiry must not reserve an incident until this entire process dies.
+/datum/netrun_bot_brain/proc/release_incident()
+	var/datum/netrun_incident/incident = incident_ref?.resolve()
+	if(incident?.claimed_by() == src)
+		incident.claim(null)
+	incident_ref = null
 
 /datum/netrun_bot_brain/proc/claimed_incident()
 	var/datum/netrun_incident/incident = incident_ref?.resolve()
@@ -172,54 +182,32 @@
 // MARK: Обход сети
 
 /datum/controller/subsystem/netrun
-	/// LAN id -> world.time of the last police inspection, shared by all officers.
+	/// Node address -> world.time of the last delivered police inspection.
 	var/list/police_inspected = list()
 
 /// The least recently inspected reachable station LAN; recent activity draws the officer first.
 /datum/netrun_bot_brain/proc/police_destination()
-	var/datum/netrun_console/console = owner.console
-	var/datum/netrun_network/best
-	var/best_time = INFINITY
-	for(var/id in SSnetrun.networks)
-		var/datum/netrun_network/network = SSnetrun.networks[id]
-		if(network.isolated || !length(network.nodes) || !console.can_reach(network))
-			continue
-		var/inspected = SSnetrun.police_inspected[id] || 0
-		if(inspected < best_time)
-			best = network
-			best_time = inspected
-	if(!best)
-		return null
-	SSnetrun.police_inspected[best.id] = world.time
-	var/list/active = list()
-	var/list/quiet = list()
-	for(var/datum/component/netrun_node/node as anything in best.nodes)
-		if(QDELETED(node) || node.is_dynamic() || !node.is_online() || is_blacklisted(node.address))
-			continue
-		if(world.time - node.last_activity < 30 SECONDS)
-			active += node
-		else
-			quiet += node
-	if(length(active))
-		return pick(active)
-	return length(quiet) ? pick(quiet) : null
+	return patrol_destination(null, TRUE)
 
 /// Read the node journal with the ordinary command and look for repeated refusals.
 /datum/netrun_bot_brain/proc/inspect(datum/component/netrun_node/node)
-	owner.console.run_command(node, "packet_log")
-	var/list/rejects = list()
-	for(var/list/entry as anything in node.packet_logs)
-		if(entry["phase"] != "REJECT" || world.time - entry["time"] > 60 SECONDS || !entry["from"])
-			continue
-		rejects[entry["from"]] = (rejects[entry["from"]] || 0) + 1
-	for(var/address in rejects)
-		if(rejects[address] >= 3)
-			var/datum/component/netrun_node/source = SSnetrun.find_node(address)
-			if(source && source != node)
-				SSnetrun.report_incident("intrusion", source, null, NETRUN_INCIDENT_LOW, "Серия отклонённых пакетов с узла [address].")
+	var/result = command_step(node, "packet_log")
+	if(result != NETRUN_BOT_GOAL_DONE)
+		return result
+	SSnetrun.police_inspected[node.address] = world.time
+	// Store only what the ordinary delivered command actually returned. Incident
+	// signals carry authoritative suspicious activity; no private journal is read here.
+	var/datum/netrun_file_store/store = owner.console.inventory.local_store
+	for(var/datum/netrun_file/file as anything in store.files.Copy())
+		if(file.name == "last-inspection.txt" && file.kind == NETRUN_FILE_TEXT)
+			store.delete_file(file)
+	var/datum/netrun_file/report = new("last-inspection.txt", NETRUN_FILE_TEXT, command_result || "Журнал пуст.")
+	if(!owner.console.store_file(report))
+		qdel(report)
 	var/mob/camera/netrun_entity/suspect = find_suspect(node, null)
 	if(suspect)
 		SSnetrun.report_incident(suspect.netrun_faction() == NETRUN_FACTION_ROGUE ? "rogue" : "intrusion", node, suspect, NETRUN_INCIDENT_MEDIUM, "[owner.real_name] застал процесс [suspect.real_name] без доступа.")
+	return NETRUN_BOT_GOAL_DONE
 
 /datum/netrun_bot_goal/police_patrol
 	name = "обход сети"
@@ -246,8 +234,7 @@
 	brain.state = "обход сети"
 	switch(approach(target))
 		if(NETRUN_BOT_MOVE_ARRIVED)
-			brain.inspect(target)
-			return NETRUN_BOT_GOAL_DONE
+			return brain.inspect(target)
 		if(NETRUN_BOT_MOVE_BLOCKED)
 			return NETRUN_BOT_GOAL_FAILED
 	return NETRUN_BOT_GOAL_CONTINUE
@@ -264,6 +251,12 @@
 	..(brain, 3 MINUTES)
 	incident_ref = WEAKREF(incident)
 	incident_id = incident.id
+
+/datum/netrun_bot_goal/investigate/Destroy()
+	var/datum/netrun_incident/incident = incident_ref?.resolve()
+	if(incident?.claimed_by() == brain)
+		incident.claim(null)
+	return ..()
 
 /datum/netrun_bot_goal/investigate/describe()
 	return "расследование [incident_id]"
@@ -284,10 +277,14 @@
 	brain.state = "расследование"
 	var/datum/netrun_console/console = brain.owner.console
 	if(!scanned)
-		if(world.time >= console.next_command)
-			console.run_command(node, "scan")
+		var/result = brain.command_step(node, "scan")
+		if(result == NETRUN_BOT_GOAL_DONE)
 			scanned = TRUE
 			arrived_at = world.time
+			brain.clear_command()
+		else if(result == NETRUN_BOT_GOAL_FAILED)
+			brain.police_report(incident, "доставка команды осмотра отклонена")
+			return NETRUN_BOT_GOAL_FAILED
 		return NETRUN_BOT_GOAL_CONTINUE
 	if(brain.counter_trace(node))
 		engaged = TRUE

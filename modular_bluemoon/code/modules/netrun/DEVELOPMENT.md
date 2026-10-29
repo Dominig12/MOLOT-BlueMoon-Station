@@ -51,9 +51,9 @@ DM runner автоматически выбирает подключённые `
 Дополнительные проверки интерфейса из `tgui/`:
 
 ```powershell
-node .yarn/releases/yarn-4.15.0.cjs tsc --noEmit
-node .yarn/releases/yarn-4.15.0.cjs eslint packages/tgui/interfaces/NetrunTerminal --ext .ts,.tsx
-node .yarn/releases/yarn-4.15.0.cjs run tgui:build
+node .yarn/releases/yarn-4.18.1.cjs tsc --noEmit
+node .yarn/releases/yarn-4.18.1.cjs eslint packages/tgui/interfaces/NetrunTerminal --ext .ts,.tsx
+node .yarn/releases/yarn-4.18.1.cjs run tgui:build
 ```
 
 Логи DM находятся в `data/logs/ci-hermetic/`, выборка — в

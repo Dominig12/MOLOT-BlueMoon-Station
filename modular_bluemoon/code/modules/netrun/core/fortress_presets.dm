@@ -11,6 +11,8 @@
 	var/list/target_types = list()
 	/// Zero means every matching node of the station is fortified.
 	var/max_instances = 0
+	/// Important cores/archives are seeded before abundant relay endpoints.
+	var/priority = 50
 
 /datum/netrun_fortress_preset/proc/matches(datum/component/netrun_node/node)
 	var/atom/host = node.parent
@@ -19,27 +21,47 @@
 			return TRUE
 	return FALSE
 
+/datum/netrun_fortress_preset/proc/valid_for(datum/component/netrun_node/node)
+	var/available = netrun_fortress_slots(node)
+	if(!available || !length(modules))
+		return FALSE
+	var/used = 0
+	for(var/kind in modules)
+		var/datum/netrun_fortress_module/path = netrun_fortress_module_type(kind)
+		var/count = modules[kind]
+		if(!path || !IS_FINITE(count) || count < 1 || count != round(count) || count > initial(path.max_per_fortress))
+			return FALSE
+		used += initial(path.slot_cost) * count
+	return used <= available
+
+/proc/cmp_netrun_fortress_preset(datum/netrun_fortress_preset/first, datum/netrun_fortress_preset/second)
+	return first.priority - second.priority
+
 /datum/netrun_fortress_preset/ai_citadel
 	id = "ai_citadel"
 	name = "Цитадель ядра ИИ"
+	priority = 10
 	modules = list(NETRUN_FORT_WALL = 3, NETRUN_FORT_GATE = 1, NETRUN_FORT_TURRET = 2, NETRUN_FORT_TRAP = 1, NETRUN_FORT_ALARM = 1, NETRUN_FORT_REGEN = 1)
 	target_types = list(/mob/living/silicon/ai)
 
 /datum/netrun_fortress_preset/rnd_archive
 	id = "rnd_archive"
 	name = "Архив РнД"
+	priority = 20
 	modules = list(NETRUN_FORT_WALL = 2, NETRUN_FORT_TURRET = 1, NETRUN_FORT_ALARM = 1, NETRUN_FORT_VAULT = 1)
 	target_types = list(/obj/machinery/rnd/server)
 
 /datum/netrun_fortress_preset/telecomms_hub
 	id = "telecomms_hub"
 	name = "Узел связи"
+	priority = 30
 	modules = list(NETRUN_FORT_WALL = 2, NETRUN_FORT_GATE = 1, NETRUN_FORT_TURRET = 1, NETRUN_FORT_ALARM = 1)
 	target_types = list(/obj/machinery/telecomms/hub, /obj/machinery/telecomms/message_server)
 
 /datum/netrun_fortress_preset/command_bastion
 	id = "command_bastion"
 	name = "Командный бастион"
+	priority = 40
 	modules = list(NETRUN_FORT_WALL = 2, NETRUN_FORT_GATE = 1, NETRUN_FORT_TRAP = 1, NETRUN_FORT_ALARM = 1)
 	target_types = list(/obj/machinery/computer/communications)
 	max_instances = 1
@@ -47,6 +69,7 @@
 /datum/netrun_fortress_preset/relay_outpost
 	id = "relay_outpost"
 	name = "Шлюзовая застава"
+	priority = 60
 	modules = list(NETRUN_FORT_WALL = 1, NETRUN_FORT_TURRET = 1, NETRUN_FORT_ALARM = 1)
 	target_types = list(/obj/machinery/ntnet_relay)
 
@@ -63,7 +86,7 @@
 	var/fortress_topology_revision = -1
 	/// Unit tests build presets explicitly instead of fortifying the test station.
 	var/fortress_presets_enabled = NETRUN_AUTONOMOUS_CONTENT
-	/// address -> TRUE: a fortress destroyed by players is never re-seeded.
+	/// address -> original preset id, retained even after destruction/claiming.
 	var/list/fortress_presets_seeded = list()
 
 /datum/controller/subsystem/netrun/proc/get_fortress_preset(id)
@@ -87,25 +110,25 @@
 	get_fortress_preset(null)
 	var/list/instances = list()
 	for(var/address in fortress_presets_seeded)
-		var/datum/component/netrun_node/seeded = nodes_by_address[address]
-		if(seeded?.fortress?.preset_id)
-			instances[seeded.fortress.preset_id] = (instances[seeded.fortress.preset_id] || 0) + 1
-	for(var/address in nodes_by_address)
-		if(length(fortress_presets_seeded) >= NETRUN_MAX_FORTRESS_PRESETS)
-			return
-		if(fortress_presets_seeded[address])
-			continue
-		var/datum/component/netrun_node/node = nodes_by_address[address]
-		if(QDELETED(node) || QDELETED(node.parent) || node.fortress || netrun_fortress_slots(node) <= 0)
-			continue
-		for(var/preset_id in fortress_presets)
-			var/datum/netrun_fortress_preset/preset = fortress_presets[preset_id]
-			if(!preset.matches(node) || (preset.max_instances && instances[preset_id] >= preset.max_instances))
+		var/preset_id = fortress_presets_seeded[address]
+		instances[preset_id] = (instances[preset_id] || 0) + 1
+	var/list/ordered = list()
+	for(var/preset_id in fortress_presets)
+		ordered += fortress_presets[preset_id]
+	sortTim(ordered, GLOBAL_PROC_REF(cmp_netrun_fortress_preset))
+	for(var/datum/netrun_fortress_preset/preset as anything in ordered)
+		for(var/address in nodes_by_address)
+			if(length(fortress_presets_seeded) >= NETRUN_MAX_FORTRESS_PRESETS)
+				return
+			if(preset.max_instances && instances[preset.id] >= preset.max_instances)
+				break
+			if(fortress_presets_seeded[address])
 				continue
-			if(build_fortress_preset(node, preset_id))
-				fortress_presets_seeded[address] = TRUE
-				instances[preset_id] = (instances[preset_id] || 0) + 1
-			break
+			var/datum/component/netrun_node/node = nodes_by_address[address]
+			if(QDELETED(node) || QDELETED(node.parent) || node.fortress || !preset.matches(node))
+				continue
+			if(build_fortress_preset(node, preset.id))
+				instances[preset.id] = (instances[preset.id] || 0) + 1
 
 /// Deploy a ready fortress with every module standing. Returns the existing one if the node is already fortified.
 /datum/controller/subsystem/netrun/proc/build_fortress_preset(datum/component/netrun_node/node, preset_id)
@@ -114,13 +137,18 @@
 		return null
 	if(node.fortress)
 		return node.fortress
+	if(!preset.valid_for(node))
+		return null
 	var/datum/netrun_fortress/fortress = new(node, preset.name, preset.faction)
 	fortress.preset_id = preset.id
 	fortress.preset_name = preset.name
 	node.fortress = fortress
 	for(var/kind in preset.modules)
 		for(var/i in 1 to preset.modules[kind])
-			fortress.add_module(kind, TRUE)
+			if(!fortress.add_module(kind, TRUE))
+				qdel(fortress)
+				return null
+	fortress_presets_seeded[node.address] = preset.id
 	fortress.refresh_vault()
 	node.add_log("Развёрнута крепость «[preset.name]».")
 	fortress.changed()

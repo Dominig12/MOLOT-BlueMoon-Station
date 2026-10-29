@@ -129,6 +129,7 @@
 	src.command = command
 	src.command_id = command_id
 	src.packet_id = packet_id
+	console.track_command_packet(src)
 
 /datum/netrun_request/command/Destroy()
 	command = null

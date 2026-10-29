@@ -8,7 +8,7 @@ export const pixiColor = (value: string | undefined, fallback: number) =>
 export const edgeColor = (kind: string, online = true) => !online ? 0x52636e
   : kind === 'relay' ? 0x46c9bd : kind === 'apc' ? 0x4f86a3 : 0x3a6a85;
 /** World-unit cable widths at working zoom (GRAPH_TILE is 144 units, default zoom .7). */
-export const edgeWidth = (kind: string) => kind === 'relay' ? 3.4 : kind === 'apc' ? 3 : 1.8;
+export const edgeWidth = (kind: string) => kind === 'relay' ? 4.2 : kind === 'apc' ? 3.8 : 2.4;
 /** Quantized zoom level for strokes: below .6 widths double per halving so links stay visible. */
 export const strokeLod = (zoom: number) => Math.max(1, 2 ** Math.ceil(Math.log2(.6 / Math.max(zoom, 1e-6))));
 

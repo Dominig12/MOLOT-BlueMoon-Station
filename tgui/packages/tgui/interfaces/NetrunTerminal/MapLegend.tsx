@@ -82,6 +82,7 @@ export const MapLegend = (props: { types: string[]; entity: boolean; onClose: ()
         <span><LinkSample kind="endpoint" /> устройство ↔ APC</span>
         <span><LinkSample kind="apc" online={false} /> связь нарушена</span>
       </div>
+      <p className="netrun-map-legend__hint">Кабели устройств скрыты в обзоре. Включите их в фильтрах; связь выбранного устройства и путь отправленного пакета видны всегда.</p>
     </section>
     <section>
       <h4>Пакеты в полёте</h4>

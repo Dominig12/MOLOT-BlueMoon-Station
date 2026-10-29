@@ -27,12 +27,12 @@ type GlyphPath = Pick<Graphics, 'moveTo' | 'lineTo' | 'closePath' | 'circle' | '
 type GlyphGraphics = GlyphPath & Pick<Graphics, 'fill' | 'stroke'>;
 
 /** Pictograms appear only when they are large enough to read. */
-export const GLYPH_MIN_ZOOM = .4;
+export const GLYPH_MIN_ZOOM = .32;
 export const MAX_GLYPH_RADIUS = 18;
 export const GLYPH_INK = 0x0b1822;
 export const GLYPH_INK_CSS = '#0b1822';
-export const GLYPH_STROKE = 1.7;
-export const BODY_STROKE = 1.6;
+export const GLYPH_STROKE = 1.9;
+export const BODY_STROKE = 1.8;
 export const BODY_ALPHA = .94;
 export const OFFLINE_ALPHA = .55;
 export const OFFLINE_SLASH = 2.2;
@@ -80,7 +80,8 @@ const GLYPHS: Record<string, NodeGlyph> = {
   apc: { family: 'infrastructure', radius: 15, body: [round(-.84, -.84, 1.68, 1.68, .2)], strokes: [],
     fills: [path(true, .16, -.66, -.34, .1, -.02, .1, -.16, .66, .34, -.12, .02, -.12)] },
   relay: { ...relay, radius: 16 },
-  gateway: { ...relay, radius: 16 },
+  gateway: { family: 'infrastructure', radius: 16, body: [regular(4, Math.PI / 4)],
+    strokes: [path(false, -.62, -.2, .62, -.2, .36, -.44), path(false, .62, .2, -.62, .2, -.36, .44)], fills: [] },
   camera: { family: 'security', radius: 12,
     body: [path(true, -.94, -.44, .46, -.44, .94, -.66, .94, .42, .46, .2, -.94, .2), rect(-.54, .2, .24, .46), rect(-.78, .62, .72, .2)],
     strokes: [circle(.66, -.12, .16)], fills: [circle(-.6, -.12, .1)] },

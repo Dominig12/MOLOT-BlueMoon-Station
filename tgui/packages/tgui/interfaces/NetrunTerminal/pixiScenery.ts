@@ -7,10 +7,10 @@ import {
   BODY_ALPHA, BODY_STROKE, GLYPH_INK, GLYPH_MIN_ZOOM, GLYPH_STROKE, glyphRadius,
   traceBody, traceGlyphFills, traceGlyphStrokes, traceOfflineSlash,
 } from './nodeGlyphs';
-import { destroyDisplay, edgeColor, edgeWidth, pixiColor, PixiLibrary, strokeLod } from './pixiPrimitives';
+import { destroyDisplay, edgeColor, edgeWidth, pixiColor, PixiLibrary, segmentPath, strokeLod } from './pixiPrimitives';
 import type { NetEdge } from './types';
 
-type Stroke = { from: { px: number; py: number }; to: { px: number; py: number } };
+type Stroke = { from: { px: number; py: number }; to: { px: number; py: number }; offline?: boolean };
 type ZoneRect = { x: number; y: number; width: number };
 type Device = { node: PlacedNode; border: number };
 type Batch = { key: string; nodes: Device[]; glyphs: PlacedNode[]; strokes: Stroke[]; zones: ZoneRect[];
@@ -60,7 +60,7 @@ export class PixiScenery {
 
   queue(scene: GraphScene, base: GraphBase, force = false) {
     if (!force && this.scene === scene && this.base?.gateways === base.gateways
-      && this.base?.apcZones === base.apcZones) { return false; }
+      && this.base?.apcZones === base.apcZones && this.base?.showEndpointLinks === base.showEndpointLinks) { return false; }
     this.scene = scene; this.base = base;
     this.pending = this.build(scene, base);
     return true;
@@ -127,15 +127,16 @@ export class PixiScenery {
     return { node, fill, border, parts };
   }
 
-  private edgeInput(edge: NetEdge, scene: GraphScene): EdgeInput | null {
+  private edgeInput(edge: NetEdge, scene: GraphScene, base: GraphBase): EdgeInput | null {
+    if (base.showEndpointLinks === false && edge.kind === 'endpoint') { return null; }
     const a = scene.byAddress.get(edge.from), b = scene.byAddress.get(edge.to);
     if (!a || !b || a.dynamic || b.dynamic) { return null; }
     const from = physicalPoint(a), to = physicalPoint(b), previous = this.edgeInputs.get(edge.id);
     if (previous && previous.edge.kind === edge.kind && previous.edge.online === edge.online
       && previous.fromX === from.px && previous.fromY === from.py && previous.toX === to.px && previous.toY === to.py) { return previous; }
     const part: Part = { bucket: bucketAt('1-edge', from.px, from.py), key: edge.id,
-      color: edgeColor(edge.kind, edge.online !== false), alpha: edge.online === false ? .18 : edge.kind === 'endpoint' ? .36 : .56,
-      width: edgeWidth(edge.kind), stroke: { from, to },
+      color: edgeColor(edge.kind, edge.online !== false), alpha: edge.online === false ? .22 : edge.kind === 'endpoint' ? .28 : .48,
+      width: edgeWidth(edge.kind), stroke: { from, to, offline: edge.online === false },
       signature: `${edge.id}:${from.px},${from.py},${to.px},${to.py}`, bounds: segmentBox(from, to) };
     return { edge, fromX: from.px, fromY: from.py, toX: to.px, toY: to.py, part };
   }
@@ -181,7 +182,7 @@ export class PixiScenery {
     }
     const edges = new Map<string, EdgeInput>();
     for (const edge of scene.edges) {
-      const previous = this.edgeInputs.get(edge.id), input = this.edgeInput(edge, scene);
+      const previous = this.edgeInputs.get(edge.id), input = this.edgeInput(edge, scene, base);
       if (!input) { continue; }
       if (input !== previous) {
         if (previous) { edit(previous.part, true); }
@@ -272,7 +273,7 @@ export class PixiScenery {
     for (const rect of data.zones) { graphic.rect(rect.x, rect.y, rect.width, GRAPH_TILE); }
     if (data.zones.length) { graphic.fill({ color: data.color, alpha: data.alpha }); }
     const scale = LINE_LAYERS.has(Number(data.key[0])) ? this.lod : 1;
-    for (const stroke of data.strokes) { graphic.moveTo(stroke.from.px, stroke.from.py).lineTo(stroke.to.px, stroke.to.py); }
+    for (const stroke of data.strokes) { segmentPath(graphic, stroke.from, stroke.to, stroke.offline ? 8 * scale : 0); }
     if (data.strokes.length) { graphic.stroke({ color: data.color, width: data.width * scale, alpha: data.alpha }); }
     // Device silhouettes: filled with the access colour, outlined with the LAN colour.
     for (const { node, border } of data.nodes) {

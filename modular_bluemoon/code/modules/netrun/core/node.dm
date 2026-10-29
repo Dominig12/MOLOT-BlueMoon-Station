@@ -69,7 +69,7 @@
 	/// Every movable ancestor, nearest first. Nullspace organs start at their wearer.
 	var/list/physical_carriers
 
-/datum/component/netrun_node/Initialize(node_type, list/command_ids, security = 1, list/required_access, storage_capacity = 0)
+/datum/component/netrun_node/Initialize(node_type, list/command_ids, security = 1, list/required_access, storage_capacity = null)
 	if(!isatom(parent))
 		return COMPONENT_INCOMPATIBLE
 	src.node_type = node_type
@@ -77,7 +77,7 @@
 	base_security = security
 	src.required_access = required_access
 	// Firmware documentation is available even on endpoints without writable storage.
-	file_store = new(src, storage_capacity || 0)
+	file_store = new(src, isnull(storage_capacity) ? netrun_node_storage_capacity(node_type) : storage_capacity)
 	RegisterSignal(file_store, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_storage_changed))
 	address = SSnetrun.make_address()
 	SSnetrun.nodes_by_address[address] = src

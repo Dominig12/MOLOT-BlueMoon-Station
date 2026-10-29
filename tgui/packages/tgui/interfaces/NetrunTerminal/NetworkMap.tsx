@@ -144,7 +144,7 @@ const MapSnapshot = memo(({ input, act, suspended, focusRequest, consumeFocusReq
   const stateKey = input.map?.state_revision;
   const nodes = useSemanticValue(rawNodes, streamed ? undefined : stateKey === undefined ? JSON.stringify(rawNodes.map((node) => [
     node.address, node.type, node.uplink, node.name, node.network, node.sector, node.apc, node.x, node.y, node.z,
-    node.online, node.access, node.security, node.entities, node.ice, node.active, node.can_hop, node.dynamic,
+    node.online, node.access, node.security, node.entities, node.ice, node.bots, node.police, node.fortress, node.active, node.can_hop, node.dynamic,
   ])) : `${topologyKey}:${stateKey}`);
   const edges = useSemanticValue(rawEdges, streamed ? undefined : stateKey === undefined ? JSON.stringify(rawEdges) : `${topologyKey}:${stateKey}`);
   const gateways = useSemanticValue(input.map?.gateways ?? [], streamed ? undefined : JSON.stringify(input.map?.gateways ?? []));
@@ -180,6 +180,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
   const [focusNearby, setFocusNearby] = useState(false);
   const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>({});
   const [legendOpen, setLegendOpen] = useState(false);
+  const [showEndpointLinks, setShowEndpointLinks] = useState(false);
   const [pendingCenter, setPendingCenter] = useState<string | null>(null);
   const [searchReset, setSearchReset] = useState(0);
   const nodes = map?.nodes ?? EMPTY_NODES;
@@ -338,6 +339,10 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
             <Icon name="filter" /> Фильтры{hiddenTypes ? ` · скрыто ${hiddenTypes}` : ''}
           </summary>
           <div className="netrun-map-popover__body netrun-map-filters">
+            <Button compact icon="diagram-project" selected={showEndpointLinks}
+              content="Кабели устройств" tooltip="Показать все подключения к APC. Маршруты пакетов и выбранного устройства видны всегда."
+              onClick={() => setShowEndpointLinks((shown) => !shown)} />
+            <span className="netrun-map-popover__break" />
             {types.map((type) => (<Button key={type} compact selected={!disabledTypes[type]}
               aria-label={`Фильтр: ${NODE_NAMES[type] || type}`} tooltip={NODE_NAMES[type] || type}
               onClick={() => { setPendingCenter(null); setDisabledTypes((old) => ({ ...old, [type]: !old[type] })); }}>
@@ -376,7 +381,8 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
           gateways={gateways} selected={selectedAddress} jacked={jackAddress}
           apcZones={map.apc_zones}
           entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || EMPTY_ADDRESSES}
-          pingRoute={pingAddresses} pingId={pingId} pingExpiresAt={pingExpiresAt} events={events} onSelect={onSelect} />
+          pingRoute={pingAddresses} pingId={pingId} pingExpiresAt={pingExpiresAt} events={events}
+          showEndpointLinks={showEndpointLinks} onSelect={onSelect} />
         <SelectionCard node={selectedNode} />
         {docked && <div className="netrun-map-dock" data-net-overlay>
           {!!waypoint && <div className="netrun-map-dock__panel">

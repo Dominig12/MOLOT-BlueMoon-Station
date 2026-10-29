@@ -229,7 +229,16 @@
 	trace = 4
 	icon = "download"
 
+/datum/netrun_command/siphon/ui_entry(datum/component/netrun_node/node, datum/netrun_console/console, full_id)
+	. = ..()
+	if(.["allowed"] && console.node_level(node) < (node.fortress?.file_access_level(console) || 0))
+		.["allowed"] = FALSE
+		.["unavailable_reason"] = "Хранилище крепости требует доступа ROOT."
+
 /datum/netrun_command/siphon/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	if(console.node_level(node) < max(NETRUN_ACCESS_USER, node.fortress?.file_access_level(console) || 0))
+		console.log_line("Хранилище крепости требует доступа ROOT.", "bad")
+		return null
 	if(!console.daemon_bonus("siphon"))
 		return "Для массового слива нужен siphon.exe в памяти."
 	if(!node.file_store || !length(node.file_store.files))

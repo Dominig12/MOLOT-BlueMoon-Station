@@ -11,15 +11,14 @@ import { FACTION_COLORS, NetEdge, NetEvent, PACKET_COLORS } from './types';
 type Actor = { group: Container; body: Graphics; marks: Graphics; labels: Text[]; node: PlacedNode;
   signature: string; px: number; py: number; fromX: number; fromY: number; movedAt: number; appearedAt: number };
 type Link = { graphic: Graphics; signature: string; bounds: GraphBox };
-type Segment = { from: GraphPoint; to: GraphPoint; length: number; jump?: boolean };
+type Segment = { from: GraphPoint; to: GraphPoint; length: number; jump?: boolean; fromAddress?: string; toAddress?: string; hop?: number; hops?: number };
 type Route = { graphic: Graphics; signature: string; segments: Segment[]; until: number; began: number; tint: number };
 type Traffic = { born: number; point: GraphPoint; tint: number; segments: Segment[] };
 type Pulse = { born: number; point: GraphPoint; tint: number };
-/** One packet in flight (send) or its outcome ring (done/fail), keyed so repeated pushes keep its clock. */
+/** One packet owns one clock and route; a terminal receipt settles its existing flight. */
 type Flight = { key: string; phase: 'send' | 'done' | 'fail'; born: number; duration: number;
-  segments: Segment[]; end: GraphPoint | null; tint: number; own: boolean };
+  until: number; segments: Segment[]; end: GraphPoint | null; endAddress: string | null; tint: number; own: boolean };
 const NO_BOX: GraphBox = { left: -Infinity, right: Infinity, top: -Infinity, bottom: Infinity };
-const FLIGHT_MIN_MS = 350;
 const ARRIVAL_MS = 900;
 const OUTCOME_MS = 1200;
 const MAX_FLIGHTS = 48;
@@ -28,7 +27,8 @@ const FAIL_TINT = pixiColor(PACKET_COLORS.fail, 0xff6470);
 const sameOverlayData = (a: GraphOverlay | null, b: GraphOverlay) => a
   && a.gateways === b.gateways && a.entityHost === b.entityHost && a.jacked === b.jacked
   && a.selectedRoute === b.selectedRoute && a.waypointRoute === b.waypointRoute
-  && a.pingRoute === b.pingRoute && a.pingId === b.pingId && a.pingExpiresAt === b.pingExpiresAt && a.events === b.events;
+  && a.pingRoute === b.pingRoute && a.pingId === b.pingId && a.pingExpiresAt === b.pingExpiresAt && a.events === b.events
+  && a.showEndpointLinks === b.showEndpointLinks;
 const sameLocalState = (a: GraphOverlay, b: GraphOverlay) => a.selected === b.selected
   && a.hovered === b.hovered && a.selectionPending === b.selectionPending;
 const needsActor = (node: PlacedNode, overlay: GraphOverlay) => node.dynamic || node.entities || node.ice || node.active
@@ -47,6 +47,16 @@ const pointOn = (segments: Segment[], progress: number) => {
   return segments[segments.length - 1]?.to;
 };
 const packetTint = (event: NetEvent) => pixiColor(PACKET_COLORS[event.packet ?? ''], pixiColor(PACKET_COLORS.command, 0xffc26b));
+/** Keep undisclosed route holes as holes instead of compressing them into a shortcut. */
+const packetPoint = (segments: Segment[], progress: number) => {
+  if (!segments.length) { return null; }
+  if (segments.length === segments[0].hops) { return pointOn(segments, progress); }
+  const position = progress * (segments[0].hops || segments.length);
+  const segment = segments.find((part) => position >= part.hop && position <= part.hop + 1);
+  if (!segment) { return null; }
+  const t = position - segment.hop;
+  return { px: segment.from.px + (segment.to.px - segment.from.px) * t, py: segment.from.py + (segment.to.py - segment.from.py) * t };
+};
 
 /** Keyed live objects: moving one endpoint never retessellates the stationary map. */
 export class PixiActors {
@@ -156,6 +166,7 @@ export class PixiActors {
     }
     const linkKeys = new Set<string>();
     for (const edge of dynamicEdges) {
+      if (overlay.showEndpointLinks === false && edge.kind === 'endpoint') { continue; }
       const a = scene.byAddress.get(edge.from), b = scene.byAddress.get(edge.to);
       if (!a || !b) { continue; }
       linkKeys.add(edge.id);
@@ -188,8 +199,10 @@ export class PixiActors {
     link.bounds = segmentBox(from, to);
     if (link.signature === signature) { return; }
     link.signature = signature;
-    link.graphic.clear().moveTo(from.px, from.py).lineTo(to.px, to.py)
-      .stroke({ color: edgeColor(edge.kind, edge.online !== false), width: edgeWidth(edge.kind) * this.lod, alpha: edge.online === false ? .18 : .5 });
+    link.graphic.clear();
+    segmentPath(link.graphic, from, to, edge.online === false ? 8 * this.lod : 0);
+    link.graphic.stroke({ color: edgeColor(edge.kind, edge.online !== false), width: edgeWidth(edge.kind) * this.lod,
+      alpha: edge.online === false ? .22 : edge.kind === 'endpoint' ? .28 : .48 });
   }
 
   /** Bots, police and fortresses decorate the live node; bodies of static nodes stay in scenery. */
@@ -225,7 +238,9 @@ export class PixiActors {
       marks.circle(0, 0, (radius + 10) * scale).stroke({ color: 0xef6b7c, width: 1.6 * scale, alpha: .8 });
       marks.circle(-(radius + 4) * scale, -(radius + 4) * scale, (this.detailed ? 8 : 4) * scale).fill({ color: 0xff6470 });
       marks.circle(0, 0, (radius + 15) * scale).stroke({ color: 0xff6470, width: Math.min(2.5, 1.1 * scale), alpha: .28 });
-    } else if (node.active) { marks.circle(0, 0, (radius + 5) * scale).stroke({ color: 0xffc26b, width: 1.6 * scale, alpha: .8 }); }
+    } else if (node.active && (this.detailed || selected || hovered)) {
+      marks.circle(0, 0, (radius + 5) * scale).stroke({ color: 0xffc26b, width: 1.6 * scale, alpha: .65 });
+    }
     if (node.entities) {
       marks.roundRect((radius - 2) * scale, -(radius + 10) * scale, (this.detailed ? 16 : 7) * scale, (this.detailed ? 13 : 7) * scale, 2 * scale).fill({ color: 0xf19bdc });
     }
@@ -266,7 +281,7 @@ export class PixiActors {
     if (fortress.tier >= 3) {
       marks.circle(0, 0, ring + 4 * scale).stroke({ color, width: 1.2 * scale, alpha: .45 });
     }
-    const merlons = Math.max(4, fortress.walls * 2), size = 4 * scale;
+    const merlons = Math.min(24, Math.max(0, fortress.walls) * 2), size = 4 * scale;
     for (let i = 0; i < merlons; i++) {
       const angle = -Math.PI / 2 + i * 2 * Math.PI / merlons;
       const x = Math.cos(angle) * ring, y = Math.sin(angle) * ring;
@@ -284,43 +299,46 @@ export class PixiActors {
       const adjacent = !!this.adjacency.get(a.address)?.has(b.address);
       if (!adjacent && !allowJumps) { continue; }
       const from = physicalPoint(a), to = physicalPoint(b);
-      result.push({ from, to, length: Math.hypot(to.px - from.px, to.py - from.py), jump: !adjacent });
+      result.push({ from, to, length: Math.hypot(to.px - from.px, to.py - from.py), jump: !adjacent,
+        fromAddress: a.address, toAddress: b.address, hop: i - 1, hops: addresses.length - 1 });
     }
     return result;
   }
 
-  /** Flights are keyed by packet id and phase; their clock starts once, at first receipt. */
+  /** Dispatches are processed before outcomes, even when both arrive in one UI push. */
   private syncFlights(events: NetEvent[], now: number) {
-    const seen = new Set<string>();
-    for (const event of events) {
+    for (const event of [...events.filter((entry) => entry.phase !== 'done' && entry.phase !== 'fail'),
+      ...events.filter((entry) => entry.phase === 'done' || entry.phase === 'fail')]) {
       if (event.kind !== 'packet' || !event.id) { continue; }
       const phase = event.phase === 'done' || event.phase === 'fail' ? event.phase : 'send';
-      const key = `${event.id}:${phase}`;
-      seen.add(key);
-      if (this.flights.has(key)) { continue; }
+      const key = event.id, previous = this.flights.get(key);
+      if (previous && (previous.phase === phase || phase === 'send')) { continue; }
       const born = now - Math.max(0, event.age) * 1000;
       const end = this.scene!.byAddress.get(event.to) || null;
-      if (phase === 'send') {
-        let segments = event.route ? this.segments(event.route, true) : [];
-        const start = this.scene!.byAddress.get(event.from);
-        if (!segments.length && start && end && start !== end) {
-          segments = this.eventPath(event.from, event.to);
-        }
-        if (!segments.length && !end) { continue; }
-        const duration = Math.max(FLIGHT_MIN_MS, (event.duration || 0) * 1000);
-        if (now - born > duration + ARRIVAL_MS) { continue; }
-        this.flights.set(key, { key, phase, born, duration, segments, end: end ? physicalPoint(end) : segments[segments.length - 1]?.to || null,
-          tint: packetTint(event), own: !!event.own });
-      } else {
-        const point = end ? physicalPoint(end) : null;
-        if (!point || now - born > OUTCOME_MS) { continue; }
-        this.flights.set(key, { key, phase, born, duration: OUTCOME_MS, segments: [], end: point,
-          tint: phase === 'done' ? DONE_TINT : FAIL_TINT, own: !!event.own });
-      }
+      // An explicit route is authoritative, including redacted/missing hops.
+      // Legacy packets without route data can still use their real visible adjacency.
+      const segments = event.route ? this.segments(event.route, true)
+        : previous?.segments || this.eventPath(event.from, event.to);
+      if (!segments.length && !end) { continue; }
+      const duration = phase === 'send' ? Math.max(1, (event.duration || 0) * 1000) : OUTCOME_MS;
+      const remaining = phase === 'send' ? (event.remaining_ms ?? Math.max(0, duration - (now - born))) + ARRIVAL_MS
+        : Math.max(0, OUTCOME_MS - (now - born));
+      const until = now + Math.min(remaining, event.lifetime_ms ?? remaining);
+      if (until <= now) { continue; }
+      this.flights.set(key, { key, phase, born, duration, until, segments,
+        end: end ? physicalPoint(end) : null, endAddress: event.to,
+        tint: phase === 'send' ? packetTint(event) : phase === 'done' ? DONE_TINT : FAIL_TINT, own: !!event.own });
     }
-    // Server events expire on their own; keep only flights the server still reports or that are mid-air.
+    // Revalidate retained coordinates against the currently disclosed map. ACL
+    // revocation or local filtering must immediately remove old route fragments.
     for (const [key, flight] of this.flights) {
-      if (!seen.has(key) && now - flight.born > flight.duration + ARRIVAL_MS) { this.flights.delete(key); }
+      flight.segments = flight.segments.flatMap((segment) => {
+        const a = this.scene!.byAddress.get(segment.fromAddress), b = this.scene!.byAddress.get(segment.toAddress);
+        return a && b ? [{ ...segment, from: physicalPoint(a), to: physicalPoint(b) }] : [];
+      });
+      const endpoint = this.scene!.byAddress.get(flight.endAddress);
+      flight.end = endpoint ? physicalPoint(endpoint) : null;
+      if (now >= flight.until || (!flight.segments.length && !flight.end)) { this.flights.delete(key); }
     }
     if (this.flights.size > MAX_FLIGHTS) {
       const excess = [...this.flights.values()].sort((a, b) => a.born - b.born).slice(0, this.flights.size - MAX_FLIGHTS);
@@ -331,7 +349,11 @@ export class PixiActors {
   private paintPaths() {
     const selected = this.overlay!.selected && this.scene!.byAddress.get(this.overlay!.selected);
     const edges = selected ? [...(this.adjacency.get(selected.address) || [])].flatMap((address) => {
-      const target = this.scene!.byAddress.get(address); return target ? [{ from: physicalPoint(selected), to: physicalPoint(target) }] : [];
+      const target = this.scene!.byAddress.get(address);
+      const infrastructure = selected.type === 'apc' || selected.type === 'relay' || selected.type === 'gateway';
+      const quiet = this.overlay!.showEndpointLinks === false && infrastructure
+        && target && target.type !== 'apc' && target.type !== 'relay' && target.type !== 'gateway';
+      return target && !quiet ? [{ from: physicalPoint(selected), to: physicalPoint(target) }] : [];
     }) : [];
     const anchors = this.moving.flatMap((node) => {
       const point = physicalPoint(node); return point.px === node.px && point.py === node.py ? [] : [{ from: point, to: node }];
@@ -421,7 +443,7 @@ export class PixiActors {
   get nextWake() {
     let wake: number | null = this.routes[2].segments.length ? this.routes[2].until : null;
     for (const flight of this.flights.values()) {
-      const end = flight.born + flight.duration + (flight.phase === 'send' ? ARRIVAL_MS : 0);
+      const end = flight.until;
       wake = wake === null ? end : Math.min(wake, end);
     }
     return wake;
@@ -429,8 +451,16 @@ export class PixiActors {
 
   private drawFlight(flight: Flight, now: number) {
     const elapsed = now - flight.born;
+    if (now >= flight.until) { return false; }
+    // The whole actual dispatch route is visible before delivery. A very fast
+    // packet first observed with its outcome still leaves this completed path.
+    const fade = flight.phase === 'send' ? 1 : Math.max(0, 1 - elapsed / flight.duration);
+    for (const segment of flight.segments) { segmentPath(this.effects, segment.from, segment.to, segment.jump ? 8 * this.lod : 0); }
+    if (flight.segments.length) { this.effects.stroke({ color: flight.tint, width: (flight.own ? 3.2 : 1.8) * this.lod,
+      alpha: (flight.own ? .62 : .25) * fade }); }
     if (flight.phase !== 'send') {
-      if (!flight.end || elapsed >= flight.duration) { return false; }
+      if (elapsed >= flight.duration) { return false; }
+      if (!flight.end) { return flight.segments.length > 0; }
       const progress = Math.max(0, elapsed / flight.duration);
       this.effects.circle(flight.end.px, flight.end.py, 16 + progress * 18)
         .stroke({ color: flight.tint, width: 2.6 - progress, alpha: .9 * (1 - progress) });
@@ -442,7 +472,6 @@ export class PixiActors {
       }
       return true;
     }
-    if (elapsed >= flight.duration + ARRIVAL_MS) { return false; }
     const width = (flight.own ? 3.2 : 2.2) * this.lod, radius = (flight.own ? 6 : 4.5) * Math.max(1, this.lod * .75);
     if (this.reducedMotion) {
       for (const segment of flight.segments) { segmentPath(this.effects, segment.from, segment.to); }
@@ -453,10 +482,10 @@ export class PixiActors {
     if (elapsed < flight.duration && flight.segments.length) {
       const progress = Math.max(0, elapsed / flight.duration), tail = Math.max(0, progress - .16);
       // Comet tail: the travelled stretch fades behind the packet.
-      const head = pointOn(flight.segments, progress), back = pointOn(flight.segments, tail);
+      const head = packetPoint(flight.segments, progress), back = packetPoint(flight.segments, tail);
       if (head && back) {
         for (let i = 1; i <= 4; i++) {
-          const point = pointOn(flight.segments, tail + (progress - tail) * i / 4);
+          const point = packetPoint(flight.segments, tail + (progress - tail) * i / 4);
           if (point) { this.effects.circle(point.px, point.py, radius * (.35 + i * .12)).fill({ color: flight.tint, alpha: .15 + i * .12 }); }
         }
         this.effects.circle(head.px, head.py, radius).fill({ color: flight.tint, alpha: .95 });

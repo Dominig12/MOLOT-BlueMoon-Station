@@ -9,6 +9,20 @@ const node = (address: string, px: number, py = 0): PlacedNode => ({ address, na
 const finish = (layer: PixiScenery) => { for (let i = 0; i < 10000 && layer.advance(Infinity); i++) { /* bounded work slices */ } };
 beforeEach(resetPixiMock);
 
+test('quiet overview hides endpoint cables without removing devices or retessellating them on toggle', () => {
+  const scene = new GraphScene(); scene.update([node('A', 0), node('B', 100)], [
+    { id: 'AB', from: 'A', to: 'B', kind: 'endpoint' },
+  ]);
+  const layer = new PixiScenery(mockPixi), gateways = new Map();
+  layer.queue(scene, { gateways, showEndpointLinks: false }); finish(layer);
+  expect(MockGraphics.graphics.some((graphic) => graphic.label.startsWith('1-edge:'))).toBe(false);
+  const devices = MockGraphics.graphics.filter((graphic) => graphic.label.startsWith('3-node:'));
+  const before = devices.map((graphic) => graphic.clears);
+  layer.queue(scene, { gateways, showEndpointLinks: true }); finish(layer);
+  expect(MockGraphics.graphics.some((graphic) => graphic.label.startsWith('1-edge:'))).toBe(true);
+  expect(devices.map((graphic) => graphic.clears)).toEqual(before);
+});
+
 test('large scenes retain every node, edge and APC run instead of rejecting GPU rendering', () => {
   const nodes = Array.from({ length: 6001 }, (_, i) => node(`N${i}`, (i % 100) * GRAPH_TILE, Math.floor(i / 100) * GRAPH_TILE));
   const edges = nodes.slice(1).map((entry, i) => ({ id: `E${i}`, from: nodes[i].address, to: entry.address, kind: 'apc' as const }));

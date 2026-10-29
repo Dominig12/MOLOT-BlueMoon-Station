@@ -61,3 +61,47 @@ test('agents list their state and send orders with the selected node', () => {
   const request = topic.mock.calls.find(([message]) => message.type === 'act/agent_order')[0];
   expect(JSON.parse(request.payload)).toEqual(expect.objectContaining({ ref: 'agent-1', order: 'guard', address: 'NODE-7' }));
 });
+
+test('module actions retain exact instance ids and show protected vault capacity', () => {
+  const onCommand = jest.fn();
+  const details = { ...fortress, storage: { used: 8, capacity: 24, vault_bonus: 12, required_access: 3 }, modules: [
+    { ...fortress.modules[0], id: 'wall-2', repair_command: 'fort_repair@wall-2', dismantle_command: 'fort_dismantle@wall-2' },
+  ] };
+  const panel = render(<FortressPanel fortress={details} access={3} onCommand={onCommand} commands={[
+    command('fort_repair@wall-2', { allowed: false }), command('fort_dismantle@wall-2'), command('fort_dismantle@wall'),
+  ]} />);
+  expect(panel.getByText('Доступ к файлам: ROOT.')).toBeTruthy();
+  expect(panel.getByRole('meter', { name: 'Память крепости' }).getAttribute('aria-valuemax')).toBe('24');
+  fireEvent.click(panel.getByText('Починить')); expect(onCommand).not.toHaveBeenCalled();
+  fireEvent.click(panel.getByText('Разобрать')); expect(onCommand).toHaveBeenCalledWith('fort_dismantle@wall-2');
+  expect(panel.queryByText('fort_dismantle@wall')).toBeNull();
+});
+
+test('agent controls transmit persona, file and delegated commands through agent_order only', () => {
+  const { topic } = setupBackend({
+    selected: { address: 'TARGET', name: 'Устройство', commands: [command('scan', { name: 'Сканировать', allowed: false })] },
+    storage: { used: 3, capacity: 10, files: [{ uid: 'local-1', name: 'shield.exe', kind: 'combat', size: 3, preview: null }] },
+    agents: [{ ref: 'bot-1', name: 'STEW-01', bot_kind: 'mender', node: 'HOME', node_name: 'APC', integrity: 80, max_integrity: 100,
+      state: 'ожидает', goal: 'охрана', storage: { used: 2, capacity: 10 }, persona: { avatar: 'fox', accent: 'mint', tagline: 'На связи.' },
+      files: [{ uid: 'bot-file', name: 'report.txt', kind: 'text', size: 2, preview: 'Отчёт' }], programs: [],
+      goals: [{ id: 'goal-1', name: 'Проверить узел', desc: 'Диагностика APC.', selected: true }],
+      orders: ['persona', 'command', 'upload', 'download'].map((id) => ({ id, name: id })) }],
+  });
+  const panel = render(<AgentsPanel />);
+  fireEvent.change(panel.getByLabelText('Команда агента STEW-01'), { target: { value: 'scan' } });
+  fireEvent.click(panel.getByText('Поручить'));
+  fireEvent.change(panel.getByLabelText('Локальный файл'), { target: { value: 'local-1' } });
+  fireEvent.click(panel.getByText('Загрузить'));
+  fireEvent.click(panel.getByLabelText('Забрать report.txt у STEW-01'));
+  fireEvent.click(panel.getByText('Личность'));
+  fireEvent.change(panel.getByLabelText('Имя'), { target: { value: 'STEW-02' } });
+  fireEvent.click(panel.getByText('Сохранить личность'));
+  const requests = topic.mock.calls.filter(([message]) => message.type === 'act/agent_order').map(([message]) => JSON.parse(message.payload));
+  expect(requests).toEqual(expect.arrayContaining([
+    expect.objectContaining({ ref: 'bot-1', order: 'command', address: 'TARGET', command: 'scan' }),
+    expect.objectContaining({ ref: 'bot-1', order: 'upload', uid: 'local-1' }),
+    expect.objectContaining({ ref: 'bot-1', order: 'download', uid: 'bot-file' }),
+    expect.objectContaining({ ref: 'bot-1', order: 'persona', name: 'STEW-02', avatar: 'fox', accent: 'mint' }),
+  ]));
+  expect(topic.mock.calls.some(([message]) => message.type === 'act/command')).toBe(false);
+});

@@ -633,6 +633,8 @@
 		return TRUE
 	if(combat_context.needs_live_refresh())
 		return TRUE
+	if(selected_node()?.fortress?.needs_live_refresh())
+		return TRUE
 	// Web pages (NTnet) and pinned machine windows carry external/async content that arrives with
 	// no netrun change signal, so those tabs keep polling; the map and terminal stay event-driven.
 	if(workspace_view == "web" || (workspace_view == "pinned" && remote_session.active_window))

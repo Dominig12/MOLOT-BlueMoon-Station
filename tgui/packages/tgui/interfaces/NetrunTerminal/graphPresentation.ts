@@ -10,8 +10,10 @@ export type GraphOverlay = {
   gateways: Map<string, Gateway>; selectedRoute: string[]; waypointRoute: string[]; pingRoute: string[];
   pingId?: number; pingExpiresAt?: number;
   events: NetEvent[]; apcZones?: ApcZone[];
+  /** Quiet overview hides endpoint cables; focus and actual packet routes remain visible. */
+  showEndpointLinks?: boolean;
 };
-export type GraphBase = Pick<GraphOverlay, 'gateways' | 'apcZones'>;
+export type GraphBase = Pick<GraphOverlay, 'gateways' | 'apcZones' | 'showEndpointLinks'>;
 export type GraphCamera = { x: number; y: number; zoom: number };
 export type GraphBox = { left: number; top: number; right: number; bottom: number };
 export const markerColor = (node: PlacedNode) => !node.online ? '#85434a' : ACCESS_COLORS[node.access] || '#678698';

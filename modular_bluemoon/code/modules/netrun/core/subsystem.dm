@@ -74,6 +74,9 @@ SUBSYSTEM_DEF(netrun)
 	/// Общая лента недавних событий сети - её видят все раннеры на карте.
 	/// list(list("kind","from","to","t","until","route"[,"packet"]))
 	var/list/events = list()
+	/// Long flights survive unrelated churn in the bounded recent-event ring.
+	var/list/map_packet_flights = list()
+	var/map_event_serial = 0
 	var/datum/netrun_topology/topology
 
 /datum/controller/subsystem/netrun/stat_entry(msg)
@@ -544,13 +547,32 @@ SUBSYSTEM_DEF(netrun)
 /datum/controller/subsystem/netrun/proc/post_event(kind, from_ref, to_ref, list/route, list/packet)
 	var/duration = packet ? max(0, packet["duration"] || 0) : 0
 	var/lifetime = max(NETRUN_MAP_EVENT_LIFETIME, duration + NETRUN_MAP_EVENT_TAIL)
-	var/list/event = list("kind" = kind, "from" = from_ref, "to" = to_ref, "t" = world.time, "until" = world.time + lifetime, "route" = route?.Copy())
+	var/list/event = list("event_id" = "event-[++map_event_serial]", "kind" = kind, "from" = from_ref, "to" = to_ref, "t" = world.time, "until" = world.time + lifetime, "route" = route?.Copy())
 	if(packet)
 		event["packet"] = packet.Copy()
+		if(packet["phase"] == "send" && duration > 0)
+			map_packet_flights[packet["id"]] = event
+			if(length(map_packet_flights) > NETRUN_MAX_MAP_EVENTS)
+				map_packet_flights.Cut(1, 2)
+		else if(packet["phase"] != "send")
+			map_packet_flights -= packet["id"]
 	events += list(event)
 	if(length(events) > NETRUN_MAX_MAP_EVENTS)
 		events.Cut(1, length(events) - NETRUN_MAX_MAP_EVENTS + 1)
 	SEND_SIGNAL(src, COMSIG_NETRUN_EVENT_POSTED, kind, from_ref, to_ref, route, lifetime)
+
+/// At most two bounded rings; no packet, payload or game-object references.
+/datum/controller/subsystem/netrun/proc/map_event_snapshot()
+	. = events.Copy()
+	var/list/included = list()
+	for(var/list/event as anything in events)
+		included[event["event_id"]] = TRUE
+	for(var/id in map_packet_flights)
+		var/list/flight = map_packet_flights[id]
+		if(world.time >= flight["until"])
+			map_packet_flights -= id
+		else if(!included[flight["event_id"]])
+			. += list(flight)
 
 /// A packet flight is published once at dispatch, with its real transit time and hops.
 /// The outcome is a second, short event; neither retains the packet or its payload.
@@ -558,16 +580,18 @@ SUBSYSTEM_DEF(netrun)
 	if(!operation)
 		return
 	var/datum/netrun_console/owner = operation.console_ref?.resolve()
+	var/mob/camera/netrun_entity/entity = owner?.host
+	var/datum/netrun_console/principal = istype(entity) ? entity.netrun_owner_console() : null
 	var/list/packet = list("id" = operation.id, "packet" = operation.kind, "phase" = phase,
 		"duration" = phase == "send" ? operation.eta : 0, "label" = operation.label,
-		"owner" = owner ? REF(owner) : null)
+		"owner" = owner ? REF(owner) : null, "principal" = principal ? REF(principal) : null)
 	post_event("packet", operation.from_address, operation.to_address, operation.route, packet)
 
 /// Недавние события (последние секунды) для интерфейса
 /datum/controller/subsystem/netrun/proc/recent_events(datum/netrun_console/viewer)
 	. = list()
 	var/viewer_ref = viewer ? REF(viewer) : null
-	for(var/list/event as anything in events)
+	for(var/list/event as anything in map_event_snapshot())
 		if(world.time >= (event["until"] || event["t"] + NETRUN_MAP_EVENT_LIFETIME))
 			continue
 		var/age = world.time - event["t"]
@@ -577,20 +601,27 @@ SUBSYSTEM_DEF(netrun)
 		var/list/packet = event["packet"]
 		if(viewer)
 			var/list/shown = viewer.map_view.shown_addresses
+			// Unrelated traffic must neither disclose metadata nor inflate every map.
+			var/synthetic = !packet && !length(path) && !nodes_by_address[from_ref] && !nodes_by_address[to_ref]
+			if(!synthetic && !viewer.map_view.event_visible_in(from_ref, to_ref, path, shown))
+				continue
 			if(path)
 				path = path.Copy()
 				for(var/i in 1 to length(path))
 					if(!shown[path[i]])
 						path[i] = ""
 			// A flight never discloses an endpoint of a closed LAN to an unrelated map.
-			if(packet)
+			if(!synthetic)
 				if(!shown[from_ref])
 					from_ref = null
 				if(!shown[to_ref])
 					to_ref = null
-		var/list/entry = list("kind" = event["kind"], "from" = from_ref, "to" = to_ref, "age" = round(age / (1 SECONDS), 0.1), "route" = path)
+		var/list/entry = list("event_id" = event["event_id"], "kind" = event["kind"], "from" = from_ref, "to" = to_ref,
+			"age" = round(age / (1 SECONDS), 0.01), "route" = path,
+			"remaining_ms" = max(0, event["until"] - world.time) * 100,
+			"lifetime_ms" = (event["until"] - event["t"]) * 100)
 		if(packet)
-			var/own = !!viewer_ref && packet["owner"] == viewer_ref
+			var/own = !!viewer_ref && (packet["owner"] == viewer_ref || packet["principal"] == viewer_ref)
 			entry["id"] = packet["id"]
 			entry["packet"] = packet["packet"]
 			entry["phase"] = packet["phase"]

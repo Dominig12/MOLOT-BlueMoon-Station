@@ -114,9 +114,10 @@ class NetrunPixiSurface implements PixiSurface {
 
   updateScene(scene: GraphScene, base: GraphBase) {
     if (this.disposed || this.failed) { return false; }
-    if (scene !== this.scene || base.gateways !== this.base?.gateways || base.apcZones !== this.base?.apcZones) {
+    if (scene !== this.scene || base.gateways !== this.base?.gateways || base.apcZones !== this.base?.apcZones
+      || base.showEndpointLinks !== this.base?.showEndpointLinks) {
       const sceneryChanged = scene.sceneryVersion !== this.scene?.sceneryVersion
-        || base.gateways !== this.base?.gateways || base.apcZones !== this.base?.apcZones;
+        || base.gateways !== this.base?.gateways || base.apcZones !== this.base?.apcZones || base.showEndpointLinks !== this.base?.showEndpointLinks;
       if (this.scene && (scene.changedNodes === null || scene.edges !== this.scene.edges)) {
         this.scenery.suppressUndisclosed(scene);
       }
@@ -137,7 +138,7 @@ class NetrunPixiSurface implements PixiSurface {
         && a.entityHost === b.entityHost && a.jacked === b.jacked && a.gateways === b.gateways
         && a.selectedRoute === b.selectedRoute && a.waypointRoute === b.waypointRoute
         && a.pingRoute === b.pingRoute && a.pingId === b.pingId && a.pingExpiresAt === b.pingExpiresAt
-        && a.events === b.events) { return; }
+          && a.events === b.events && a.showEndpointLinks === b.showEndpointLinks) { return; }
     }
     // The UI provides one complete graph. Render-layer membership stays an
     // internal cache detail, never a second transport/layout contract.

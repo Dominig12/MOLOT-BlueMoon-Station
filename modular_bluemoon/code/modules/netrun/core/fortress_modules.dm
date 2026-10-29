@@ -1,5 +1,7 @@
 /// Один модуль крепости. Новый вид модуля - подтип со своим `kind` и параметрами.
 /datum/netrun_fortress_module
+	var/static/next_id = 0
+	var/id
 	var/kind
 	var/name = "модуль"
 	var/desc = ""
@@ -17,6 +19,7 @@
 	var/datum/netrun_fortress/fortress
 
 /datum/netrun_fortress_module/New(datum/netrun_fortress/fortress, instant = FALSE)
+	id = "fort-module-[++next_id]"
 	src.fortress = fortress
 	if(instant)
 		status = NETRUN_FORT_MODULE_ONLINE
@@ -40,7 +43,7 @@
 
 /// The UI distinguishes a standing module on an unpowered node.
 /datum/netrun_fortress_module/proc/display_status()
-	if(status == NETRUN_FORT_MODULE_ONLINE && (QDELETED(fortress?.node) || !fortress.node.is_online()))
+	if(status == NETRUN_FORT_MODULE_ONLINE && (QDELETED(fortress?.node) || fortress.slots_max() <= 0 || !fortress.node.is_online()))
 		return "offline"
 	return status
 
@@ -50,9 +53,12 @@
 		remaining = max(0, CEILING((build_until - world.time) / (1 SECONDS), 1))
 	else if(kind == NETRUN_FORT_TRAP && ready_at > world.time)
 		remaining = CEILING((ready_at - world.time) / (1 SECONDS), 1)
-	return list("ref" = REF(src), "kind" = kind, "name" = name, "desc" = desc,
+	if(is_jammed())
+		remaining = CEILING((jammed_until - world.time) / (1 SECONDS), 1)
+	return list("ref" = REF(src), "id" = id, "kind" = kind, "name" = name, "desc" = desc,
 		"integrity" = round(integrity), "max_integrity" = max_integrity,
-		"status" = display_status(), "remaining" = remaining)
+		"status" = display_status(), "remaining" = remaining, "jammed" = is_jammed(),
+		"repair_command" = "fort_repair@[id]", "dismantle_command" = "fort_dismantle@[id]")
 
 /datum/netrun_fortress_module/proc/complete_build()
 	if(status != NETRUN_FORT_MODULE_BUILDING || QDELETED(fortress))
@@ -66,7 +72,7 @@
 	fortress.refresh_vault()
 
 /datum/netrun_fortress_module/proc/take_damage(amount, reason, datum/netrun_console/attacker)
-	if(status == NETRUN_FORT_MODULE_DESTROYED || QDELETED(fortress) || amount <= 0)
+	if(status == NETRUN_FORT_MODULE_DESTROYED || QDELETED(fortress) || !IS_FINITE(amount) || amount <= 0)
 		return
 	integrity = max(0, integrity - amount)
 	if(integrity <= 0)
@@ -87,7 +93,7 @@
 
 /// Repairs return a destroyed module to service; `quiet` skips the shared change publication.
 /datum/netrun_fortress_module/proc/repair(amount, quiet = FALSE)
-	if(QDELETED(fortress) || status == NETRUN_FORT_MODULE_BUILDING)
+	if(QDELETED(fortress) || status == NETRUN_FORT_MODULE_BUILDING || !IS_FINITE(amount) || amount <= 0)
 		return FALSE
 	if(status == NETRUN_FORT_MODULE_DESTROYED)
 		status = NETRUN_FORT_MODULE_ONLINE
@@ -226,7 +232,8 @@
 /datum/component/netrun_combatant/fortress/allows_remote_attack(datum/netrun_console/console, datum/component/netrun_node/local_node)
 	var/datum/netrun_fortress_module/module = parent
 	var/datum/netrun_fortress/fortress = module.fortress
-	if(QDELETED(fortress?.node) || !local_node || local_node == fortress.node || !console?.combat_self())
+	var/mob/camera/netrun_entity/entity = console?.combat_self()
+	if(QDELETED(fortress?.node) || QDELETED(entity) || !local_node || entity.host_node != local_node || local_node == fortress.node)
 		return FALSE
 	if(!(module in fortress.siege_targets()))
 		return FALSE

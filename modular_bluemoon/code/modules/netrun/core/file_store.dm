@@ -2,12 +2,28 @@
 /datum/netrun_file_store
 	var/datum/weakref/owner_ref
 	var/list/datum/netrun_file/files = list()
-	var/capacity = 0
+	var/capacity = 8 * NETRUN_STORAGE_SCALE
 	var/revision = 0
 
-/datum/netrun_file_store/New(datum/owner, capacity = 0)
+/datum/netrun_file_store/New(datum/owner, capacity = 8 * NETRUN_STORAGE_SCALE)
 	owner_ref = owner ? WEAKREF(owner) : null
 	src.capacity = capacity
+
+/// Every addressable endpoint has writable memory. Explicit capacities (including
+/// zero for read-only media) override these defaults and are already scaled.
+/proc/netrun_node_storage_capacity(node_type)
+	switch(node_type)
+		if(NETRUN_NODE_AI)
+			return 24 * NETRUN_STORAGE_SCALE
+		if(NETRUN_NODE_SERVER)
+			return 16 * NETRUN_STORAGE_SCALE
+		if(NETRUN_NODE_TERMINAL)
+			return 12 * NETRUN_STORAGE_SCALE
+		if(NETRUN_NODE_GATEWAY)
+			return 8 * NETRUN_STORAGE_SCALE
+		if(NETRUN_NODE_APC)
+			return 6 * NETRUN_STORAGE_SCALE
+	return 4 * NETRUN_STORAGE_SCALE
 
 /datum/netrun_file_store/Destroy()
 	owner_ref = null

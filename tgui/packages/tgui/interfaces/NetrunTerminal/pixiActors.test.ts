@@ -112,6 +112,39 @@ test('a sent packet flies its hop route for its real transit time, then reports 
   expect(layer.animate(6300)).toBe(false);
 });
 
+test('a fast packet first observed with its receipt keeps its actual path without replaying a flight', () => {
+  const scene = new GraphScene();
+  scene.update([node('A'), node('B', 0, 100), node('C', 100, 100)], [
+    { id: 'AB', from: 'A', to: 'B', kind: 'apc' }, { id: 'BC', from: 'B', to: 'C', kind: 'apc' },
+  ]);
+  const sent = { kind: 'packet' as const, id: 'fast', packet: 'command', from: 'A', to: 'C', own: true,
+    route: ['A', 'B', 'C'], phase: 'send' as const, duration: .01, age: .2, remaining_ms: 0, lifetime_ms: 1000 };
+  const layer = new PixiActors(mockPixi);
+  layer.update(scene, overlay({ events: [sent, { ...sent, phase: 'done', age: .19 }] }), [], scene.adjacency, 0);
+  layer.animate(0);
+  const effects = MockGraphics.graphics.find((entry) => entry.label === 'traffic-and-ping');
+  expect(effects.calls.filter((call) => call.op === 'lineTo').map((call) => call.args)).toEqual([[0, 100], [100, 100]]);
+  expect(effects.calls.filter((call) => call.op === 'circle')).toHaveLength(1); // Outcome ring, no invented second comet.
+  expect(layer.animate(1100)).toBe(false);
+});
+
+test('explicit redacted packet routes never fall back to a fabricated visible BFS route', () => {
+  const scene = new GraphScene();
+  scene.update([node('A'), node('B', 0, 100), node('C', 100, 100)], [
+    { id: 'AB', from: 'A', to: 'B', kind: 'apc' }, { id: 'BC', from: 'B', to: 'C', kind: 'apc' },
+  ]);
+  const layer = new PixiActors(mockPixi);
+  layer.update(scene, overlay({ events: [{ kind: 'packet', id: 'private', from: 'A', to: 'C', own: true,
+    route: ['A', '', 'C'], phase: 'send', duration: 2, age: 0 }] }), [], scene.adjacency, 0);
+  layer.animate(500);
+  const effects = MockGraphics.graphics.find((entry) => entry.label === 'traffic-and-ping');
+  expect(effects.calls.some((call) => call.op === 'lineTo')).toBe(false);
+  const revoked = new GraphScene(); revoked.update([], []);
+  layer.update(revoked, overlay(), [], revoked.adjacency, 600);
+  expect(layer.animate(600)).toBe(false);
+  expect(effects.calls).toEqual([]);
+});
+
 test('a ping clears its route geometry at expiry without clearing stored or waypoint routes', () => {
   const scene = new GraphScene(); scene.update([node('A'), node('B', 100)], [{ id: 'AB', from: 'A', to: 'B', kind: 'apc' }]);
   const layer = new PixiActors(mockPixi), edges = [];

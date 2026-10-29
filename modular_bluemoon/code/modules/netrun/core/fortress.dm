@@ -28,6 +28,8 @@
 	var/turret_fire_at = 0
 	/// Storage currently added to the node by vault modules.
 	var/vault_bonus = 0
+	/// Only local defenders are observed; an idle fortress owns no polling task.
+	var/list/observed_ice = list()
 
 /datum/netrun_fortress/New(datum/component/netrun_node/node, name, faction = NETRUN_FACTION_OWNER, datum/netrun_console/owner)
 	src.node = node
@@ -37,6 +39,8 @@
 	if(owner)
 		set_owner(owner)
 	SSnetrun.fortress_nodes[node.address] = node
+	RegisterSignal(node, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(on_node_changed))
+	refresh_defenders()
 
 /datum/netrun_fortress/Destroy()
 	clear_timer()
@@ -44,6 +48,7 @@
 	cancel_turret()
 	var/datum/component/netrun_node/old = node
 	if(old)
+		UnregisterSignal(old, COMSIG_NETRUN_NODE_CHANGED)
 		SSnetrun.fortress_nodes -= old.address
 		apply_vault_bonus(0)
 		if(old.fortress == src)
@@ -52,6 +57,9 @@
 	QDEL_LIST(modules)
 	owner_ref = null
 	besiegers = null
+	for(var/datum/netrun_ice/ice as anything in observed_ice)
+		UnregisterSignal(ice, list(COMSIG_NETRUN_COMBAT_CHANGED, COMSIG_PARENT_QDELETING))
+	observed_ice.Cut()
 	if(!QDELETED(old))
 		old.notify_changed()
 		SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_FORTRESS_CHANGED, old)
@@ -64,6 +72,7 @@
 
 /// A ruined fortress (every module destroyed) can be claimed by whoever rebuilds it.
 /datum/netrun_fortress/proc/claim(datum/netrun_console/console)
+	clear_ruins()
 	set_owner(console)
 	faction = NETRUN_FACTION_OWNER
 	name = "Крепость [owner_name]"
@@ -71,6 +80,17 @@
 	preset_name = null
 	node.add_log("Руины крепости захвачены: [owner_name].")
 	node.network?.add_log("Узел [node.address]: руины крепости захвачены.", TRUE)
+
+/// Clearing ruins is explicit rebuilding; regeneration never resurrects destroyed works.
+/datum/netrun_fortress/proc/clear_ruins()
+	if(!ruined())
+		return FALSE
+	QDEL_LIST(modules)
+	modules = list()
+	besiegers.Cut()
+	cancel_turret()
+	refresh_vault()
+	return TRUE
 
 // MARK: Свои и чужие
 
@@ -167,16 +187,18 @@
 		. |= module.kind
 
 /datum/netrun_fortress/proc/security_bonus()
+	if(slots_max() <= 0)
+		return 0
 	return min(NETRUN_FORT_MAX_SECURITY_BONUS, intact_count(NETRUN_FORT_WALL))
 
 /datum/netrun_fortress/proc/gate_blocks(datum/netrun_console/console)
-	return intact_count(NETRUN_FORT_GATE) && !is_friendly(console)
+	return slots_max() > 0 && intact_count(NETRUN_FORT_GATE) && !is_friendly(console)
 
 /datum/netrun_fortress/proc/blocks_breach(datum/netrun_console/console)
-	return intact_count(NETRUN_FORT_WALL) && !is_friendly(console)
+	return slots_max() > 0 && intact_count(NETRUN_FORT_WALL) && !is_friendly(console)
 
 /datum/netrun_fortress/proc/file_access_level(datum/netrun_console/console)
-	return intact_count(NETRUN_FORT_VAULT) && !is_friendly(console) ? NETRUN_ACCESS_ROOT : 0
+	return slots_max() > 0 && intact_count(NETRUN_FORT_VAULT) && !is_friendly(console) ? NETRUN_ACCESS_ROOT : 0
 
 /// Everything still standing, including works under construction.
 /datum/netrun_fortress/proc/combat_targets()
@@ -216,6 +238,9 @@
 	var/path = netrun_fortress_module_type(kind)
 	if(!path)
 		return null
+	var/datum/netrun_fortress_module/module_type = path
+	if(count_kind(kind) >= initial(module_type.max_per_fortress) || slots_used() + initial(module_type.slot_cost) > slots_max())
+		return null
 	var/datum/netrun_fortress_module/module = new path(src, instant)
 	modules += module
 	if(instant)
@@ -250,9 +275,13 @@
 			if(NETRUN_FORT_MODULE_DESTROYED)
 				damaged = TRUE
 	return list("tier" = intact >= 6 ? 3 : (intact >= 3 ? 2 : 1), "walls" = walls, "faction" = faction,
-		"damaged" = damaged, "online" = intact > 0 && !QDELETED(node) && node.is_online())
+		"damaged" = damaged, "online" = intact > 0 && !QDELETED(node) && slots_max() > 0 && node.is_online())
 
 /datum/netrun_fortress/proc/manage_denial(datum/netrun_console/viewer, level)
+	if(slots_max() <= 0)
+		return "Этот узел больше не может нести действующие укрепления."
+	if(!node.is_online())
+		return "Узел отключён; управление крепостью недоступно."
 	if(level < NETRUN_ACCESS_ROOT)
 		return "Управление крепостью требует доступа ROOT к узлу."
 	if(!viewer.daemon_bonus("forge"))
@@ -268,12 +297,90 @@
 	for(var/datum/netrun_fortress_module/module as anything in modules)
 		entries += list(module.ui_entry())
 	var/reason = manage_denial(viewer, level)
+	var/datum/netrun_file_store/store = node?.file_store
 	return list("name" = name, "owner" = owner_name || (faction == NETRUN_FACTION_STATION ? "Станция" : null),
 		"faction" = faction, "preset" = preset_name, "security_bonus" = security_bonus(),
 		"slots_used" = slots_used(), "slots_max" = slots_max(), "modules" = entries,
-		"can_manage" = !reason, "manage_reason" = reason)
+		"can_manage" = !reason, "manage_reason" = reason,
+		"storage" = list("used" = store?.used() || 0, "capacity" = store?.capacity || 0, "vault_bonus" = vault_bonus,
+			"required_access" = max(NETRUN_ACCESS_USER, file_access_level(viewer))))
+
+/datum/netrun_fortress/proc/find_module(id_or_kind)
+	for(var/datum/netrun_fortress_module/module as anything in modules)
+		if(module.id == id_or_kind)
+			return module
+	// Old CLI kind-based commands remain valid and prefer a ruin over intact works.
+	for(var/datum/netrun_fortress_module/module as anything in modules)
+		if(module.kind == id_or_kind && (!. || module.status == NETRUN_FORT_MODULE_DESTROYED))
+			. = module
+
+/// Buttons and delivered commands share exactly the same authorization and target checks.
+/datum/netrun_fortress/proc/repair_denial(datum/netrun_console/console, module_id)
+	if(QDELETED(console) || console.is_locked() || !console.can_route(node) || !node.is_online())
+		return "Нет действующего подключения к работающему узлу."
+	var/level = console.node_level(node)
+	if(level < NETRUN_ACCESS_USER || (!is_friendly(console) && level < NETRUN_ACCESS_ROOT))
+		return "Ремонт чужой крепости требует ROOT; своим нужен доступ ПОЛЬЗОВАТЕЛЯ."
+	if(world.time < next_repair)
+		return "Ремонтные процессы ещё заняты."
+	var/datum/netrun_fortress_module/module = module_id ? find_module(module_id) : most_damaged()
+	if(!module)
+		return module_id ? "Модуль больше не существует." : "Все модули крепости целы."
+	if(module.status == NETRUN_FORT_MODULE_BUILDING)
+		return "Строящийся модуль ещё нельзя ремонтировать."
+	if(module.integrity >= module.max_integrity)
+		return "Модуль уже полностью восстановлен."
+	return null
+
+/datum/netrun_fortress/proc/dismantle_denial(datum/netrun_console/console, module_id)
+	if(QDELETED(console) || console.is_locked() || !console.can_route(node) || !node.is_online())
+		return "Нет действующего подключения к работающему узлу."
+	if(console.node_level(node) < NETRUN_ACCESS_ROOT)
+		return "Разбор крепости требует ROOT."
+	if(!can_dismantle(console))
+		return "Разбирать крепость могут только владелец, свои и законный администратор."
+	if(!find_module(module_id))
+		return "Модуль больше не существует."
+	return null
+
+/datum/netrun_fortress/proc/needs_live_refresh()
+	if(turret_fire_at > world.time)
+		return TRUE
+	for(var/datum/netrun_fortress_module/module as anything in modules)
+		if(module.status == NETRUN_FORT_MODULE_BUILDING || module.is_jammed() || module.ready_at > world.time)
+			return TRUE
+	return FALSE
 
 // MARK: Изменения и таймер
+
+/datum/netrun_fortress/proc/on_node_changed(datum/source, datum/component/netrun_node/changed_node, flags)
+	SIGNAL_HANDLER
+	if(flags & NETRUN_CHANGED_OCCUPANTS)
+		refresh_defenders()
+	if(flags & (NETRUN_CHANGED_BINDING | NETRUN_CHANGED_STATE))
+		refresh_vault()
+	schedule()
+
+/datum/netrun_fortress/proc/refresh_defenders()
+	for(var/datum/netrun_ice/ice as anything in observed_ice.Copy())
+		if(QDELETED(ice) || !(ice in node.netrun_ice))
+			UnregisterSignal(ice, list(COMSIG_NETRUN_COMBAT_CHANGED, COMSIG_PARENT_QDELETING))
+			observed_ice -= ice
+	for(var/datum/netrun_ice/ice as anything in node.netrun_ice)
+		if(!QDELETED(ice) && !observed_ice[ice])
+			observed_ice[ice] = TRUE
+			RegisterSignal(ice, COMSIG_NETRUN_COMBAT_CHANGED, PROC_REF(on_defender_changed))
+			RegisterSignal(ice, COMSIG_PARENT_QDELETING, PROC_REF(on_defender_deleted))
+
+/datum/netrun_fortress/proc/on_defender_changed(datum/source)
+	SIGNAL_HANDLER
+	schedule()
+
+/datum/netrun_fortress/proc/on_defender_deleted(datum/source)
+	SIGNAL_HANDLER
+	observed_ice -= source
+	UnregisterSignal(source, list(COMSIG_NETRUN_COMBAT_CHANGED, COMSIG_PARENT_QDELETING))
+	schedule()
 
 /datum/netrun_fortress/proc/changed()
 	if(QDELETED(src) || QDELETED(node))
@@ -283,7 +390,7 @@
 	schedule()
 
 /datum/netrun_fortress/proc/refresh_vault()
-	apply_vault_bonus(intact_count(NETRUN_FORT_VAULT) ? NETRUN_FORT_VAULT_STORAGE : 0)
+	apply_vault_bonus(slots_max() > 0 && intact_count(NETRUN_FORT_VAULT) ? NETRUN_FORT_VAULT_STORAGE : 0)
 
 /datum/netrun_fortress/proc/apply_vault_bonus(amount)
 	if(amount == vault_bonus)
@@ -302,7 +409,11 @@
 	for(var/datum/netrun_fortress_module/module as anything in modules)
 		if(module.status == NETRUN_FORT_MODULE_BUILDING)
 			. = min(., module.build_until)
-	if(!node.is_online())
+		if(module.status == NETRUN_FORT_MODULE_ONLINE && module.jammed_until > world.time)
+			. = min(., module.jammed_until)
+		if(module.status == NETRUN_FORT_MODULE_ONLINE && module.ready_at > world.time)
+			. = min(., module.ready_at)
+	if(slots_max() <= 0 || !node.is_online())
 		return
 	if(turret_fire_at)
 		. = min(., turret_fire_at)
@@ -346,7 +457,13 @@
 		if(module.status == NETRUN_FORT_MODULE_BUILDING && world.time >= module.build_until)
 			module.complete_build()
 			updated = TRUE
-	if(!node.is_online())
+		if(module.jammed_until && world.time >= module.jammed_until)
+			module.jammed_until = 0
+			updated = TRUE
+		if(module.ready_at && world.time >= module.ready_at)
+			module.ready_at = 0
+			updated = TRUE
+	if(slots_max() <= 0 || !node.is_online())
 		cancel_turret()
 	else
 		process_turret()
@@ -373,13 +490,15 @@
 	if(!istype(entity) || QDELETED(entity) || !entity.host_node || entity.host_node == node)
 		return FALSE
 	var/hit_at = besiegers[WEAKREF(entity)]
-	if(!hit_at || world.time - hit_at > 20 SECONDS)
+	if(isnull(hit_at) || world.time - hit_at > 20 SECONDS)
 		return FALSE
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	return (node.address in graph.neighbors(entity.host_node.address, FALSE)) && netrun_link_available(entity.host_node, node)
 
 /datum/netrun_fortress/proc/valid_turret_target(mob/camera/netrun_entity/entity)
 	if(!istype(entity) || QDELETED(entity))
+		return FALSE
+	if(is_friendly(entity.console))
 		return FALSE
 	return entity.host_node == node ? hostile_to(entity) : besieging(entity)
 
@@ -445,7 +564,7 @@
 
 /// Called by entity.enter_node() after the arrival; the entity may be stunned or traced here.
 /datum/netrun_fortress/proc/on_arrival(mob/camera/netrun_entity/entity)
-	if(QDELETED(node) || !node.is_online() || !hostile_to(entity))
+	if(QDELETED(node) || slots_max() <= 0 || !node.is_online() || !hostile_to(entity))
 		return
 	var/datum/netrun_fortress_module/trap = armed_trap()
 	if(trap)
@@ -534,6 +653,8 @@
 
 /// Start (or extend) a fortress with one module under construction for the given builder.
 /datum/controller/subsystem/netrun/proc/build_fortress_module(datum/component/netrun_node/node, kind, datum/netrun_console/console)
+	if(netrun_fortress_build_denial(node, console, kind))
+		return null
 	var/datum/netrun_fortress/fortress = node.fortress
 	if(!fortress)
 		fortress = new(node, "Крепость [console.get_handle()]", NETRUN_FACTION_OWNER, console)
@@ -541,6 +662,8 @@
 		node.add_log("Заложена крепость: [fortress.name].")
 	else if(fortress.ruined() && !fortress.is_friendly(console) && console.legit_node_level(node) < NETRUN_ACCESS_ROOT)
 		fortress.claim(console)
+	else if(fortress.ruined())
+		fortress.clear_ruins()
 	var/datum/netrun_fortress_module/module = fortress.add_module(kind, FALSE)
 	if(!module)
 		return null

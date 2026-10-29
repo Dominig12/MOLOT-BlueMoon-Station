@@ -13,6 +13,9 @@
 	. += "fort_repair"
 	for(var/kind in node.fortress.module_kinds())
 		. += "fort_dismantle@[kind]"
+	for(var/datum/netrun_fortress_module/module as anything in node.fortress.modules)
+		. += "fort_repair@[module.id]"
+		. += "fort_dismantle@[module.id]"
 
 /// Shared refusal for the button and the delivered request.
 /proc/netrun_fortress_build_denial(datum/component/netrun_node/node, datum/netrun_console/console, kind)
@@ -22,6 +25,10 @@
 	var/slots = netrun_fortress_slots(node)
 	if(slots <= 0)
 		return "Этот узел не может нести укрепления."
+	if(QDELETED(console) || console.is_locked() || !console.can_route(node) || !node.is_online())
+		return "Нет действующего подключения к работающему узлу."
+	if(console.node_level(node) < NETRUN_ACCESS_ROOT)
+		return "Постройка крепости требует доступа ROOT к узлу."
 	if(!console.daemon_bonus("forge"))
 		return "Нужен демон forge.exe в памяти или на подключённом шарде."
 	var/datum/netrun_fortress/fortress = node.fortress
@@ -29,6 +36,8 @@
 		return initial(path.slot_cost) > slots ? "Не хватает слотов крепости." : null
 	if(!fortress.can_build(console))
 		return "Крепость принадлежит [fortress.owner_name || "станции"]: сначала разрушьте все её модули."
+	if(fortress.ruined())
+		return initial(path.slot_cost) > slots ? "Не хватает слотов крепости." : null
 	if(fortress.count_kind(kind) >= initial(path.max_per_fortress))
 		return "Достигнут предел модулей «[initial(path.name)]»."
 	if(fortress.slots_used() + initial(path.slot_cost) > slots)
@@ -84,18 +93,28 @@
 	icon = "screwdriver-wrench"
 	group = "fortress"
 
-/datum/netrun_command/fort_repair/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+/datum/netrun_command/fort_repair/display_name(datum/component/netrun_node/node, arg)
+	var/datum/netrun_fortress_module/module = node?.fortress?.find_module(arg)
+	return module ? "Ремонт: [module.name]" : name
+
+/datum/netrun_command/fort_repair/ui_entry(datum/component/netrun_node/node, datum/netrun_console/console, full_id)
+	. = ..()
+	if(.["allowed"])
+		var/reason = node?.fortress?.repair_denial(console, netrun_command_arg(full_id))
+		if(reason)
+			.["allowed"] = FALSE
+			.["unavailable_reason"] = reason
+
+/datum/netrun_command/fort_repair/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg)
 	var/datum/netrun_fortress/fortress = node.fortress
 	if(!fortress)
 		console.log_line("[node.address]: в узле нет крепости.", "bad")
 		return null
-	if(!fortress.is_friendly(console) && console.node_level(node) < NETRUN_ACCESS_ROOT)
-		console.log_line("[node.address]: чужую крепость можно чинить только с ROOT.", "bad")
+	var/reason = fortress.repair_denial(console, arg)
+	if(reason)
+		console.log_line("[node.address]: [reason]", "bad")
 		return null
-	if(world.time < fortress.next_repair)
-		console.log_line("[node.address]: ремонтные процессы ещё заняты.", "average")
-		return null
-	var/datum/netrun_fortress_module/module = fortress.most_damaged()
+	var/datum/netrun_fortress_module/module = arg ? fortress.find_module(arg) : fortress.most_damaged()
 	if(!module)
 		return "Все модули крепости целы."
 	fortress.next_repair = world.time + 4 SECONDS
@@ -116,21 +135,30 @@
 	group = "fortress"
 
 /datum/netrun_command/fort_dismantle/display_name(datum/component/netrun_node/node, arg)
+	var/datum/netrun_fortress_module/module = node?.fortress?.find_module(arg)
+	if(module)
+		return "Разобрать: [module.name]"
 	var/datum/netrun_fortress_module/path = netrun_fortress_module_type(arg)
 	return path ? "Разобрать: [initial(path.name)]" : name
+
+/datum/netrun_command/fort_dismantle/ui_entry(datum/component/netrun_node/node, datum/netrun_console/console, full_id)
+	. = ..()
+	if(.["allowed"])
+		var/reason = node?.fortress?.dismantle_denial(console, netrun_command_arg(full_id))
+		if(reason)
+			.["allowed"] = FALSE
+			.["unavailable_reason"] = reason
 
 /datum/netrun_command/fort_dismantle/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg)
 	var/datum/netrun_fortress/fortress = node.fortress
 	if(!fortress)
 		console.log_line("[node.address]: в узле нет крепости.", "bad")
 		return null
-	if(!fortress.can_dismantle(console))
-		console.log_line("[node.address]: разбирать крепость могут только владелец, свои и законный администратор.", "bad")
+	var/reason = fortress.dismantle_denial(console, arg)
+	if(reason)
+		console.log_line("[node.address]: [reason]", "bad")
 		return null
-	var/datum/netrun_fortress_module/target
-	for(var/datum/netrun_fortress_module/module as anything in fortress.modules)
-		if(module.kind == arg)
-			target = module
+	var/datum/netrun_fortress_module/target = fortress.find_module(arg)
 	if(!target)
 		console.log_line("[node.address]: такого модуля в крепости нет.", "bad")
 		return null

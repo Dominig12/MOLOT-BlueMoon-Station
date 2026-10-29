@@ -45,7 +45,7 @@ Frontend проверяется отдельно:
 ```powershell
 # Один раз установить зависимости TGUI (используйте yarnPath из tgui/.yarnrc.yml).
 cd tgui
-node .yarn/releases/yarn-4.15.0.cjs install --immutable
+node .yarn/releases/yarn-4.18.1.cjs install --immutable
 cd ..
 node tools/netrun/run-tests.mjs --frontend
 node tools/netrun/run-tests.mjs --frontend --filter SessionStatus

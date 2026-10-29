@@ -32,7 +32,7 @@ const commandKind = (id: string) => id.slice(id.indexOf('@') + 1);
 const moduleName = (kind: string, fallback?: string) => FORTRESS_MODULE_NAMES[kind] || fallback || kind;
 
 const moduleStatus = (module: FortressModule) => {
-  const status = MODULE_STATUS[module.status] || MODULE_STATUS.offline;
+  const status = module.jammed && module.status === 'online' ? { label: 'подавлен', color: THEME.warn } : MODULE_STATUS[module.status] || MODULE_STATUS.offline;
   // Construction, or the re-arm of a spent module, counts down on the server.
   const remaining = Math.ceil(Number(module.remaining) || 0);
   return { ...status, text: remaining > 0 ? `${status.label} · ${remaining} с` : status.label };
@@ -55,7 +55,7 @@ const FactionBadge = (props: { faction: string }) => {
   );
 };
 
-const ModuleRow = (props: { module: FortressModule }) => {
+const ModuleRow = (props: { module: FortressModule; commands: NetCommand[]; disabled?: boolean; onCommand: (id: string) => void }) => {
   const { module } = props;
   const status = moduleStatus(module);
   const name = moduleName(module.kind, module.name);
@@ -78,6 +78,14 @@ const ModuleRow = (props: { module: FortressModule }) => {
           {module.integrity}/{module.max_integrity}
         </Box>
       </Box>
+      {[module.repair_command, module.dismantle_command].filter(Boolean).map((id) => {
+        const request = props.commands.find((entry) => entry.id === id);
+        if (!request) { return null; }
+        const repair = id === module.repair_command;
+        return (<Button key={id} compact icon={repair ? 'screwdriver-wrench' : 'hammer'} content={repair ? 'Починить' : 'Разобрать'}
+          className={commandClass(request)} color={commandColor(request)} disabled={props.disabled || !request.allowed}
+          tooltip={<CommandTooltip command={request} />} onClick={() => props.onCommand(id)} />);
+      })}
     </Box>
   );
 };
@@ -201,6 +209,9 @@ export const FortressPanel = (props: {
   }
   const color = FACTION_COLORS[fortress.faction] || THEME.line;
   const modules = fortress.modules ?? [];
+  const moduleCommands = new Set(modules.flatMap((module) => [module.repair_command, module.dismantle_command]).filter(Boolean));
+  const commonCommands = commands.filter((request) => !moduleCommands.has(request.id)
+    && !(moduleCommands.size && request.id.startsWith(DISMANTLE_PREFIX)));
   return (
     <Box mt={1} p={1} data-net-fortress={fortress.faction}
       style={{ background: THEME.bg, border: `1px solid ${color}`, borderRadius: '6px' }}>
@@ -220,8 +231,15 @@ export const FortressPanel = (props: {
       </Box>
       <Meter value={fortress.slots_used} max={fortress.slots_max} tone="usage" label="Слоты крепости" height={4}
         style={{ margin: '3px 0 6px' }} />
+      {!!fortress.storage && <Box mb={1} data-net-fortress-storage>
+        <Box fontSize="11px"><Icon name="vault" mr={0.5} />Хранилище: {fortress.storage.used}/{fortress.storage.capacity}
+          {fortress.storage.vault_bonus > 0 ? ` · сейф +${fortress.storage.vault_bonus}` : ''}
+        </Box>
+        <Meter value={fortress.storage.used} max={fortress.storage.capacity} tone="usage" label="Память крепости" height={4} />
+        <Box color={THEME.muted} fontSize="10px">Доступ к файлам: {ACCESS_NAMES[fortress.storage.required_access] || 'ROOT'}.</Box>
+                             </Box>}
       {modules.length ? (
-        modules.map((module) => <ModuleRow key={module.ref} module={module} />)
+        modules.map((module) => <ModuleRow key={module.id || module.ref} module={module} commands={commands} disabled={disabled} onCommand={onCommand} />)
       ) : (
         <Box color={THEME.muted} fontSize="11px">Модулей нет.</Box>
       )}
@@ -230,7 +248,7 @@ export const FortressPanel = (props: {
           <Icon name="circle-info" mr={0.5} />{fortress.manage_reason}
         </Box>
       )}
-      <FortressActions commands={commands} disabled={disabled} onCommand={onCommand} />
+      <FortressActions commands={commonCommands} disabled={disabled} onCommand={onCommand} />
     </Box>
   );
 };

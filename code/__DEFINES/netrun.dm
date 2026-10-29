@@ -191,7 +191,7 @@
 #define NETRUN_CHANGED_DETAILS (1<<4)
 
 /// Storage capacities are authored in base cells and scaled once by this factor.
-#define NETRUN_STORAGE_SCALE 4
+#define NETRUN_STORAGE_SCALE 8
 
 /// Autonomous round content (bot population, fortress presets). Unit tests create it explicitly
 /// so ambient processes never interfere with unrelated assertions.

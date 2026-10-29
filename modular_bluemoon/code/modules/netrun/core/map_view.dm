@@ -336,7 +336,7 @@
 /// subscription. Initialize its fade once from the bounded recent-event history.
 /datum/netrun_map_view/proc/reconcile_visible_events()
 	events_need_reconcile = FALSE
-	for(var/list/event as anything in SSnetrun.events)
+	for(var/list/event as anything in SSnetrun.map_event_snapshot())
 		var/until = event["until"] || event["t"] + NETRUN_MAP_EVENT_LIFETIME
 		if(until <= world.time || !event_visible(event["from"], event["to"], event["route"]))
 			continue

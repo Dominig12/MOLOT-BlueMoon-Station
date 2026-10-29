@@ -967,6 +967,19 @@
 .netrun-persona-preview small { color: var(--net-muted); font-size: 9px; letter-spacing: .04em; }
 .netrun-field { display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: var(--net-muted); margin-top: 14px; }
 .netrun-field input, .netrun-field textarea { width: 100%; box-sizing: border-box; color: var(--net-text); background: var(--net-bg); border: 1px solid var(--net-border); border-radius: 5px; padding: 8px; font-size: 12px; font-family: inherit; resize: vertical; }
+.netrun-field select { width: 100%; min-width: 0; box-sizing: border-box; color: var(--net-text); background: var(--net-bg); border: 1px solid var(--net-border); border-radius: 5px; padding: 6px; font: inherit; }
+.netrun-agent-details { border-top: 1px solid var(--net-border); margin-top: 8px; padding-top: 6px; }
+.netrun-agent-details > summary { color: var(--net-muted); font-size: 11px; cursor: pointer; padding: 3px 0; }
+.netrun-agent-details ol { margin: 6px 0; padding-left: 22px; font-size: 11px; }
+.netrun-agent-details li { padding: 3px 0; }
+.netrun-agent-active-goal { color: var(--net-accent); }
+.netrun-agent-program { border-left: 2px solid var(--net-border); margin: 6px 0; padding-left: 7px; font-size: 11px; }
+.netrun-agent-form { margin-top: 8px; padding: 8px; background: var(--net-panel); border: 1px solid var(--net-border); border-radius: 6px; }
+.netrun-agent-form .netrun-field, .netrun-agent-form__row .netrun-field { margin: 5px 0; gap: 4px; flex: 1 1 0; min-width: 0; }
+.netrun-agent-form__row { display: flex; align-items: end; flex-wrap: wrap; gap: 6px; margin: 5px 0; }
+.netrun-agent-file { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 5px 0; }
+.netrun-agent-file > span { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
+.netrun-agent-file small { display: block; color: var(--net-muted); font-size: 10px; }
 .netrun-field > small { align-self: flex-end; font-variant-numeric: tabular-nums; }
 .netrun-persona-editor fieldset { border: none; margin: 16px 0 0; padding: 0; }
 .netrun-persona-editor legend { font-size: 11px; color: var(--net-muted); margin-bottom: 8px; }
