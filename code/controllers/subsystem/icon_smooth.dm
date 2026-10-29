@@ -16,13 +16,15 @@ SUBSYSTEM_DEF(icon_smooth)
 	while(cached.len)
 		var/atom/A = cached[cached.len]
 		cached.len--
-		// A queued atom can be deleted before this subsystem reaches it. A
-		// hard-deleted atom leaves a null slot; neither belongs in deferred.
-		if (!QDELETED(A))
-			if (A.flags_1 & INITIALIZED_1)
-				smooth_icon(A)
-			else
-				deferred += A
+		// Жёстко удалённый атом оставляет в очереди null
+		if(QDELETED(A))
+			if(MC_TICK_CHECK)
+				return
+			continue
+		if (A.flags_1 & INITIALIZED_1)
+			smooth_icon(A)
+		else
+			deferred += A
 		if (MC_TICK_CHECK)
 			return
 
