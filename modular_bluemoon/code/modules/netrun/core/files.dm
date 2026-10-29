@@ -29,12 +29,24 @@
 	src.network_id = network_id
 
 /datum/netrun_file/proc/copy()
+	if(!can_copy())
+		return null
 	var/datum/netrun_file/result = new(name, kind, content, size, network_id)
 	if(picture)
 		result.picture = picture.Copy()
 		result.picture.caption = picture.caption
 	result.techweb_ref = techweb_ref
 	return result
+
+/// Capability-bearing files can restrict transport at the storage boundary.
+/datum/netrun_file/proc/can_copy()
+	return TRUE
+
+/datum/netrun_file/proc/can_transfer(datum/netrun_file_store/destination, move = FALSE)
+	return TRUE
+
+/datum/netrun_file/proc/can_store(datum/netrun_file_store/destination)
+	return TRUE
 
 /datum/netrun_file/Destroy()
 	QDEL_NULL(picture)
@@ -67,6 +79,8 @@
 		"size" = size,
 		"preview" = preview,
 		"selected" = uid == selected_uid,
+		"transferable" = can_transfer(null),
+		"session_bound" = FALSE,
 	)
 
 /// Чтение использует штатный просмотр фото; текст всегда экранируется как обычный текст.

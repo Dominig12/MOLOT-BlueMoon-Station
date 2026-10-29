@@ -98,6 +98,47 @@ describe('Netrun workspace pages', () => {
     expect(actions(topic, 'view_network')).toHaveLength(0);
   });
 
+  test('the threat shortcut opens security and its map action addresses only an evidence ID', () => {
+    const { panel, topic, page } = setup({ workspace_view: 'map', security: { defended: null, entries: [{
+      id: 'trace-42', kind: 'intrusion', age: 3, ttl: 42, attributed: true, name: 'Раннер', source_address: 'TEST:0001',
+      active: true, status: 'Источник установлен.', trace_allowed: true, map_allowed: true, pursue_allowed: false,
+      pursue_reason: 'Нужна сетевая сущность.',
+    }] } });
+    fireEvent.click(panel.getByText('Угрозы (1)'));
+    expect(panel.getByRole('tabpanel', { name: 'Терминал' })).toBeTruthy();
+    const security = within(page('terminal')).getByRole('region', { name: 'Безопасность сети' });
+    expect(security.parentElement.style.display).toBe('flex');
+    fireEvent.click(within(security).getByText('Узел на карте'));
+    expect(actions(topic, 'security_map')).toEqual([{ id: 'trace-42' }]);
+  });
+
+  test('a delivered file proposal is discoverable from the Files tab and waits for acceptance', () => {
+    const { panel, page, topic } = setup({ file_exchange: { incoming: [{ id: 'proposal', sender: 'Резидент', name: 'agent.bot', kind: 'bot',
+      size: 8, ttl: 120, can_accept: true }], max_offers: 8 } });
+    expect(panel.getByText('Файлы (1)')).toBeTruthy();
+    fireEvent.click(panel.getByRole('tab', { name: 'Файлы' }));
+    const inbox = within(page('files')).getByRole('region', { name: 'Входящие предложения файлов' });
+    expect(within(inbox).getByText('agent.bot')).toBeTruthy();
+    expect(actions(topic, 'entity_file_accept')).toEqual([]);
+  });
+
+  test('Agents is its own page and a file shortcut preserves the selected template UID', () => {
+    const template = { uid: 'bot-template', name: 'sentinel.bot', kind: 'bot', size: 8, preview: 'Страж', agent_profile: 'sentinel' };
+    const { panel, page, topic, update } = setup({ workspace_view: 'files', agent_count: 2,
+      storage: { files: [template], used: 8, capacity: 128 }, file: { ...template, source: 'local', content: null, image: null },
+    });
+    expect(panel.getByRole('tab', { name: 'Агенты' }).textContent).toContain('(2)');
+    expect(page('files').querySelector('[data-net-agents]')).toBeNull();
+    fireEvent.click(within(page('files')).getByText('К агентам: настройка и запуск'));
+    expect(actions(topic, 'workspace_view')).toEqual([{ page: 'agents' }]);
+    expect(actions(topic, 'file_select')).toEqual([]);
+    update({ workspace_view: 'agents' });
+    expect(panel.getByRole('tabpanel', { name: 'Агенты' })).toBeTruthy();
+    expect(page('agents').querySelector('[data-net-bot-launch="bot-template"]')).not.toBeNull();
+    fireEvent.click(within(page('agents')).getByText('Запустить агента'));
+    expect(actions(topic, 'bot_launch')).toEqual([{ uid: 'bot-template' }]);
+  });
+
   test('reopening after a missed breach completion restores the terminal and corrects server mode once', () => {
     const { panel, update, topic } = setup({ workspace_view: 'breach', breach: null });
     expect(panel.getByRole('tabpanel', { name: 'Терминал' })).toBeTruthy();

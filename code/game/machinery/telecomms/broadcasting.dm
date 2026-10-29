@@ -153,6 +153,13 @@
 	copy.from_antag_training = from_antag_training
 	return copy
 
+/// Спаны вещания: при сжатии сигнала добавляет помехи, исходный список не мутирует.
+/proc/radio_broadcast_spans(list/spans, compression)
+	if(compression <= 0)
+		return spans
+	. = spans ? spans.Copy() : list()
+	. |= SPAN_RADIO_STATIC
+
 // This is the meat function for making radios hear vocal transmissions.
 /datum/signal/subspace/vocal/broadcast()
 	set waitfor = FALSE
@@ -243,7 +250,7 @@
 
 	// Render the message and have everybody hear it.
 	// Always call this on the virtualspeaker to avoid issues.
-	var/spans = data["spans"]
+	var/spans = radio_broadcast_spans(data["spans"], compression)
 	var/rendered = speaker.compose_message(speaker, language, message, frequency, spans)
 	for(var/atom/movable/hearer in receive)
 		hearer.Hear(rendered, speaker, language, message, frequency, spans)

@@ -99,7 +99,7 @@ APC одной группы этажей связаны между собой. �
 
 /obj/machinery/netrun_server/Initialize(mapload)
 	. = ..()
-	var/capacity = 40 * NETRUN_STORAGE_SCALE
+	var/capacity = 80 * NETRUN_STORAGE_SCALE
 	for(var/obj/item/stock_parts/matter_bin/bin in component_parts)
 		capacity += bin.rating * 10 * NETRUN_STORAGE_SCALE
 	var/datum/component/netrun_node/node = AddComponent(/datum/component/netrun_node, NETRUN_NODE_SERVER, list("purge", "issue_key", "reboot"), server_security, server_access, capacity)

@@ -23,6 +23,7 @@
 	clear_timer()
 	if(QDELETED(owner))
 		return
+	owner.wake_reactive()
 	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
 	SSnetrun.get_task_scheduler().enqueue("ice", owner, limits.interactive_priority, TRUE)
 
@@ -35,7 +36,11 @@
 
 /datum/netrun_ice_reaction/proc/schedule_next()
 	clear_timer()
-	if(QDELETED(owner) || !owner.node?.is_online())
+	if(QDELETED(owner) || (owner.reactive && owner.dormant))
+		return
+	if(!owner.node?.is_online())
+		if(owner.reactive)
+			schedule_at(owner.reactive_sleep_at)
 		return
 	if(owner.pending_program)
 		schedule_at(owner.attack_at)
@@ -48,6 +53,8 @@
 				tracing = TRUE
 				break
 	if(!prey && !tracing)
+		if(owner.reactive)
+			schedule_at(owner.reactive_sleep_at)
 		return
 	if(owner.is_stunned())
 		schedule_at(owner.combat_stun_until)

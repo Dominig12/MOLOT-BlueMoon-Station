@@ -19,6 +19,9 @@
 /datum/netrun_bot_goal/proc/describe()
 	return name
 
+/datum/netrun_bot_goal/proc/waits_for_signal()
+	return FALSE
+
 /// Shared movement outcome: arrival continues the goal, a blocked node is skipped for a while.
 /datum/netrun_bot_goal/proc/approach(datum/component/netrun_node/target)
 	switch(brain.move_toward(target))
@@ -176,8 +179,7 @@
 	var/datum/netrun_console/console = brain.owner.console
 	for(var/datum/netrun_file/file as anything in node.salvage)
 		if(console.inventory.local_store.can_fit(file))
-			console.recover_salvage(file.uid)
-			return NETRUN_BOT_GOAL_CONTINUE
+			return console.recover_salvage(file.uid) ? NETRUN_BOT_GOAL_CONTINUE : NETRUN_BOT_GOAL_FAILED
 	brain.blacklist(node.address, 5 MINUTES)
 	return NETRUN_BOT_GOAL_DONE
 

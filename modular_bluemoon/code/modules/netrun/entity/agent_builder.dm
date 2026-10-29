@@ -16,10 +16,19 @@
 		var/datum/netrun_program/executable = SSnetrun.get_program(id)
 		if(executable)
 			defaults += list(list("id" = id, "name" = executable.name, "size" = executable.size))
+	for(var/id in program.daemons)
+		var/datum/netrun_daemon/executable = SSnetrun.get_daemon(id)
+		if(executable)
+			defaults += list(list("id" = id, "name" = executable.name, "size" = executable.size))
 	var/list/program_files = list()
+	var/list/module_files = list()
 	for(var/datum/netrun_file/file as anything in inventory.all_files())
 		if(file.kind == NETRUN_FILE_PROGRAM && SSnetrun.get_program(file.content))
 			program_files += list(list("uid" = file.uid, "name" = file.name, "program_id" = file.content, "size" = file.size))
+		var/datum/netrun_agent_extension/extension = netrun_agent_extension_for(file)
+		if(extension)
+			var/datum/netrun_daemon/definition = SSnetrun.get_daemon(file.content)
+			module_files += list(list("uid" = file.uid, "id" = extension.id, "name" = extension.name, "desc" = extension.desc, "size" = file.size, "effects" = definition.effect_values(), "requirements" = list(), "allowed" = TRUE, "reason" = null))
 	return list(
 		"template_uid" = template.uid,
 		"profile" = program.id,
@@ -29,11 +38,13 @@
 		"base_size" = program.file_size,
 		"defaults" = defaults,
 		"programs" = program_files,
+		"modules" = module_files,
 		"orders" = list(list("id" = "guard", "name" = "Работа на месте запуска"), list("id" = "patrol", "name" = "Патруль доступной сети")),
 		"avatars" = netrun_avatar_options(),
 		"accents" = netrun_accent_options(),
 		"themes" = netrun_theme_ids(),
 		"max_programs" = 8,
+		"max_modules" = 4,
 	)
 
 /// Create an independent executable package. All validation precedes writes;
@@ -77,12 +88,33 @@
 			if(!executable)
 				return null
 			required += executable.size
+		for(var/id in program.daemons)
+			var/datum/netrun_daemon/executable = SSnetrun.get_daemon(id)
+			if(!executable)
+				return null
+			required += executable.size
 	for(var/uid in uids)
 		var/datum/netrun_file/file = find_local_file(uid)
 		if(!istext(uid) || seen[uid] || QDELETED(file) || file.kind != NETRUN_FILE_PROGRAM || !inventory.store_for(file) || !SSnetrun.get_program(file.content) || !IS_FINITE(file.size) || file.size < 0)
 			log_line("Выбранная программа больше не принадлежит этой консоли.", "bad")
 			return null
 		seen[uid] = TRUE
+		selected += file
+		required += file.size
+	var/list/module_uids = options["module_uids"]
+	if(isnull(module_uids))
+		module_uids = list()
+	if(!islist(module_uids) || length(module_uids) > 4)
+		return null
+	var/list/module_ids = list()
+	for(var/uid in module_uids)
+		var/datum/netrun_file/file = find_local_file(uid)
+		var/datum/netrun_agent_extension/extension = netrun_agent_extension_for(file)
+		if(!istext(uid) || seen[uid] || !extension || module_ids[extension.id] || !inventory.store_for(file) || !IS_FINITE(file.size) || file.size < 0)
+			log_line("Модуль агента недоступен, повторяется или не входит в поддерживаемый набор.", "bad")
+			return null
+		seen[uid] = TRUE
+		module_ids[extension.id] = TRUE
 		selected += file
 		required += file.size
 	var/datum/netrun_file_store/destination = options["to_shard"] ? inventory.shard?.file_store : inventory.local_store
@@ -98,6 +130,8 @@
 	if(include_defaults)
 		for(var/id in program.programs)
 			result.stored_files += netrun_program_file(id)
+		for(var/id in program.daemons)
+			result.stored_files += netrun_daemon_file(id)
 	for(var/datum/netrun_file/file as anything in selected)
 		result.stored_files += file.copy()
 	result.size = program.file_size + netrun_storage_used(result.stored_files)

@@ -74,11 +74,13 @@
 	var/datum/netrun_entity_module/goals_module = owner.entity_modules["bot_goals"]
 	if(!goals_module?.enabled && !in_combat)
 		return
+	if(!in_combat && current_goal()?.waits_for_signal())
+		return
 	if(command_nonce && !(command_phase in list("completed", "rejected", "cancelled")))
 		schedule(max(NETRUN_EXECUTION_MIN_INTERVAL, command_deadline - world.time))
 		return
 	var/datum/netrun_bot_goal/guard/guard = current_goal()
-	if(istype(guard) && at_post() && !in_combat)
+	if(istype(guard) && owner.host_node == guard.post_ref?.resolve() && !in_combat)
 		schedule(max(NETRUN_EXECUTION_MIN_INTERVAL, guard.expires_at - world.time))
 		return
 	var/datum/netrun_bot_program/program = owner.program
@@ -131,6 +133,7 @@
 	SEND_SIGNAL(owner, COMSIG_NETRUN_ENTITY_GOALS_CHANGED, handling_behavior)
 
 /datum/netrun_bot_brain/proc/current_goal()
+	RETURN_TYPE(/datum/netrun_bot_goal)
 	return length(goals) ? goals[1] : null
 
 /datum/netrun_bot_brain/proc/finish_goal(datum/netrun_bot_goal/goal)
@@ -171,7 +174,7 @@
 		SEND_SIGNAL(owner, COMSIG_NETRUN_ENTITY_COMMAND_FINISHED, operation.id)
 
 /datum/netrun_bot_brain/proc/clear_command()
-	var/datum/netrun_request/command/packet = command_packet_ref?.resolve()
+	var/datum/netrun_request/delivery/packet = command_packet_ref?.resolve()
 	command_packet_ref = null
 	if(!QDELETED(packet) && !packet.delivering)
 		packet.cancelled = TRUE
@@ -316,7 +319,18 @@
 	console.release_path_tree(tree)
 
 /datum/netrun_bot_brain/proc/node_has_salvage(datum/component/netrun_node/node)
-	return length(node.salvage) > 0
+	if(!node.is_online())
+		return FALSE
+	for(var/datum/netrun_file/file as anything in node.salvage)
+		if(owner.console.inventory.local_store.can_fit(file))
+			return TRUE
+	return FALSE
+
+/// Recovery is a local action too: the current node is absent from nearby BFS.
+/datum/netrun_bot_brain/proc/find_salvage(list/scope)
+	if(owner?.host_node && node_has_salvage(owner.host_node))
+		return owner.host_node
+	return find_nearby_node(PROC_REF(node_has_salvage), scope)
 
 /datum/netrun_bot_brain/proc/node_has_ice(datum/component/netrun_node/node)
 	return LAZYLEN(node.netrun_ice) > 0
@@ -488,7 +502,7 @@
 	if(world.time < next_rogue_report)
 		return
 	for(var/mob/camera/netrun_entity/bot/other in owner.host_node.entities)
-		if(other.net_faction == NETRUN_FACTION_ROGUE)
+		if(netrun_bot_factions_hostile(owner.net_faction, other.net_faction))
 			next_rogue_report = world.time + 20 SECONDS
 			SSnetrun.report_incident("rogue", owner.host_node, other, NETRUN_INCIDENT_MEDIUM, "[owner.real_name] сообщает о диком процессе [other.real_name].")
 			return

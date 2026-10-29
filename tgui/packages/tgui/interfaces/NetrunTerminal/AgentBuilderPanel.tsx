@@ -18,21 +18,24 @@ export const AgentBuilderPanel = ({ builder }: { builder: AgentBuilder }) => {
   const [order, setOrder] = useState(builder.orders[0]?.id || 'guard');
   const [includeDefaults, setIncludeDefaults] = useState(true);
   const [selected, setSelected] = useState<string[]>([]);
+  const [selectedModules, setSelectedModules] = useState<string[]>([]);
   const [toShard, setToShard] = useState(false);
   // Removed media/programs disappear from the request as soon as a new payload arrives.
   const programs = builder.programs.filter((program) => selected.includes(program.uid));
+  const modules = (builder.modules || []).filter((module) => selectedModules.includes(module.uid));
   const used = (includeDefaults ? builder.defaults.reduce((sum, program) => sum + program.size, 0) : 0)
-    + programs.reduce((sum, program) => sum + program.size, 0);
+    + programs.reduce((sum, program) => sum + program.size, 0) + modules.reduce((sum, module) => sum + module.size, 0);
   const size = builder.base_size + used;
   const onShard = toShard && !!data.shard;
   const destination = onShard ? data.shard : data.storage;
   const remaining = destination ? destination.capacity - destination.used : 0;
   const overfull = used > builder.capacity || size > remaining;
-  const valid = !!name.trim() && !overfull;
+  const valid = !!name.trim() && !overfull && modules.every((module) => module.allowed)
+    && modules.length <= (builder.max_modules ?? 4) && programs.length <= (builder.max_programs ?? 8);
   const create = () => {
     if (!valid) { return; }
     act('agent_create', { uid: builder.template_uid, name: name.trim(), avatar, accent, tagline, theme, order,
-      include_defaults: includeDefaults, program_uids: programs.map((program) => program.uid), to_shard: onShard });
+      include_defaults: includeDefaults, program_uids: programs.map((program) => program.uid), module_uids: modules.map((module) => module.uid), to_shard: onShard });
   };
   return (<Box mt={1} data-net-agent-builder={builder.profile}>
     <Button compact icon="robot" content="Собрать своего агента" selected={open} onClick={() => setOpen(!open)} />
@@ -74,6 +77,23 @@ export const AgentBuilderPanel = ({ builder }: { builder: AgentBuilder }) => {
                                             </label>))}
         {!builder.programs.length && <Box color={THEME.muted} fontSize="11px">Дополнительные программы можно выбрать из памяти или шарда.</Box>}
       </fieldset>
+      {!!builder.modules?.length && <fieldset style={{ border: `1px solid ${THEME.line}`, margin: '6px 0 0', padding: '6px' }}>
+        <legend>Модули агента · {modules.length}/{builder.max_modules ?? 4}</legend>
+        <Box color={THEME.muted} fontSize="11px" mb={0.5}>Модули добавляют возможности агента и занимают его память.</Box>
+        {builder.modules.map((module) => (<div key={module.uid} style={{ marginTop: '5px' }}>
+          <label><input type="checkbox" checked={selectedModules.includes(module.uid)}
+            disabled={!selectedModules.includes(module.uid) && (!module.allowed || modules.length >= (builder.max_modules ?? 4))}
+            onChange={(event) => {
+              if (event.target.checked && (!module.allowed || modules.length >= (builder.max_modules ?? 4))) { return; }
+              setSelectedModules(event.target.checked ? [...selectedModules, module.uid] : selectedModules.filter((uid) => uid !== module.uid));
+            }} />
+            {' '}{module.name} · {module.size}
+          </label>
+          <Box color={THEME.muted} fontSize="11px" ml={2}>{module.desc}</Box>
+          {!!module.requirements.length && <Box color={THEME.muted} fontSize="10px" ml={2}>Нужно: {module.requirements.join(', ')}</Box>}
+          {!module.allowed && !!module.reason && <Box color={THEME.warn} fontSize="11px" ml={2}>{module.reason}</Box>}
+                                          </div>))}
+                                    </fieldset>}
       <label className="netrun-field">Сохранить агента<select value={onShard ? 'shard' : 'local'} onChange={(event) => setToShard(event.target.value === 'shard')}>
         <option value="local">Локальная память</option>
         {!!data.shard && <option value="shard">{data.shard.name}</option>}

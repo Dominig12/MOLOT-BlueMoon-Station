@@ -175,7 +175,7 @@
 /datum/netrun_command/countertrace
 	id = "countertrace"
 	name = "Контртрассировка"
-	desc = "Защитить узел от активного взлома: повысить трассировку атакующих подключений на 8%."
+	desc = "Установить источник недавней атаки на 45 секунд и повысить трассировку активных взломщиков на 8%."
 	help = "Нужен законный доступ ПОЛЬЗОВАТЕЛЯ к узлу. Полученный взломом доступ не позволяет выдавать себя за его защитника."
 	access = NETRUN_ACCESS_USER
 	trace = 0
@@ -193,6 +193,14 @@
 		console.log_line("Контртрассировка требует законного доступа к узлу.", "bad")
 		return null
 	var/list/targets = netrun_countertrace_targets(node)
+	// Capture attribution before trace can lock/disconnect the offending client.
+	for(var/datum/netrun_console/attacker as anything in targets)
+		if(attacker != console && attacker.intrusion.breach?.valid_target())
+			node.observe_attack(attacker, "breach")
+	var/identified = 0
+	for(var/datum/netrun_attack_observation/observation as anything in console.security_session.observations(node))
+		if(console.security_session.capture(observation, node))
+			identified++
 	var/tracked = 0
 	for(var/datum/netrun_console/target as anything in targets)
 		if(target == console)
@@ -202,7 +210,7 @@
 		target.log_line("Защитник [console.get_handle()] отслеживает взлом узла [node.address]: трассировка растёт.", "bad")
 	if(tracked)
 		SSnetrun.post_event("trace", null, node.address)
-	return "Контртрассировка [node.address]: отслежено подключений — [tracked]."
+	return "Контртрассировка [node.address]: активных подключений — [tracked], установлено источников — [identified]. Откройте «Безопасность» для выбора на карте."
 
 // MARK: Обход сети
 

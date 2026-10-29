@@ -15,6 +15,9 @@
 /datum/netrun_file/access/copy()
 	return new /datum/netrun_file/access(name, accesses)
 
+/datum/netrun_file/access/proc/access_for(datum/netrun_console/console)
+	return accesses
+
 /datum/netrun_file/access/ui_entry(selected_uid)
 	. = ..()
 	.["preview"] = "Учётные данные: [length(accesses)] доступов"
@@ -89,7 +92,7 @@
 	. = list()
 	for(var/datum/netrun_file/access/file as anything in all_files(fresh))
 		if(istype(file) && file.kind == NETRUN_FILE_ACCESS)
-			. |= file.accesses
+			. |= file.access_for(src)
 
 /// Native allowed() consumes only copied ID rights, never a hacked network privilege.
 /mob/camera/netrun_entity/proc/on_credential_access_check(datum/source, obj/target)

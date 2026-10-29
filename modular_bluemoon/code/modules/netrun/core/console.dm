@@ -50,6 +50,8 @@
 	var/input_ack
 	var/ui_flushing = FALSE
 	var/datum/netrun_interaction/interaction
+	var/datum/netrun_security_session/security_session
+	var/datum/netrun_file_exchange/file_exchange
 	/// UI polling renews this lease, including consoles embedded in NTOS windows.
 	var/last_ui_at = -INFINITY
 	/// Actual snapshots, independently of activity leases renewed by incoming input.
@@ -80,6 +82,8 @@
 	map_view = new(src)
 	combat_context = new(src)
 	interaction = new(src)
+	security_session = new(src)
+	file_exchange = new(src)
 	RegisterSignal(inventory, COMSIG_NETRUN_INVENTORY_CHANGED, PROC_REF(on_session_changed))
 	RegisterSignal(src, COMSIG_NETRUN_COMBAT_CHANGED, PROC_REF(on_session_changed))
 	SSnetrun.consoles += src
@@ -88,6 +92,8 @@
 	log_line("Сеанс открыт.", "good")
 
 /datum/netrun_console/Destroy()
+	QDEL_NULL(security_session)
+	QDEL_NULL(file_exchange)
 	stop_ui_observation()
 	SSnetrun.consoles -= src
 	SSnetrun.active_consoles -= src
@@ -325,7 +331,7 @@
 	if(!owner.can_reach(network, tree) || owner.is_locked())
 		. = NETRUN_ACCESS_NONE
 	else
-		. = max(network_access[network.id] || 0, owner.legit_network_level(network, !ui_read))
+		. = max(acquired_network_level(network), owner.legit_network_level(network, !ui_read))
 		if(owner.is_home_network(network, tree))
 			. = max(., NETRUN_ACCESS_GUEST)
 	if(ui_read && owner.network_level_cache)
@@ -397,7 +403,7 @@
 	var/net_level = owner.network_level(node.network, tree)
 	var/atom/target = node.parent
 	var/owner_level = target.netrun_owner_access(owner)
-	var/acquired_level = node_access[node.address] || 0
+	var/acquired_level = acquired_node_level(node)
 	var/local_endpoint = node == (tree ? tree.source : owner.route_source())
 	if(net_level < NETRUN_ACCESS_GUEST && !local_endpoint && (!(owner_level || acquired_level) || !owner.can_route(node, tree)))
 		. = NETRUN_ACCESS_NONE
@@ -528,10 +534,8 @@
 	log_game("NETRUN: [key_name(operator)] ([origin]) [command.id] -> [node.get_name()] [node.address][illegal ? " (взлом)" : ""] [AREACOORD(target)]")
 	node.network?.add_log("[log_source()] -> [node.address]: [command.name][illegal ? " (без авторизации)" : ""]", illegal && command.access >= NETRUN_ACCESS_ROOT)
 	if(illegal)
+		report_illegal_activity(node, command.name, command.access)
 		add_trace(command.trace * node.get_security())
-		SSnetrun.raise_defenses(src, node)
-		target.netrun_on_illegal(src, node)
-		SSnetrun.report_incident("intrusion", node, combat_self() || src, command.access >= NETRUN_ACCESS_ROOT ? NETRUN_INCIDENT_MEDIUM : NETRUN_INCIDENT_LOW, "Команда без авторизации: [command.name].")
 	return TRUE
 
 /// Есть ли вообще маршрут к узлу (иначе узел отрезан - подключиться нельзя)
@@ -757,7 +761,14 @@
 		breach.buffer_size = min(breach.buffer_size, 7)
 		breach.generate()
 	SSnetrun.post_event("breach", kind == "network" ? id : null, kind == "network" ? null : id)
-	var/datum/component/netrun_node/incident_node = kind == "network" ? owner.route_source() : SSnetrun.find_node(id)
+	var/datum/component/netrun_node/incident_node = SSnetrun.find_node(id)
+	if(kind == "network")
+		var/datum/netrun_network/defended = SSnetrun.networks[id]
+		for(var/datum/component/netrun_node/candidate as anything in defended.nodes)
+			if(candidate.node_type == NETRUN_NODE_APC || !incident_node)
+				incident_node = candidate
+			if(candidate.node_type == NETRUN_NODE_APC)
+				break
 	SSnetrun.report_incident("breach", incident_node, owner, kind == "network" ? NETRUN_INCIDENT_MEDIUM : NETRUN_INCIDENT_LOW, "Взлом: [target_name].")
 	// Взлом защищённой цели поднимает сторожевой ICE.
 	if(kind != "network")
@@ -811,10 +822,10 @@
 		owner.add_trace(25)
 	else
 		if(finished.target_kind == "network")
-			owner.access_session.network_access[finished.target_id] = max(owner.access_session.network_access[finished.target_id] || 0, reward)
+			owner.access_session.grant_network(SSnetrun.networks[finished.target_id], reward, reward)
 			owner.map_view.invalidate_network_access(finished.target_id)
 		else
-			owner.access_session.node_access[finished.target_id] = max(owner.access_session.node_access[finished.target_id] || 0, reward)
+			owner.access_session.grant_node(SSnetrun.find_node(finished.target_id), reward, reward)
 			owner.map_view.invalidate_node_access(finished.target_id)
 		owner.log_line("Взлом завершён: [finished.target_name], уровень [netrun_access_name(reward)].", "good")
 		if(clean)

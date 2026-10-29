@@ -5,6 +5,7 @@ import { AutoBreachButton } from './AutoBreachButton';
 import { Meter } from './CombatPanel';
 import { CommandList } from './CommandList';
 import { EntityContacts } from './EntityContacts';
+import { isTransferableFile, SESSION_FILE_REASON } from './filePermissions';
 import { FortressPanel } from './FortressPanel';
 import { NodeInteractions } from './NodeInteractions';
 import { PacketJournal } from './PacketJournal';
@@ -332,8 +333,9 @@ const RemoteFile = (props: { file: NetFile; root: boolean }) => {
         {file.kind === 'text' && (
           <Button compact icon="eye" tooltip="Прочитать" onClick={() => act('read', { uid: file.uid })} />
         )}
-        <Button compact icon="download" tooltip="Скачать" onClick={() => act('download', { uid: file.uid })} />
-        {!!data.shard && (
+        {!isTransferableFile(file) && <Box color={THEME.muted} fontSize="10px">{SESSION_FILE_REASON}</Box>}
+        {isTransferableFile(file) && <Button compact icon="download" tooltip="Скачать" onClick={() => act('download', { uid: file.uid })} />}
+        {!!data.shard && isTransferableFile(file) && (
           <Button
             compact
             icon="sd-card"
@@ -367,7 +369,10 @@ const StorageMeter = (props: { storage?: { used: number; capacity: number } }) =
 export const fileIcon = (kind: string) => {
   switch (kind) {
     case 'key':
+    case 'grants':
       return 'key';
+    case 'access':
+      return 'id-card';
     case 'daemon':
       return 'gear';
     case 'seed':
@@ -393,6 +398,8 @@ export const fileFormat = (name: string, kind: string) => {
   }
   const labels: Record<string, string> = {
     key: 'KEY',
+    grants: 'KEY',
+    access: 'ID',
     daemon: 'EXE',
     seed: 'SEED',
     photo: 'IMG',

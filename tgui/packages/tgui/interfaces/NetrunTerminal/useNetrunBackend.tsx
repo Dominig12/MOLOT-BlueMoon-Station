@@ -16,6 +16,8 @@ const LABELS: Record<string, string> = {
   breach: 'Начало взлома', breach_pick: 'Выбор кода', breach_abort: 'Прерывание взлома',
   hop: 'Переход в узел', relay_hop: 'Переход через реле', travel: 'Автопроход', travel_cancel: 'Остановка маршрута',
   pursue: 'Захват и преследование цели', pursuit_stop: 'Остановка преследования',
+  security_probe: 'Проверка следов взлома', security_trace: 'Контртрассировка источника',
+  security_map: 'Отметить источник атаки', security_pursue: 'Преследование по следу атаки',
   agent_order: 'Приказ агенту', bot_launch: 'Запуск агента', agent_create: 'Создание агента',
   file_new: 'Создание файла', file_edit: 'Сохранение файла', file_rename: 'Переименование файла',
   file_copy: 'Копирование файла', file_move: 'Перенос файла', file_select: 'Выбор файла', file_import: 'Импорт в локальную память',
@@ -26,6 +28,8 @@ const LABELS: Record<string, string> = {
   program_use: 'Запуск программы', recover_salvage: 'Подбор данных', chat_send: 'Отправка сообщения',
   cli: 'Команда терминала', web_site: 'Открытие сайта', web_page: 'Открытие страницы', web_back: 'Навигация WEB',
   entity_signal: 'Сигнал сущности', entity_message: 'Личное сообщение сущности',
+  entity_file_offer: 'Предложить копию файла', entity_file_accept: 'Принять файл в память', entity_file_reject: 'Отклонить файл',
+  access_export: 'Создание ключа доступа',
   set_theme: 'Тема интерфейса', appearance_update: 'Профиль сущности',
 };
 

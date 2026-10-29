@@ -20,7 +20,7 @@
 		inventory.selected_file_uid = null
 		return null
 	var/list/payload = file.ui_entry(inventory.selected_file_uid)
-	payload["source"] = (file in inventory.local_store.files) ? "local" : "shard"
+	payload["source"] = inventory.store_for(file) == inventory.session_store ? "session" : ((file in inventory.local_store.files) ? "local" : "shard")
 	payload["can_import"] = inventory.store_for(file) == inventory.shard?.file_store
 	if(file.kind == NETRUN_FILE_BOT)
 		payload["agent_builder"] = agent_builder_payload(file)
@@ -54,6 +54,8 @@
 	switch(action)
 		if("file_select")
 			inventory.selected_file_uid = file.uid
+			if(workspace_view != "agents")
+				workspace_view = "files"
 		if("file_edit")
 			edit_text_file(file, params["content"])
 		if("file_rename")

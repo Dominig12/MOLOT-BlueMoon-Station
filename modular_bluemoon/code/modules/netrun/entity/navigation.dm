@@ -12,6 +12,7 @@
 	var/pursuit_name
 	var/pursuit_node
 	var/pursuit_status
+	var/security_contact_id
 
 /datum/netrun_entity_navigation/New(mob/camera/netrun_entity/entity)
 	owner = entity
@@ -33,6 +34,7 @@
 	destination = null
 	expected_source = null
 	if(clear_pursuit)
+		security_contact_id = null
 		var/mob/camera/netrun_entity/target = pursuit_target_ref?.resolve()
 		if(target)
 			UnregisterSignal(target, list(COMSIG_NETRUN_ENTITY_NODE_CHANGED, COMSIG_PARENT_QDELETING))
@@ -43,20 +45,29 @@
 	owner?.console?.invalidate_ui()
 
 /// A lock can only be acquired from an actual combat contact, never an arbitrary REF.
-/datum/netrun_entity_navigation/proc/pursue(mob/camera/netrun_entity/target)
+/datum/netrun_entity_navigation/proc/pursue(mob/camera/netrun_entity/target, evidence_id)
 	if(QDELETED(owner) || !istype(target) || QDELETED(target) || target == owner || owner.is_stunned())
 		return FALSE
 	var/reason = owner.console.combat_context.target_denial(target)
+	if(evidence_id)
+		var/datum/netrun_security_contact/contact = owner.console.security_session.contacts[evidence_id]
+		if(QDELETED(contact) || contact.actor_ref?.resolve() != target || contact.pursuit_denial())
+			return FALSE
+		reason = null
 	if(reason)
 		owner.console.log_line("Захват цели невозможен: [reason]", "bad")
 		return FALSE
 	cancel()
+	security_contact_id = evidence_id
 	pursuit_target_ref = WEAKREF(target)
 	pursuit_name = target.real_name
 	pursuit_node = target.host_node.address
 	RegisterSignal(target, COMSIG_NETRUN_ENTITY_NODE_CHANGED, PROC_REF(on_pursuit_moved))
 	RegisterSignal(target, COMSIG_PARENT_QDELETING, PROC_REF(on_pursuit_deleted))
-	refresh_pursuit()
+	if(refresh_pursuit())
+		schedule_step()
+	if(!pursuit_target_ref)
+		return FALSE
 	owner.console.log_line("Цель зафиксирована: [pursuit_name]. Переходы выполняются по разрешённому маршруту, боевые программы запускайте вручную.")
 	return TRUE
 
@@ -75,6 +86,11 @@
 
 /// Replan only after a target changes nodes or a route stops being usable.
 /datum/netrun_entity_navigation/proc/refresh_pursuit()
+	if(security_contact_id)
+		var/datum/netrun_security_contact/contact = owner?.console?.security_session.contacts[security_contact_id]
+		if(QDELETED(contact) || !contact.valid())
+			cancel()
+			return FALSE
 	var/mob/camera/netrun_entity/target = pursuit_target_ref?.resolve()
 	var/datum/component/netrun_node/node = target?.host_node
 	if(QDELETED(target) || QDELETED(node) || QDELETED(owner) || !owner.host_node || owner.console.is_locked())

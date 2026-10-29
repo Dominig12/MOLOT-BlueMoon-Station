@@ -7,8 +7,8 @@ import { NetrunData, THEME } from './types';
 import { useNetrunBackend as useBackend, useNetrunFeedback } from './useNetrunBackend';
 
 /** A reserved row keeps urgent feedback visible without moving tools or taking focus. */
-const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; onOperations?: () => void }) => {
-  const { act, data } = useBackend<NetrunData>(['combat', 'entity', 'locked', 'breach', 'operations']);
+const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; onOperations?: () => void; onSecurity?: () => void }) => {
+  const { act, data } = useBackend<NetrunData>(['combat', 'entity', 'locked', 'breach', 'operations', 'security']);
   const feedback = useNetrunFeedback();
   const incoming = !!data.combat?.incoming?.length;
   const travel = data.entity?.travel;
@@ -43,6 +43,8 @@ const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; 
         onClick={() => act('travel_cancel')} />}
       {!!props.onOperations && <Button compact role="button" icon="list-check" content={`Операции${data.operations?.some(operationActive) ? ` (${data.operations.filter(operationActive).length})` : ''}`}
         onClick={props.onOperations} />}
+      {!!props.onSecurity && !!data.security?.entries?.length && <Button compact role="button" icon="shield-halved"
+        content={`Угрозы (${data.security.entries.length})`} color="caution" onClick={props.onSecurity} />}
     </div>
   );
 };

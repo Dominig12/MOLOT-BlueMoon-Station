@@ -49,6 +49,7 @@
 
 /datum/netrun_access_session/Destroy()
 	UnregisterSignal(SSnetrun, COMSIG_NETRUN_FIREWALL_CHANGED)
+	clear_grant_scopes()
 	node_access.Cut()
 	network_access.Cut()
 	server_passwords.Cut()
@@ -58,9 +59,13 @@
 /datum/netrun_access_session/proc/revoke_all()
 	node_access.Cut()
 	network_access.Cut()
+	clear_grant_scopes()
 
 /datum/netrun_access_session/proc/revoke_node(address)
 	node_access -= address
+	var/datum/netrun_grant_scope/scope = node_grant_scopes[address]
+	node_grant_scopes -= address
+	qdel(scope)
 
 /// The running breach and trace/lockout lifecycle have one owner.
 /datum/netrun_intrusion_session

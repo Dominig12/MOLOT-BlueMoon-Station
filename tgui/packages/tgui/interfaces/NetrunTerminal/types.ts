@@ -95,6 +95,10 @@ export type NetFile = {
   size: number;
   preview: string | null;
   selected?: boolean;
+  agent_profile?: string | null;
+  packed_files?: number;
+  session_bound?: boolean;
+  transferable?: boolean;
 };
 
 export type Storage = {
@@ -112,11 +116,13 @@ export type AgentBuilder = {
   base_size: number;
   defaults: { id: string; name: string; size: number }[];
   programs: { uid: string; name: string; program_id: string; size: number }[];
+  modules?: { uid: string; id: string; name: string; desc: string; size: number; requirements: string[]; allowed: boolean; reason?: string | null }[];
   orders: { id: string; name: string }[];
   avatars: { id: string; name: string }[];
   accents: { id: string; name: string; color: string }[];
   themes: string[];
   max_programs?: number;
+  max_modules?: number;
 };
 
 export type NodeInteraction = {
@@ -144,6 +150,10 @@ export type EntityContact = {
   self: boolean;
   can_signal: boolean;
   can_message: boolean;
+  can_offer?: boolean;
+  offer_reason?: string | null;
+  faction_name?: string | null;
+  faction_color?: string | null;
   threat?: string | null;
   ice_kind?: IceKind;
   persona?: Persona;
@@ -318,7 +328,7 @@ export type SearchResult = {
   visible: boolean;
 };
 
-export type WorkspaceView = 'terminal' | 'map' | 'files' | 'pinned' | 'combat' | 'breach' | 'web';
+export type WorkspaceView = 'terminal' | 'map' | 'files' | 'agents' | 'pinned' | 'combat' | 'breach' | 'web';
 
 export type NetOperation = {
   id: string;
@@ -349,8 +359,47 @@ export type NetPacketHeader = {
   headers?: Record<string, string | number | boolean> | null;
 };
 
+export type SecurityEvidence = {
+  id: string;
+  kind: string;
+  age: number;
+  /** Remaining seconds of the attributed contact; unknown evidence can have ttl=0. */
+  ttl: number;
+  attributed: boolean;
+  name?: string | null;
+  source_address?: string | null;
+  source_name?: string | null;
+  active: boolean;
+  status: string;
+  map_allowed: boolean;
+  map_reason?: string | null;
+  pursue_allowed: boolean;
+  pursue_reason?: string | null;
+  trace_allowed: boolean;
+  trace_reason?: string | null;
+};
+
+export type SecurityState = {
+  defended: { address: string; name: string; can_countertrace: boolean; reason?: string | null } | null;
+  entries: SecurityEvidence[];
+};
+
+export type IncomingFileOffer = {
+  id: string;
+  sender: string;
+  name: string;
+  kind: string;
+  size: number;
+  ttl: number;
+  can_accept: boolean;
+  reason?: string | null;
+};
+
 export type NetrunData = {
   operations?: NetOperation[];
+  security?: SecurityState | null;
+  file_exchange?: { incoming: IncomingFileOffer[]; max_offers: number } | null;
+  access_export?: { node_count: number; network_count: number; can_export: boolean; reason?: string | null } | null;
   /** Receipt of a UI request; it does not imply the game action succeeded. */
   input_ack?: string | null;
   workspace_view?: WorkspaceView;
@@ -393,6 +442,7 @@ export type NetrunData = {
   ping_route: PingHop[] | null;
   ping?: { id: number; remaining_ms: number } | null;
   agents?: AgentState[] | null;
+  agent_count?: number;
   events?: NetEvent[] | null;
   waypoint?: Waypoint | null;
   search?: SearchResult[] | null;
@@ -401,7 +451,7 @@ export type NetrunData = {
     image: string | null;
     width?: number;
     height?: number;
-    source: 'local' | 'shard';
+    source: 'local' | 'shard' | 'session';
     can_import?: boolean;
     agent_builder?: AgentBuilder | null;
   }) | null;
@@ -658,6 +708,8 @@ export const BOT_NAMES: Record<string, string> = {
   surveyor: 'Агент-разведчик',
   collector: 'Агент-сборщик',
   interceptor: 'Агент-перехватчик',
+  hacker: 'Агент-взломщик',
+  breacher: 'Агент-пробойник',
 };
 
 export const BOT_ICONS: Record<string, string> = {
@@ -669,6 +721,8 @@ export const BOT_ICONS: Record<string, string> = {
   surveyor: 'compass',
   collector: 'box-archive',
   interceptor: 'crosshairs',
+  hacker: 'key',
+  breacher: 'burst',
 };
 
 export const FACTION_COLORS: Record<string, string> = {

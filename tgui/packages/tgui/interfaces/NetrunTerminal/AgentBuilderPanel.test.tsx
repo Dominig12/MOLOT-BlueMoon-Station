@@ -34,7 +34,20 @@ test('a named agent package uses the selected template, persona, owned programs 
   expect(panel.getByText('Файл займёт 9; свободно 30.')).toBeTruthy();
   fireEvent.click(panel.getByText('Создать агента'));
   expect(sent()).toEqual([{ uid: 'template', name: 'Кира', avatar: 'fox', accent: 'mint', tagline: 'Картограф', theme: 'ion', order: 'patrol',
-    include_defaults: true, program_uids: ['owned-program'], to_shard: true }]);
+    include_defaults: true, program_uids: ['owned-program'], module_uids: [], to_shard: true }]);
+});
+
+test('owned capability modules use their memory cost and UID while denied modules explain their requirement', () => {
+  const { panel, sent } = setup();
+  const hacking = { uid: 'owned-hacker', id: 'hacking', name: 'Модуль взлома', desc: 'Подбирает доступ штатным протоколом.', size: 4, requirements: [], allowed: true };
+  panel.rerender(<AgentBuilderPanel builder={{ ...builder, modules: [hacking,
+    { ...hacking, uid: 'blocked', id: 'icepick', name: 'Обход прошивки', allowed: false, reason: 'Нужен модуль взлома.' }], max_modules: 1 }} />);
+  expect(panel.getByText('Нужен модуль взлома.')).toBeTruthy();
+  fireEvent.click(panel.getByLabelText('Обход прошивки · 4'));
+  fireEvent.click(panel.getByLabelText('Модуль взлома · 4'));
+  expect(panel.getByText('Файл займёт 11; свободно 39.')).toBeTruthy();
+  fireEvent.click(panel.getByText('Создать агента'));
+  expect(sent()).toEqual([expect.objectContaining({ module_uids: ['owned-hacker'], program_uids: [] })]);
 });
 
 test('capacity limits prevent creation and removed media cannot leave stale program UIDs in a request', () => {

@@ -211,7 +211,7 @@
 	// Matrix clicks need no global discovery pass. The live delivery/finish
 	// checks own fresh trees; this snapshot only describes the visible panel.
 	refresh_route_node(selected_node())
-	if(!intrusion.breach || (workspace_view in list("map", "files", "pinned", "terminal", "web")))
+	if(!intrusion.breach || (workspace_view in list("map", "files", "agents", "pinned", "terminal", "web")))
 		ui_routes = acquire_ui_routes()
 	else
 		ui_routes = null
@@ -285,12 +285,15 @@
 	data["can_breach"] = intrusion.can_breach
 	data["can_autobreach"] = intrusion.can_breach && !!daemon_bonus("autobreach")
 	data["log"] = log
+	data["security"] = workspace_view == "breach" ? list("defended" = null, "entries" = list()) : security_session.payload()
+	data["file_exchange"] = file_exchange.payload()
+	data["access_export"] = workspace_view == "files" ? acquired_key_payload() : null
 	data["jack"] = connection.jack ? list("address" = connection.jack.address, "name" = connection.jack.get_name()) : null
 	data["host_actions"] = host_actions()
-	data["file"] = file_payload()
+	data["file"] = (workspace_view in list("files", "agents")) ? file_payload() : null
 	// Matrix clicks must not rebuild the hidden graph, global autocomplete,
 	// selected-node command help or the native machine UI behind the puzzle.
-	if(intrusion.breach && !(workspace_view in list("map", "files", "pinned", "terminal", "web")))
+	if(intrusion.breach && !(workspace_view in list("map", "files", "agents", "pinned", "terminal", "web")))
 		append_network_catalog(data, session, FALSE)
 		data["view"] = null
 		data["web"] = null
@@ -342,7 +345,10 @@
 
 	var/datum/component/netrun_node/node = selected_node()
 	var/list/selected = null
-	if((workspace_view in list("map", "files", "pinned")) && node && node_visible(node))
+	if(workspace_view == "agents" && node && node_visible(node))
+		selected = list("address" = node.address, "name" = node.get_name(), "type" = node.node_type,
+			"online" = node.is_online(), "access" = node_level(node), "commands" = node.command_entries(src))
+	else if((workspace_view in list("map", "files", "pinned")) && node && node_visible(node))
 		var/level = node_level(node)
 		selected = node.ui_entry(src)
 		selected["network"] = node.network?.short_name
@@ -409,7 +415,8 @@
 	// Only a visible map animates events; hidden pages never serialize the shared ring.
 	data["events"] = workspace_view == "map" ? SSnetrun.recent_events(src) : null
 	data["search"] = workspace_view == "map" ? search_payload() : null
-	data["agents"] = agents_payload()
+	data["agent_count"] = length(agents())
+	data["agents"] = workspace_view == "agents" ? agents_payload() : null
 	return data
 
 /// Поиск по всей сети: находит достижимые узлы по имени/адресу, чтобы проложить
@@ -524,6 +531,10 @@
 	var/list/local = list()
 	for(var/datum/netrun_file/file as anything in inventory.local_store.files)
 		local += list(file.ui_entry(inventory.selected_file_uid))
+	for(var/datum/netrun_file/file as anything in inventory.session_store?.files)
+		var/list/entry = file.ui_entry(inventory.selected_file_uid)
+		entry["source"] = "session"
+		local += list(entry)
 	return list("files" = local, "used" = netrun_storage_used(inventory.local_store.files), "capacity" = inventory.local_store.capacity)
 
 /datum/netrun_console/proc/shard_payload()
@@ -597,6 +608,14 @@
 
 /// Dispatch follows the ordinary TGUI permission check; denied domain actions still get receipt.
 /datum/netrun_console/proc/handle_ui_action(action, list/params, datum/tgui/ui, input_nonce)
+	if(action == "access_export")
+		return !!export_acquired_key(params["name"], !!params["to_shard"])
+	if(action == "entity_file_offer")
+		return offer_entity_file(params["address"], params["ref"], params["uid"])
+	if(action in list("entity_file_accept", "entity_file_reject"))
+		return file_exchange.respond(params["id"], action == "entity_file_accept")
+	if(action in list("security_probe", "security_trace", "security_map", "security_pursue"))
+		return security_session.act(action, params["id"])
 	if(action == "map_resync")
 		map_view.resync(ui)
 		return TRUE
@@ -609,7 +628,7 @@
 			return update_persona(params, ui.user)
 		if("workspace_view")
 			var/page = params["page"]
-			if(page in list("terminal", "map", "files", "pinned", "combat", "breach", "web"))
+			if(page in list("terminal", "map", "files", "agents", "pinned", "combat", "breach", "web"))
 				if(page != "web" || web_browsing())
 					workspace_view = page
 					map_view.viewed_network_id = page == "web" ? "web" : null
@@ -877,9 +896,13 @@
 
 /// Один путь доставки файлов для кнопок, CLI и будущих клиентов.
 /datum/netrun_console/proc/queue_file_request(action, datum/component/netrun_node/node, uid, to_shard = FALSE, input_nonce)
-	var/list/labels = list("download" = "Скачивание файла", "upload" = "Загрузка файла", "delete" = "Удаление файла", "read" = "Чтение файла")
+	var/list/labels = list("download" = "Скачивание файла", "upload" = "Загрузка файла", "deposit" = "Разгрузка файла", "delete" = "Удаление файла", "read" = "Чтение файла")
 	var/datum/netrun_packet_context/operation = new("file", labels[action] || "Файловый запрос",
 		route_source()?.address, node?.address, "file.[action]", src, input_nonce)
+	if(action == "deposit")
+		var/reason = deposit_denial(uid, node)
+		if(reason)
+			return reject_operation(operation, reason)
 	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
 	// A fortress vault keeps the node's disk behind ROOT for everybody except its owner.
 	required = max(required, node?.fortress?.file_access_level(src) || 0)
@@ -918,6 +941,8 @@
 			. = transfer_from_node(uid, to_shard, node, TRUE)
 		if("upload")
 			. = transfer_to_node(uid, node, TRUE)
+		if("deposit")
+			. = deposit_to_node(uid, node, TRUE)
 		if("delete")
 			. = delete_from_node(uid, node, TRUE)
 		if("read")
@@ -936,7 +961,7 @@
 	if(!.)
 		operation?.finish("rejected", "Файл не передан: файл или место хранения недоступны.")
 	else
-		var/list/results = list("download" = "Файл скачан.", "upload" = "Файл передан на устройство.", "delete" = "Файл удалён.", "read" = "Файл открыт для чтения.")
+		var/list/results = list("download" = "Файл скачан.", "upload" = "Файл передан на устройство.", "deposit" = "Исходный файл разгружен на сервер.", "delete" = "Файл удалён.", "read" = "Файл открыт для чтения.")
 		operation?.set_result(results[action])
 	return !!.
 

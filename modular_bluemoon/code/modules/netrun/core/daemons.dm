@@ -10,6 +10,9 @@
 	var/size = 1
 	var/bonus_kind
 	var/bonus = 0
+	/// Optional independent effects. Each kind competes with legacy bonus_kind;
+	/// neither duplicate files nor multiple matching effects are added together.
+	var/list/effects
 	/// Zero excludes a definition from ICE salvage (e.g. test-only definitions).
 	var/loot_weight = 1
 
@@ -17,7 +20,25 @@
 	return new /datum/netrun_file(name, NETRUN_FILE_DAEMON, id, size)
 
 /datum/netrun_daemon/proc/ui_entry()
-	return list("id" = id, "name" = name, "desc" = desc, "size" = size, "bonus_kind" = bonus_kind, "bonus" = bonus)
+	return list("id" = id, "name" = name, "desc" = desc, "size" = size, "bonus_kind" = bonus_kind, "bonus" = bonus, "effects" = effect_values())
+
+/datum/netrun_daemon/proc/effect_bonus(kind)
+	. = 0
+	if(bonus_kind == kind && IS_FINITE(bonus))
+		. = max(., bonus)
+	var/value = effects?[kind]
+	if(IS_FINITE(value))
+		. = max(., value)
+
+/// Metadata is a fresh list; callers cannot modify the shared registry definition.
+/datum/netrun_daemon/proc/effect_values()
+	var/list/result = list()
+	if(istext(bonus_kind) && effect_bonus(bonus_kind) > 0)
+		result[bonus_kind] = effect_bonus(bonus_kind)
+	for(var/kind in effects)
+		if(istext(kind) && effect_bonus(kind) > 0)
+			result[kind] = effect_bonus(kind)
+	return result
 
 /datum/netrun_daemon/buffer
 	id = "buffer"
@@ -207,6 +228,48 @@
 	desc = "Набор программ опытного сетевика: буфер, разведка, разгон и заметание следов."
 	icon_state = "datadisk3"
 	preload_daemons = list("buffer", "icepick", "cloak", "mapper", "overclock", "scrub")
+
+// Composite loadouts use the same native effect consumers. Their storage and
+// competing effects are explicit; no extra timer or effect-specific dispatcher.
+/datum/netrun_daemon/ghostlink
+	id = "ghostlink"
+	name = "ghostlink.exe"
+	desc = "Снижает рост трассировки на 20% и вдвое ускоряет её штатное затухание в простое. Компактнее двух программ, но маскировка слабее отдельного cloak.exe."
+	size = 4
+	effects = list("cloak" = 0.2, "scrub" = 1)
+	loot_weight = 0.6
+
+/datum/netrun_daemon/breachkit
+	id = "breachkit"
+	name = "breachkit.exe"
+	desc = "Объединяет icepick и расширение буфера: защита подбора ниже на один уровень, буфер ручного протокола больше на один. Занимает пять ячеек; ROOT и автоматический взлом прошивки не выдаёт."
+	size = 5
+	effects = list("icepick" = 1, "buffer" = 1)
+	loot_weight = 0.35
+
+/datum/netrun_daemon/analyst
+	id = "analyst"
+	name = "analyst.exe"
+	desc = "Разведка закрытых сегментов и массовый слив читаемых файлов в одном пакете. Команды сохраняют обычные требования доступа и вместимости."
+	size = 4
+	effects = list("mapper" = 1, "siphon" = 1)
+	loot_weight = 0.5
+
+/obj/item/netrun_shard/composites
+	name = "data shard (composite daemon suite)"
+	desc = "Составные программы ghostlink, breachkit и analyst. Каждый эффект использует обычные правила клиента; копии не складываются."
+	icon_state = "datadisk3"
+	preload_daemons = list("ghostlink", "breachkit", "analyst")
+
+/datum/design/netrun_daemon_composites
+	name = "Composite Network Daemons"
+	desc = "Шард с составными программами маскировки, анализа и подготовки взлома."
+	id = "netrun_daemon_composites"
+	build_type = PROTOLATHE
+	materials = list(/datum/material/glass = 1800, /datum/material/gold = 1000, /datum/material/silver = 1200)
+	build_path = /obj/item/netrun_shard/composites
+	category = list("Computer Parts")
+	departmental_flags = DEPARTMENTAL_FLAG_ENGINEERING | DEPARTMENTAL_FLAG_SCIENCE
 
 // MARK: Лорные документы
 

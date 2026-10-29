@@ -134,7 +134,10 @@
 #define NETRUN_PROGRAM_PURGE "purge"
 #define NETRUN_PROGRAM_TRACE "trace"
 /// Bounded recoverable files left by defeated processes, separate from machine storage.
-#define NETRUN_MAX_SALVAGE_FILES 4
+#define NETRUN_MAX_SALVAGE_FILES 12
+/// SSnetrun: (node); entity: (file, node), after actual ownership changes.
+#define COMSIG_NETRUN_SALVAGE_CHANGED "netrun_salvage_changed"
+#define COMSIG_NETRUN_SALVAGE_RECOVERED "netrun_salvage_recovered"
 
 // Враждебные процессы (ICE)
 #define NETRUN_ICE_SENTRY "sentry"
@@ -142,6 +145,8 @@
 #define NETRUN_ICE_BLACK "black"
 #define COMSIG_NETRUN_ICE_PROGRAM_RESOLVED "netrun_ice_program_resolved"
 #define COMSIG_NETRUN_ENTITY_SPEAK "netrun_entity_speak"
+#define COMSIG_NETRUN_AGENT_ORDER_LIST "netrun_agent_order_list"
+#define COMSIG_NETRUN_AGENT_CONTROL "netrun_agent_control"
 /// Сколько персистентных патрульных процессов поднимается в начале раунда
 #define NETRUN_MAX_PATROLS 400
 /// Сколько лорных документов раскладывается по серверам станции в начале раунда
@@ -210,6 +215,7 @@
 // Автономные сетевые боты: архетипы поведения
 #define NETRUN_BOT_RAIDER "raider"
 #define NETRUN_BOT_CUSTODIAN "custodian"
+#define NETRUN_BOT_RECYCLER "recycler"
 #define NETRUN_BOT_POLICE "police"
 #define NETRUN_BOT_MENDER "mender"
 #define NETRUN_BOT_SENTINEL "sentinel"
@@ -228,11 +234,12 @@
 #define NETRUN_BOT_MOVE_ARRIVED 1
 #define NETRUN_BOT_MOVE_BLOCKED 2
 /// Autonomous processes alive at once, including player agents.
-#define NETRUN_MAX_BOTS 12
+#define NETRUN_MAX_BOTS 20
 #define NETRUN_MAX_AGENTS_PER_CONSOLE 2
 #define NETRUN_POLICE_QUOTA 2
 #define NETRUN_ROGUE_QUOTA 2
 #define NETRUN_CUSTODIAN_QUOTA 3
+#define NETRUN_RECYCLER_QUOTA 2
 
 // Модули сетевых крепостей
 #define NETRUN_FORT_WALL "wall"

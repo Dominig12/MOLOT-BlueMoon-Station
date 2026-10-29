@@ -18,6 +18,11 @@
 	var/datum/weakref/deployer_ref
 	/// Reconnectable personal guards must not become an unlimited salvage source.
 	var/drops_loot = TRUE
+	/// Only a guard raised by an intrusion uses the dormant-nest lifecycle.
+	var/reactive = FALSE
+	var/dormant = FALSE
+	var/reactive_sleep_at = 0
+	var/reactive_quiet_timeout = 45 SECONDS
 	var/name = "ICE"
 	var/datum/component/netrun_node/node
 	var/kind = NETRUN_ICE_SENTRY
@@ -150,7 +155,7 @@
 		return null
 	return list("name" = pending_program.name, "role" = pending_program.role,
 		"power" = pending_program.role == NETRUN_PROGRAM_ATTACK ? round(pending_program.power * damage_factor) : pending_program.power,
-		"remaining" = max(0, CEILING((attack_at - world.time) / (1 SECONDS), 0.1)))
+		"remaining" = max(0, CEILING(round((attack_at - world.time) / (1 SECONDS), 0.01), 0.1)))
 
 /datum/netrun_ice/proc/is_stunned()
 	return world.time < combat_stun_until
@@ -246,13 +251,9 @@
 	if(!QDELETED(node))
 		// Debris is recoverable without USER privileges on the host machine.
 		// Bounded separately: defeating ICE never expands the machine's disk.
-		while(length(node.salvage) >= NETRUN_MAX_SALVAGE_FILES)
-			var/datum/netrun_file/expired = node.salvage[1]
-			node.salvage.Cut(1, 2)
-			node.add_log("Старые обломки [expired.name] вытеснены новой добычей.")
-			qdel(expired)
-		node.salvage += loot
-		node.add_log("В обломках процесса остался файл: [loot.name].")
+		if(!node.leave_salvage(loot, name))
+			qdel(loot)
+			return
 		killer?.log_line("Нет места в памяти. [loot.name] можно забрать из обломков в узле [node.address].", "average")
 		return
 	// Нет места нигде в сети - роняем физический шард рядом с убившим (у кого есть тело/машина).
@@ -275,6 +276,8 @@
 
 /// Population inspects cheap deadlines; only due patrols and active combat queue AI work.
 /datum/netrun_ice/proc/needs_netrun_tick()
+	if(reactive && dormant)
+		return FALSE
 	if(QDELETED(node) || QDELETED(node.parent) || pending_program)
 		return TRUE
 	if(kind == NETRUN_ICE_HUNTER && !persistent && world.time >= idle_expires_at)
@@ -296,7 +299,29 @@
 	return FALSE
 
 /datum/netrun_ice/proc/process_ai(delta)
+	if(reactive && (pending_program || has_reactive_threat()))
+		dormant = FALSE
+		reactive_sleep_at = world.time + reactive_quiet_timeout
 	agent.advance(delta)
+
+/// Local residents and the bounded active-breach index are the only wake interests.
+/datum/netrun_ice/proc/has_reactive_threat()
+	if(QDELETED(node) || !node.is_online())
+		return FALSE
+	if(find_intruder(node))
+		return TRUE
+	for(var/datum/netrun_console/console as anything in SSnetrun.currentbreaches)
+		if(valid_trace_target(console))
+			return TRUE
+	return FALSE
+
+/datum/netrun_ice/proc/wake_reactive()
+	if(!reactive || !dormant)
+		return
+	dormant = FALSE
+	reactive_sleep_at = world.time + reactive_quiet_timeout
+	agent.state = "охрана"
+	node?.queue_presentation(NETRUN_CHANGED_OCCUPANTS)
 
 /// May also inspect a destination before arrival; presence is checked by the caller.
 /datum/netrun_ice/proc/is_intruder(mob/camera/netrun_entity/entity, datum/component/netrun_node/where, datum/netrun_path_tree/tree)
@@ -362,7 +387,7 @@
 	if(agent?.profile.illegal && is_deployer(console))
 		return FALSE
 	var/datum/netrun_breach/breach = console?.intrusion.breach
-	return !QDELETED(console) && !console.is_locked() && breach && ((breach.target_kind == "network" && node?.network && breach.target_id == node.network.id) || (breach.target_kind != "network" && breach.target_id == node?.address))
+	return !console.is_locked() && !QDELETED(breach) && ((breach.target_kind == "network" && node?.network && breach.target_id == node.network.id) || (breach.target_kind != "network" && breach.target_id == node?.address))
 
 /// Recheck authority and presence at both ends of the telegraph, not just at acquisition.
 /datum/netrun_ice/proc/valid_program_target(datum/netrun_program/program, datum/target, fresh_access = FALSE)
@@ -608,14 +633,24 @@
 
 /// Среагировать на нелегальную активность: закалённый узел ставит сторожа,
 /// а при высокой трассировке с ближайшего реле/сервера выходит охотник.
+/datum/component/netrun_node
+	/// The carrier has one reactive nest for its lifetime, even after its guard is defeated.
+	var/reactive_defense_seeded = FALSE
+
 /datum/controller/subsystem/netrun/proc/raise_defenses(datum/netrun_console/console, datum/component/netrun_node/target)
 	if(QDELETED(target) || QDELETED(target.parent))
 		return
 	var/atom/host = target.parent
 	if(!host.netrun_reactive_defense_allowed())
 		return
-	if(target.get_security() >= 3 && ice_count(target) < 1)
-		spawn_ice(target, NETRUN_ICE_SENTRY)
+	if(target.get_security() >= 3 && !target.reactive_defense_seeded && ice_count(target) < 1)
+		var/datum/netrun_ice/ice = spawn_ice(target, NETRUN_ICE_SENTRY)
+		if(ice)
+			target.reactive_defense_seeded = TRUE
+			ice.reactive = TRUE
+			ice.drops_loot = FALSE
+			ice.reactive_sleep_at = world.time + ice.reactive_quiet_timeout
+			ice.reaction.wake()
 
 /// Пассивный патруль с начала раунда: по одному персистентному охотнику на крупные
 /// отдельские ЛВС. Патруль не сворачивается без цели и роняет ключ своей ЛВС при гибели.

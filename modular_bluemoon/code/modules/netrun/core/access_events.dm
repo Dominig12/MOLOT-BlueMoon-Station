@@ -10,7 +10,7 @@
 	var/datum/netrun_breach/breach = owner.intrusion?.breach
 	// Node/map events already publish the visible security change. A session
 	// without this grant or breach has no authority state for the firewall to revoke.
-	if(!node_access[node.address] && !(breach && breach.target_kind != "network" && breach.target_id == node.address))
+	if(!node_access[node.address] && !owner.inventory.has_acquired_node_scope(node.address) && !(breach && breach.target_kind != "network" && breach.target_id == node.address))
 		return
 	pending_firewalls[node.address] = WEAKREF(node)
 	owner.invalidate_ui()
