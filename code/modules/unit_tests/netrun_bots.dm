@@ -96,6 +96,33 @@
 			report = TRUE
 	TEST_ASSERT(report, "The police keeps a written report in its memory")
 
+/// Counter-tracing uses the same delivered commands as a player; no direct brain mutation.
+/datum/unit_test/netrun_bot_countertrace_delivery/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/mob/camera/netrun_entity/bot/police = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_a, NETRUN_BOT_POLICE)
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/attacker = allocate(/datum/netrun_console, host)
+	attacker.intrusion.breach = allocate(/datum/netrun_breach, attacker, "node", scene.node_a.address, scene.node_a.get_name(), 1)
+	SSnetrun.currentbreaches |= attacker
+	var/before = attacker.intrusion.trace
+	TEST_ASSERT(police.brain.counter_trace(scene.node_a), "The officer admits a real countertrace command")
+	TEST_ASSERT_EQUAL(attacker.intrusion.trace, before, "The brain cannot raise trace before command delivery")
+	var/datum/netrun_request/command/packet = netrun_operation_packet(police.console, /datum/netrun_request/command)
+	TEST_ASSERT_NOTNULL(packet, "Countertrace owns a routed command packet")
+	TEST_ASSERT_EQUAL(packet.command_id, "countertrace", "The police uses the public device command")
+	TEST_ASSERT(packet.deliver(), "A legal station officer can protect the node")
+	TEST_ASSERT_EQUAL(attacker.intrusion.trace, before + 8, "The delivered command applies the countertrace once")
+	police.brain.clear_command()
+	police.console.next_command = 0
+	TEST_ASSERT(police.brain.counter_trace(scene.node_a), "Another observation can dispatch a new command")
+	packet = netrun_operation_packet(police.console, /datum/netrun_request/command)
+	attacker.intrusion.breach.target_id = scene.node_b.address
+	TEST_ASSERT(packet.deliver(), "A no-longer-attacked node returns a valid empty result")
+	TEST_ASSERT_EQUAL(attacker.intrusion.trace, before + 8, "Delivery rechecks the live breach instead of punishing stale observations")
+	var/datum/netrun_command/command = SSnetrun.get_command("countertrace")
+	attacker.access_session.node_access[scene.node_a.address] = NETRUN_ACCESS_ROOT
+	TEST_ASSERT_NULL(command.execute(scene.node_a, attacker), "Acquired ROOT is not legal authority to countertrace another client")
+
 /// Agents leave memory as processes and come back as files.
 /datum/unit_test/netrun_bot_agent_lifecycle/Run()
 	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
@@ -121,6 +148,8 @@
 	TEST_ASSERT(!QDELETED(agent) && agent.agent_file == file, "The agent retains its program until the actual file arrives")
 	var/datum/netrun_request/agent_recall/recall = netrun_operation_packet(owner.console, /datum/netrun_request/agent_recall)
 	TEST_ASSERT_NOTNULL(recall, "Returning the program uses a real file packet")
+	agent.brain.think()
+	TEST_ASSERT_NULL(agent.brain.current_goal(), "A process awaiting recall acceptance must not start another patrol or guard route")
 	recall.deliver()
 	TEST_ASSERT(QDELETED(agent), "The accepted file delivery releases the live agent")
 	var/returned = FALSE

@@ -73,7 +73,7 @@
 	if(!isatom(parent))
 		return COMPONENT_INCOMPATIBLE
 	src.node_type = node_type
-	src.command_ids = list("scan", "ping", "node_log", "packet_log", "packet_decrypt", "extract", "traceroute", "siphon", "spoof_log") | (command_ids || list())
+	src.command_ids = list("scan", "ping", "node_log", "packet_log", "packet_decrypt", "extract", "traceroute", "countertrace", "siphon", "spoof_log") | (command_ids || list())
 	base_security = security
 	src.required_access = required_access
 	// Firmware documentation is available even on endpoints without writable storage.

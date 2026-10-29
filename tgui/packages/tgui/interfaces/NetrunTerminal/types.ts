@@ -286,6 +286,8 @@ export type CombatState = {
   action_ready_in?: number;
   incoming?: IncomingProgram[];
   loot?: NetFile[];
+  pursuit_available?: boolean;
+  pursuit?: { target_ref: string; name: string; node: string | null; following: boolean; status: string } | null;
 };
 
 export type SearchResult = {

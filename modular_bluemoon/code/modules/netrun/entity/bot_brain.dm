@@ -107,6 +107,11 @@
 		report_rogues()
 	if(combat_step())
 		return
+	// A dispatched return still owns the live process until the receiver accepts
+	// its file. Starting another patrol here would move the source mid-transfer.
+	if(owner.return_pending)
+		state = "возврат пакета"
+		return
 	var/datum/netrun_bot_goal/goal = current_goal()
 	if(goal && world.time >= goal.expires_at)
 		finish_goal(goal)
@@ -194,7 +199,7 @@
 			return NETRUN_BOT_GOAL_FAILED
 		if(command_phase == "completed")
 			return NETRUN_BOT_GOAL_DONE
-		if(command_phase in list("rejected", "cancelled") || world.time >= command_deadline)
+		if((command_phase in list("rejected", "cancelled")) || world.time >= command_deadline)
 			return NETRUN_BOT_GOAL_FAILED
 		return NETRUN_BOT_GOAL_CONTINUE
 	if(world.time < owner.console.next_command)

@@ -82,9 +82,10 @@ const TargetCard = (props: {
   target: CombatTarget;
   selected: boolean;
   localNode: string | null;
+  selectionLocked?: boolean;
   onSelect: (ref: string) => void;
 }) => {
-  const { target: t, selected, localNode, onSelect } = props;
+  const { target: t, selected, localNode, onSelect, selectionLocked } = props;
   const role = targetRole(t);
   // Outer works of a neighbouring fortress are engaged across the link.
   const siege = t.kind === 'fortress' && !!t.node && !!localNode && t.node !== localNode;
@@ -94,9 +95,9 @@ const TargetCard = (props: {
       data-net-target={t.kind}
       mb={0.5}
       p={1}
-      onClick={() => !t.unavailable_reason && onSelect(t.ref)}
+      onClick={() => !selectionLocked && !t.unavailable_reason && onSelect(t.ref)}
       style={{
-        cursor: t.unavailable_reason ? 'default' : 'pointer',
+        cursor: selectionLocked || t.unavailable_reason ? 'default' : 'pointer',
         background: selected ? THEME.line : THEME.panel,
         border: `1px solid ${selected ? THEME.accent : t.hostile ? THEME.bad : THEME.line}`,
         borderRadius: '8px',
@@ -203,16 +204,21 @@ const CombatPanelView = () => {
   const { act, data } = useBackend<NetrunData>(['combat', 'locked']);
   const { combat } = data;
   const [target, setTarget] = useState<string | null>(null);
+  const pursuit = combat?.pursuit;
 
   // Preserve a usable selection and replace removed or disconnected targets in one update.
   // Fortress modules are never picked automatically: a siege, like an attack on your own
   // or the station's works, starts with a deliberate selection.
   const targets = combat?.targets ?? [];
   useEffect(() => {
+    if (pursuit?.target_ref) {
+      setTarget(pursuit.target_ref);
+      return;
+    }
     const usable = targets.find((t) => t.ref === target && !t.unavailable_reason)
       ?? targets.find((t) => t.hostile && t.kind !== 'fortress' && !t.unavailable_reason);
     setTarget(usable?.ref ?? null);
-  }, [targets, target]);
+  }, [targets, target, pursuit?.target_ref]);
 
   if (!combat) {
     return (
@@ -223,7 +229,11 @@ const CombatPanelView = () => {
   }
 
   const programs = combat.programs ?? [];
-  const selectedTarget = targets.find((t) => t.ref === target);
+  const selectedRef = pursuit?.target_ref || target;
+  const selectedTarget = targets.find((t) => t.ref === selectedRef);
+  const pursuitOutsideNode = !!pursuit && (!selectedTarget || !combat.node || selectedTarget.node !== combat.node);
+  const canPursue = combat.pursuit_available && selectedTarget
+    && (selectedTarget.kind === 'entity' || selectedTarget.kind === 'bot');
   const actionReadyIn = combat.action_ready_in ?? 0;
   const actionBlockReasons = [
     combat.self?.stunned ? 'Вы оглушены: дождитесь окончания оглушения.' : null,
@@ -250,16 +260,28 @@ const CombatPanelView = () => {
       )}
 
       <Box color={THEME.muted} fontSize="12px" mb={1}>Цели и процессы</Box>
+      {!!pursuit && <Box mb={1} p={1} data-net-pursuit role="status" style={{ border: `1px solid ${THEME.accent}`, borderRadius: '6px' }}>
+        <Box bold color={THEME.accent}><Icon name="crosshairs" mr={0.5} />Захвачена цель: {pursuit.name}</Box>
+        <Box fontSize="11px">{pursuit.status}</Box>
+        {!!pursuit.node && <Box fontSize="10px" color={THEME.muted}>Узел цели: {pursuit.node}</Box>}
+        {pursuitOutsideNode && <Box fontSize="11px" color={THEME.muted}>Цель вне текущего узла. Атакующие программы недоступны до встречи.</Box>}
+        <Button mt={0.5} compact icon="stop" content="Остановить преследование" onClick={() => act('pursuit_stop')} />
+                    </Box>}
       <div className="netrun-combat-targets">
       {targets.length === 0 ? (
         <Box color={THEME.muted} mb={1}>Других процессов нет.</Box>
       ) : (
         targets.map((t: CombatTarget) => (
-          <TargetCard key={t.ref} target={t} selected={target === t.ref} localNode={combat.node} onSelect={setTarget} />
+          <TargetCard key={t.ref} target={t} selected={selectedRef === t.ref} localNode={combat.node}
+            selectionLocked={!!pursuit} onSelect={setTarget} />
         ))
       )}
 
       </div>
+      {!!canPursue && !pursuit && <Button compact icon="route" content="Преследовать"
+        disabled={data.locked > 0 || !!combat.self?.stunned}
+        tooltip="Захватить цель и идти за ней узел за узлом. Атаки запускаются вручную при встрече."
+        onClick={() => act('pursue', { ref: selectedTarget.ref })} />}
       <Box color={THEME.muted} fontSize="12px" mt={2} mb={1}>Боевые программы</Box>
       {!!actionBlockReasons.length && (
         <Box role="status" color={THEME.warn} fontSize="11px" mb={1}>
@@ -272,12 +294,12 @@ const CombatPanelView = () => {
         <div className="netrun-combat-programs" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
           {programs.map((p) => {
             const onCd = p.ready_in > 0;
-            const needTarget = p.needs_target && (!selectedTarget || !!selectedTarget.unavailable_reason);
+            const needTarget = p.needs_target && (!selectedTarget || !!selectedTarget.unavailable_reason || pursuitOutsideNode);
             const blockReasons = [
               ...actionBlockReasons,
               p.unavailable_reason,
               onCd ? `Перезарядка: ещё ${p.ready_in} с.` : null,
-              needTarget ? 'Сначала выберите доступную цель.' : null,
+              needTarget ? pursuitOutsideNode ? 'Цель вне текущего узла: дождитесь встречи.' : 'Сначала выберите доступную цель.' : null,
             ].filter((reason): reason is string => !!reason);
             return (
               <Button
@@ -294,7 +316,7 @@ const CombatPanelView = () => {
                     { label: 'Цель', value: p.needs_target ? 'Процесс в одном узле' : 'Собственная сущность' },
                   ]}
                   notices={blockReasons.map((text) => ({ text }))} />}
-                onClick={() => act('program_use', { uid: p.uid, target: p.needs_target ? target : null })}
+                onClick={() => act('program_use', { uid: p.uid, target: p.needs_target ? selectedRef : null })}
               >
                 <Box style={{ minWidth: 0 }}>
                   <Box>{p.name.replace(/\.(exe|card)$/, '')}</Box>

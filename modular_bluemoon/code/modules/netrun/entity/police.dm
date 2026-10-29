@@ -153,31 +153,72 @@
 	var/datum/weakref/reference = WEAKREF(suspect)
 	var/warned_at = warned[reference]
 	if(!warned_at)
+		if(!owner.console.signal_entity(node, REF(suspect), "Сетевая полиция [owner.real_name]: несанкционированный процесс в узле [node.address]. Покиньте узел в течение 5 секунд, иначе процесс будет обезврежен."))
+			return
 		warned[reference] = world.time
 		while(length(warned) > 16)
 			warned.Cut(1, 2)
-		owner.console.signal_entity(node, REF(suspect), "Сетевая полиция [owner.real_name]: несанкционированный процесс в узле [node.address]. Покиньте узел в течение 5 секунд, иначе процесс будет обезврежен.")
-		to_chat(suspect, span_warning("Сетевая полиция [owner.real_name] требует покинуть узел [node.address] в течение 5 секунд."))
 		return
 	if(world.time - warned_at >= 5 SECONDS)
 		mark_enemy(suspect)
 
 /// Remote breaches against this node or its LAN are traced back while the police stands here.
 /datum/netrun_bot_brain/proc/counter_trace(datum/component/netrun_node/node)
-	. = FALSE
+	if(!length(netrun_countertrace_targets(node)))
+		if(command_id == "countertrace")
+			clear_command()
+		return FALSE
+	var/result = command_step(node, "countertrace")
+	if(result != NETRUN_BOT_GOAL_CONTINUE)
+		clear_command()
+	return TRUE
+
+/// Perception may observe active attacks, but mutation belongs to a delivered node command.
+/proc/netrun_countertrace_targets(datum/component/netrun_node/node)
+	. = list()
+	if(QDELETED(node))
+		return
 	for(var/datum/netrun_console/console as anything in SSnetrun.currentbreaches)
-		if(QDELETED(console) || console == owner.console || console.is_locked())
+		if(QDELETED(console) || console.is_locked())
 			continue
 		var/datum/netrun_breach/breach = console.intrusion.breach
 		if(!breach)
 			continue
 		if(breach.target_id != node.address && !(breach.target_kind == "network" && node.network && breach.target_id == node.network.id))
 			continue
-		console.add_trace(8)
-		console.log_line("Сетевая полиция [owner.real_name] отслеживает ваш взлом: трассировка растёт.", "bad")
-		. = TRUE
-	if(.)
+		. += console
+
+/datum/netrun_command/countertrace
+	id = "countertrace"
+	name = "Контртрассировка"
+	desc = "Защитить узел от активного взлома: повысить трассировку атакующих подключений на 8%."
+	help = "Нужен законный доступ ПОЛЬЗОВАТЕЛЯ к узлу. Полученный взломом доступ не позволяет выдавать себя за его защитника."
+	access = NETRUN_ACCESS_USER
+	trace = 0
+	read_only = TRUE
+	icon = "shield-halved"
+
+/datum/netrun_command/countertrace/ui_entry(datum/component/netrun_node/node, datum/netrun_console/console, full_id)
+	. = ..()
+	if(console.legit_node_level(node) < NETRUN_ACCESS_USER)
+		.["allowed"] = FALSE
+		.["unavailable_reason"] = "Нужен законный доступ ПОЛЬЗОВАТЕЛЯ к узлу."
+
+/datum/netrun_command/countertrace/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	if(console.legit_node_level(node) < NETRUN_ACCESS_USER)
+		console.log_line("Контртрассировка требует законного доступа к узлу.", "bad")
+		return null
+	var/list/targets = netrun_countertrace_targets(node)
+	var/tracked = 0
+	for(var/datum/netrun_console/target as anything in targets)
+		if(target == console)
+			continue
+		tracked++
+		target.add_trace(8)
+		target.log_line("Защитник [console.get_handle()] отслеживает взлом узла [node.address]: трассировка растёт.", "bad")
+	if(tracked)
 		SSnetrun.post_event("trace", null, node.address)
+	return "Контртрассировка [node.address]: отслежено подключений — [tracked]."
 
 // MARK: Обход сети
 
@@ -275,7 +316,6 @@
 			return NETRUN_BOT_GOAL_FAILED
 		return NETRUN_BOT_GOAL_CONTINUE
 	brain.state = "расследование"
-	var/datum/netrun_console/console = brain.owner.console
 	if(!scanned)
 		var/result = brain.command_step(node, "scan")
 		if(result == NETRUN_BOT_GOAL_DONE)

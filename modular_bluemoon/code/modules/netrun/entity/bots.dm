@@ -85,7 +85,8 @@
 
 /// An agent whose launching console is gone has nobody to report to.
 /mob/camera/netrun_entity/bot/proc/agent_orphaned()
-	return launched_by_owner && QDELETED(owner_ref?.resolve())
+	var/datum/netrun_console/owner = owner_ref?.resolve()
+	return launched_by_owner && QDELETED(owner)
 
 /// Visiting processes depart without being destroyed or generating free combat loot.
 /mob/camera/netrun_entity/bot/proc/retire()
@@ -443,7 +444,7 @@
 	src.agent = agent
 	src.arguments = arguments.Copy()
 	dependencies += agent
-	RegisterSignal(agent, COMSIG_PARENT_QDELETING, PROC_REF(on_dependency_deleted))
+	RegisterSignal(agent, COMSIG_PARENT_QDELETING, TYPE_PROC_REF(/datum/netrun_request/delivery, on_dependency_deleted))
 	operation.capture(src.arguments)
 
 /datum/netrun_request/agent_control/Destroy()
@@ -481,7 +482,7 @@
 		if(dependency in dependencies)
 			continue
 		dependencies += dependency
-		RegisterSignal(dependency, COMSIG_PARENT_QDELETING, PROC_REF(on_dependency_deleted))
+		RegisterSignal(dependency, COMSIG_PARENT_QDELETING, TYPE_PROC_REF(/datum/netrun_request/delivery, on_dependency_deleted))
 
 /datum/netrun_request/agent_recall/Destroy()
 	if(!QDELETED(agent))

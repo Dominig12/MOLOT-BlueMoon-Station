@@ -146,6 +146,58 @@ describe('Netrun combat contacts', () => {
     expect(panel.queryByText('ICE-SENTRY')).toBeNull();
   });
 
+  test.each(['entity', 'bot'] as const)('an entity host can explicitly pursue a selected %s', (kind) => {
+    const target = { ...enemy, ref: 'runner', name: 'RUNNER', kind };
+    const { topic } = setup({ pursuit_available: true, node: target.node, targets: [target] });
+    const panel = render(<CombatPanel />);
+    fireEvent.click(panel.getByText('Преследовать'));
+    const calls = topic.mock.calls.filter(([message]) => message.type === 'act/pursue');
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0][0].payload)).toEqual({ ref: 'runner' });
+    expect(uses(topic)).toHaveLength(0); // Capturing a target never starts a manual attack.
+  });
+
+  test.each(['ice', 'fortress'] as const)('pursuit controls are not offered for %s', (kind) => {
+    setup({ pursuit_available: true, targets: [{ ...enemy, kind }] });
+    const panel = render(<CombatPanel />);
+    expect(panel.queryByText('Преследовать')).toBeNull();
+  });
+
+  test('a pursuit keeps its captured ref across missing and remote snapshots without enabling attacks', () => {
+    const runner: CombatTarget = { ...enemy, ref: 'runner', name: 'RUNNER', kind: 'entity', node: 'HERE' };
+    const pursuit = { target_ref: runner.ref, name: runner.name, node: 'HERE', following: true, status: 'Цель рядом.' };
+    const { topic, store, combat } = setup({ node: 'HERE', pursuit_available: true, targets: [runner], pursuit });
+    const panel = render(<CombatPanel />);
+    act(() => store.dispatch(backendUpdate({ data: { combat: { ...combat,
+      targets: [enemy], pursuit: { ...pursuit, node: 'NEXT', status: 'Идём к следующему узлу.' },
+    } } })));
+    expect(panel.getByText('Захвачена цель: RUNNER')).toBeTruthy();
+    expect(panel.getByText('Идём к следующему узлу.')).toBeTruthy();
+    fireEvent.click(panel.getByText('ICE-SENTRY'));
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toHaveLength(0); // A new hostile contact must not steal the captured selection.
+    act(() => store.dispatch(backendUpdate({ data: { combat: { ...combat,
+      targets: [{ ...runner, node: 'NEXT' }], pursuit: { ...pursuit, node: 'NEXT' },
+    } } })));
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toHaveLength(0); // A visible remote entity is still outside the current node.
+    act(() => store.dispatch(backendUpdate({ data: { combat } })));
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toEqual([{ uid: 'file-strike', target: runner.ref }]);
+    fireEvent.click(panel.getByText('Остановить преследование'));
+    expect(topic.mock.calls.some(([message]) => message.type === 'act/pursuit_stop')).toBe(true);
+  });
+
+  test('pursuit requires an available entity host and respects a locked terminal', () => {
+    const runner: CombatTarget = { ...enemy, kind: 'bot' };
+    const { topic, store, combat } = setup({ targets: [runner], pursuit_available: false }, 3);
+    const panel = render(<CombatPanel />);
+    expect(panel.queryByText('Преследовать')).toBeNull();
+    act(() => store.dispatch(backendUpdate({ data: { combat: { ...combat, pursuit_available: true } } })));
+    fireEvent.click(panel.getByText('Преследовать'));
+    expect(topic.mock.calls.some(([message]) => message.type === 'act/pursue')).toBe(false);
+  });
+
   test('trace warnings preserve their source identity while the puzzle is open', () => {
     setup({ incoming: [{ source: enemy.name, source_ref: enemy.ref, source_node: enemy.node,
       name: 'trace.exe', role: 'trace', power: 6, remaining: 3 }] });
