@@ -3,6 +3,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Box, Button, Input } from '../../components';
 import { AgentBuilderPanel } from './AgentBuilderPanel';
 import { AgentsPanel } from './AgentsPanel';
+import { FileExchangePanel } from './FileExchange';
 import { NetFile, NetrunData, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
@@ -16,6 +17,7 @@ const FilePanelView = () => {
   const [creating, setCreating] = useState(false);
   return (
     <Box mt={1}>
+      <FileExchangePanel />
       <Button compact icon="file-circle-plus" content="Новый текстовый файл" selected={creating} onClick={() => setCreating(!creating)} />
       {creating ? (
         <FileEditor key="new" onCreated={() => setCreating(false)} />

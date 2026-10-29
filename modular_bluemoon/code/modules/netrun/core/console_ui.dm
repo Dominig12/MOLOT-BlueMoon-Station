@@ -285,6 +285,8 @@
 	data["can_breach"] = intrusion.can_breach
 	data["can_autobreach"] = intrusion.can_breach && !!daemon_bonus("autobreach")
 	data["log"] = log
+	data["security"] = security_session.payload()
+	data["file_exchange"] = file_exchange.payload()
 	data["jack"] = connection.jack ? list("address" = connection.jack.address, "name" = connection.jack.get_name()) : null
 	data["host_actions"] = host_actions()
 	data["file"] = file_payload()
@@ -597,6 +599,12 @@
 
 /// Dispatch follows the ordinary TGUI permission check; denied domain actions still get receipt.
 /datum/netrun_console/proc/handle_ui_action(action, list/params, datum/tgui/ui, input_nonce)
+	if(action == "entity_file_offer")
+		return offer_entity_file(params["address"], params["ref"], params["uid"])
+	if(action in list("entity_file_accept", "entity_file_reject"))
+		return file_exchange.respond(params["id"], action == "entity_file_accept")
+	if(action in list("security_probe", "security_trace", "security_map", "security_pursue"))
+		return security_session.act(action, params["id"])
 	if(action == "map_resync")
 		map_view.resync(ui)
 		return TRUE

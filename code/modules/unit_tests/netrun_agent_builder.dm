@@ -6,7 +6,7 @@
 	shard.afterattack(scene.user, scene.user, TRUE)
 	TEST_ASSERT_EQUAL(scene.implant.console.inventory.shard, shard, "Applying a shard to oneself loads the implanted port")
 	TEST_ASSERT_EQUAL(shard.loc, scene.implant, "The implant physically contains the loaded shard")
-	TEST_ASSERT_EQUAL(length(shard.file_store.files), 5, "The workshop provides all five private agent templates")
+	TEST_ASSERT_EQUAL(length(shard.file_store.files), 7, "The workshop provides all seven private agent templates")
 	scene.implant.console.eject_shard(scene.user)
 	TEST_ASSERT_NULL(scene.implant.console.inventory.shard, "Normal ejection frees the physical slot")
 	TEST_ASSERT(shard in scene.user.held_items, "Ejection returns the actual media to the wearer")

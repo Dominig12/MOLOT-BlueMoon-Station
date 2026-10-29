@@ -142,6 +142,8 @@
 #define NETRUN_ICE_BLACK "black"
 #define COMSIG_NETRUN_ICE_PROGRAM_RESOLVED "netrun_ice_program_resolved"
 #define COMSIG_NETRUN_ENTITY_SPEAK "netrun_entity_speak"
+#define COMSIG_NETRUN_AGENT_ORDER_LIST "netrun_agent_order_list"
+#define COMSIG_NETRUN_AGENT_CONTROL "netrun_agent_control"
 /// Сколько персистентных патрульных процессов поднимается в начале раунда
 #define NETRUN_MAX_PATROLS 400
 /// Сколько лорных документов раскладывается по серверам станции в начале раунда
@@ -228,7 +230,7 @@
 #define NETRUN_BOT_MOVE_ARRIVED 1
 #define NETRUN_BOT_MOVE_BLOCKED 2
 /// Autonomous processes alive at once, including player agents.
-#define NETRUN_MAX_BOTS 12
+#define NETRUN_MAX_BOTS 20
 #define NETRUN_MAX_AGENTS_PER_CONSOLE 2
 #define NETRUN_POLICE_QUOTA 2
 #define NETRUN_ROGUE_QUOTA 2

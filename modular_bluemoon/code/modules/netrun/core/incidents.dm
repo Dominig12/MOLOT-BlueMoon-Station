@@ -103,6 +103,10 @@
 		return null
 	var/address = node?.address
 	var/atom/security_host = node?.parent
+	if(node && (kind in list("breach", "intrusion")))
+		var/datum/netrun_console/attacker = suspect
+		if(istype(attacker))
+			node.observe_attack(attacker, kind)
 	for(var/datum/netrun_incident/incident as anything in incidents)
 		if(!incident.is_open() || incident.kind != kind || incident.address != address)
 			continue

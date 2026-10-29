@@ -29,6 +29,7 @@
 		types[navigation_slot] = /datum/netrun_entity_module/navigation/bot
 	types |= program.behavior_modules
 	types |= program.extra_behavior_modules
+	types |= /datum/netrun_entity_module/agent_extensions
 	return types
 
 /mob/camera/netrun_entity/bot/Initialize(mapload, datum/component/netrun_node/start, program_id, datum/netrun_console/owner)
@@ -131,7 +132,7 @@
 	if(agent_file)
 		remains += agent_file
 		agent_file = null
-	if(net_faction == NETRUN_FACTION_ROGUE)
+	if(SSnetrun.get_netrun_faction(net_faction)?.arrival_weight)
 		var/list/programs = list()
 		for(var/datum/netrun_file/file as anything in console.inventory.local_store.files)
 			if(file.kind == NETRUN_FILE_PROGRAM)
@@ -171,9 +172,7 @@
 
 /mob/camera/netrun_entity/bot/proc/agent_entry()
 	var/datum/netrun_file_store/store = console.inventory.local_store
-	var/list/orders = list(list("id" = "recall", "name" = "Отозвать"), list("id" = "guard", "name" = "Перевести на выбранный узел", "needs_node" = TRUE), list("id" = "terminate", "name" = "Завершить"))
-	orders += list(list("id" = "patrol", "name" = "Патрулировать доступную сеть"), list("id" = "command", "name" = "Команда выбранного узла", "needs_node" = TRUE))
-	orders += list(list("id" = "persona", "name" = "Личность"), list("id" = "upload", "name" = "Передать файл"), list("id" = "download", "name" = "Забрать файл"))
+	var/list/orders = agent_orders()
 	var/list/files = list()
 	for(var/datum/netrun_file/file as anything in store.files)
 		files += list(file.ui_entry(null))
@@ -186,6 +185,13 @@
 		"state" = contact_state(), "goal" = brain?.goal_text(),
 		"storage" = list("used" = store.used(), "capacity" = store.capacity), "orders" = orders,
 		"persona" = get_persona().ui_payload(FALSE), "files" = files, "programs" = console.combat_context.programs(), "goals" = goals)
+
+/mob/camera/netrun_entity/bot/proc/agent_orders()
+	var/list/orders = list(list("id" = "recall", "name" = "Отозвать"), list("id" = "guard", "name" = "Перевести на выбранный узел", "needs_node" = TRUE), list("id" = "terminate", "name" = "Завершить"))
+	orders += list(list("id" = "patrol", "name" = "Патрулировать доступную сеть"), list("id" = "command", "name" = "Команда выбранного узла", "needs_node" = TRUE))
+	orders += list(list("id" = "persona", "name" = "Личность"), list("id" = "upload", "name" = "Передать файл"), list("id" = "download", "name" = "Забрать файл"))
+	SEND_SIGNAL(src, COMSIG_NETRUN_AGENT_ORDER_LIST, orders)
+	return orders
 
 // MARK: Консоль бота
 
@@ -369,7 +375,12 @@
 	if(!istype(agent) || QDELETED(agent) || agent.netrun_owner_console() != src)
 		log_line("Агент не найден.", "bad")
 		return FALSE
-	if(!(order in list("recall", "terminate", "guard", "patrol", "command", "persona", "upload", "download")))
+	var/known_order = FALSE
+	for(var/list/entry as anything in agent.agent_orders())
+		if(entry["id"] == order)
+			known_order = TRUE
+			break
+	if(!known_order)
 		log_line("Неизвестный приказ агенту.", "bad")
 		return FALSE
 	var/datum/component/netrun_node/site = agent.host_node
@@ -390,6 +401,8 @@
 
 /// Called only by an authenticated, freshly delivered control packet.
 /datum/netrun_console/proc/apply_agent_order(mob/camera/netrun_entity/bot/agent, list/options)
+	if(SEND_SIGNAL(agent, COMSIG_NETRUN_AGENT_CONTROL, src, options))
+		return TRUE
 	var/order = options["order"]
 	switch(order)
 		if("recall")
@@ -714,7 +727,7 @@
 		if(QDELETED(bot))
 			bots -= bot
 	if(!rogue_wave_at)
-		rogue_wave_at = world.time + 5 MINUTES
+		rogue_wave_at = world.time + rand(60 SECONDS, 120 SECONDS)
 	if(count_bots(NETRUN_BOT_POLICE) < NETRUN_POLICE_QUOTA && world.time >= police_respawn_at)
 		var/datum/component/netrun_node/node = bot_entry_node()
 		var/mob/camera/netrun_entity/bot/police = spawn_bot(NETRUN_BOT_POLICE, node)
@@ -723,11 +736,9 @@
 			return
 	if(world.time >= custodian_respawn_at && count_bots(NETRUN_BOT_CUSTODIAN) < NETRUN_CUSTODIAN_QUOTA)
 		spawn_custodian()
-	if(world.time >= rogue_wave_at && count_bot_faction(NETRUN_FACTION_ROGUE) < NETRUN_ROGUE_QUOTA)
-		rogue_wave_at = world.time + rand(6 MINUTES, 10 MINUTES)
-		var/mob/camera/netrun_entity/bot/raider = spawn_bot(pick(NETRUN_BOT_RAIDER, "scavenger"), bot_entry_node())
-		if(raider)
-			report_incident("rogue", raider.host_node, raider, NETRUN_INCIDENT_MEDIUM, "Обнаружен дикий процесс [raider.real_name].")
+	if(world.time >= rogue_wave_at)
+		rogue_wave_at = world.time + rand(90 SECONDS, 180 SECONDS)
+		spawn_visitor_wave()
 
 /// One custodian per department without one, among departments that keep patrols.
 /datum/controller/subsystem/netrun/proc/spawn_custodian()

@@ -22,12 +22,14 @@
 		var/mob/camera/netrun_entity/resident = istype(occupant, /mob/camera/netrun_entity) ? occupant : null
 		entry["can_signal"] = resident && !QDELETED(resident.console) && !is_self && !is_locked()
 		entry["can_message"] = entry["can_signal"]
+		entry["can_offer"] = entry["can_signal"] && !!combat_self()
+		entry["offer_reason"] = entry["can_offer"] ? null : "Прямой обмен доступен между сетевыми сущностями."
 		if(istype(occupant, /mob/camera/netrun_entity))
 			var/mob/camera/netrun_entity/entity = occupant
 			entry["state"] = entity.contact_state()
 		else if(istype(occupant, /datum/netrun_ice))
 			var/datum/netrun_ice/ice = occupant
-			entry["state"] = ice.is_stunned() ? "оглушён" : (ice.pending_program ? "готовит атаку" : (ice.enemy_ref?.resolve() ? "преследует" : (ice.kind == NETRUN_ICE_HUNTER ? "патрулирует" : "охраняет узел")))
+			entry["state"] = ice.dormant ? "спит до появления угрозы" : (ice.is_stunned() ? "оглушён" : (ice.pending_program ? "готовит атаку" : (ice.enemy_ref?.resolve() ? "преследует" : (ice.kind == NETRUN_ICE_HUNTER ? "патрулирует" : "охраняет узел"))))
 			entry["ice_kind"] = ice.kind
 			entry["threat"] = ice_contact_threat(ice, node)
 		. += list(entry)

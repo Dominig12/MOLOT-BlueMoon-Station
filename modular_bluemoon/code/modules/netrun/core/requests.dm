@@ -198,7 +198,10 @@
 	console.log_line("[node.address]: запрос передан интерфейсу устройства.", "good")
 	operation.set_result("[entry["name"]]: запрос обработан интерфейсом устройства.")
 	if(illegal)
-		console.add_trace(6 * node.get_security())
+		var/trace_cost = 6 * node.get_security()
+		console.report_illegal_activity(node, entry["name"], api.action_access(action))
+		if(!QDELETED(console))
+			console.add_trace(trace_cost)
 	return TRUE
 
 /// Window adapters keep their native authorization policy behind the console facade.
@@ -237,4 +240,14 @@
 	operation.capture(list("action" = action, "file_uid" = file_uid, "to_shard" = to_shard))
 
 /datum/netrun_request/file/execute()
-	return console.deliver_file_request(action, node, file_uid, to_shard, sent_network, sender, operation)
+	. = console.deliver_file_request(action, node, file_uid, to_shard, sent_network, sender, operation)
+	// File callbacks own validation and their existing trace prices. Report only
+	// accepted mutations/reads, never an invalid UID or a full destination disk.
+	if(!. || QDELETED(console) || QDELETED(node))
+		return .
+	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
+	required = max(required, node.fortress?.file_access_level(console) || 0)
+	if(console.compute_legit_node_level(node, TRUE) < required)
+		var/list/labels = list("download" = "Скачивание файла", "upload" = "Загрузка файла", "delete" = "Удаление файла", "read" = "Чтение файла")
+		console.report_illegal_activity(node, labels[action] || "Файловая операция", required)
+	return .

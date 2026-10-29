@@ -11,6 +11,7 @@ import { NodeInteractions } from './NodeInteractions';
 import { NodePanel } from './NodePanel';
 import { OperationsPanel } from './OperationsPanel';
 import { ConsoleLog, EntityPanel, NetChat, StoragePanel } from './Panels';
+import { SecurityPanel } from './SecurityPanel';
 import { SessionStatus } from './SessionStatus';
 import { themeId, themeStyle } from './themes';
 import { NetrunData, THEME, WorkspaceView } from './types';
@@ -74,6 +75,7 @@ const NetrunWorkspace = () => {
   const data = useNetrunSelector((state) => ({
     workspace_view: state.workspace_view, breach: !!state.breach, web: !!state.web,
     hasWindow: !!state.window, windowCount: state.windows?.length ?? 0,
+    fileOfferCount: state.file_exchange?.incoming?.length ?? 0,
     incomingCount: state.combat?.incoming?.length ?? 0,
     webAvailable: !!state.networks?.some((network) => network.id === 'web') || !!state.web,
   }));
@@ -81,7 +83,7 @@ const NetrunWorkspace = () => {
   const storedPage = data.workspace_view === 'breach' && !breach ? 'terminal' : data.workspace_view;
   const [page, setPage] = useState<WorkspaceView>(() => storedPage
     ?? (breach ? 'breach' : data.hasWindow ? 'pinned' : web ? 'web' : 'terminal'));
-  const [terminalTab, setTerminalTab] = useState<'console' | 'chat' | 'operations'>('console');
+  const [terminalTab, setTerminalTab] = useState<'console' | 'chat' | 'operations' | 'security'>('console');
   const [compact, setCompact] = useState(() => window.innerWidth < 860);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [mapFocusRequest, setMapFocusRequest] = useState<MapFocusRequest | null>(null);
@@ -100,6 +102,7 @@ const NetrunWorkspace = () => {
   const openCombat = useCallback(() => navigate('combat'), [navigate]);
   const openBreach = useCallback(() => navigate('breach'), [navigate]);
   const openOperations = useCallback(() => { setTerminalTab('operations'); navigate('terminal'); }, [navigate]);
+  const openSecurity = useCallback(() => { setTerminalTab('security'); navigate('terminal'); }, [navigate]);
   const locateOperationNode = useCallback((address: string) => {
     setMapFocusRequest((previous) => ({ address, sequence: (previous?.sequence ?? 0) + 1 }));
     navigate('map'); setSidebarOpen(true);
@@ -133,7 +136,7 @@ const NetrunWorkspace = () => {
   const tabs: { id: WorkspaceView; icon: string; count?: number }[] = [
     { id: 'terminal', icon: 'terminal' },
     { id: 'map', icon: 'diagram-project' },
-    { id: 'files', icon: 'folder-open' },
+    { id: 'files', icon: 'folder-open', count: data.fileOfferCount },
     { id: 'pinned', icon: 'thumbtack', count: data.windowCount },
   ];
   // Keep the tab in a fixed place; a new ICE cast must not insert/remove controls.
@@ -159,7 +162,7 @@ const NetrunWorkspace = () => {
           ))}
         </Tabs>
       </div>
-      <div className="netrun-status"><SessionStatus onCombat={openCombat} onBreach={openBreach} onOperations={openOperations} /></div>
+      <div className="netrun-status"><SessionStatus onCombat={openCombat} onBreach={openBreach} onOperations={openOperations} onSecurity={openSecurity} /></div>
       <div className="netrun-workspace" data-net-layout="workspace" style={{ display: 'flex', flex: '1 1 0', minHeight: 0, minWidth: 0,
         position: 'relative', borderRadius: '10px', overflow: 'hidden' }}>
         <WorkspacePage id="terminal" active={page}>
@@ -168,12 +171,14 @@ const NetrunWorkspace = () => {
             <Tabs.Tab icon="terminal" selected={terminalTab === 'console'} onClick={() => setTerminalTab('console')}>Консоль</Tabs.Tab>
             <Tabs.Tab icon="comments" selected={terminalTab === 'chat'} onClick={() => setTerminalTab('chat')}>#noosphere</Tabs.Tab>
             <Tabs.Tab icon="list-check" selected={terminalTab === 'operations'} onClick={() => setTerminalTab('operations')}>Операции</Tabs.Tab>
+            <Tabs.Tab icon="shield-halved" selected={terminalTab === 'security'} onClick={() => setTerminalTab('security')}>Безопасность</Tabs.Tab>
           </Tabs>
           <div style={{ display: terminalTab === 'console' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}><ConsoleLog active={page === 'terminal' && terminalTab === 'console'} /></div>
           <div style={{ display: terminalTab === 'chat' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}><NetChat active={page === 'terminal' && terminalTab === 'chat'} /></div>
           <div style={{ display: terminalTab === 'operations' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}>
             <OperationsPanel onLocate={locateOperationNode} />
           </div>
+          <div style={{ display: terminalTab === 'security' ? 'flex' : 'none', flex: '1 1 0', minHeight: 0 }}><SecurityPanel /></div>
         </WorkspacePage>
         <WorkspacePage id="map" active={page}>
           <div style={{ display: 'flex', flex: '1 1 0', minWidth: 0, minHeight: 0, gap: '7px', position: 'relative' }}>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
 import { EntityAvatar } from './EntityAvatar';
+import { FileOffer } from './FileExchange';
 import { BOT_ICONS, BOT_NAMES, EntityContact, FACTION_COLORS, IceKind, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
@@ -67,7 +68,7 @@ export const EntityContacts = (props: {
     <Box mt={2}>
       <Box bold mb={0.5}>Процессы на узле</Box>
       {props.contacts.map((contact) => (
-        <ContactCard key={`${props.address}:${contact.ref}`} contact={contact} pending={props.pending} />
+        <ContactCard key={`${props.address}:${contact.ref}`} address={props.address} contact={contact} pending={props.pending} />
       ))}
       {props.localEntity && props.contacts.some((contact) => !contact.self) && (
         <Button icon="crosshairs" content="Открыть бой" disabled={props.pending}
@@ -77,7 +78,7 @@ export const EntityContacts = (props: {
   );
 };
 
-const ContactCard = (props: { contact: EntityContact; pending: boolean }) => {
+const ContactCard = (props: { address: string; contact: EntityContact; pending: boolean }) => {
   const { act } = useBackend([]);
   const { contact, pending } = props;
   const [message, setMessage] = useState('');
@@ -98,6 +99,9 @@ const ContactCard = (props: { contact: EntityContact; pending: boolean }) => {
         {contact.kind === 'entity' ? <EntityAvatar avatar={contact.persona?.avatar} accent={contact.persona?.accent} size={28} />
           : bot ? <BotAvatar kind={contact.bot_kind} faction={contact.faction} /> : <IceAvatar kind={contact.ice_kind} />}
         {contact.name}{contact.self ? ' · вы' : ''}
+        {!!contact.faction_name && <Box inline ml={0.5} fontSize="10px" color={contact.faction_color || THEME.muted}>
+          <Icon name="flag" mr={0.5} />{contact.faction_name}
+                                   </Box>}
       </Box>
       {!!contact.persona?.tagline && <Box className="netrun-contact-tagline">{contact.persona.tagline}</Box>}
       <Box color={THEME.muted} fontSize="11px">
@@ -124,6 +128,7 @@ const ContactCard = (props: { contact: EntityContact; pending: boolean }) => {
           </form>
         </Box>
       )}
+      {!contact.self && contact.kind !== 'ice' && contact.can_offer !== undefined && <FileOffer address={props.address} contact={contact} pending={pending} />}
     </Box>
   );
 };

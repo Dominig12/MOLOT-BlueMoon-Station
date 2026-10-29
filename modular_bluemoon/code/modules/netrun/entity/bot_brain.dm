@@ -74,6 +74,8 @@
 	var/datum/netrun_entity_module/goals_module = owner.entity_modules["bot_goals"]
 	if(!goals_module?.enabled && !in_combat)
 		return
+	if(!in_combat && current_goal()?.waits_for_signal())
+		return
 	if(command_nonce && !(command_phase in list("completed", "rejected", "cancelled")))
 		schedule(max(NETRUN_EXECUTION_MIN_INTERVAL, command_deadline - world.time))
 		return
@@ -131,6 +133,7 @@
 	SEND_SIGNAL(owner, COMSIG_NETRUN_ENTITY_GOALS_CHANGED, handling_behavior)
 
 /datum/netrun_bot_brain/proc/current_goal()
+	RETURN_TYPE(/datum/netrun_bot_goal)
 	return length(goals) ? goals[1] : null
 
 /datum/netrun_bot_brain/proc/finish_goal(datum/netrun_bot_goal/goal)
@@ -488,7 +491,7 @@
 	if(world.time < next_rogue_report)
 		return
 	for(var/mob/camera/netrun_entity/bot/other in owner.host_node.entities)
-		if(other.net_faction == NETRUN_FACTION_ROGUE)
+		if(netrun_bot_factions_hostile(owner.net_faction, other.net_faction))
 			next_rogue_report = world.time + 20 SECONDS
 			SSnetrun.report_incident("rogue", owner.host_node, other, NETRUN_INCIDENT_MEDIUM, "[owner.real_name] сообщает о диком процессе [other.real_name].")
 			return

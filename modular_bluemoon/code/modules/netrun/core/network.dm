@@ -116,6 +116,7 @@
 			color = "#8b93a3"
 
 /datum/netrun_network/Destroy()
+	QDEL_NULL(security_audit)
 	if(area)
 		UnregisterSignal(area, COMSIG_PARENT_QDELETING)
 	area = null

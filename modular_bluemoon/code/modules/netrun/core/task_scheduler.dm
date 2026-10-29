@@ -168,7 +168,7 @@
 	worker.breach_snapshot_active = TRUE
 	ice.process_ai(delta)
 	worker.breach_snapshot_active = FALSE
-	if(!QDELETED(ice) && (interactive || ice.pending_program || ice.reaction.timer_id))
+	if(!QDELETED(ice) && (interactive || ice.pending_program || ice.reaction.timer_id || ice.reactive))
 		ice.reaction.schedule_next()
 	return TRUE
 

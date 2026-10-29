@@ -51,7 +51,7 @@
 		return
 	if(!node)
 		node = AddComponent(/datum/component/netrun_node, NETRUN_NODE_IMPLANT, list(), 2)
-	node.command_ids = list("scan", "ping", "probe_location") + command_ids
+	node.command_ids = list("scan", "ping", "probe_location", "countertrace") + command_ids
 	netrun_update_firewall_action()
 	netrun_refresh_cyber_security()
 

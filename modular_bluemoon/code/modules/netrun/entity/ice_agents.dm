@@ -103,6 +103,12 @@
 	if(QDELETED(owner.node) || QDELETED(owner.node.parent) || (owner.kind == NETRUN_ICE_HUNTER && owner.node.network != owner.defense_network()))
 		owner.host_lost()
 		return TRUE
+	if(owner.reactive && !owner.pending_program && world.time >= owner.reactive_sleep_at && !owner.has_reactive_threat())
+		owner.dormant = TRUE
+		owner.agent.state = "сон"
+		owner.reaction.clear_timer()
+		owner.node.queue_presentation(NETRUN_CHANGED_OCCUPANTS)
+		return TRUE
 	if(owner.kind == NETRUN_ICE_HUNTER && !owner.persistent && !owner.pending_program && world.time >= owner.idle_expires_at)
 		owner.node.network?.add_log("Охотничий процесс свёрнут: цель не найдена.")
 		qdel(owner)

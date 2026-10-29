@@ -102,6 +102,7 @@
 	var/atom/host = parent
 	host.ensure_netrun_machine_services(src)
 	host.ensure_netrun_manual(src)
+	host.ensure_netrun_server_content(src)
 
 /datum/component/netrun_node/UnregisterFromParent()
 	clear_physical_carrier()
@@ -110,6 +111,7 @@
 	subscribed_state_signals = null
 
 /datum/component/netrun_node/Destroy()
+	QDEL_NULL(security_audit)
 	clear_physical_carrier()
 	var/atom/host = parent
 	for(var/id in host.netrun_machine_services?.Copy())

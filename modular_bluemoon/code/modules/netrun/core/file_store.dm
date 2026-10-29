@@ -259,12 +259,17 @@
 
 /// A loadout uses the strongest effect of each program kind, not the number of copies.
 /datum/netrun_inventory/proc/daemon_bonus(id)
+	// Read actual source membership without allocating all_files() snapshots or
+	// caching authority across a file edit, borrowed disk replacement or removal.
+	. = daemon_store_bonus(local_store, id)
+	if(!QDELETED(shard))
+		. = max(., daemon_store_bonus(shard.file_store, id))
+
+/datum/netrun_inventory/proc/daemon_store_bonus(datum/netrun_file_store/store, id)
 	. = 0
-	// These effects participate in execution (trace, latency and breach); a
-	// previously serialized file list cannot keep a removed program installed.
-	for(var/datum/netrun_file/file as anything in all_files(TRUE))
+	for(var/datum/netrun_file/file as anything in store?.files)
 		if(file.kind != NETRUN_FILE_DAEMON)
 			continue
 		var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(file.content)
-		if(daemon && daemon.bonus_kind == id)
-			. = max(., daemon.bonus)
+		if(daemon)
+			. = max(., daemon.effect_bonus(id))

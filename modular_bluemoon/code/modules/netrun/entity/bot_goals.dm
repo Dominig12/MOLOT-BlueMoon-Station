@@ -19,6 +19,9 @@
 /datum/netrun_bot_goal/proc/describe()
 	return name
 
+/datum/netrun_bot_goal/proc/waits_for_signal()
+	return FALSE
+
 /// Shared movement outcome: arrival continues the goal, a blocked node is skipped for a while.
 /datum/netrun_bot_goal/proc/approach(datum/component/netrun_node/target)
 	switch(brain.move_toward(target))

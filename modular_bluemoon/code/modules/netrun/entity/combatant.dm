@@ -67,6 +67,13 @@
 	var/mob/camera/netrun_entity/entity = parent
 	return entity.combat_name()
 
+/datum/component/netrun_combatant/entity/ui_entry()
+	. = ..()
+	var/mob/camera/netrun_entity/entity = parent
+	var/datum/netrun_faction/faction = SSnetrun.get_netrun_faction(entity.netrun_faction())
+	.["faction_name"] = faction?.name
+	.["faction_color"] = faction?.color
+
 /datum/component/netrun_combatant/entity/integrity_payload()
 	var/mob/camera/netrun_entity/entity = parent
 	return list("cur" = round(entity.integrity), "max" = entity.max_integrity,

@@ -235,7 +235,11 @@
 	node.add_log("[owner.log_source()]: [entry["name"]][illegal ? " (без авторизации)" : ""].")
 	node.network?.add_log("[owner.log_source()] -> [node.address]: [entry["name"]]", illegal)
 	if(illegal)
-		owner.add_trace(4 * node.get_security())
+		var/datum/netrun_console/actor = owner
+		var/trace_cost = 4 * node.get_security()
+		actor.report_illegal_activity(node, entry["name"], required)
+		if(!QDELETED(actor))
+			actor.add_trace(trace_cost)
 	return TRUE
 
 // MARK: Видеопотоки

@@ -11,7 +11,7 @@
 	display_name = "Нейросетевые интерфейсы"
 	description = "Прямое подключение нервной системы к сети и выращивание самообучающихся сетевых процессов."
 	prereq_ids = list("netrunning", "cyber_implants")
-	design_ids = list("ci-netlink", "netrun_seed", "netrun_deck_advanced", "netrun_daemon_icepick", "netrun_daemon_cloak", "netrun_agent_sentinel", "netrun_agent_workshop", "netrun_assault_suite")
+	design_ids = list("ci-netlink", "netrun_seed", "netrun_deck_advanced", "netrun_daemon_icepick", "netrun_daemon_cloak", "netrun_agent_sentinel", "netrun_agent_workshop", "netrun_assault_suite", "netrun_daemon_composites")
 	research_costs = list(TECHWEB_POINT_TYPE_GENERIC = 4000)
 
 /datum/design/board/netrun_terminal

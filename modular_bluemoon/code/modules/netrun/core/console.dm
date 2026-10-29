@@ -50,6 +50,8 @@
 	var/input_ack
 	var/ui_flushing = FALSE
 	var/datum/netrun_interaction/interaction
+	var/datum/netrun_security_session/security_session
+	var/datum/netrun_file_exchange/file_exchange
 	/// UI polling renews this lease, including consoles embedded in NTOS windows.
 	var/last_ui_at = -INFINITY
 	/// Actual snapshots, independently of activity leases renewed by incoming input.
@@ -80,6 +82,8 @@
 	map_view = new(src)
 	combat_context = new(src)
 	interaction = new(src)
+	security_session = new(src)
+	file_exchange = new(src)
 	RegisterSignal(inventory, COMSIG_NETRUN_INVENTORY_CHANGED, PROC_REF(on_session_changed))
 	RegisterSignal(src, COMSIG_NETRUN_COMBAT_CHANGED, PROC_REF(on_session_changed))
 	SSnetrun.consoles += src
@@ -88,6 +92,8 @@
 	log_line("Сеанс открыт.", "good")
 
 /datum/netrun_console/Destroy()
+	QDEL_NULL(security_session)
+	QDEL_NULL(file_exchange)
 	stop_ui_observation()
 	SSnetrun.consoles -= src
 	SSnetrun.active_consoles -= src
@@ -528,10 +534,8 @@
 	log_game("NETRUN: [key_name(operator)] ([origin]) [command.id] -> [node.get_name()] [node.address][illegal ? " (взлом)" : ""] [AREACOORD(target)]")
 	node.network?.add_log("[log_source()] -> [node.address]: [command.name][illegal ? " (без авторизации)" : ""]", illegal && command.access >= NETRUN_ACCESS_ROOT)
 	if(illegal)
+		report_illegal_activity(node, command.name, command.access)
 		add_trace(command.trace * node.get_security())
-		SSnetrun.raise_defenses(src, node)
-		target.netrun_on_illegal(src, node)
-		SSnetrun.report_incident("intrusion", node, combat_self() || src, command.access >= NETRUN_ACCESS_ROOT ? NETRUN_INCIDENT_MEDIUM : NETRUN_INCIDENT_LOW, "Команда без авторизации: [command.name].")
 	return TRUE
 
 /// Есть ли вообще маршрут к узлу (иначе узел отрезан - подключиться нельзя)
@@ -757,7 +761,14 @@
 		breach.buffer_size = min(breach.buffer_size, 7)
 		breach.generate()
 	SSnetrun.post_event("breach", kind == "network" ? id : null, kind == "network" ? null : id)
-	var/datum/component/netrun_node/incident_node = kind == "network" ? owner.route_source() : SSnetrun.find_node(id)
+	var/datum/component/netrun_node/incident_node = SSnetrun.find_node(id)
+	if(kind == "network")
+		var/datum/netrun_network/defended = SSnetrun.networks[id]
+		for(var/datum/component/netrun_node/candidate as anything in defended.nodes)
+			if(candidate.node_type == NETRUN_NODE_APC || !incident_node)
+				incident_node = candidate
+			if(candidate.node_type == NETRUN_NODE_APC)
+				break
 	SSnetrun.report_incident("breach", incident_node, owner, kind == "network" ? NETRUN_INCIDENT_MEDIUM : NETRUN_INCIDENT_LOW, "Взлом: [target_name].")
 	// Взлом защищённой цели поднимает сторожевой ICE.
 	if(kind != "network")

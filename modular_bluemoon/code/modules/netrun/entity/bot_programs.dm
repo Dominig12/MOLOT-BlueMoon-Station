@@ -13,6 +13,8 @@
 	var/storage = 8 * NETRUN_STORAGE_SCALE
 	/// Combat programs installed as real files at spawn.
 	var/list/programs = list()
+	/// Optional capabilities/tools are real daemon files and survive recall normally.
+	var/list/daemons = list()
 	var/name_prefix = "PROC"
 	var/avatar = "orb"
 	var/accent = "silver"
@@ -43,6 +45,10 @@
 		var/datum/netrun_file/file = netrun_program_file(id)
 		if(file && !bot.console.store_file(file))
 			qdel(file)
+	for(var/id in daemons)
+		var/datum/netrun_file/file = netrun_daemon_file(id)
+		if(file && !bot.console.store_file(file))
+			qdel(file)
 	var/datum/netrun_network/network = bot.host_node?.network
 	if(carries_lan_key && network && !network.isolated)
 		bot.console.store_file(new /datum/netrun_file("[network.id].key", NETRUN_FILE_KEY, network.passcode, 1, network.id))
@@ -68,9 +74,7 @@
 
 /// Rogue processes fight everybody else; station and private processes coexist.
 /proc/netrun_bot_factions_hostile(first, second)
-	if(!first || !second || first == second)
-		return FALSE
-	return first == NETRUN_FACTION_ROGUE || second == NETRUN_FACTION_ROGUE
+	return SSnetrun.get_netrun_faction(first)?.hostile_to(second) || FALSE
 
 /datum/controller/subsystem/netrun
 	var/list/datum/netrun_bot_program/bot_programs
@@ -302,6 +306,50 @@
 	tagline = "перекрывает проход"
 	file_size = 5
 
+/// The same attachable hacking capability works on any private agent with its
+/// owned autobreach file. Profiles only choose loadout and autonomous policy.
+/datum/netrun_bot_program/hacker
+	id = "hacker"
+	name = "Агент-взломщик"
+	desc = "Открывает доступные рубежи обычным автовзломом и проходит через них; выполняет адресные приказы владельца."
+	faction = NETRUN_FACTION_OWNER
+	max_integrity = 90
+	storage = 8 * NETRUN_STORAGE_SCALE
+	programs = list("blackout", "patch")
+	daemons = list("autobreach", "cloak")
+	name_prefix = "HACK"
+	avatar = "cipher"
+	accent = "violet"
+	tagline = "подбирает доступ"
+	flee_ratio = 0.5
+	file_size = 5
+
+/datum/netrun_bot_program/hacker/on_spawn(mob/camera/netrun_entity/bot/bot)
+	bot.brain.order = "patrol"
+
+/datum/netrun_bot_program/hacker/plan(datum/netrun_bot_brain/brain)
+	var/datum/netrun_entity_module/hacking/module = brain.owner.entity_modules["hacking"]
+	var/datum/component/netrun_node/target = brain.order == "patrol" ? module?.pick_target(brain) : null
+	if(target)
+		brain.push_goal(new /datum/netrun_bot_goal/hack(brain, target))
+	else
+		brain.push_goal(new /datum/netrun_bot_goal/guard(brain, brain.post_node()))
+
+/datum/netrun_bot_program/hacker/breacher
+	id = "breacher"
+	name = "Агент-пробойник"
+	desc = "Более живучий взломщик с боевыми программами и icepick.exe; защита, стены крепостей и трассировка действуют обычно."
+	max_integrity = 140
+	storage = 10 * NETRUN_STORAGE_SCALE
+	programs = list("assault", "barrier", "patch")
+	daemons = list("autobreach", "icepick", "cloak")
+	name_prefix = "BREACH"
+	avatar = "fox"
+	accent = "rose"
+	tagline = "расчищает рубеж"
+	flee_ratio = 0.2
+	file_size = 6
+
 /obj/item/netrun_shard/agent_sentinel
 	name = "data shard (sentinel.bot)"
 	desc = "Шард с программой агента-стража. Запустите её из памяти сетевого клиента."
@@ -323,17 +371,17 @@
 /// Printable templates enable the in-world agent builder on any local client.
 /obj/item/netrun_shard/agent_workshop
 	name = "data shard (agent workshop)"
-	desc = "Шаблоны частных агентов: страж, ремонтник, разведчик, сборщик и перехватчик. Скопируйте шаблон в свою память или создайте из него собственную конфигурацию."
+	desc = "Шаблоны частных агентов: страж, ремонтник, разведчик, сборщик, перехватчик, взломщик и пробойник. Скопируйте шаблон в свою память или создайте из него собственную конфигурацию."
 	icon_state = "datadisk3"
 
 /obj/item/netrun_shard/agent_workshop/Initialize(mapload)
 	. = ..()
-	for(var/id in list(NETRUN_BOT_SENTINEL, NETRUN_BOT_MENDER, "surveyor", "collector", "interceptor"))
+	for(var/id in list(NETRUN_BOT_SENTINEL, NETRUN_BOT_MENDER, "surveyor", "collector", "interceptor", "hacker", "breacher"))
 		file_store.insert(netrun_bot_file(id), TRUE)
 
 /datum/design/netrun_agent_workshop
 	name = "Agent Workshop Templates"
-	desc = "Шард с пятью шаблонами частных агентов для настройки поведения, программ и персоны."
+	desc = "Шард с семью шаблонами частных агентов для настройки поведения, программ и персоны."
 	id = "netrun_agent_workshop"
 	build_type = PROTOLATHE
 	materials = list(/datum/material/glass = 1200, /datum/material/gold = 500, /datum/material/silver = 500)
