@@ -3,10 +3,11 @@ import { KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState 
 import { Box, Button, Icon, Input } from '../../components';
 import { MapProjection } from './mapLayers';
 import { graphAdjacency, graphNeighborhood, GraphPoint } from './mapLayout';
+import { GlyphIcon, MapLegend } from './MapLegend';
 import { NetrunMapStream } from './mapStream';
 import { NetworkViewport, NetworkViewportHandle } from './NetworkViewport';
 import {
-  ACCESS_NAMES, NetEdge, NetEvent, NetMap, NetNode, NetrunData, NODE_ICONS,
+  ACCESS_COLORS, ACCESS_NAMES, FACTION_COLORS, NetEdge, NetEvent, NetMap, NetNode, NetrunData, NODE_ICONS,
   NODE_NAMES, PingHop, SearchResult, THEME, Waypoint,
 } from './types';
 import { useNetrunBackend as useBackend, useNetrunFeedback } from './useNetrunBackend';
@@ -178,6 +179,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
   const [query, setQuery] = useState('');
   const [focusNearby, setFocusNearby] = useState(false);
   const [disabledTypes, setDisabledTypes] = useState<Record<string, boolean>>({});
+  const [legendOpen, setLegendOpen] = useState(false);
   const [pendingCenter, setPendingCenter] = useState<string | null>(null);
   const [searchReset, setSearchReset] = useState(0);
   const nodes = map?.nodes ?? EMPTY_NODES;
@@ -284,50 +286,67 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
   const sector = map.sectors?.find((entry) => entry.id === map.active_sector);
   const selectedNode = selectedAddress ? byAddress.get(selectedAddress) : null;
   const relayDestinations = (map.relay_destinations || []).filter((destination) => destination.from === (selectedAddress || entityHost));
+  const hiddenTypes = types.filter((type) => disabledTypes[type]).length;
+  const docked = !!waypoint || relayDestinations.length > 0 || search?.length > 0;
   return (
     <Box data-net-layout="map" onKeyDown={onKeyDown} style={{
       background: '#08131c', border: `1px solid ${THEME.line}`, borderRadius: '7px',
       display: 'flex', flexDirection: 'column', flex: '1 1 auto', height: '100%',
       minHeight: 0, minWidth: 0, boxSizing: 'border-box', overflow: 'hidden',
     }}>
-      {!!map.sectors?.length && <Box p={0.5} style={{ display: 'flex', flex: '0 0 auto', gap: '4px', overflowX: 'auto', borderBottom: `1px solid ${THEME.line}` }}>
-        {map.sectors.map((entry) => (<Button key={entry.id} compact selected={entry.id === map.active_sector}
-          content={entry.name} aria-label={`Сектор: ${entry.name}`} onClick={() => { setPendingCenter(null); act('map_sector', { id: entry.id }); }} />))}
-        {sector?.levels.map((z) => (<Button key={z} compact selected={z === map.active_z}
-          content={`Z${z}`} aria-label={`Этаж Z${z}`} onClick={() => { setPendingCenter(null); act('map_sector', { id: sector.id, z }); }} />))}
+      <div className="netrun-map-tools">
+        {!!map.sectors?.length && (
+          <details className="netrun-map-popover netrun-map-sectors">
+            <summary title="Сектор и этаж карты">
+              <Icon name="layer-group" /> {sector?.name || 'Сектор'}{map.active_z ? ` · Z${map.active_z}` : ''}
+            </summary>
+            <div className="netrun-map-popover__body">
+              {map.sectors.map((entry) => (<Button key={entry.id} compact selected={entry.id === map.active_sector}
+                content={entry.name} aria-label={`Сектор: ${entry.name}`} onClick={() => { setPendingCenter(null); act('map_sector', { id: entry.id }); }} />))}
+              {!!sector?.levels.length && <span className="netrun-map-popover__break" />}
+              {sector?.levels.map((z) => (<Button key={z} compact selected={z === map.active_z}
+                content={`Z${z}`} aria-label={`Этаж Z${z}`} onClick={() => { setPendingCenter(null); act('map_sector', { id: sector.id, z }); }} />))}
+            </div>
+          </details>
+        )}
         {!!map.source_sector && (map.source_sector !== map.active_sector || map.source_z !== map.active_z) && <Button compact
-          icon="location-crosshairs" content="Точка подключения" onClick={() => act('map_sector', { id: map.source_sector, z: map.source_z })} />}
-                                </Box>}
-      <Box className="netrun-map-tools" p={1} style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', borderBottom: `1px solid ${THEME.line}`, background: THEME.panel }}>
-        <Input key={searchReset} width="190px" placeholder="Имя или адрес устройства…" aria-label="Поиск устройств на карте" value={query}
+          icon="location-crosshairs" tooltip="Вернуться к этажу точки подключения" onClick={() => act('map_sector', { id: map.source_sector, z: map.source_z })}>
+          <span className="netrun-sr-only">Точка подключения</span>
+                                                                                                              </Button>}
+        <Input key={searchReset} width="160px" placeholder="Имя или адрес устройства…" aria-label="Поиск устройств на карте" value={query}
           onInput={(_event, value) => { setPendingCenter(null); setQuery(value); }}
           onEnter={(_event, value) => act('search', { text: value })} />
         <Button compact icon="magnifying-glass" tooltip="Поиск узлов по всей сети" onClick={() => act('search', { text: query })} />
-        {!!hasEntity && !!entityHost && <Button compact icon="location-crosshairs" content="Мой узел"
-          onClick={() => locate(entityHost, true)} />}
-        <Button compact icon="bullseye" content="Рядом" selected={focusNearby} disabled={!selectedAddress}
-          tooltip="Показать окружение выбранного узла в 2 переходах" onClick={() => { setPendingCenter(null); setFocusNearby(!focusNearby); }} />
-        <Button compact icon="crosshairs" content="К выбранному" tooltip="Центрировать выбранное устройство" disabled={!selectedAddress}
-          onClick={() => selectedAddress && viewport.current?.center(selectedAddress)} />
-        <Button compact icon="expand" content="Обзор" tooltip="Показать все устройства текущего этажа" onClick={() => viewport.current?.fit()} />
-        <Box style={{ flex: '1 1 auto', minWidth: 0 }} />
-        <Box color={THEME.muted} fontSize="10px" style={{ whiteSpace: 'nowrap' }}>
-          {visibleNodes.length}/{nodes.length} · текущий этаж
-        </Box>
-        <Box style={{ flex: '0 0 146px', minWidth: '146px', textAlign: 'right' }}>
-          {map.route ? <StoredRouteStatus route={map.route} />
-            : <Box color={THEME.muted} fontSize="10px">Путь: —</Box>}
-        </Box>
-      </Box>
-      <Box className="netrun-map-filterbar" p={0.5} style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', flex: '0 0 auto', alignItems: 'center', borderBottom: `1px solid ${THEME.line}` }}>
-        <Box color={THEME.muted} fontSize="10px" mr={0.5}>Устройства</Box>
-        {types.map((type) => (<Button key={type} compact icon={NODE_ICONS[type] || 'circle'}
-          content={<span className="netrun-map-type-label">{NODE_NAMES[type] || type}</span>}
-          selected={!disabledTypes[type]} aria-label={`Фильтр: ${NODE_NAMES[type] || type}`}
-          tooltip={NODE_NAMES[type] || type}
-          onClick={() => { setPendingCenter(null); setDisabledTypes((old) => ({ ...old, [type]: !old[type] })); }} />))}
-        <Box ml={1} style={{ width: '1px', alignSelf: 'stretch', background: THEME.line, flexShrink: 0 }} />
-        <details ref={gatewaysMenu} className="netrun-map-gateways" onKeyDown={(event) => {
+        <span className="netrun-map-tools__sep" />
+        {!!hasEntity && !!entityHost && <Button compact icon="street-view" tooltip="Мой узел"
+          onClick={() => locate(entityHost, true)}><span className="netrun-sr-only">Мой узел</span>
+                                        </Button>}
+        <Button compact icon="bullseye" selected={focusNearby} disabled={!selectedAddress}
+          tooltip="Рядом: окружение выбранного узла в 2 переходах" onClick={() => { setPendingCenter(null); setFocusNearby(!focusNearby); }}>
+          <span className="netrun-sr-only">Рядом</span>
+        </Button>
+        <Button compact icon="crosshairs" tooltip="К выбранному: центрировать устройство" disabled={!selectedAddress}
+          onClick={() => selectedAddress && viewport.current?.center(selectedAddress)}>
+          <span className="netrun-sr-only">К выбранному</span>
+        </Button>
+        <Button compact icon="expand" tooltip="Обзор: все устройства этажа" onClick={() => viewport.current?.fit()}>
+          <span className="netrun-sr-only">Обзор</span>
+        </Button>
+        <span className="netrun-map-tools__sep" />
+        <details className="netrun-map-popover netrun-map-filterbar">
+          <summary title="Типы устройств на карте">
+            <Icon name="filter" /> Фильтры{hiddenTypes ? ` · скрыто ${hiddenTypes}` : ''}
+          </summary>
+          <div className="netrun-map-popover__body netrun-map-filters">
+            {types.map((type) => (<Button key={type} compact selected={!disabledTypes[type]}
+              aria-label={`Фильтр: ${NODE_NAMES[type] || type}`} tooltip={NODE_NAMES[type] || type}
+              onClick={() => { setPendingCenter(null); setDisabledTypes((old) => ({ ...old, [type]: !old[type] })); }}>
+              <GlyphIcon type={type} size={14} /> <span className="netrun-map-type-label">{NODE_NAMES[type] || type}</span>
+                                  </Button>))}
+            {hiddenTypes > 0 && <Button compact icon="eye" content="Показать все" onClick={() => setDisabledTypes({})} />}
+          </div>
+        </details>
+        <details className="netrun-map-gateways netrun-map-popover" ref={gatewaysMenu} onKeyDown={(event) => {
           if (event.key === 'Escape') { event.currentTarget.open = false; }
         }}>
           <summary>Сети ({(map.gateways ?? []).length}){selectedNetwork ? ` · ${(map.gateways ?? []).find((net) => net.id === selectedNetwork)?.code || ''}` : ''}</summary>
@@ -342,66 +361,87 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
           }} />))}
           </div>
         </details>
-      </Box>
-      <Box className="netrun-map-selectionbar" role="status">
-        <Icon name={selectedNode ? NODE_ICONS[selectedNode.type] || 'circle' : 'hand-pointer'} />
-        <strong>{selectedNode?.name || 'Выберите устройство на карте'}</strong>
-        {selectedNode ? <><span>{selectedNode.address}</span>
-          <span style={{ color: selectedNode.online ? THEME.good : THEME.bad }}>{selectedNode.online ? 'В сети' : 'Не отвечает'}</span>
-          <span>{ACCESS_NAMES[selectedNode.access]}</span>
-                        </>
-          : <span>Наведите курсор для подсказки · нажмите для просмотра действий</span>}
-      </Box>
-      {!!waypoint && <Box p={0.5} style={{ background: '#12202a', borderBottom: `1px solid ${THEME.line}` }}>
-        <WaypointRoute wp={waypoint} onClear={() => act('clear_waypoint')} onNext={(address) => act('select', { address })} />
-                     </Box>}
-      {relayDestinations.length > 0 && <Box data-net-relay-destinations p={0.75} style={{ flex: '0 0 auto', maxHeight: '112px', overflowY: 'auto', borderBottom: `1px solid ${THEME.line}` }}>
-        <Box color={THEME.muted} fontSize="10px">Реле NTnet · направления перехода</Box>
-        {relayDestinations.map((destination) => (<Box key={`${destination.from}:${destination.to}`} mt={0.5} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <Icon name="tower-broadcast" color={destination.online ? THEME.good : THEME.bad} />
-          <Box style={{ flex: '1 1 auto', minWidth: 0 }}>{destination.name} · {map.sectors?.find((entry) => entry.id === destination.sector)?.name || destination.sector} · Z{destination.z}</Box>
-          <Button compact content="Показать" aria-label={`Показать реле ${destination.name}`}
-            onClick={() => locate(destination.to)} />
-          <Button compact icon="arrow-right" content="Перейти" disabled={!destination.can_hop}
-            tooltip={destination.unavailable_reason || 'Перейти через реле'} aria-label={`Перейти к реле ${destination.name}`}
-            onClick={() => act('relay_hop', { address: destination.to })} />
-                                                 </Box>))}
-                                       </Box>}
-      {search?.length > 0 && <Box p={0.75} style={{ flex: '0 0 auto', maxHeight: '104px', overflowY: 'auto', borderBottom: `1px solid ${THEME.line}`, fontFamily: 'monospace' }}>
-        <Box color={THEME.muted} fontSize="10px" mb={0.5}>Найдено в сети: {search.length}
-          <Button compact icon="xmark" ml={1} tooltip="Очистить поиск" onClick={() => act('search', { text: '' })} />
+        <Button compact icon="circle-info" selected={legendOpen} tooltip="Легенда карты" onClick={() => setLegendOpen(!legendOpen)} />
+        <span style={{ flex: '1 1 auto', minWidth: 0 }} />
+        <Box color={THEME.muted} fontSize="10px" style={{ whiteSpace: 'nowrap' }}>
+          {visibleNodes.length}/{nodes.length} · текущий этаж
         </Box>
-        {search.map((result) => (<Box key={result.address} mb={0.5} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <Icon name={NODE_ICONS[result.type] || 'circle'} color={result.online ? THEME.accent : THEME.bad} />
-          <Box style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {result.name} <Box inline color={THEME.muted} fontSize="9px">{result.address}</Box>
-          </Box>
-          <Button compact icon="location-arrow" selected={waypoint?.address === result.address}
-            tooltip="Проложить маршрут" onClick={() => act('set_waypoint', { address: result.address })} />
-          {result.visible && <Button compact icon="diagram-project" tooltip="Выбрать на карте"
-            aria-label={`Выбрать узел ${result.name} на карте`} onClick={() => locate(result.address)} />}
-                                 </Box>))}
-                             </Box>}
-      {!nodes.length ? <Box p={1} color={THEME.muted}>На этом этаже нет доступных узлов.</Box>
-        : !visibleNodes.length && <Box p={1} color={THEME.muted}>
-          Все узлы скрыты фильтрами.
-          <Button compact ml={1} icon="filter-circle-xmark" content="Сбросить фильтры" onClick={() => {
-            setQuery(''); setSearchReset((value) => value + 1); setDisabledTypes({}); setFocusNearby(false);
-          }} />
-                                  </Box>}
-      <NetworkViewport ref={viewport} adjacency={adjacency} nodes={visibleNodes} edges={visibleEdges} suspended={suspended}
-        gateways={gateways} selected={selectedAddress} jacked={jackAddress}
-        apcZones={map.apc_zones}
-        entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || EMPTY_ADDRESSES}
-        pingRoute={pingAddresses} pingId={pingId} pingExpiresAt={pingExpiresAt} events={events} onSelect={onSelect} />
-      <Box p={0.5} color={THEME.muted} fontSize="10px" style={{ flexShrink: 0, borderTop: `1px solid ${THEME.line}`, background: '#0d222d' }}>
-        □ APC · ⬡ реле · ◇ сервер/терминал · ○ устройство · яркая линия — выбранный маршрут<br />
-        ЛКМ — выбрать · потянуть — переместить · колесо — масштаб · WASD — выбор{hasEntity ? ' · Shift+WASD — переход' : ''}
-      </Box>
+        <Box style={{ flex: '0 0 auto', textAlign: 'right' }}>
+          {map.route ? <StoredRouteStatus route={map.route} />
+            : <Box color={THEME.muted} fontSize="10px">Путь: —</Box>}
+        </Box>
+      </div>
+      <div className="netrun-map-stage">
+        <NetworkViewport ref={viewport} adjacency={adjacency} nodes={visibleNodes} edges={visibleEdges} suspended={suspended}
+          gateways={gateways} selected={selectedAddress} jacked={jackAddress}
+          apcZones={map.apc_zones}
+          entityHost={entityHost} selectedRoute={selectedRoute} waypointRoute={waypoint?.route || EMPTY_ADDRESSES}
+          pingRoute={pingAddresses} pingId={pingId} pingExpiresAt={pingExpiresAt} events={events} onSelect={onSelect} />
+        <SelectionCard node={selectedNode} />
+        {docked && <div className="netrun-map-dock" data-net-overlay>
+          {!!waypoint && <div className="netrun-map-dock__panel">
+            <WaypointRoute wp={waypoint} onClear={() => act('clear_waypoint')} onNext={(address) => act('select', { address })} />
+                         </div>}
+          {relayDestinations.length > 0 && <div data-net-relay-destinations className="netrun-map-dock__panel">
+            <Box color={THEME.muted} fontSize="10px">Реле NTnet · направления перехода</Box>
+            {relayDestinations.map((destination) => (<Box key={`${destination.from}:${destination.to}`} mt={0.5} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Icon name="tower-broadcast" color={destination.online ? THEME.good : THEME.bad} />
+              <Box style={{ flex: '1 1 auto', minWidth: 0 }}>{destination.name} · {map.sectors?.find((entry) => entry.id === destination.sector)?.name || destination.sector} · Z{destination.z}</Box>
+              <Button compact content="Показать" aria-label={`Показать реле ${destination.name}`}
+                onClick={() => locate(destination.to)} />
+              <Button compact icon="arrow-right" content="Перейти" disabled={!destination.can_hop}
+                tooltip={destination.unavailable_reason || 'Перейти через реле'} aria-label={`Перейти к реле ${destination.name}`}
+                onClick={() => act('relay_hop', { address: destination.to })} />
+                                                     </Box>))}
+                                           </div>}
+          {search?.length > 0 && <div className="netrun-map-dock__panel" style={{ fontFamily: 'monospace' }}>
+            <Box color={THEME.muted} fontSize="10px" mb={0.5}>Найдено в сети: {search.length}
+              <Button compact icon="xmark" ml={1} tooltip="Очистить поиск" onClick={() => act('search', { text: '' })} />
+            </Box>
+            {search.map((result) => (<Box key={result.address} mb={0.5} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Icon name={NODE_ICONS[result.type] || 'circle'} color={result.online ? THEME.accent : THEME.bad} />
+              <Box style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {result.name} <Box inline color={THEME.muted} fontSize="9px">{result.address}</Box>
+              </Box>
+              <Button compact icon="location-arrow" selected={waypoint?.address === result.address}
+                tooltip="Проложить маршрут" onClick={() => act('set_waypoint', { address: result.address })} />
+              {result.visible && <Button compact icon="diagram-project" tooltip="Выбрать на карте"
+                aria-label={`Выбрать узел ${result.name} на карте`} onClick={() => locate(result.address)} />}
+                                     </Box>))}
+                                 </div>}
+                   </div>}
+        {!nodes.length ? <div className="netrun-map-notice" data-net-overlay>На этом этаже нет доступных узлов.</div>
+          : !visibleNodes.length && <div className="netrun-map-notice" data-net-overlay>
+            Все узлы скрыты фильтрами.
+            <Button compact ml={1} icon="filter-circle-xmark" content="Сбросить фильтры" onClick={() => {
+              setQuery(''); setSearchReset((value) => value + 1); setDisabledTypes({}); setFocusNearby(false);
+            }} />
+                                    </div>}
+        {legendOpen && <MapLegend types={types} entity={hasEntity} onClose={() => setLegendOpen(false)} />}
+      </div>
     </Box>
   );
 });
 
+/** Floating card of the selected device: identity, status and its live markers. */
+const SelectionCard = memo(({ node }: { node: Placed | null | undefined }) => (
+  <div className="netrun-map-selectionbar" role="status" data-net-overlay>
+    {node ? <GlyphIcon type={node.type} size={18} fill={node.online ? ACCESS_COLORS[node.access] : '#85434a'} offline={!node.online} />
+      : <Icon name="hand-pointer" />}
+    <strong>{node?.name || 'Выберите устройство на карте'}</strong>
+    {node ? <SelectionDetails node={node} /> : <span>Наведите курсор для подсказки · нажмите для просмотра действий</span>}
+  </div>
+));
+const SelectionDetails = ({ node }: { node: Placed }) => (
+  <>
+    <span>{node.address}</span>
+    <span style={{ color: node.online ? THEME.good : THEME.bad }}>{node.online ? 'В сети' : 'Не отвечает'}</span>
+    <span>{ACCESS_NAMES[node.access]}</span>
+    {!!node.fortress && <span style={{ color: FACTION_COLORS[node.fortress.faction] }}><Icon name="chess-rook" /> крепость</span>}
+    {!!node.police && <span style={{ color: FACTION_COLORS.station }}><Icon name="shield-halved" /> полиция</span>}
+    {!!node.bots && <span><Icon name="robot" /> ботов: {node.bots}</span>}
+  </>
+);
 const StoredRouteStatus = memo(({ route }: { route: NonNullable<NetMap['route']> }) => (<Box
   color={route.reachable ? THEME.accent : THEME.bad} fontSize="10px" title={`Сохранённый маршрут #${route.revision}`}>
   {route.reachable ? `Путь: ${route.hops} пер. · ${Math.round(route.latency)} мс` : 'Путь: нет связи'}

@@ -3,20 +3,27 @@ import type { Container, Graphics } from 'pixi.js';
 import { GRAPH_TILE } from './graphLayout';
 import { boxesIntersect, GraphBase, GraphBox, markerColor, physicalPoint, segmentBox } from './graphPresentation';
 import type { GraphScene, PlacedNode } from './graphScene';
-import { destroyDisplay, edgeColor, markerPath, pixiColor, PixiLibrary } from './pixiPrimitives';
+import {
+  BODY_ALPHA, BODY_STROKE, GLYPH_INK, GLYPH_MIN_ZOOM, GLYPH_STROKE, glyphRadius,
+  traceBody, traceGlyphFills, traceGlyphStrokes, traceOfflineSlash,
+} from './nodeGlyphs';
+import { destroyDisplay, edgeColor, edgeWidth, pixiColor, PixiLibrary, strokeLod } from './pixiPrimitives';
 import type { NetEdge } from './types';
 
 type Stroke = { from: { px: number; py: number }; to: { px: number; py: number } };
 type ZoneRect = { x: number; y: number; width: number };
 type Device = { node: PlacedNode; border: number };
-type Batch = { key: string; nodes: Device[]; strokes: Stroke[]; zones: ZoneRect[];
+type Batch = { key: string; nodes: Device[]; glyphs: PlacedNode[]; strokes: Stroke[]; zones: ZoneRect[];
   color: number; alpha: number; width: number; bounds: GraphBox; signature: string[] };
 type Part = { bucket: string; key: string; color: number; alpha: number; width: number;
-  bounds: GraphBox; signature: string; device?: Device; stroke?: Stroke; zone?: ZoneRect };
+  bounds: GraphBox; signature: string; device?: Device; glyph?: PlacedNode; stroke?: Stroke; zone?: ZoneRect };
 type NodeInput = { node: PlacedNode; fill: number; border: number; parts: Part[] };
 type EdgeInput = { edge: NetEdge; fromX: number; fromY: number; toX: number; toY: number; part: Part };
 type RetainedBatch = { graphic: Graphics; signature: string; bounds: GraphBox };
 const CELL = GRAPH_TILE * 8;
+/** Cables and tethers keep a readable on-screen width through quantized zoom levels. */
+const LINE_LAYERS = new Set([1, 2]);
+const GLYPH_LAYER = 4;
 const bucketAt = (kind: string, x: number, y: number) => `${kind}:${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
 const EMPTY_BOUNDS = (): GraphBox => ({ left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
 const include = (box: GraphBox, next: GraphBox) => {
@@ -41,11 +48,12 @@ export class PixiScenery {
   private zoneParts: Part[] = [];
   private builtZones: GraphBase['apcZones'];
   private viewport: GraphBox | null = null;
+  private lod = 1;
   private pending: Generator<void, void, unknown> | null = null;
   constructor(private readonly pixi: PixiLibrary) {
     this.world = new pixi.Container();
     this.world.label = 'netrun-scenery';
-    this.layers = ['zones', 'cables', 'anchors', 'devices'].map((name) => {
+    this.layers = ['zones', 'cables', 'anchors', 'devices', 'glyphs'].map((name) => {
       const layer = new pixi.Container(); layer.label = name; this.world.addChild(layer); return layer;
     });
   }
@@ -87,7 +95,7 @@ export class PixiScenery {
       this.waiting.delete(key);
       const prepared = this.prepared.get(key);
       if (prepared && (!this.viewport || boxesIntersect(prepared.batch.bounds, this.viewport))) {
-        this.paint(prepared.batch, prepared.signature);
+        this.paint(prepared.batch, this.effectiveSignature(prepared.batch.key, prepared.signature));
       }
       work++;
     }
@@ -104,13 +112,18 @@ export class PixiScenery {
     const anchor = physicalPoint(node), parts: Part[] = [];
     if (anchor.px !== node.px || anchor.py !== node.py) {
       parts.push({ bucket: bucketAt('2-anchor', node.px, node.py), key: node.address,
-        color: 0x75a3b4, alpha: .16, width: .7, stroke: { from: anchor, to: node },
+        color: 0x75a3b4, alpha: .24, width: 1, stroke: { from: anchor, to: node },
         signature: `${anchor.px},${anchor.py},${node.px},${node.py}`, bounds: segmentBox(anchor, node) });
     }
+    const reach = glyphRadius(node.type) + 2;
+    const bounds = { left: node.px - reach, right: node.px + reach, top: node.py - reach, bottom: node.py + reach };
     parts.push({ bucket: bucketAt('3-node', node.px, node.py), key: node.address,
-      color: fill, alpha: 1, width: 1, device: { node, border },
-      signature: `${node.address}:${node.px},${node.py}:${node.type}:${border}`,
-      bounds: { left: node.px - 16, right: node.px + 16, top: node.py - 16, bottom: node.py + 16 } });
+      color: fill, alpha: BODY_ALPHA, width: BODY_STROKE, device: { node, border },
+      signature: `${node.address}:${node.px},${node.py}:${node.type}:${border}`, bounds });
+    // Pictograms live in their own layer: an overview hides them without retessellation.
+    parts.push({ bucket: bucketAt('4-glyph', node.px, node.py), key: node.address,
+      color: GLYPH_INK, alpha: .9, width: GLYPH_STROKE, glyph: node,
+      signature: `${node.address}:${node.px},${node.py}:${node.type}:${node.online}`, bounds });
     return { node, fill, border, parts };
   }
 
@@ -121,8 +134,8 @@ export class PixiScenery {
     if (previous && previous.edge.kind === edge.kind && previous.edge.online === edge.online
       && previous.fromX === from.px && previous.fromY === from.py && previous.toX === to.px && previous.toY === to.py) { return previous; }
     const part: Part = { bucket: bucketAt('1-edge', from.px, from.py), key: edge.id,
-      color: edgeColor(edge.kind, edge.online !== false), alpha: edge.online === false ? .12 : edge.kind === 'endpoint' ? .22 : .4,
-      width: edge.kind === 'endpoint' ? .75 : 1.1, stroke: { from, to },
+      color: edgeColor(edge.kind, edge.online !== false), alpha: edge.online === false ? .18 : edge.kind === 'endpoint' ? .36 : .56,
+      width: edgeWidth(edge.kind), stroke: { from, to },
       signature: `${edge.id}:${from.px},${from.py},${to.px},${to.py}`, bounds: segmentBox(from, to) };
     return { edge, fromX: from.px, fromY: from.py, toX: to.px, toY: to.py, part };
   }
@@ -188,11 +201,12 @@ export class PixiScenery {
         let item = tails.get(prefix);
         if (!item || item.nodes.length + item.strokes.length + item.zones.length >= 128) {
           const key = `${prefix}:${item ? Number(item.key.slice(item.key.lastIndexOf(':') + 1)) + 1 : 0}`;
-          item = { key, nodes: [], strokes: [], zones: [], color: part.color, alpha: part.alpha,
+          item = { key, nodes: [], glyphs: [], strokes: [], zones: [], color: part.color, alpha: part.alpha,
             width: part.width, bounds: EMPTY_BOUNDS(), signature: [] };
           batches.set(key, item); tails.set(prefix, item);
         }
         if (part.device) { item.nodes.push(part.device); }
+        if (part.glyph) { item.glyphs.push(part.glyph); }
         if (part.stroke) { item.strokes.push(part.stroke); }
         if (part.zone) { item.zones.push(part.zone); }
         item.signature.push(part.signature); include(item.bounds, part.bounds);
@@ -222,13 +236,21 @@ export class PixiScenery {
     this.enqueueVisible();
   }
 
+  /** Line batches also depend on the quantized zoom level; everything else on its geometry only. */
+  private effectiveSignature(key: string, signature: string) {
+    return LINE_LAYERS.has(Number(key[0])) ? `${signature}@${this.lod}` : signature;
+  }
+
   private enqueueVisible() {
     for (const [key, { batch, signature }] of this.prepared) {
       const visible = !this.suppressed.has(batch.key.slice(0, batch.key.indexOf(':', batch.key.indexOf(':') + 1)))
         && (!this.viewport || boxesIntersect(batch.bounds, this.viewport));
-      const retained = this.records.get(key);
-      if (retained) { retained.graphic.visible = visible && retained.signature === signature; }
-      if (visible && (!retained || retained.signature !== signature)) { this.waiting.add(key); }
+      const retained = this.records.get(key), effective = this.effectiveSignature(key, signature);
+      // A cable waiting for its new width keeps showing the old one rather than blinking out.
+      const current = retained && (retained.signature === effective
+        || (LINE_LAYERS.has(Number(key[0])) && retained.signature.startsWith(`${signature}@`)));
+      if (retained) { retained.graphic.visible = visible && !!current; }
+      if (visible && (!retained || retained.signature !== effective)) { this.waiting.add(key); }
       else { this.waiting.delete(key); }
     }
   }
@@ -249,24 +271,31 @@ export class PixiScenery {
     graphic.clear();
     for (const rect of data.zones) { graphic.rect(rect.x, rect.y, rect.width, GRAPH_TILE); }
     if (data.zones.length) { graphic.fill({ color: data.color, alpha: data.alpha }); }
+    const scale = LINE_LAYERS.has(Number(data.key[0])) ? this.lod : 1;
     for (const stroke of data.strokes) { graphic.moveTo(stroke.from.px, stroke.from.py).lineTo(stroke.to.px, stroke.to.py); }
-    if (data.strokes.length) { graphic.stroke({ color: data.color, width: data.width, alpha: data.alpha }); }
+    if (data.strokes.length) { graphic.stroke({ color: data.color, width: data.width * scale, alpha: data.alpha }); }
+    // Device silhouettes: filled with the access colour, outlined with the LAN colour.
     for (const { node, border } of data.nodes) {
-      markerPath(graphic, node.type, node.px, node.py, 1)
-        .fill({ color: data.color, alpha: .94 })
-        .stroke({ color: border, width: 1.5 });
-      // LAN outlines live in PixiActors; their zoom never retessellates this map.
-      if (['apc', 'server', 'terminal', 'camera'].includes(node.type)) {
-        graphic.moveTo(node.px - 4, node.py).lineTo(node.px + 4, node.py);
-        if (node.type === 'apc') { graphic.moveTo(node.px, node.py - 4).lineTo(node.px, node.py + 4); }
-        graphic.stroke({ color: 0x102331, width: 1.5 });
-      }
+      traceBody(graphic, node.type, node.px, node.py);
+      graphic.fill({ color: data.color, alpha: data.alpha }).stroke({ color: border, width: data.width });
     }
+    if (!data.glyphs.length) { return; }
+    let stroked = false, filled = false;
+    for (const node of data.glyphs) {
+      stroked = traceGlyphStrokes(graphic, node.type, node.px, node.py) || stroked;
+      if (!node.online) { traceOfflineSlash(graphic, node.type, node.px, node.py); stroked = true; }
+    }
+    if (stroked) { graphic.stroke({ color: data.color, width: data.width, alpha: data.alpha }); }
+    for (const node of data.glyphs) { filled = traceGlyphFills(graphic, node.type, node.px, node.py) || filled; }
+    if (filled) { graphic.fill({ color: data.color, alpha: data.alpha }); }
   }
 
-  /** Moving or zooming the camera changes visibility, not batch geometry. */
-  setViewport(bounds: GraphBox, _zoom: number) {
-    if (this.viewport && this.viewport.left === bounds.left && this.viewport.right === bounds.right
+  /** Panning changes visibility; zoom toggles pictograms and, across a level, cable widths. */
+  setViewport(bounds: GraphBox, zoom: number) {
+    const lod = strokeLod(zoom), lodChanged = lod !== this.lod;
+    this.lod = lod;
+    this.layers[GLYPH_LAYER].visible = zoom >= GLYPH_MIN_ZOOM;
+    if (!lodChanged && this.viewport && this.viewport.left === bounds.left && this.viewport.right === bounds.right
       && this.viewport.top === bounds.top && this.viewport.bottom === bounds.bottom) { return; }
     this.viewport = bounds;
     this.enqueueVisible();

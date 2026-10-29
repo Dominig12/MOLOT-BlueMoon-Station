@@ -55,7 +55,7 @@
 	name = "сетевой мост"
 	origin = NETRUN_ORIGIN_CIRCUIT
 	initial_can_breach = FALSE
-	initial_storage_capacity = 1
+	initial_storage_capacity = 1 * NETRUN_STORAGE_SCALE
 
 /datum/netrun_console/circuit/New(atom/host, origin)
 	. = ..()

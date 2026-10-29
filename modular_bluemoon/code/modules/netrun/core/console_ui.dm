@@ -374,6 +374,7 @@
 				files += list(file.ui_entry())
 			selected["files"] = files
 			selected["storage"] = list("used" = node.used_storage(), "capacity" = node.file_store?.capacity)
+		selected["fortress"] = node.fortress?.ui_payload(src, level)
 	data["selected"] = selected
 
 	var/datum/netrun_network/selnet = SSnetrun.networks[map_view.selected_network]
@@ -405,8 +406,10 @@
 	data["window"] = workspace_view == "pinned" && remote_session.active_window ? window_payload() : null
 	data["ping_route"] = map_view.has_ping() ? map_view.ping_route : null
 	data["ping"] = map_view.ping_metadata()
-	data["events"] = SSnetrun.recent_events(src)
+	// Only a visible map animates events; hidden pages never serialize the shared ring.
+	data["events"] = workspace_view == "map" ? SSnetrun.recent_events(src) : null
 	data["search"] = workspace_view == "map" ? search_payload() : null
+	data["agents"] = agents_payload()
 	return data
 
 /// Поиск по всей сети: находит достижимые узлы по имени/адресу, чтобы проложить
@@ -714,6 +717,12 @@
 		if("program_use")
 			program_use(params["uid"], params["target"])
 			return TRUE
+		if("bot_launch")
+			launch_bot_file(params["uid"], params["address"])
+			return TRUE
+		if("agent_order")
+			agent_order(params["ref"], params["order"], params["address"])
+			return TRUE
 		if("download")
 			transfer_from_node(params["uid"], !!params["to_shard"], input_nonce = input_nonce)
 			return TRUE
@@ -872,6 +881,8 @@
 	var/datum/netrun_packet_context/operation = new("file", labels[action] || "Файловый запрос",
 		route_source()?.address, node?.address, "file.[action]", src, input_nonce)
 	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
+	// A fortress vault keeps the node's disk behind ROOT for everybody except its owner.
+	required = max(required, node?.fortress?.file_access_level(src) || 0)
 	var/datum/netrun_path_tree/tree = make_path_tree()
 	if(!node?.file_store?.files || !can_route(node, tree) || node_level(node, tree) < required || !node.is_online(node != connection.jack) || is_locked() || world.time < next_command)
 		qdel(tree)
@@ -892,6 +903,7 @@
 	node.join_network()
 	var/datum/netrun_path_tree/tree = make_path_tree()
 	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
+	required = max(required, node.fortress?.file_access_level(src) || 0)
 	var/reachable = can_route(node, tree)
 	if(reachable)
 		operation?.receive(tree.addresses_to(node.address))

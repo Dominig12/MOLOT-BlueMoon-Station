@@ -48,10 +48,10 @@ APC одной группы этажей связаны между собой. �
 	. = ..()
 	console = new(src, NETRUN_ORIGIN_TERMINAL)
 	console.connection.wireless = FALSE
-	console.inventory.local_store.capacity = 12
+	console.inventory.local_store.capacity = 12 * NETRUN_STORAGE_SCALE
 	console.tgui_title = "Сетевой терминал"
 	console.store_file(new /datum/netrun_file("readme.txt", NETRUN_FILE_TEXT, netrun_manual_text()))
-	AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list("purge", "issue_key"), 2, list(ACCESS_NETWORK), 12)
+	AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL, list("purge", "issue_key"), 2, list(ACCESS_NETWORK), 12 * NETRUN_STORAGE_SCALE)
 
 /obj/machinery/computer/netrun_terminal/Destroy()
 	QDEL_NULL(console)
@@ -99,9 +99,9 @@ APC одной группы этажей связаны между собой. �
 
 /obj/machinery/netrun_server/Initialize(mapload)
 	. = ..()
-	var/capacity = 40
+	var/capacity = 40 * NETRUN_STORAGE_SCALE
 	for(var/obj/item/stock_parts/matter_bin/bin in component_parts)
-		capacity += bin.rating * 10
+		capacity += bin.rating * 10 * NETRUN_STORAGE_SCALE
 	var/datum/component/netrun_node/node = AddComponent(/datum/component/netrun_node, NETRUN_NODE_SERVER, list("purge", "issue_key", "reboot"), server_security, server_access, capacity)
 	for(var/file_name in preload_files)
 		if(file_name == "readme.txt")

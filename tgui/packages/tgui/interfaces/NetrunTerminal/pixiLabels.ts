@@ -8,6 +8,8 @@ import { GraphViewport } from './graphViewport';
 import { destroyDisplay, PixiLibrary } from './pixiPrimitives';
 
 type Caption = { text: Text; background: Graphics; rectangle: string };
+/** From this zoom every device may be captioned; below it only important nodes are. */
+export const LABEL_ALL_ZOOM = .9;
 
 /** Screen-space Pixi text stays sharp, collision checked and keyed by address. */
 export class PixiLabels {
@@ -29,10 +31,14 @@ export class PixiLabels {
     const caption = (node: PlacedNode) => ['apc', 'gateway', 'relay'].includes(node.type)
       ? [overlay.gateways.get(node.network)?.code, node.sector?.replace('sector:', 'S'), node.name].filter(Boolean).join(' · ') : node.name;
     const priority = (node: PlacedNode) => node.address === overlay.selected ? 10 : node.address === overlay.hovered ? 9
-      : node.address === overlay.entityHost ? 8 : node.ice ? 6 : ['apc', 'gateway', 'relay'].includes(node.type) ? 3 : 0;
-    const placed = layoutLabels(nodes, view, width, Math.max(0, height - 26), (text) => {
+      : node.address === overlay.entityHost ? 8 : node.ice ? 6 : node.police || node.fortress ? 5 : node.bots ? 4
+        : ['apc', 'gateway', 'relay', 'server', 'ai'].includes(node.type) ? 3 : 0;
+    // Away from close-up zoom only meaningful places are named; everything stays on hover.
+    const overview = view.zoom < LABEL_ALL_ZOOM;
+    const candidates = overview ? nodes.filter((node) => priority(node) > 0) : nodes;
+    const placed = layoutLabels(candidates, view, width, height, (text) => {
       this.metric.text = text; return this.metric.width;
-    }, priority, caption, 80);
+    }, priority, caption, overview ? 40 : 80);
     const visible = new Set<string>();
     for (const label of placed) {
       visible.add(label.node.address);

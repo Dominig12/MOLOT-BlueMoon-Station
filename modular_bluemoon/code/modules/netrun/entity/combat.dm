@@ -190,7 +190,13 @@
 	if(console.is_locked())
 		return "Точка подключения заблокирована."
 	// During one combat payload the local node has already been resolved once.
-	if(node == (local_known ? local_node : console.combat_node(tree)))
+	var/datum/component/netrun_node/local = local_known ? local_node : console.combat_node(tree)
+	if(node == local)
+		return null
+	// Structures may be engaged from a neighbouring node (siege of fortress outer works).
+	if(combatant.allows_remote_attack(console, local))
+		if(!node.is_online(node != console.connection.jack))
+			return "Узел противника не отвечает."
 		return null
 	var/datum/netrun_combat_contact/contact = contacts[REF(target)]
 	if(!contact?.valid_for(console))
@@ -212,6 +218,11 @@
 	if(node)
 		candidates |= node.entities || list()
 		candidates |= node.netrun_ice || list()
+		candidates |= node.fortress?.combat_targets() || list()
+		// A resident process can lay siege to the outer works of fortresses next door.
+		if(console.combat_self())
+			for(var/datum/component/netrun_node/neighbor as anything in netrun_adjacent_fortress_nodes(node))
+				candidates |= neighbor.fortress.siege_targets()
 	for(var/id in contacts)
 		var/datum/netrun_combat_contact/contact = contacts[id]
 		var/datum/netrun_ice/ice = contact.ice_ref.resolve()
@@ -405,6 +416,8 @@
 	if(program.trace)
 		console.add_trace(program.trace)
 	SSnetrun.post_event("intrusion", node.network?.id, node.address)
+	if((program.role == NETRUN_PROGRAM_ATTACK || program.role == NETRUN_PROGRAM_STUN) && combatant?.protected_by_station())
+		SSnetrun.report_incident("combat", node, self || console, NETRUN_INCIDENT_MEDIUM, "Атака на [combatant.display_name()].")
 	if(program.consumable)
 		console.delete_local_file(file)
 		console.log_line("Карточка [executable_name] израсходована.", "average")

@@ -27,6 +27,8 @@
 	var/list/mob/camera/netrun_entity/entities
 	/// Враждебные процессы (ICE), стоящие в этом узле
 	var/list/datum/netrun_ice/netrun_ice
+	/// Сетевая крепость, построенная в узле (стены, врата, турели и прочие модули)
+	var/datum/netrun_fortress/fortress
 	/// Узел оглушён ЭМИ или командой и до этого времени не отвечает
 	var/offline_until = 0
 	/// До этого времени на узле поднят сетевой экран (усиленная защита)
@@ -117,6 +119,8 @@
 	SSnetrun.nodes_by_address -= address
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_UNREGISTERED, src)
 	notify_changed(NETRUN_CHANGED_REMOVED)
+	// Modules are combat targets and timers of their own: drop them before the occupants leave.
+	QDEL_NULL(fortress)
 	for(var/mob/camera/netrun_entity/entity as anything in entities?.Copy())
 		entity.host_lost()
 	entities = null
@@ -344,7 +348,8 @@
 
 /datum/component/netrun_node/proc/get_security()
 	var/firewall = world.time < firewall_until ? 2 : 0
-	return clamp(base_security + (network ? network.security - 1 : 0) + firewall, 1, 5)
+	var/walls = fortress ? fortress.security_bonus() : 0
+	return clamp(base_security + (network ? network.security - 1 : 0) + firewall + walls, 1, 5)
 
 /// Поднять сетевой экран: сбросить взломанные доступы к узлу и прервать взлом цели.
 /datum/component/netrun_node/proc/raise_firewall(duration = 20 SECONDS)
@@ -468,6 +473,18 @@
 	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
 	var/turf/T = physical_turf()
 	var/datum/component/netrun_node/uplink = uplink_node()
+	// Bots are entities for routing and combat, but the map marks them separately.
+	var/residents = 0
+	var/bots = 0
+	var/police = FALSE
+	for(var/mob/camera/netrun_entity/entity as anything in entities)
+		var/bot_kind = entity.netrun_bot_kind()
+		if(!bot_kind)
+			residents++
+			continue
+		bots++
+		if(bot_kind == NETRUN_BOT_POLICE)
+			police = TRUE
 	. = list(
 		"address" = address,
 		"name" = get_name(),
@@ -479,11 +496,14 @@
 		"security" = get_security(),
 		"online" = is_online(),
 		"access" = console.node_level(src),
-		"entities" = length(entities),
+		"entities" = residents,
+		"bots" = bots,
+		"police" = police,
 		"ice" = LAZYLEN(netrun_ice),
 		"active" = world.time - last_activity < limits.node_activity_duration,
 		"uplink" = uplink?.address,
 		"apc" = bound_apc?.address,
+		"fortress" = fortress?.map_summary(),
 	)
 	if(console.origin == NETRUN_ORIGIN_ENTITY && istype(console.host, /mob/camera/netrun_entity))
 		var/mob/camera/netrun_entity/entity = console.host

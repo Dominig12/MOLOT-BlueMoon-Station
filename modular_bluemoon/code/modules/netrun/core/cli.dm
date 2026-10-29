@@ -572,9 +572,12 @@
 			. |= list(file.name, "#[file.uid]")
 
 /datum/netrun_console/proc/cli_execute_file(selector, target_ref)
-	var/datum/netrun_file/file = cli_file(selector, list(NETRUN_FILE_DAEMON, NETRUN_FILE_PROGRAM))
+	var/datum/netrun_file/file = cli_file(selector, list(NETRUN_FILE_DAEMON, NETRUN_FILE_PROGRAM, NETRUN_FILE_BOT))
 	if(!file)
 		return FALSE
+	if(file.kind == NETRUN_FILE_BOT)
+		// target_ref doubles as an optional node address for the agent's launch site.
+		return launch_bot_file(file.uid, target_ref)
 	if(file.kind == NETRUN_FILE_DAEMON)
 		var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(file.content)
 		if(!daemon)
@@ -587,7 +590,7 @@
 /datum/netrun_cli_command/exec
 	id = "exec"
 	args = "<имя|#UID> \[REF цели\]"
-	desc = "Запустить боевой файл или проверить работу пассивного демона."
+	desc = "Запустить боевой файл, программу-агента или проверить работу пассивного демона."
 	category = "Память"
 
 /datum/netrun_cli_command/exec/execute(datum/netrun_console/console, list/words, raw)
@@ -598,7 +601,7 @@
 	. += list("Пример: exec \"Мой щит.exe\". Имена и #UID смотрите в ls.", "Файлы выбираются по текущему имени, не по ID из каталога демонов. При совпадениях используйте #UID, local:имя или shard:имя.", "Демоны работают пассивно из памяти и подключённого шарда. Боевые программы запускаются через тот же механизм, что во вкладке боя; targets показывает REF целей.")
 
 /datum/netrun_cli_command/exec/completions(datum/netrun_console/console, partial)
-	return console.cli_file_completions(list(NETRUN_FILE_DAEMON, NETRUN_FILE_PROGRAM))
+	return console.cli_file_completions(list(NETRUN_FILE_DAEMON, NETRUN_FILE_PROGRAM, NETRUN_FILE_BOT))
 
 /datum/netrun_cli_command/targets
 	id = "targets"

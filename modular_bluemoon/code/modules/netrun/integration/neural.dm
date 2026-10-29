@@ -47,7 +47,7 @@
 /datum/neural_interface_module/netrun/proc/render_lines()
 	var/write = line("├─ NETLINK", separator_color)
 	if(console.is_locked())
-		write += line("└ LOCKED: [round((console.intrusion.lockout_until - world.time) / (1 SECONDS))]s", "#ef4444ff")
+		write += line("└ LOCKED: [CEILING((console.intrusion.lockout_until - world.time) / (1 SECONDS), 1)]s", "#ef4444ff")
 		return write
 	var/uplink = console.has_uplink()
 	write += line("└ NTnet: [uplink ? "ONLINE" : "OFFLINE"]", uplink ? "#10b981ff" : "#ef4444ff")

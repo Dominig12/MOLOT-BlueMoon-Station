@@ -302,10 +302,10 @@
 	if(owner)
 		owner.invalidate_ui()
 
-/datum/netrun_map_view/proc/on_event_posted(datum/source, kind, from_ref, to_ref, list/route)
+/datum/netrun_map_view/proc/on_event_posted(datum/source, kind, from_ref, to_ref, list/route, lifetime = NETRUN_MAP_EVENT_LIFETIME)
 	SIGNAL_HANDLER
 	if(subscribed && owner && event_visible(from_ref, to_ref, route))
-		event_refresh_until = max(event_refresh_until, world.time + 4 SECONDS)
+		event_refresh_until = max(event_refresh_until, world.time + lifetime)
 		owner.invalidate_ui()
 
 /// Events only animate visible endpoints and route segments. A packet elsewhere
@@ -337,7 +337,7 @@
 /datum/netrun_map_view/proc/reconcile_visible_events()
 	events_need_reconcile = FALSE
 	for(var/list/event as anything in SSnetrun.events)
-		var/until = event["t"] + 4 SECONDS
+		var/until = event["until"] || event["t"] + NETRUN_MAP_EVENT_LIFETIME
 		if(until <= world.time || !event_visible(event["from"], event["to"], event["route"]))
 			continue
 		event_refresh_until = max(event_refresh_until, until)

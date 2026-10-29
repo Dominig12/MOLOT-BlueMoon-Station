@@ -10,7 +10,7 @@
 	slot_flags = ITEM_SLOT_BELT
 	var/datum/netrun_console/console
 	var/buffer_bonus = 0
-	var/storage_capacity = 8
+	var/storage_capacity = 8 * NETRUN_STORAGE_SCALE
 	/// Дека перегорела от ответного удара и до этого времени не работает
 	var/burnt_until = 0
 
@@ -33,7 +33,7 @@
 		. += span_warning("Из корпуса тянет горелой изоляцией. Ещё [round((burnt_until - world.time) / (1 SECONDS))] сек.")
 	if(console?.connection.jack)
 		. += span_notice("Кабель подключён к [console.connection.jack.get_name()].")
-	. += span_notice("Буфер взлома: +[buffer_bonus]. Память: [console ? netrun_storage_used(console.inventory.local_store.files) : 0]/[storage_capacity].")
+	. += span_notice("Буфер взлома: +[buffer_bonus]. Память: [console ? netrun_storage_used(console.inventory.local_store.files) : 0]/[console ? console.inventory.local_store.capacity : storage_capacity].")
 
 /obj/item/netrun_deck/attack_self(mob/user)
 	if(world.time < burnt_until)
@@ -78,7 +78,7 @@
 	icon_state = "hand_tele"
 	color = "#7fbfff"
 	buffer_bonus = 1
-	storage_capacity = 16
+	storage_capacity = 16 * NETRUN_STORAGE_SCALE
 
 // MARK: Нейролинк
 
@@ -96,7 +96,7 @@
 	. = ..()
 	console = new(src, NETRUN_ORIGIN_IMPLANT)
 	console.connection.wireless = TRUE
-	console.inventory.local_store.capacity = 6
+	console.inventory.local_store.capacity = 6 * NETRUN_STORAGE_SCALE
 	console.state_override = GLOB.conscious_state
 	console.tgui_title = "Нейролинк"
 	AddComponent(/datum/component/netrun_access_device, console, NETRUN_NODE_IMPLANT)

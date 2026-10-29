@@ -72,7 +72,7 @@ SUBSYSTEM_DEF(netrun)
 	var/breach_snapshot_active = FALSE
 	var/reconcile_nodes = FALSE
 	/// Общая лента недавних событий сети - её видят все раннеры на карте.
-	/// list(list("kind","from","to","t"))
+	/// list(list("kind","from","to","t","until","route"[,"packet"]))
 	var/list/events = list()
 	var/datum/netrun_topology/topology
 
@@ -540,26 +540,65 @@ SUBSYSTEM_DEF(netrun)
 	return network
 
 /// Зарегистрировать событие сети: его отрисуют карты всех активных раннеров.
-/datum/controller/subsystem/netrun/proc/post_event(kind, from_ref, to_ref, list/route)
-	events += list(list("kind" = kind, "from" = from_ref, "to" = to_ref, "t" = world.time, "route" = route?.Copy()))
-	if(length(events) > 40)
-		events.Cut(1, length(events) - 40 + 1)
-	SEND_SIGNAL(src, COMSIG_NETRUN_EVENT_POSTED, kind, from_ref, to_ref, route)
+/// `packet` describes a flight: list("id", "packet", "phase", "duration", "label", "owner").
+/datum/controller/subsystem/netrun/proc/post_event(kind, from_ref, to_ref, list/route, list/packet)
+	var/duration = packet ? max(0, packet["duration"] || 0) : 0
+	var/lifetime = max(NETRUN_MAP_EVENT_LIFETIME, duration + NETRUN_MAP_EVENT_TAIL)
+	var/list/event = list("kind" = kind, "from" = from_ref, "to" = to_ref, "t" = world.time, "until" = world.time + lifetime, "route" = route?.Copy())
+	if(packet)
+		event["packet"] = packet.Copy()
+	events += list(event)
+	if(length(events) > NETRUN_MAX_MAP_EVENTS)
+		events.Cut(1, length(events) - NETRUN_MAX_MAP_EVENTS + 1)
+	SEND_SIGNAL(src, COMSIG_NETRUN_EVENT_POSTED, kind, from_ref, to_ref, route, lifetime)
+
+/// A packet flight is published once at dispatch, with its real transit time and hops.
+/// The outcome is a second, short event; neither retains the packet or its payload.
+/datum/controller/subsystem/netrun/proc/post_packet(datum/netrun_packet_context/operation, phase)
+	if(!operation)
+		return
+	var/datum/netrun_console/owner = operation.console_ref?.resolve()
+	var/list/packet = list("id" = operation.id, "packet" = operation.kind, "phase" = phase,
+		"duration" = phase == "send" ? operation.eta : 0, "label" = operation.label,
+		"owner" = owner ? REF(owner) : null)
+	post_event("packet", operation.from_address, operation.to_address, operation.route, packet)
 
 /// Недавние события (последние секунды) для интерфейса
 /datum/controller/subsystem/netrun/proc/recent_events(datum/netrun_console/viewer)
 	. = list()
+	var/viewer_ref = viewer ? REF(viewer) : null
 	for(var/list/event as anything in events)
-		var/age = world.time - event["t"]
-		if(age > 4 SECONDS)
+		if(world.time >= (event["until"] || event["t"] + NETRUN_MAP_EVENT_LIFETIME))
 			continue
+		var/age = world.time - event["t"]
 		var/list/path = event["route"]
-		if(path && viewer)
-			path = path.Copy()
-			for(var/i in 1 to length(path))
-				if(!viewer.map_view.shown_addresses[path[i]])
-					path[i] = ""
-		. += list(list("kind" = event["kind"], "from" = event["from"], "to" = event["to"], "age" = round(age / (1 SECONDS), 0.1), "route" = path))
+		var/from_ref = event["from"]
+		var/to_ref = event["to"]
+		var/list/packet = event["packet"]
+		if(viewer)
+			var/list/shown = viewer.map_view.shown_addresses
+			if(path)
+				path = path.Copy()
+				for(var/i in 1 to length(path))
+					if(!shown[path[i]])
+						path[i] = ""
+			// A flight never discloses an endpoint of a closed LAN to an unrelated map.
+			if(packet)
+				if(!shown[from_ref])
+					from_ref = null
+				if(!shown[to_ref])
+					to_ref = null
+		var/list/entry = list("kind" = event["kind"], "from" = from_ref, "to" = to_ref, "age" = round(age / (1 SECONDS), 0.1), "route" = path)
+		if(packet)
+			var/own = !!viewer_ref && packet["owner"] == viewer_ref
+			entry["id"] = packet["id"]
+			entry["packet"] = packet["packet"]
+			entry["phase"] = packet["phase"]
+			entry["duration"] = round(packet["duration"] / (1 SECONDS), 0.01)
+			entry["own"] = own
+			// Command names stay private to the sender; other maps only see the packet class.
+			entry["label"] = own ? packet["label"] : null
+		. += list(entry)
 
 /datum/controller/subsystem/netrun/proc/get_command(id)
 	if(!commands)

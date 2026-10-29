@@ -3,7 +3,7 @@
 	display_name = "Сетевая инфраструктура"
 	description = "Проводные терминалы, серверы данных и инструменты для работы с локальными сетями станции."
 	prereq_ids = list("comptech", "datatheory")
-	design_ids = list("netrun_terminal", "netrun_server", "netrun_shard", "netrun_deck", "netrun_daemon_buffer", "netrun_daemon_autobreach")
+	design_ids = list("netrun_terminal", "netrun_server", "netrun_shard", "netrun_deck", "netrun_daemon_buffer", "netrun_daemon_autobreach", "netrun_daemon_forge", "netrun_agent_mender")
 	research_costs = list(TECHWEB_POINT_TYPE_GENERIC = 2000)
 
 /datum/techweb_node/netrunning_neural
@@ -11,7 +11,7 @@
 	display_name = "Нейросетевые интерфейсы"
 	description = "Прямое подключение нервной системы к сети и выращивание самообучающихся сетевых процессов."
 	prereq_ids = list("netrunning", "cyber_implants")
-	design_ids = list("ci-netlink", "netrun_seed", "netrun_deck_advanced", "netrun_daemon_icepick", "netrun_daemon_cloak")
+	design_ids = list("ci-netlink", "netrun_seed", "netrun_deck_advanced", "netrun_daemon_icepick", "netrun_daemon_cloak", "netrun_agent_sentinel")
 	research_costs = list(TECHWEB_POINT_TYPE_GENERIC = 4000)
 
 /datum/design/board/netrun_terminal

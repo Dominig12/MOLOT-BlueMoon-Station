@@ -1,0 +1,232 @@
+/**
+ * Программа поведения автономного бота: сторона, снаряжение и план.
+ * Новый архетип - подтип со своим `id`; реестр находит его сам.
+ */
+/datum/netrun_bot_program
+	var/id
+	var/name = "Автономный процесс"
+	var/desc = ""
+	var/faction = NETRUN_FACTION_ROGUE
+	/// Sanctioned station processes do not wake ICE and are trusted by station fortresses.
+	var/sanctioned = FALSE
+	var/max_integrity = 100
+	var/storage = 8 * NETRUN_STORAGE_SCALE
+	/// Combat programs installed as real files at spawn.
+	var/list/programs = list()
+	var/name_prefix = "PROC"
+	var/avatar = "orb"
+	var/accent = "silver"
+	var/tagline = ""
+	var/console_type = /datum/netrun_console/entity/bot
+	var/think_idle = 4 SECONDS
+	var/think_busy = 2 SECONDS
+	var/think_combat = 1.2 SECONDS
+	/// Below this share of integrity the bot leaves a fight it can leave.
+	var/flee_ratio = 0.3
+	/// Programs distributed as launchable `.bot` files have a non-zero size.
+	var/file_size = 0
+	/// The spawn LAN's key file lets the bot move freely inside that LAN, like a patrol.
+	var/carries_lan_key = FALSE
+
+/datum/netrun_bot_program/proc/equip(mob/camera/netrun_entity/bot/bot)
+	for(var/id in programs)
+		var/datum/netrun_file/file = netrun_program_file(id)
+		if(file && !bot.console.store_file(file))
+			qdel(file)
+	var/datum/netrun_network/network = bot.host_node?.network
+	if(carries_lan_key && network && !network.isolated)
+		bot.console.store_file(new /datum/netrun_file("[network.id].key", NETRUN_FILE_KEY, network.passcode, 1, network.id))
+
+/datum/netrun_bot_program/proc/on_spawn(mob/camera/netrun_entity/bot/bot)
+	return
+
+/// Queue goals when the bot has none.
+/datum/netrun_bot_program/proc/plan(datum/netrun_bot_brain/brain)
+	brain.push_goal(new /datum/netrun_bot_goal/patrol(brain, patrol_networks(brain)))
+
+/// Processes this program attacks on sight (besides ICE attacking it and remembered attackers).
+/datum/netrun_bot_program/proc/is_enemy(datum/netrun_bot_brain/brain, mob/camera/netrun_entity/entity)
+	var/mob/camera/netrun_entity/bot/other = entity
+	if(!istype(other))
+		return FALSE
+	return netrun_bot_factions_hostile(brain.owner.net_faction, other.net_faction)
+
+/// Patrol scope: null means every reachable LAN.
+/datum/netrun_bot_program/proc/patrol_networks(datum/netrun_bot_brain/brain)
+	var/datum/netrun_network/network = brain.owner.host_node?.network
+	return network ? list(network.id) : null
+
+/// Rogue processes fight everybody else; station and private processes coexist.
+/proc/netrun_bot_factions_hostile(first, second)
+	if(!first || !second || first == second)
+		return FALSE
+	return first == NETRUN_FACTION_ROGUE || second == NETRUN_FACTION_ROGUE
+
+/datum/controller/subsystem/netrun
+	var/list/datum/netrun_bot_program/bot_programs
+
+/datum/controller/subsystem/netrun/proc/get_bot_program(id)
+	RETURN_TYPE(/datum/netrun_bot_program)
+	if(!bot_programs)
+		bot_programs = list()
+		for(var/datum/netrun_bot_program/path as anything in subtypesof(/datum/netrun_bot_program))
+			if(initial(path.id))
+				var/datum/netrun_bot_program/program = new path
+				bot_programs[program.id] = program
+	return istext(id) ? bot_programs[id] : null
+
+/// A launchable agent program as a real file.
+/proc/netrun_bot_file(id)
+	var/datum/netrun_bot_program/program = SSnetrun.get_bot_program(id)
+	if(!program?.file_size)
+		return null
+	return new /datum/netrun_file("[id].bot", NETRUN_FILE_BOT, id, program.file_size)
+
+// MARK: Дикие процессы
+
+/// Рейдер бродит по своей ЛВС, дерётся с ICE и чужими процессами и подбирает обломки.
+/datum/netrun_bot_program/raider
+	id = NETRUN_BOT_RAIDER
+	name = "Рейдер"
+	desc = "Дикий боевой процесс: дерётся с ICE и станционными процессами своей ЛВС, подбирает обломки."
+	faction = NETRUN_FACTION_ROGUE
+	max_integrity = 120
+	programs = list("assault", "strike", "barrier")
+	name_prefix = "RAID"
+	avatar = "fox"
+	accent = "rose"
+	tagline = "ищет драку"
+	flee_ratio = 0.2
+	carries_lan_key = TRUE
+
+/datum/netrun_bot_program/raider/plan(datum/netrun_bot_brain/brain)
+	var/datum/component/netrun_node/salvage = brain.find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_has_salvage))
+	if(salvage)
+		brain.push_goal(new /datum/netrun_bot_goal/salvage(brain, salvage))
+		return
+	var/datum/component/netrun_node/prey = brain.find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_has_ice))
+	if(prey)
+		brain.push_goal(new /datum/netrun_bot_goal/travel(brain, prey))
+		return
+	return ..()
+
+// MARK: Станционные процессы
+
+/// Санитар чинит станционные крепости своего отдела и сообщает полиции о диких процессах.
+/datum/netrun_bot_program/custodian
+	id = NETRUN_BOT_CUSTODIAN
+	name = "Санитар сети"
+	desc = "Станционный процесс обслуживания: чинит крепости отдела и сообщает полиции о диких процессах."
+	faction = NETRUN_FACTION_STATION
+	sanctioned = TRUE
+	max_integrity = 100
+	programs = list("strike", "patch")
+	name_prefix = "CLEAN"
+	avatar = "orb"
+	accent = "mint"
+	tagline = "обслуживание сети"
+	console_type = /datum/netrun_console/entity/bot/custodian
+	think_idle = 6 SECONDS
+
+/datum/netrun_bot_program/custodian/patrol_networks(datum/netrun_bot_brain/brain)
+	var/datum/netrun_console/entity/bot/custodian/console = brain.owner.console
+	return istype(console) && length(console.jurisdiction) ? console.jurisdiction : ..()
+
+/datum/netrun_bot_program/custodian/plan(datum/netrun_bot_brain/brain)
+	var/list/scope = patrol_networks(brain)
+	for(var/address in SSnetrun.fortress_nodes)
+		var/datum/component/netrun_node/node = SSnetrun.fortress_nodes[address]
+		if(QDELETED(node) || node.fortress?.faction != NETRUN_FACTION_STATION || !node.network || (scope && !(node.network.id in scope)))
+			continue
+		if(length(node.fortress.damaged_modules()) && !brain.is_blacklisted(address))
+			brain.push_goal(new /datum/netrun_bot_goal/repair(brain, node))
+			return
+	brain.push_goal(new /datum/netrun_bot_goal/patrol(brain, scope))
+
+/datum/netrun_bot_program/custodian/on_spawn(mob/camera/netrun_entity/bot/bot)
+	bot.brain.watch_for_rogues = TRUE
+
+// MARK: Агенты игроков
+
+/// Страж занимает узел и атакует посторонние процессы в нём.
+/datum/netrun_bot_program/sentinel
+	id = NETRUN_BOT_SENTINEL
+	name = "Агент-страж"
+	desc = "Охраняет указанный узел: атакует процессы без доступа ПОЛЬЗОВАТЕЛЯ, кроме владельца и его агентов."
+	faction = NETRUN_FACTION_OWNER
+	max_integrity = 120
+	storage = 4 * NETRUN_STORAGE_SCALE
+	programs = list("strike", "blackout", "barrier")
+	name_prefix = "GUARD"
+	avatar = "eye"
+	accent = "violet"
+	tagline = "охраняет узел"
+	file_size = 4
+
+/datum/netrun_bot_program/sentinel/plan(datum/netrun_bot_brain/brain)
+	brain.push_goal(new /datum/netrun_bot_goal/guard(brain, brain.post_node()))
+
+/datum/netrun_bot_program/sentinel/is_enemy(datum/netrun_bot_brain/brain, mob/camera/netrun_entity/entity)
+	if(..())
+		return TRUE
+	return brain.at_post() && brain.trespasser(entity)
+
+/// Ремонтник обслуживает крепости владельца в указанном узле.
+/datum/netrun_bot_program/mender
+	id = NETRUN_BOT_MENDER
+	name = "Агент-ремонтник"
+	desc = "Держится у указанного узла и чинит крепость владельца, пока у неё есть повреждения."
+	faction = NETRUN_FACTION_OWNER
+	max_integrity = 80
+	storage = 4 * NETRUN_STORAGE_SCALE
+	programs = list("patch")
+	name_prefix = "MEND"
+	avatar = "ghost"
+	accent = "mint"
+	tagline = "чинит укрепления"
+	file_size = 4
+
+/datum/netrun_bot_program/mender/plan(datum/netrun_bot_brain/brain)
+	var/datum/component/netrun_node/post = brain.post_node()
+	if(post?.fortress && length(post.fortress.damaged_modules()))
+		brain.push_goal(new /datum/netrun_bot_goal/repair(brain, post))
+		return
+	brain.push_goal(new /datum/netrun_bot_goal/guard(brain, post))
+
+/obj/item/netrun_shard/agent_sentinel
+	name = "data shard (sentinel.bot)"
+	desc = "Шард с программой агента-стража. Запустите её из памяти сетевого клиента."
+	icon_state = "datadisk3"
+
+/obj/item/netrun_shard/agent_sentinel/Initialize(mapload)
+	. = ..()
+	file_store.insert(netrun_bot_file(NETRUN_BOT_SENTINEL), TRUE)
+
+/obj/item/netrun_shard/agent_mender
+	name = "data shard (mender.bot)"
+	desc = "Шард с программой агента-ремонтника. Запустите её из памяти сетевого клиента."
+	icon_state = "datadisk3"
+
+/obj/item/netrun_shard/agent_mender/Initialize(mapload)
+	. = ..()
+	file_store.insert(netrun_bot_file(NETRUN_BOT_MENDER), TRUE)
+
+/datum/design/netrun_agent_mender
+	name = "Mender Agent Program"
+	desc = "Шард с mender.bot: агент чинит крепость владельца."
+	id = "netrun_agent_mender"
+	build_type = PROTOLATHE
+	materials = list(/datum/material/glass = 600, /datum/material/gold = 200, /datum/material/silver = 200)
+	build_path = /obj/item/netrun_shard/agent_mender
+	category = list("Computer Parts")
+	departmental_flags = DEPARTMENTAL_FLAG_ENGINEERING | DEPARTMENTAL_FLAG_SCIENCE
+
+/datum/design/netrun_agent_sentinel
+	name = "Sentinel Agent Program"
+	desc = "Шард с sentinel.bot: агент охраняет узел."
+	id = "netrun_agent_sentinel"
+	build_type = PROTOLATHE
+	materials = list(/datum/material/glass = 700, /datum/material/gold = 300, /datum/material/silver = 300)
+	build_path = /obj/item/netrun_shard/agent_sentinel
+	category = list("Computer Parts")
+	departmental_flags = DEPARTMENTAL_FLAG_ENGINEERING | DEPARTMENTAL_FLAG_SCIENCE

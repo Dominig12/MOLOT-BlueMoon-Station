@@ -4,17 +4,27 @@ import { GRAPH_TILE } from './graphLayout';
 import { boxesIntersect, GraphBox, GraphOverlay, markerColor, markerScale, physicalPoint, segmentBox } from './graphPresentation';
 import type { GraphScene, PlacedNode } from './graphScene';
 import type { GraphPoint } from './mapLayout';
-import { destroyDisplay, edgeColor, markerPath, pixiColor, PixiLibrary, segmentPath } from './pixiPrimitives';
-import type { NetEdge } from './types';
+import { drawBody, drawGlyph, GLYPH_MIN_ZOOM, glyphRadius } from './nodeGlyphs';
+import { destroyDisplay, edgeColor, edgeWidth, pixiColor, PixiLibrary, segmentPath, strokeLod } from './pixiPrimitives';
+import { FACTION_COLORS, NetEdge, NetEvent, PACKET_COLORS } from './types';
 
 type Actor = { group: Container; body: Graphics; marks: Graphics; labels: Text[]; node: PlacedNode;
   signature: string; px: number; py: number; fromX: number; fromY: number; movedAt: number; appearedAt: number };
 type Link = { graphic: Graphics; signature: string; bounds: GraphBox };
-type Segment = { from: GraphPoint; to: GraphPoint; length: number };
+type Segment = { from: GraphPoint; to: GraphPoint; length: number; jump?: boolean };
 type Route = { graphic: Graphics; signature: string; segments: Segment[]; until: number; began: number; tint: number };
 type Traffic = { born: number; point: GraphPoint; tint: number; segments: Segment[] };
 type Pulse = { born: number; point: GraphPoint; tint: number };
+/** One packet in flight (send) or its outcome ring (done/fail), keyed so repeated pushes keep its clock. */
+type Flight = { key: string; phase: 'send' | 'done' | 'fail'; born: number; duration: number;
+  segments: Segment[]; end: GraphPoint | null; tint: number; own: boolean };
 const NO_BOX: GraphBox = { left: -Infinity, right: Infinity, top: -Infinity, bottom: Infinity };
+const FLIGHT_MIN_MS = 350;
+const ARRIVAL_MS = 900;
+const OUTCOME_MS = 1200;
+const MAX_FLIGHTS = 48;
+const DONE_TINT = 0x5bdab1;
+const FAIL_TINT = pixiColor(PACKET_COLORS.fail, 0xff6470);
 const sameOverlayData = (a: GraphOverlay | null, b: GraphOverlay) => a
   && a.gateways === b.gateways && a.entityHost === b.entityHost && a.jacked === b.jacked
   && a.selectedRoute === b.selectedRoute && a.waypointRoute === b.waypointRoute
@@ -22,6 +32,7 @@ const sameOverlayData = (a: GraphOverlay | null, b: GraphOverlay) => a
 const sameLocalState = (a: GraphOverlay, b: GraphOverlay) => a.selected === b.selected
   && a.hovered === b.hovered && a.selectionPending === b.selectionPending;
 const needsActor = (node: PlacedNode, overlay: GraphOverlay) => node.dynamic || node.entities || node.ice || node.active
+  || node.bots || node.police || node.fortress
   || node.type === 'gateway' || node.type === 'relay' || node.address === overlay.selected
   || node.address === overlay.hovered || node.address === overlay.entityHost || node.address === overlay.jacked;
 const pointOn = (segments: Segment[], progress: number) => {
@@ -35,6 +46,7 @@ const pointOn = (segments: Segment[], progress: number) => {
   }
   return segments[segments.length - 1]?.to;
 };
+const packetTint = (event: NetEvent) => pixiColor(PACKET_COLORS[event.packet ?? ''], pixiColor(PACKET_COLORS.command, 0xffc26b));
 
 /** Keyed live objects: moving one endpoint never retessellates the stationary map. */
 export class PixiActors {
@@ -54,8 +66,10 @@ export class PixiActors {
   private selectedSignature = '';
   private traffic: Traffic[] = [];
   private pulses: Pulse[] = [];
+  private flights = new Map<string, Flight>();
   private zoom = 1;
   private scale = 1;
+  private lod = 1;
   private detailed = true;
   private bounds = NO_BOX;
   private reducedMotion = false;
@@ -145,83 +159,173 @@ export class PixiActors {
       const a = scene.byAddress.get(edge.from), b = scene.byAddress.get(edge.to);
       if (!a || !b) { continue; }
       linkKeys.add(edge.id);
-      const from = physicalPoint(a), to = physicalPoint(b), signature = `${from.px},${from.py}:${to.px},${to.py}:${edge.kind}:${edge.online}`;
       let retained = this.links.get(edge.id);
       if (!retained) {
-        retained = { graphic: new this.pixi.Graphics(), signature: '', bounds: segmentBox(from, to) };
+        retained = { graphic: new this.pixi.Graphics(), signature: '', bounds: NO_BOX };
         retained.graphic.label = `edge:${edge.id}`; this.links.set(edge.id, retained); this.linkLayer.addChild(retained.graphic);
       }
-      retained.bounds = segmentBox(from, to);
-      if (retained.signature !== signature) {
-        retained.signature = signature;
-        retained.graphic.clear().moveTo(from.px, from.py).lineTo(to.px, to.py)
-          .stroke({ color: edgeColor(edge.kind, edge.online !== false), width: 1, alpha: edge.online === false ? .12 : .3 });
-      }
+      this.paintLink(retained, edge, physicalPoint(a), physicalPoint(b));
     }
     for (const [id, link] of this.links) { if (!linkKeys.has(id)) { destroyDisplay(link.graphic); this.links.delete(id); } }
     this.paintPaths();
     this.paintRoute(overlay.selectedRoute, this.routes[0]); this.paintRoute(overlay.waypointRoute, this.routes[1]);
     this.paintPing(now);
-    if (!localOnly) { this.traffic = overlay.events.filter((event) => event.age < 4).flatMap((event) => {
-      const point = scene.byAddress.get(event.to) || scene.byAddress.get(event.from);
-      const tint = event.kind === 'trace' ? 0xf56670 : event.kind === 'machine' ? 0x50e8c0 : event.kind === 'dns' ? 0x79adff : 0xffc26b;
-      return point ? [{ born: now - Math.max(0, event.age) * 1000, point, tint,
-        segments: event.route ? this.segments(event.route) : this.eventPath(event.from, event.to) }] : [];
-    }); }
+    if (!localOnly) {
+      this.traffic = overlay.events.filter((event) => event.kind !== 'packet' && event.age < 4).flatMap((event) => {
+        const point = scene.byAddress.get(event.to) || scene.byAddress.get(event.from);
+        const tint = event.kind === 'trace' ? 0xf56670 : event.kind === 'machine' ? 0x50e8c0 : event.kind === 'dns' ? 0x79adff : 0xffc26b;
+        return point ? [{ born: now - Math.max(0, event.age) * 1000, point, tint,
+          segments: event.route ? this.segments(event.route) : this.eventPath(event.from, event.to) }] : [];
+      });
+      this.syncFlights(overlay.events, now);
+    }
     if (this.pulses.length > 24) { this.pulses.splice(0, this.pulses.length - 24); }
     this.setViewport(this.bounds, this.zoom); return true;
   }
 
+  private paintLink(link: Link, edge: NetEdge, from: GraphPoint, to: GraphPoint) {
+    const signature = `${from.px},${from.py}:${to.px},${to.py}:${edge.kind}:${edge.online}:${this.lod}`;
+    link.bounds = segmentBox(from, to);
+    if (link.signature === signature) { return; }
+    link.signature = signature;
+    link.graphic.clear().moveTo(from.px, from.py).lineTo(to.px, to.py)
+      .stroke({ color: edgeColor(edge.kind, edge.online !== false), width: edgeWidth(edge.kind) * this.lod, alpha: edge.online === false ? .18 : .5 });
+  }
+
+  /** Bots, police and fortresses decorate the live node; bodies of static nodes stay in scenery. */
   private paintActor(actor: Actor) {
     const node = actor.node, overlay = this.overlay!;
     const selected = node.address === overlay.selected, hosted = node.address === overlay.entityHost;
     const jacked = node.address === overlay.jacked, hovered = node.address === overlay.hovered;
     const fill = pixiColor(markerColor(node), 0x678698), border = pixiColor(overlay.gateways.get(node.network)?.color, 0x82a9ba);
-    const signature = `${node.type}:${!!node.dynamic}:${fill}:${border}:${node.entities}:${node.ice}:${node.active}:${selected}:${overlay.selectionPending}:${hosted}:${jacked}:${hovered}:${this.scale}:${this.detailed}`;
+    const fortress = node.fortress;
+    const fortressKey = fortress ? `${fortress.tier}/${fortress.walls}/${fortress.faction}/${fortress.damaged}/${fortress.online}` : '';
+    const signature = `${node.type}:${!!node.dynamic}:${node.online}:${fill}:${border}:${node.entities}:${node.ice}:${node.bots || 0}:${!!node.police}:${fortressKey}:${node.active}:${selected}:${overlay.selectionPending}:${hosted}:${jacked}:${hovered}:${this.scale}:${this.detailed}`;
     if (actor.signature === signature) { return; }
     actor.signature = signature; actor.body.clear(); actor.marks.clear();
     // No LOD enlargement of ordinary device bodies. This scale is reserved
     // for LAN/ICE/entity contours (never the underlying node).
-    if (node.dynamic) { markerPath(actor.body, node.type, 0, 0, 1).fill({ color: fill }).stroke({ color: border, width: 1.5 }); }
-    const marks = actor.marks, scale = node.ice || node.entities
+    if (node.dynamic) {
+      drawBody(actor.body, node.type, 0, 0, fill, border, node.online);
+      if (this.zoom >= GLYPH_MIN_ZOOM) { drawGlyph(actor.body, node.type, 0, 0); }
+    }
+    const radius = glyphRadius(node.type), marks = actor.marks;
+    const scale = node.ice || node.entities || node.bots || node.police || fortress
       || node.type === 'gateway' || node.type === 'relay' ? this.scale : 1;
+    if (fortress) { this.paintFortress(marks, fortress, (radius + 9) * scale, scale); }
     if (node.type === 'gateway' || node.type === 'relay') {
-      marks.circle(0, 0, 19 * scale)
+      marks.circle(0, 0, (radius + 5) * scale)
         .stroke({ color: border, width: Math.min(3, scale * 1.3), alpha: .64 });
     }
     if (selected || hosted || jacked || hovered) {
-      marks.circle(0, 0, hovered && !selected ? 18 : 21).stroke({ color: selected ? overlay.selectionPending ? 0xffd18a : 0xeafff5 : hosted ? 0xf8a3e6 : jacked ? 0x65b4d5 : 0x8ed1ea, width: selected ? 2 : 1.3, alpha: .95 });
-      if (selected) { marks.circle(0, 0, 25).stroke({ color: 0x70e6cd, width: 1, alpha: .25 }); }
+      marks.circle(0, 0, radius + (hovered && !selected ? 5 : 8)).stroke({ color: selected ? overlay.selectionPending ? 0xffd18a : 0xeafff5 : hosted ? 0xf8a3e6 : jacked ? 0x65b4d5 : 0x8ed1ea, width: selected ? 2.4 : 1.6, alpha: .95 });
+      if (selected) { marks.circle(0, 0, radius + 12).stroke({ color: 0x70e6cd, width: 1.2, alpha: .3 }); }
     }
     if (node.ice) {
-      marks.circle(0, 0, 23 * scale).stroke({ color: 0xef6b7c, width: 1.5 * scale, alpha: .8 });
-      marks.circle(-16 * scale, -16 * scale, (this.detailed ? 8 : 4) * scale).fill({ color: 0xff6470 });
-      marks.circle(0, 0, 28 * scale).stroke({ color: 0xff6470, width: Math.min(2.5, 1.1 * scale), alpha: .28 });
-    } else if (node.active) { marks.circle(0, 0, 18 * scale).stroke({ color: 0xffc26b, width: 1.5 * scale, alpha: .8 }); }
-    if (node.entities) { marks.roundRect(10 * scale, -23 * scale, (this.detailed ? 16 : 7) * scale, (this.detailed ? 13 : 7) * scale, 2 * scale).fill({ color: 0xf19bdc }); }
-    const badges = this.detailed ? [node.ice ? { value: String(node.ice), x: -16 * scale, y: -16 * scale, color: 0x2d1017 } : null,
-      node.entities ? { value: String(node.entities), x: 18 * scale, y: -16 * scale, color: 0x2d1026 } : null].filter(Boolean) : [];
+      marks.circle(0, 0, (radius + 10) * scale).stroke({ color: 0xef6b7c, width: 1.6 * scale, alpha: .8 });
+      marks.circle(-(radius + 4) * scale, -(radius + 4) * scale, (this.detailed ? 8 : 4) * scale).fill({ color: 0xff6470 });
+      marks.circle(0, 0, (radius + 15) * scale).stroke({ color: 0xff6470, width: Math.min(2.5, 1.1 * scale), alpha: .28 });
+    } else if (node.active) { marks.circle(0, 0, (radius + 5) * scale).stroke({ color: 0xffc26b, width: 1.6 * scale, alpha: .8 }); }
+    if (node.entities) {
+      marks.roundRect((radius - 2) * scale, -(radius + 10) * scale, (this.detailed ? 16 : 7) * scale, (this.detailed ? 13 : 7) * scale, 2 * scale).fill({ color: 0xf19bdc });
+    }
+    if (node.bots) {
+      marks.roundRect((radius - 2) * scale, (radius - 3) * scale, (this.detailed ? 16 : 7) * scale, (this.detailed ? 13 : 7) * scale, 3 * scale)
+        .fill({ color: 0xc9e66b }).stroke({ color: 0x1c2a10, width: scale, alpha: .8 });
+    }
+    if (node.police) {
+      // Shield badge: police presence reads at a glance even at overview zoom.
+      const s = scale * (this.detailed ? 1 : .6), x = -(radius + 6) * scale, y = (radius - 2) * scale;
+      marks.moveTo(x, y).lineTo(x + 14 * s, y).lineTo(x + 14 * s, y + 8 * s).lineTo(x + 7 * s, y + 15 * s).lineTo(x, y + 8 * s).closePath()
+        .fill({ color: 0x6fb6ff }).stroke({ color: 0xe8f4ff, width: scale, alpha: .9 });
+    }
+    const badges = this.detailed ? [node.ice ? { value: String(node.ice), x: -(radius + 4) * scale, y: -(radius + 4) * scale, color: 0x2d1017 } : null,
+      node.entities ? { value: String(node.entities), x: (radius + 6) * scale, y: -(radius + 4) * scale, color: 0x2d1026 } : null,
+      node.bots ? { value: String(node.bots), x: (radius + 6) * scale, y: (radius + 3) * scale, color: 0x1c2a10 } : null].filter(Boolean) : [];
     for (let i = 0; i < badges.length; i++) {
       const badge = badges[i]; let label = actor.labels[i];
       if (!label) {
         label = new this.pixi.Text({ text: '', style: { fontFamily: 'monospace', fontSize: 9, fill: badge.color } });
         label.anchor.set(.5); actor.group.addChild(label); actor.labels.push(label);
       }
-      label.text = badge.value; label.position.set(badge.x, badge.y); label.scale.set(1 / this.zoom); label.visible = true;
+      label.text = badge.value; label.style.fill = badge.color; label.position.set(badge.x, badge.y); label.scale.set(1 / this.zoom); label.visible = true;
     }
     for (let i = badges.length; i < actor.labels.length; i++) { actor.labels[i].visible = false; }
   }
 
-  private segments(addresses: string[]): Segment[] {
+  /** Crenellated ring in the faction colour: merlons for standing walls, a broken ring when damaged. */
+  private paintFortress(marks: Graphics, fortress: NonNullable<PlacedNode['fortress']>, ring: number, scale: number) {
+    const color = fortress.online ? pixiColor(FACTION_COLORS[fortress.faction], 0x6fb6ff) : 0x5d6b75;
+    const steps = 24;
+    for (let i = 0; i < steps; i++) {
+      if (fortress.damaged && i % 3 === 2) { continue; }
+      const a = i * 2 * Math.PI / steps, b = (i + 1) * 2 * Math.PI / steps;
+      marks.moveTo(Math.cos(a) * ring, Math.sin(a) * ring).lineTo(Math.cos(b) * ring, Math.sin(b) * ring);
+    }
+    marks.stroke({ color, width: 2.4 * scale, alpha: fortress.online ? .9 : .5 });
+    if (fortress.tier >= 3) {
+      marks.circle(0, 0, ring + 4 * scale).stroke({ color, width: 1.2 * scale, alpha: .45 });
+    }
+    const merlons = Math.max(4, fortress.walls * 2), size = 4 * scale;
+    for (let i = 0; i < merlons; i++) {
+      const angle = -Math.PI / 2 + i * 2 * Math.PI / merlons;
+      const x = Math.cos(angle) * ring, y = Math.sin(angle) * ring;
+      marks.rect(x - size / 2, y - size / 2, size, size);
+    }
+    marks.fill({ color, alpha: fortress.walls ? .95 : .4 });
+  }
+
+  /** Map edges carry the hop between adjacent nodes; relay jumps between visible relays are drawn straight. */
+  private segments(addresses: string[], allowJumps = false): Segment[] {
     const result: Segment[] = [];
     for (let i = 1; i < addresses.length; i++) {
       const a = this.scene!.byAddress.get(addresses[i - 1]), b = this.scene!.byAddress.get(addresses[i]);
-      if (!a || !b || !a.online || !b.online || !this.adjacency.get(a.address)?.has(b.address)
-        || this.blocked.has([a.address, b.address].sort().join('|'))) { continue; }
+      if (!a || !b || !a.online || !b.online || this.blocked.has([a.address, b.address].sort().join('|'))) { continue; }
+      const adjacent = !!this.adjacency.get(a.address)?.has(b.address);
+      if (!adjacent && !allowJumps) { continue; }
       const from = physicalPoint(a), to = physicalPoint(b);
-      result.push({ from, to, length: Math.hypot(to.px - from.px, to.py - from.py) });
+      result.push({ from, to, length: Math.hypot(to.px - from.px, to.py - from.py), jump: !adjacent });
     }
     return result;
+  }
+
+  /** Flights are keyed by packet id and phase; their clock starts once, at first receipt. */
+  private syncFlights(events: NetEvent[], now: number) {
+    const seen = new Set<string>();
+    for (const event of events) {
+      if (event.kind !== 'packet' || !event.id) { continue; }
+      const phase = event.phase === 'done' || event.phase === 'fail' ? event.phase : 'send';
+      const key = `${event.id}:${phase}`;
+      seen.add(key);
+      if (this.flights.has(key)) { continue; }
+      const born = now - Math.max(0, event.age) * 1000;
+      const end = this.scene!.byAddress.get(event.to) || null;
+      if (phase === 'send') {
+        let segments = event.route ? this.segments(event.route, true) : [];
+        const start = this.scene!.byAddress.get(event.from);
+        if (!segments.length && start && end && start !== end) {
+          segments = this.eventPath(event.from, event.to);
+        }
+        if (!segments.length && !end) { continue; }
+        const duration = Math.max(FLIGHT_MIN_MS, (event.duration || 0) * 1000);
+        if (now - born > duration + ARRIVAL_MS) { continue; }
+        this.flights.set(key, { key, phase, born, duration, segments, end: end ? physicalPoint(end) : segments[segments.length - 1]?.to || null,
+          tint: packetTint(event), own: !!event.own });
+      } else {
+        const point = end ? physicalPoint(end) : null;
+        if (!point || now - born > OUTCOME_MS) { continue; }
+        this.flights.set(key, { key, phase, born, duration: OUTCOME_MS, segments: [], end: point,
+          tint: phase === 'done' ? DONE_TINT : FAIL_TINT, own: !!event.own });
+      }
+    }
+    // Server events expire on their own; keep only flights the server still reports or that are mid-air.
+    for (const [key, flight] of this.flights) {
+      if (!seen.has(key) && now - flight.born > flight.duration + ARRIVAL_MS) { this.flights.delete(key); }
+    }
+    if (this.flights.size > MAX_FLIGHTS) {
+      const excess = [...this.flights.values()].sort((a, b) => a.born - b.born).slice(0, this.flights.size - MAX_FLIGHTS);
+      for (const flight of excess) { this.flights.delete(flight.key); }
+    }
   }
 
   private paintPaths() {
@@ -232,28 +336,28 @@ export class PixiActors {
     const anchors = this.moving.flatMap((node) => {
       const point = physicalPoint(node); return point.px === node.px && point.py === node.py ? [] : [{ from: point, to: node }];
     });
-    const signature = `${this.detailed}:${edges.length}:` + [...edges, ...anchors].map(({ from, to }) => `${from.px},${from.py}:${to.px},${to.py}`).join('|');
+    const signature = `${this.detailed}:${this.lod}:${edges.length}:` + [...edges, ...anchors].map(({ from, to }) => `${from.px},${from.py}:${to.px},${to.py}`).join('|');
     if (signature === this.selectedSignature) { return; }
     this.selectedSignature = signature; this.selectedLinks.clear();
     if (this.detailed) {
       for (const { from, to } of edges) { segmentPath(this.selectedLinks, from, to); }
-      this.selectedLinks.stroke({ color: 0x9ad0e0, width: edges.length > 24 ? .8 : 2, alpha: edges.length > 24 ? .16 : .7 });
+      this.selectedLinks.stroke({ color: 0x9ad0e0, width: (edges.length > 24 ? 1.2 : 2.8) * this.lod, alpha: edges.length > 24 ? .2 : .75 });
     }
     for (const { from, to } of anchors) { segmentPath(this.selectedLinks, from, to); }
-    if (anchors.length) { this.selectedLinks.stroke({ color: 0x75a3b4, width: 1.2, alpha: .5 }); }
+    if (anchors.length) { this.selectedLinks.stroke({ color: 0x75a3b4, width: 1.4 * this.lod, alpha: .5 }); }
   }
 
   private paintRoute(addresses: string[], route: Route, ping = false) {
     const segments = this.segments(addresses), path = segments.map(({ from, to }) => `${from.px},${from.py}:${to.px},${to.py}`).join('|');
-    const signature = path;
+    const signature = `${this.lod}|${path}`;
     if (route.signature === signature) { return; }
     route.signature = signature; route.segments = segments; route.graphic.clear();
     // Muted continuous path beneath bright dashes improves route legibility
     // at fractional zoom without shaders or multiple display objects.
     for (const segment of segments) { segmentPath(route.graphic, segment.from, segment.to); }
-    if (segments.length) { route.graphic.stroke({ color: route.tint, width: 4, alpha: .18 }); }
-    for (const segment of segments) { segmentPath(route.graphic, segment.from, segment.to, ping ? 5 : 10, 6); }
-    if (segments.length) { route.graphic.stroke({ color: route.tint, width: 2.5, alpha: .85 }); }
+    if (segments.length) { route.graphic.stroke({ color: route.tint, width: 6 * this.lod, alpha: .2 }); }
+    for (const segment of segments) { segmentPath(route.graphic, segment.from, segment.to, (ping ? 6 : 12) * this.lod, 7 * this.lod); }
+    if (segments.length) { route.graphic.stroke({ color: route.tint, width: 3.2 * this.lod, alpha: .9 }); }
   }
 
   private clearPing() {
@@ -288,14 +392,21 @@ export class PixiActors {
   }
 
   setViewport(bounds: GraphBox, zoom: number) {
-    const nextScale = markerScale(zoom), detailed = zoom >= .6;
-    const geometryChanged = this.scale !== nextScale || this.detailed !== detailed;
+    const nextScale = markerScale(zoom), detailed = zoom >= .6, lod = strokeLod(zoom);
+    const glyphsChanged = (this.zoom >= GLYPH_MIN_ZOOM) !== (zoom >= GLYPH_MIN_ZOOM);
+    const geometryChanged = this.scale !== nextScale || this.detailed !== detailed || this.lod !== lod || glyphsChanged;
     const zoomChanged = this.zoom !== zoom;
-    this.bounds = bounds; this.zoom = zoom; this.scale = nextScale; this.detailed = detailed;
+    this.bounds = bounds; this.zoom = zoom; this.scale = nextScale; this.detailed = detailed; this.lod = lod;
     for (const actor of this.nodes.values()) {
-      if (geometryChanged && this.overlay) { this.paintActor(actor); }
-      actor.group.visible = actor.px >= bounds.left - 32 * nextScale && actor.px <= bounds.right + 32 * nextScale && actor.py >= bounds.top - 32 * nextScale && actor.py <= bounds.bottom + 32 * nextScale;
+      if (geometryChanged && this.overlay) { actor.signature = ''; this.paintActor(actor); }
+      actor.group.visible = actor.px >= bounds.left - 48 * nextScale && actor.px <= bounds.right + 48 * nextScale && actor.py >= bounds.top - 48 * nextScale && actor.py <= bounds.bottom + 48 * nextScale;
       if (zoomChanged) { for (const label of actor.labels) { label.scale.set(1 / zoom); } }
+    }
+    if (geometryChanged && this.scene && this.dynamicEdges) {
+      for (const edge of this.dynamicEdges) {
+        const a = this.scene.byAddress.get(edge.from), b = this.scene.byAddress.get(edge.to), retained = this.links.get(edge.id);
+        if (a && b && retained) { this.paintLink(retained, edge, physicalPoint(this.pointFor(a)), physicalPoint(this.pointFor(b))); }
+      }
     }
     for (const link of this.links.values()) { link.graphic.visible = boxesIntersect(link.bounds, bounds); }
     if (geometryChanged && this.overlay) {
@@ -306,8 +417,61 @@ export class PixiActors {
 
   setReducedMotion(reduced: boolean) { this.reducedMotion = reduced; }
 
-  /** A static ping still needs one closing frame, without a reduced-motion RAF loop. */
-  get nextWake() { return this.routes[2].segments.length ? this.routes[2].until : null; }
+  /** Static pings and reduced-motion flights still need one closing frame, without a RAF loop. */
+  get nextWake() {
+    let wake: number | null = this.routes[2].segments.length ? this.routes[2].until : null;
+    for (const flight of this.flights.values()) {
+      const end = flight.born + flight.duration + (flight.phase === 'send' ? ARRIVAL_MS : 0);
+      wake = wake === null ? end : Math.min(wake, end);
+    }
+    return wake;
+  }
+
+  private drawFlight(flight: Flight, now: number) {
+    const elapsed = now - flight.born;
+    if (flight.phase !== 'send') {
+      if (!flight.end || elapsed >= flight.duration) { return false; }
+      const progress = Math.max(0, elapsed / flight.duration);
+      this.effects.circle(flight.end.px, flight.end.py, 16 + progress * 18)
+        .stroke({ color: flight.tint, width: 2.6 - progress, alpha: .9 * (1 - progress) });
+      if (flight.phase === 'fail') {
+        const r = 8;
+        this.effects.moveTo(flight.end.px - r, flight.end.py - r).lineTo(flight.end.px + r, flight.end.py + r)
+          .moveTo(flight.end.px + r, flight.end.py - r).lineTo(flight.end.px - r, flight.end.py + r)
+          .stroke({ color: flight.tint, width: 2.4, alpha: .9 * (1 - progress) });
+      }
+      return true;
+    }
+    if (elapsed >= flight.duration + ARRIVAL_MS) { return false; }
+    const width = (flight.own ? 3.2 : 2.2) * this.lod, radius = (flight.own ? 6 : 4.5) * Math.max(1, this.lod * .75);
+    if (this.reducedMotion) {
+      for (const segment of flight.segments) { segmentPath(this.effects, segment.from, segment.to); }
+      if (flight.segments.length) { this.effects.stroke({ color: flight.tint, width, alpha: .55 }); }
+      if (flight.end) { this.effects.circle(flight.end.px, flight.end.py, 22).stroke({ color: flight.tint, width: 1.5, alpha: .65 }); }
+      return true;
+    }
+    if (elapsed < flight.duration && flight.segments.length) {
+      const progress = Math.max(0, elapsed / flight.duration), tail = Math.max(0, progress - .16);
+      // Comet tail: the travelled stretch fades behind the packet.
+      const head = pointOn(flight.segments, progress), back = pointOn(flight.segments, tail);
+      if (head && back) {
+        for (let i = 1; i <= 4; i++) {
+          const point = pointOn(flight.segments, tail + (progress - tail) * i / 4);
+          if (point) { this.effects.circle(point.px, point.py, radius * (.35 + i * .12)).fill({ color: flight.tint, alpha: .15 + i * .12 }); }
+        }
+        this.effects.circle(head.px, head.py, radius).fill({ color: flight.tint, alpha: .95 });
+        for (const segment of flight.segments) {
+          if (segment.jump) { segmentPath(this.effects, segment.from, segment.to, 8 * this.lod, 8 * this.lod); }
+        }
+        this.effects.stroke({ color: flight.tint, width: 1.2 * this.lod, alpha: .35 });
+      }
+    } else if (flight.end) {
+      const progress = Math.min(1, Math.max(0, (elapsed - flight.duration) / ARRIVAL_MS));
+      this.effects.circle(flight.end.px, flight.end.py, 14 + progress * 18)
+        .stroke({ color: flight.tint, width: 2.4 - progress * 1.4, alpha: .85 * (1 - progress) });
+    }
+    return true;
+  }
 
   /** Only a finite effect/transition can request the next frame. Quiet maps do not tick. */
   animate(now: number) {
@@ -326,12 +490,7 @@ export class PixiActors {
       for (const edge of this.dynamicEdges || []) {
         const a = this.scene!.byAddress.get(edge.from), b = this.scene!.byAddress.get(edge.to), retained = this.links.get(edge.id);
         if (!a || !b || !retained) { continue; }
-        const from = physicalPoint(this.pointFor(a)), to = physicalPoint(this.pointFor(b));
-        const signature = `${from.px},${from.py}:${to.px},${to.py}:${edge.kind}:${edge.online}`;
-        if (retained.signature === signature) { continue; }
-        retained.signature = signature; retained.bounds = segmentBox(from, to);
-        retained.graphic.clear().moveTo(from.px, from.py).lineTo(to.px, to.py)
-          .stroke({ color: edgeColor(edge.kind, edge.online !== false), width: 1, alpha: edge.online === false ? .12 : .3 });
+        this.paintLink(retained, edge, physicalPoint(this.pointFor(a)), physicalPoint(this.pointFor(b)));
       }
     }
     this.effects.clear();
@@ -350,6 +509,10 @@ export class PixiActors {
       this.effects.circle(event.point.px, event.point.py, (20 + phase * 15)).stroke({ color: tint, width: 1.5, alpha: (1 - phase) * (1 - age / 4) });
       const packet = pointOn(event.segments, age % 1); if (packet) { this.effects.circle(packet.px, packet.py, 3).fill({ color: tint, alpha: .9 }); }
       animating = true;
+    }
+    for (const flight of [...this.flights.values()]) {
+      if (!this.drawFlight(flight, now)) { this.flights.delete(flight.key); continue; }
+      if (!this.reducedMotion) { animating = true; }
     }
     const ping = this.routes[2];
     if (ping.segments.length) {
@@ -382,5 +545,5 @@ export class PixiActors {
     }
     return best;
   }
-  destroy() { this.nodes.clear(); this.links.clear(); this.traffic = []; this.pulses = []; this.scene = null; this.overlay = null; destroyDisplay(this.world); }
+  destroy() { this.nodes.clear(); this.links.clear(); this.traffic = []; this.pulses = []; this.flights.clear(); this.scene = null; this.overlay = null; destroyDisplay(this.world); }
 }

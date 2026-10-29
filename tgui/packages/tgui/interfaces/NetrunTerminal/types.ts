@@ -11,13 +11,57 @@ export type NetNode = {
   online: boolean;
   access: number;
   can_hop?: boolean;
+  /** Player/ghost-role residents; autonomous bots are counted separately. */
   entities: number;
+  bots?: number;
+  /** A network police process is present on the node. */
+  police?: boolean;
   ice?: number;
   active: boolean;
   uplink: string | null;
   apc?: string | null;
   network?: string;
   sector?: string;
+  fortress?: FortressSummary | null;
+};
+
+export type NetFaction = 'station' | 'owner' | 'rogue';
+
+/** Map overlay summary of a node fortress (live layer, never static scenery). */
+export type FortressSummary = {
+  /** 1-3 by the number of intact modules. */
+  tier: number;
+  /** Intact walls (siege layer). */
+  walls: number;
+  faction: NetFaction;
+  damaged: boolean;
+  online: boolean;
+};
+
+export type FortressModule = {
+  ref: string;
+  kind: 'wall' | 'gate' | 'turret' | 'trap' | 'alarm' | 'vault' | 'regen';
+  name: string;
+  desc: string;
+  integrity: number;
+  max_integrity: number;
+  status: 'online' | 'building' | 'destroyed' | 'offline';
+  /** Remaining construction or re-arm time, seconds. */
+  remaining?: number | null;
+};
+
+export type FortressDetails = {
+  name: string;
+  owner: string | null;
+  faction: NetFaction;
+  preset: string | null;
+  security_bonus: number;
+  slots_used: number;
+  slots_max: number;
+  modules: FortressModule[];
+  /** The viewer may build, repair or dismantle (ROOT and forge.exe). */
+  can_manage: boolean;
+  manage_reason?: string | null;
 };
 
 export type NetCommand = {
@@ -35,6 +79,8 @@ export type NetCommand = {
   allowed: boolean;
   illegal: boolean;
   trace: number;
+  /** Rendered by a dedicated section (e.g. 'fortress') instead of the generic command list. */
+  group?: string | null;
 };
 
 export type NetFile = {
@@ -63,7 +109,12 @@ export type NodeInteraction = {
 export type EntityContact = {
   ref: string;
   name: string;
-  kind: 'entity' | 'ice';
+  kind: 'entity' | 'ice' | 'bot';
+  /** Bot archetype id (raider, custodian, police, sentinel, mender). */
+  bot_kind?: string | null;
+  faction?: NetFaction | null;
+  /** Current goal of a bot, in plain words. */
+  goal?: string | null;
   integrity: number;
   max_integrity: number;
   state: string;
@@ -86,6 +137,7 @@ export type SelectedNode = NetNode & {
   packets?: NetPacketHeader[];
   files?: NetFile[];
   storage?: { used: number; capacity: number };
+  fortress?: FortressDetails | null;
   lan?: {
     id: string;
     code: string;
@@ -182,7 +234,11 @@ export type Persona = {
 export type CombatTarget = {
   ref: string;
   name: string;
-  kind: 'entity' | 'ice';
+  kind: 'entity' | 'ice' | 'bot' | 'fortress';
+  bot_kind?: string | null;
+  faction?: NetFaction | null;
+  /** Fortress module kind for structure targets. */
+  module?: string | null;
   persona?: Persona;
   hostile: boolean;
   integrity: number;
@@ -310,6 +366,7 @@ export type NetrunData = {
   selected_network: SelectedNetwork | null;
   ping_route: PingHop[] | null;
   ping?: { id: number; remaining_ms: number } | null;
+  agents?: AgentState[] | null;
   events?: NetEvent[] | null;
   waypoint?: Waypoint | null;
   search?: SearchResult[] | null;
@@ -336,11 +393,40 @@ export type Waypoint = {
 };
 
 export type NetEvent = {
-  kind: 'command' | 'intrusion' | 'breach' | 'trace' | 'machine' | 'dns';
+  kind: 'command' | 'intrusion' | 'breach' | 'trace' | 'purge' | 'machine' | 'dns' | 'packet';
   from: string | null;
   to: string | null;
+  /** Seconds since the server posted the event. */
   age: number;
+  /** Hop addresses; undisclosed hops are "". */
   route?: string[] | null;
+  /** Packet flight id (kind === 'packet'). */
+  id?: string;
+  /** Packet class: command, remote, window, file, entity.signal, entity.message, machine… */
+  packet?: string;
+  /** send: dispatched with its real transit time; done/fail: outcome at the destination. */
+  phase?: 'send' | 'done' | 'fail';
+  /** Transit time in seconds (send phase). */
+  duration?: number;
+  /** The viewer's own packet. */
+  own?: boolean;
+  /** Operation label, only for the viewer's own packets. */
+  label?: string | null;
+};
+
+/** An autonomous agent launched by this console's owner. */
+export type AgentState = {
+  ref: string;
+  name: string;
+  bot_kind: string;
+  node: string | null;
+  node_name: string | null;
+  integrity: number;
+  max_integrity: number;
+  state: string;
+  goal: string | null;
+  storage: { used: number; capacity: number };
+  orders: { id: string; name: string; needs_node?: boolean }[];
 };
 
 export type Gateway = {
@@ -523,6 +609,70 @@ export const NODE_ICONS: Record<string, string> = {
   neural: 'brain',
   pai: 'robot',
   deck: 'keyboard',
+};
+
+/** Autonomous bot archetypes (server ids) and their display names. */
+export const BOT_NAMES: Record<string, string> = {
+  raider: 'Рейдер',
+  custodian: 'Санитар сети',
+  police: 'Сетевая полиция',
+  mender: 'Агент-ремонтник',
+  sentinel: 'Агент-страж',
+};
+
+export const BOT_ICONS: Record<string, string> = {
+  raider: 'skull',
+  custodian: 'broom',
+  police: 'shield-halved',
+  mender: 'screwdriver-wrench',
+  sentinel: 'tower-observation',
+};
+
+export const FACTION_COLORS: Record<string, string> = {
+  station: '#6fb6ff',
+  owner: '#7be0a8',
+  rogue: '#ff7a8a',
+};
+
+export const FORTRESS_MODULE_NAMES: Record<string, string> = {
+  wall: 'Стена',
+  gate: 'Врата',
+  turret: 'Турель',
+  trap: 'Ловушка',
+  alarm: 'Сигнализация',
+  vault: 'Хранилище',
+  regen: 'Регенератор',
+};
+
+export const FORTRESS_MODULE_ICONS: Record<string, string> = {
+  wall: 'dungeon',
+  gate: 'torii-gate',
+  turret: 'crosshairs',
+  trap: 'bug',
+  alarm: 'bell',
+  vault: 'vault',
+  regen: 'kit-medical',
+};
+
+/** Packet class colours shared by the map flights and the legend. */
+export const PACKET_COLORS: Record<string, string> = {
+  command: '#ffc26b',
+  remote: '#c792ff',
+  window: '#c792ff',
+  file: '#6fe0ff',
+  'entity.signal': '#f19bdc',
+  'entity.message': '#f19bdc',
+  machine: '#50e8c0',
+  fail: '#ff6470',
+};
+
+export const PACKET_NAMES: Record<string, string> = {
+  command: 'Команды',
+  remote: 'Запросы устройств',
+  file: 'Файлы',
+  'entity.message': 'Сообщения процессам',
+  machine: 'Обмен машин',
+  fail: 'Отказ доставки',
 };
 
 export const NODE_NAMES: Record<string, string> = {

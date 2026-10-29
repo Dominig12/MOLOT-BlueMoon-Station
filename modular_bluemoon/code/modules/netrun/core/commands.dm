@@ -20,6 +20,8 @@
 	/// Diagnostic execution does not mutate the target's native state. Its logs and
 	/// operator UI still update, without an extra native power/binding reconciliation.
 	var/read_only = FALSE
+	/// Interface section that renders this command instead of the generic list (e.g. "fortress").
+	var/group
 
 /// Выполнить команду. Возвращает текст результата или null при неудаче (причину пишет в консоль сам)
 /datum/netrun_command/proc/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
@@ -66,6 +68,7 @@
 		"allowed" = !reason,
 		"illegal" = legit < access,
 		"trace" = legit < access ? round(trace * node.get_security() * console.effective_trace_mult()) : 0,
+		"group" = group,
 	)
 
 /datum/netrun_command/proc/help_text(datum/component/netrun_node/node, datum/netrun_console/console, full_id)

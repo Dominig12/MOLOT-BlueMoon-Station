@@ -2,8 +2,10 @@ import { memo, useRef } from 'react';
 
 import { Box, Button, Icon, LabeledList, Section } from '../../components';
 import { AutoBreachButton } from './AutoBreachButton';
+import { Meter } from './CombatPanel';
 import { CommandList } from './CommandList';
 import { EntityContacts } from './EntityContacts';
+import { FortressPanel } from './FortressPanel';
 import { NodeInteractions } from './NodeInteractions';
 import { PacketJournal } from './PacketJournal';
 import {
@@ -12,6 +14,7 @@ import {
   NetFile,
   NetrunData,
   NODE_ICONS,
+  SelectedNode,
   THEME,
 } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
@@ -283,12 +286,14 @@ const NodePanelView = () => {
         />
       )}
       {!!can_breach && selected.access >= 1 && selected.access < 2 && <AutoBreachButton kind="node" id={selected.address} disabled={!selected.online} />}
+      <NodeFortress key={selected.address} selected={selected} disabled={pending} onCommand={(id) => act('command', { id })} />
       <EntityContacts address={selected.address} contacts={selected.contacts} pending={pending}
         localEntity={display.entity?.host === selected.address} />
       {!!selected.files && (
         <Box mt={2}>
           <Box color={THEME.muted} mb={0.5}>
             Хранилище узла: {selected.storage?.used}/{selected.storage?.capacity}
+            <StorageMeter storage={selected.storage} />
           </Box>
           {selected.files.length === 0 && <Box color={THEME.muted}>Пусто.</Box>}
           <div data-net-files="remote" style={{ maxHeight: '40vh', minHeight: 0, overflowY: 'auto', paddingRight: '4px' }}>
@@ -344,6 +349,21 @@ const RemoteFile = (props: { file: NetFile; root: boolean }) => {
   );
 };
 
+/** Grouped fortress requests leave the generic grid for the fortress section. */
+const NodeFortress = (props: { selected: SelectedNode; disabled: boolean; onCommand: (id: string) => void }) => {
+  const { selected } = props;
+  const commands = (selected.commands ?? []).filter((command) => command.group === 'fortress');
+  if (!selected.fortress && !commands.length) { return null; }
+  return (<FortressPanel fortress={selected.fortress} commands={commands} access={selected.access}
+    disabled={props.disabled} onCommand={props.onCommand} />);
+};
+
+const StorageMeter = (props: { storage?: { used: number; capacity: number } }) => (
+  <Meter value={props.storage?.used ?? 0} max={props.storage?.capacity ?? 0} tone="usage"
+    label="Заполнение хранилища узла" height={4}
+    style={{ display: 'inline-block', verticalAlign: 'middle', width: '80px', marginLeft: '8px' }} />
+);
+
 export const fileIcon = (kind: string) => {
   switch (kind) {
     case 'key':
@@ -358,6 +378,8 @@ export const fileIcon = (kind: string) => {
       return 'link';
     case 'techweb':
       return 'flask';
+    case 'bot':
+      return 'robot';
     default:
       return 'file-lines';
   }
@@ -377,6 +399,7 @@ export const fileFormat = (name: string, kind: string) => {
     techweb: 'WEB',
     techweb_link: 'LINK',
     text: 'TXT',
+    bot: 'BOT',
   };
   return labels[kind] || 'DAT';
 };

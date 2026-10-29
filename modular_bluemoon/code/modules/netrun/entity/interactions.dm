@@ -24,7 +24,7 @@
 		entry["can_message"] = entry["can_signal"]
 		if(istype(occupant, /mob/camera/netrun_entity))
 			var/mob/camera/netrun_entity/entity = occupant
-			entry["state"] = entity.is_stunned() ? "оглушён" : (entity.dive_link?.body ? "погружение" : "резидент")
+			entry["state"] = entity.contact_state()
 		else if(istype(occupant, /datum/netrun_ice))
 			var/datum/netrun_ice/ice = occupant
 			entry["state"] = ice.is_stunned() ? "оглушён" : (ice.pending_program ? "готовит атаку" : (ice.enemy_ref?.resolve() ? "преследует" : (ice.kind == NETRUN_ICE_HUNTER ? "патрулирует" : "охраняет узел")))

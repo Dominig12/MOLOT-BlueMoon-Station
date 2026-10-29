@@ -1,7 +1,8 @@
 import { GRAPH_TILE } from './graphLayout';
 import { GraphScene, PlacedNode } from './graphScene';
+import { glyphRadius, MAX_GLYPH_RADIUS } from './nodeGlyphs';
 import { PixiScenery } from './pixiScenery';
-import { MockGraphics, mockPixi, resetPixiMock } from './testSupport/pixiLibraryMock';
+import { MockContainer, MockGraphics, mockPixi, resetPixiMock } from './testSupport/pixiLibraryMock';
 
 const node = (address: string, px: number, py = 0): PlacedNode => ({ address, name: address, type: 'camera',
   x: px, y: py, px, py, security: 1, access: 1, online: true, active: false, entities: 0, uplink: null });
@@ -16,10 +17,14 @@ test('large scenes retain every node, edge and APC run instead of rejecting GPU 
   const layer = new PixiScenery(mockPixi); layer.queue(scene, { gateways: new Map(), apcZones: [{ address: 'N0', z: 1, runs }] });
   expect(layer.advance(0)).toBe(true); // A work slice yields before walking the entire topology.
   finish(layer);
-  expect(MockGraphics.graphics.reduce((sum, graphic) => sum + graphic.calls.filter((call) => call.op === 'circle').length, 0)).toBe(6001);
+  // One filled silhouette per device; pictograms live in their own layer.
+  expect(MockGraphics.graphics.filter((graphic) => graphic.label.startsWith('3-node:'))
+    .reduce((sum, graphic) => sum + graphic.calls.filter((call) => call.op === 'fill').length, 0)).toBe(6001);
+  expect(MockGraphics.graphics.some((graphic) => graphic.label.startsWith('4-glyph:'))).toBe(true);
   expect(MockGraphics.graphics.filter((graphic) => graphic.label.startsWith('1-edge:'))
     .reduce((sum, graphic) => sum + graphic.calls.filter((call) => call.op === 'lineTo').length, 0)).toBe(6000);
-  expect(MockGraphics.graphics.reduce((sum, graphic) => sum + graphic.calls.filter((call) => call.op === 'rect').length, 0)).toBe(5000);
+  expect(MockGraphics.graphics.filter((graphic) => graphic.label.startsWith('0-zone:'))
+    .reduce((sum, graphic) => sum + graphic.calls.filter((call) => call.op === 'rect').length, 0)).toBe(5000);
 });
 
 test('camera panning changes only culling and retains links crossing the viewport with offscreen endpoints', () => {
@@ -106,10 +111,31 @@ test('ordinary static glyphs retain their body size at overview zoom', () => {
   finish(layer);
   layer.setViewport({ left: -250, right: 450, top: -250, bottom: 250 }, .2);
   finish(layer);
-  const radii = MockGraphics.graphics.flatMap((graphic) => graphic.calls
-    .filter((call) => call.op === 'circle').map((call) => call.args[2]));
-  expect(radii).toContain(8); // Body geometry is never inflated by camera zoom.
-  expect(radii.every((radius) => Number(radius) <= 16)).toBe(true); // LAN outlines belong to the live layer.
+  const body = MockGraphics.graphics.find((graphic) => graphic.label.startsWith('3-node:'));
+  const reach = Math.max(...body.calls.filter((call) => call.op === 'moveTo' || call.op === 'lineTo')
+    .filter((call) => Math.abs(Number(call.args[0])) < 100).map((call) => Math.hypot(Number(call.args[0]), Number(call.args[1]))));
+  // Body geometry is never inflated by camera zoom; LAN outlines belong to the live layer.
+  expect(reach).toBeLessThanOrEqual(glyphRadius('camera') * 1.5);
+  expect(glyphRadius('camera')).toBeLessThanOrEqual(MAX_GLYPH_RADIUS);
+  const glyphs = MockContainer.instances.find((entry) => entry.label === 'glyphs');
+  expect(glyphs.visible).toBe(false); // Pictograms disappear at overview zoom without retessellation.
+  layer.setViewport({ left: -250, right: 450, top: -250, bottom: 250 }, 1);
+  expect(glyphs.visible).toBe(true);
+});
+
+test('cables keep a readable width by repainting only when the zoom level changes', () => {
+  const scene = new GraphScene(); scene.update([node('A', 0), node('B', 300)], [{ id: 'AB', from: 'A', to: 'B', kind: 'apc' }]);
+  const layer = new PixiScenery(mockPixi);
+  layer.setViewport({ left: -500, right: 800, top: -500, bottom: 500 }, 1);
+  layer.queue(scene, { gateways: new Map() }); finish(layer);
+  const cable = MockGraphics.graphics.find((graphic) => graphic.label.startsWith('1-edge:'));
+  const width = (graphic: MockGraphics) => Number((graphic.calls.find((call) => call.op === 'stroke')?.args[0] as { width: number }).width);
+  const base = width(cable), clears = cable.clears;
+  layer.setViewport({ left: -500, right: 800, top: -500, bottom: 500 }, .8); finish(layer);
+  expect(cable.clears).toBe(clears); // Same zoom level: no retessellation.
+  layer.setViewport({ left: -500, right: 800, top: -500, bottom: 500 }, .2); finish(layer);
+  expect(width(cable)).toBeGreaterThan(base * 2);
+  expect(cable.visible).toBe(true);
 });
 
 test('moving and removing a device update its old and new chunks and incident cables only', () => {
@@ -142,6 +168,6 @@ test('a superseded partial build cannot leave stale primitives or discard the co
   layer.queue(final, base); finish(layer);
   const remaining = MockGraphics.graphics.filter((graphic) => !graphic.destroyed && graphic.label.startsWith('3-node:'));
   expect(remaining).toHaveLength(1);
-  expect(remaining[0].calls.filter((call) => call.op === 'circle')).toHaveLength(1);
+  expect(remaining[0].calls.filter((call) => call.op === 'fill')).toHaveLength(1);
   expect(remaining[0].calls.find((call) => call.op === 'fill')?.args[0]).toEqual(expect.objectContaining({ alpha: .94 }));
 });

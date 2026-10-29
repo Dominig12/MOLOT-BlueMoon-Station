@@ -201,7 +201,8 @@
 	TEST_ASSERT_EQUAL(shard.loc, scene.implant, "A process cannot teleport a shard out of the unconscious body's implant")
 	TEST_ASSERT_EQUAL(inventory.shard, shard, "A rejected remote eject must leave the physical shard attached")
 	TEST_ASSERT(inventory.delete_file(deleted), "Deleting in the dive must affect the original implant disk")
-	var/datum/netrun_file/downloaded = new("downloaded.txt", NETRUN_FILE_TEXT, "download", 5)
+	// Fill exactly the real remaining implant capacity, whatever the configured size.
+	var/datum/netrun_file/downloaded = new("downloaded.txt", NETRUN_FILE_TEXT, "download", inventory.local_store.capacity - inventory.local_store.used())
 	TEST_ASSERT(inventory.store_file(downloaded), "A file downloaded in the dive must fit the actual implant capacity")
 	var/datum/netrun_file/overflow = new("overflow.txt", NETRUN_FILE_TEXT, "overflow", 1)
 	TEST_ASSERT(!inventory.store_file(overflow), "The resident must not gain extra capacity that would lose files on return")

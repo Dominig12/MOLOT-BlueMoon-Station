@@ -52,7 +52,7 @@
 /datum/netrun_console/ai
 	name = "сетевой клиент ИИ"
 	tgui_title = "Сеть ИИ"
-	initial_storage_capacity = 12
+	initial_storage_capacity = 12 * NETRUN_STORAGE_SCALE
 
 /datum/netrun_console/ai/New(atom/host, origin)
 	. = ..()

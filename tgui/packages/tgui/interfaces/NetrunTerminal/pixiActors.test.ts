@@ -1,5 +1,6 @@
 import { GraphOverlay } from './graphPresentation';
 import { GraphScene, PlacedNode } from './graphScene';
+import { glyphRadius } from './nodeGlyphs';
 import { PixiActors } from './pixiActors';
 import { MockContainer, MockGraphics, mockPixi, resetPixiMock } from './testSupport/pixiLibraryMock';
 
@@ -78,10 +79,37 @@ test('zoomed-out Pixi actors keep device bodies small and enlarge ICE/entity rin
   const layer = new PixiActors(mockPixi);
   layer.update(scene, overlay(), [], scene.adjacency, 0);
   layer.setViewport({ left: -100, right: 300, top: -100, bottom: 100 }, .2);
+  const camera = MockContainer.instances.find((entry) => entry.label === 'device:CAM').children[0] as MockGraphics;
+  const reach = Math.max(...camera.calls.filter((call) => call.op === 'moveTo' || call.op === 'lineTo')
+    .map((call) => Math.hypot(Number(call.args[0]), Number(call.args[1]))));
+  expect(reach).toBeLessThanOrEqual(glyphRadius('camera') * 1.5); // The device body is never inflated.
   const radii = MockGraphics.graphics.flatMap((graphic) => graphic.calls
     .filter((call) => call.op === 'circle').map((call) => call.args[2]));
-  expect(radii).toContain(8);
   expect(radii.some((radius) => Number(radius) >= 46)).toBe(true);
+});
+
+test('a sent packet flies its hop route for its real transit time, then reports its outcome', () => {
+  const scene = new GraphScene();
+  scene.update([node('A'), node('B', 0, 100), node('C', 100, 100)], [
+    { id: 'AB', from: 'A', to: 'B', kind: 'apc' }, { id: 'BC', from: 'B', to: 'C', kind: 'apc' },
+  ]);
+  const layer = new PixiActors(mockPixi);
+  const sent = { kind: 'packet' as const, id: 'p1', packet: 'command', phase: 'send' as const, from: 'A', to: 'C', age: 0, duration: 2, route: ['A', 'B', 'C'] };
+  layer.update(scene, overlay({ events: [sent] }), [], scene.adjacency, 0);
+  expect(layer.animate(1000)).toBe(true);
+  const effects = MockGraphics.graphics.find((entry) => entry.label === 'traffic-and-ping');
+  // Halfway through a two-second flight the packet sits at the B corner of the A-B-C route.
+  expect(effects.calls.filter((call) => call.op === 'circle').some((call) => call.args[0] === 0 && call.args[1] === 100)).toBe(true);
+  // A repeated push of the same packet keeps its clock instead of restarting the flight.
+  layer.update(scene, overlay({ events: [{ ...sent, age: 1.5 }] }), [], scene.adjacency, 1500);
+  layer.animate(1500);
+  expect(effects.calls.filter((call) => call.op === 'circle').some((call) => call.args[0] === 50 && call.args[1] === 100)).toBe(true);
+  expect(layer.animate(2500)).toBe(true); // Arrival ring after the transit time.
+  expect(layer.animate(4000)).toBe(false);
+  layer.update(scene, overlay({ events: [{ ...sent, id: 'p2', phase: 'fail', age: 0 }] }), [], scene.adjacency, 5000);
+  expect(layer.animate(5100)).toBe(true);
+  expect(effects.calls.some((call) => call.op === 'lineTo')).toBe(true); // A failed delivery is crossed out at the target.
+  expect(layer.animate(6300)).toBe(false);
 });
 
 test('a ping clears its route geometry at expiry without clearing stored or waypoint routes', () => {

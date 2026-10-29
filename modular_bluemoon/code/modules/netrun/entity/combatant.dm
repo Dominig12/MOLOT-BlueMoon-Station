@@ -35,6 +35,14 @@
 /datum/component/netrun_combatant/proc/heal(amount)
 	return
 
+/// Structures can be engaged from outside their node (fortress outer works from a neighbour).
+/datum/component/netrun_combatant/proc/allows_remote_attack(datum/netrun_console/console, datum/component/netrun_node/local_node)
+	return FALSE
+
+/// Attacking this target is an incident for the network police (station defenses).
+/datum/component/netrun_combatant/proc/protected_by_station()
+	return FALSE
+
 /datum/component/netrun_combatant/proc/ui_entry()
 	var/list/hp = integrity_payload()
 	var/datum/component/netrun_node/host_node = node()
@@ -115,6 +123,9 @@
 /datum/component/netrun_combatant/ice/heal(amount)
 	var/datum/netrun_ice/ice = parent
 	ice.apply_heal(amount)
+
+/datum/component/netrun_combatant/ice/protected_by_station()
+	return TRUE
 
 /datum/component/netrun_combatant/ice/ui_entry()
 	. = ..()

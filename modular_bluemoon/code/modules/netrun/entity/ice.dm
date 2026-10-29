@@ -562,7 +562,7 @@
 	active_defense_networks.Cut()
 	for(var/mob/camera/netrun_entity/entity as anything in entities)
 		var/network_id = entity.host_node?.network?.id
-		if(!QDELETED(entity) && network_id)
+		if(!QDELETED(entity) && network_id && entity.defense_threat())
 			active_defense_networks[network_id] = TRUE
 	for(var/datum/netrun_console/console as anything in currentbreaches)
 		if(QDELETED(console))

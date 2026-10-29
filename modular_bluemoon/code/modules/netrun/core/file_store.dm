@@ -91,7 +91,7 @@
 	var/obj/item/netrun_shard/shard
 	var/selected_file_uid
 
-/datum/netrun_inventory/New(datum/netrun_console/owner, capacity = 6)
+/datum/netrun_inventory/New(datum/netrun_console/owner, capacity = 6 * NETRUN_STORAGE_SCALE)
 	src.owner = owner
 	local_store = new(src, capacity)
 	owned_store = local_store

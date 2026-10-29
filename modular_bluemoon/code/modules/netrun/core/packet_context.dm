@@ -73,6 +73,12 @@
 	var/sent = FALSE
 	var/received = FALSE
 	var/finished = FALSE
+	/// Transit time chosen at dispatch, deciseconds; the map animates the flight with it.
+	var/eta = 0
+	/// The dispatch was drawn on maps, so its outcome is drawn too.
+	var/map_announced = FALSE
+	/// High-volume machine traffic publishes only failures; arrival is implied by the flight.
+	var/quiet_success = FALSE
 
 /datum/netrun_packet_context/New(kind, label, from_address, to_address, service_id, datum/netrun_console/console, nonce, operation_id)
 	id = "packet-[++SSnetrun.packet_context_serial]"
@@ -158,15 +164,27 @@
 			addresses += address
 	route = addresses
 
-/datum/netrun_packet_context/proc/queued(list/hops)
+/// `announce` = FALSE leaves map publication to a rate-limited owner (machine traffic).
+/datum/netrun_packet_context/proc/queued(list/hops, delay = 0, announce = TRUE)
 	if(finished || sent)
 		return FALSE
 	sent = TRUE
 	set_route(hops)
 	if(!from_address && length(route))
 		from_address = route[1]
+	eta = max(0, delay || 0)
 	journal(from_address, "SEND")
 	publish()
+	if(announce)
+		announce_flight()
+	return TRUE
+
+/// Publish the dispatch with its hops and transit time once; the result follows in finish().
+/datum/netrun_packet_context/proc/announce_flight()
+	if(map_announced || !sent)
+		return FALSE
+	map_announced = TRUE
+	SSnetrun.post_packet(src, "send")
 	return TRUE
 
 /datum/netrun_packet_context/proc/running()
@@ -210,6 +228,8 @@
 	else if(sent)
 		journal(at_address || from_address, "DROP", reason)
 	publish()
+	if(map_announced && (outcome != "completed" || !quiet_success))
+		SSnetrun.post_packet(src, outcome == "completed" ? "done" : "fail")
 	return TRUE
 
 /datum/netrun_console

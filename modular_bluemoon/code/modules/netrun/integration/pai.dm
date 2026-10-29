@@ -33,7 +33,7 @@
 
 /datum/netrun_console/pai
 	name = "клиент pAI"
-	initial_storage_capacity = 6
+	initial_storage_capacity = 6 * NETRUN_STORAGE_SCALE
 	tgui_title = "Сеть pAI"
 
 /datum/netrun_console/pai/New(atom/host, origin)

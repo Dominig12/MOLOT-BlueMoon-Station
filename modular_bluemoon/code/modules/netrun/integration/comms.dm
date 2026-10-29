@@ -40,6 +40,8 @@
 
 /mob/camera/netrun_entity/Initialize(mapload, datum/component/netrun_node/start)
 	. = ..()
+	if(!has_messenger)
+		return
 	messenger_pda = new(src)
 	messenger_action = new
 	messenger_action.Grant(src)

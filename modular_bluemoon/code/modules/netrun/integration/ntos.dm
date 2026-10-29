@@ -37,7 +37,7 @@
 		console = new(computer, NETRUN_ORIGIN_NTOS)
 		console.connection.wireless = TRUE
 		console.intrusion.can_breach = allow_breach
-		console.inventory.local_store.capacity = 4
+		console.inventory.local_store.capacity = 4 * NETRUN_STORAGE_SCALE
 	return console
 
 /datum/computer_file/program/netrun/ui_data(mob/user)

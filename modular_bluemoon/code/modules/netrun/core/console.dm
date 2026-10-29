@@ -12,7 +12,7 @@
 	var/atom/host
 	var/origin = NETRUN_ORIGIN_TERMINAL
 	/// Type configuration is consumed once; mutable state belongs to the sessions.
-	var/initial_storage_capacity = 6
+	var/initial_storage_capacity = 6 * NETRUN_STORAGE_SCALE
 	var/initial_can_breach = TRUE
 	var/datum/netrun_connection/connection
 	var/datum/netrun_access_session/access_session
@@ -158,6 +158,11 @@
 		var/mob/camera/netrun_entity/entity = host
 		return entity.needs_processing()
 	return FALSE
+
+/// Autonomous clients (circuits, bots) never impersonate player input: their packets stay
+/// out of the interactive lane and do not renew UI activity leases.
+/datum/netrun_console/proc/autonomous()
+	return origin == NETRUN_ORIGIN_CIRCUIT
 
 /datum/netrun_console/proc/is_ui_active()
 	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
@@ -520,6 +525,7 @@
 		add_trace(command.trace * node.get_security())
 		SSnetrun.raise_defenses(src, node)
 		target.netrun_on_illegal(src, node)
+		SSnetrun.report_incident("intrusion", node, combat_self() || src, command.access >= NETRUN_ACCESS_ROOT ? NETRUN_INCIDENT_MEDIUM : NETRUN_INCIDENT_LOW, "Команда без авторизации: [command.name].")
 	return TRUE
 
 /// Есть ли вообще маршрут к узлу (иначе узел отрезан - подключиться нельзя)
@@ -596,6 +602,7 @@
 		if(!network.isolated)
 			network.add_log("Трассировка завершена: нарушитель в районе [where].")
 	var/mob/camera/netrun_entity/entity = owner.combat_self()
+	SSnetrun.report_incident("trace", istype(entity) ? entity.host_node : owner.route_source(), istype(entity) ? entity : owner, NETRUN_INCIDENT_HIGH, "Нарушитель отслежен: точка [owner.origin], район: [where].")
 	if(istype(entity))
 		// Сущность живёт в сети: её не выбрасывает, но защита поднимается и идёт к её узлу.
 		owner.log_line("ВАС ОБНАРУЖИЛИ! Заметайте следы, иначе процессы защиты доберутся до вас.", "bad")
@@ -716,6 +723,10 @@
 		var/datum/component/netrun_node/node = SSnetrun.find_node(id)
 		if(!node || owner.node_level(node) < NETRUN_ACCESS_GUEST || !node.is_online(node != owner.connection.jack) || !owner.can_route(node))
 			return FALSE
+		// Standing fortress walls must be breached in combat before the node itself can be cracked.
+		if(node.fortress?.blocks_breach(owner))
+			owner.log_line("[node.address]: стены крепости [node.fortress.name] отражают взлом. Сначала разрушьте стены боевыми программами.", "bad")
+			return FALSE
 		security = node.get_security() - (node == owner.connection.jack ? 1 : 0)
 		target_name = "[node.get_name()] [node.address]"
 		if(kind == "firmware")
@@ -738,6 +749,8 @@
 		breach.buffer_size = min(breach.buffer_size, 7)
 		breach.generate()
 	SSnetrun.post_event("breach", kind == "network" ? id : null, kind == "network" ? null : id)
+	var/datum/component/netrun_node/incident_node = kind == "network" ? owner.route_source() : SSnetrun.find_node(id)
+	SSnetrun.report_incident("breach", incident_node, owner, kind == "network" ? NETRUN_INCIDENT_MEDIUM : NETRUN_INCIDENT_LOW, "Взлом: [target_name].")
 	// Взлом защищённой цели поднимает сторожевой ICE.
 	if(kind != "network")
 		SSnetrun.raise_defenses(owner, SSnetrun.find_node(id))

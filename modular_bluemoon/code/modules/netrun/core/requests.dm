@@ -65,11 +65,11 @@
 		return FALSE
 	sent = TRUE
 	poll_route = route_hops ? route_hops.Copy() : list()
-	operation.queued(poll_route)
+	operation.queued(poll_route, delay)
 	SSnetrun.pending_requests[src] = TRUE
 	SSnetrun.collect_request_node_interest(src)
-	// Circuits are autonomous; explicit player packets enter the interactive lane.
-	if(console.origin != NETRUN_ORIGIN_CIRCUIT)
+	// Circuits and bots are autonomous; explicit player packets enter the interactive lane.
+	if(!console.autonomous())
 		console.note_user_action()
 	return schedule_delivery(delay)
 
@@ -82,7 +82,7 @@
 	return delivery_interactive() ? limits.interactive_priority : NETRUN_TASK_NORMAL
 
 /datum/netrun_request/delivery/delivery_interactive()
-	return console?.origin != NETRUN_ORIGIN_CIRCUIT
+	return console && !console.autonomous()
 
 /datum/netrun_request/delivery/deliver()
 	set waitfor = FALSE
@@ -101,7 +101,7 @@
 		. = execute()
 		if(!operation.finished)
 			operation.finish(. ? "completed" : (cancelled ? "cancelled" : "rejected"), . ? null : "Устройство не приняло запрос.")
-		if(!QDELETED(console) && console.origin != NETRUN_ORIGIN_CIRCUIT)
+		if(!QDELETED(console) && !console.autonomous())
 			console.finish_user_action(QDELETED(node) ? null : node)
 	else
 		operation.finish("cancelled", "Доставка отменена: сеанс или узел удалён.")

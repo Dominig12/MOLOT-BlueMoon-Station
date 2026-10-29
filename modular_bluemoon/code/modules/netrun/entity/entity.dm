@@ -24,13 +24,17 @@
 	var/datum/netrun_dive_link/dive_link
 	var/datum/action/innate/netrun_console/console_action
 	var/datum/action/innate/netrun_rename/rename_action
+	/// Autonomous processes do not publish a virtual PDA into the crew messenger directory.
+	var/has_messenger = TRUE
+	/// Console implementation created in Initialize; autonomous subtypes choose theirs before ..().
+	var/console_type = /datum/netrun_console/entity
 
 /mob/camera/netrun_entity/Initialize(mapload, datum/component/netrun_node/start)
 	. = ..()
 	persona = new(src)
 	RegisterSignal(src, COMSIG_MOB_ON_NEW_MIND, PROC_REF(on_persona_mind_changed))
 	dive_link = new(src)
-	console = new(src, NETRUN_ORIGIN_ENTITY)
+	console = new console_type(src, NETRUN_ORIGIN_ENTITY)
 	navigation = new(src)
 	RegisterSignal(src, COMSIG_MOB_ALLOWED, PROC_REF(on_credential_access_check))
 	SSnetrun.entities += src
@@ -90,6 +94,10 @@
 	node.touch()
 	update_vision()
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_NODE_CHANGED, null, node)
+	// Traps and alarms react to the arrival itself; a listener may delete this process.
+	node.fortress?.on_arrival(src)
+	if(QDELETED(src) || host_node != node)
+		return TRUE
 	console.finish_user_action(node)
 	return TRUE
 
@@ -123,7 +131,11 @@
 	var/owns_tree = !tree
 	if(owns_tree)
 		tree = console.connection.read_path_tree(TRUE)
-	. = console.node_level(node, tree) >= NETRUN_ACCESS_USER || console.has_key(node.network, TRUE)
+	var/level = console.node_level(node, tree)
+	. = level >= NETRUN_ACCESS_USER || console.has_key(node.network, TRUE)
+	// Closed fortress gates admit only the node's users and the fortress owner, never a LAN key.
+	if(. && level < NETRUN_ACCESS_USER && node.fortress?.gate_blocks(console))
+		. = FALSE
 	if(owns_tree)
 		console.release_path_tree(tree)
 
@@ -142,6 +154,8 @@
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	if(!(node.address in graph.neighbors(host_node.address)) || !netrun_link_available(host_node, node))
 		return "Переход невозможен: узел не является прямым соседом или связь с ним недоступна."
+	if(node.fortress?.gate_blocks(console) && console.has_key(node.network, TRUE))
+		return "Переход невозможен: врата крепости закрыты — ключ ЛВС не действует, нужен доступ ПОЛЬЗОВАТЕЛЯ к узлу."
 	return "Переход невозможен: нужен доступ ПОЛЬЗОВАТЕЛЯ к узлу или ключ его ЛВС."
 
 /mob/camera/netrun_entity/proc/hop(datum/component/netrun_node/node, following_route = FALSE)
@@ -269,6 +283,29 @@
 		if(!blinded)
 			overlay_fullscreen("netrun_blind", /atom/movable/screen/fullscreen/scaled/blind)
 			blinded = TRUE
+
+// MARK: Роль процесса
+
+/// Archetype id of an autonomous bot; null for players and ghost-role residents.
+/mob/camera/netrun_entity/proc/netrun_bot_kind()
+	return null
+
+/// Does this process wake sleeping ICE and mark its LAN as contested? Sanctioned
+/// station processes (police, maintenance) patrol without waking every department.
+/mob/camera/netrun_entity/proc/defense_threat()
+	return TRUE
+
+/// Allegiance of an autonomous process (NETRUN_FACTION_*); null for players.
+/mob/camera/netrun_entity/proc/netrun_faction()
+	return null
+
+/// Console that launched this process as its agent; null for independent processes.
+/mob/camera/netrun_entity/proc/netrun_owner_console()
+	return null
+
+/// Short state shown on contact cards.
+/mob/camera/netrun_entity/proc/contact_state()
+	return is_stunned() ? "оглушён" : (dive_link?.body ? "погружение" : "резидент")
 
 // MARK: Боевой интерфейс
 
@@ -443,7 +480,7 @@
 	name = "сознание"
 	origin = NETRUN_ORIGIN_ENTITY
 	tgui_title = "Сеть"
-	initial_storage_capacity = 10
+	initial_storage_capacity = 10 * NETRUN_STORAGE_SCALE
 
 /datum/netrun_console/entity/New(atom/host, origin)
 	. = ..()

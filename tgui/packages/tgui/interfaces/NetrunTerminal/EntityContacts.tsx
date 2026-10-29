@@ -2,8 +2,41 @@ import { useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
 import { EntityAvatar } from './EntityAvatar';
-import { EntityContact, THEME } from './types';
+import { BOT_ICONS, BOT_NAMES, EntityContact, FACTION_COLORS, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
+
+const FACTION_LABELS: Record<'bot' | 'fortress', Record<string, string>> = {
+  bot: { station: 'станция', owner: 'агент', rogue: 'дикий' },
+  fortress: { station: 'станция', owner: 'частная', rogue: 'подпольная' },
+};
+
+/** Allegiance wording differs for processes and structures. */
+export const factionLabel = (context: 'bot' | 'fortress', faction?: string | null) =>
+  (faction && FACTION_LABELS[context][faction]) || null;
+
+export const botKindLabel = (kind?: string | null) => BOT_NAMES[kind ?? ''] || 'Автономный процесс';
+
+/** Archetype pictogram framed in the faction colour (contacts, combat, agents). */
+export const BotAvatar = (props: { kind?: string | null; faction?: string | null; size?: number }) => {
+  const { kind, faction, size = 28 } = props;
+  return (
+    <span className="netrun-avatar" role="img" aria-label={`Бот: ${botKindLabel(kind)}`}
+      style={{ color: FACTION_COLORS[faction ?? ''] || THEME.muted, width: size, height: size,
+        fontSize: `${Math.round(size / 2)}px` }}>
+      <Icon name={BOT_ICONS[kind ?? ''] || 'robot'} style={{ margin: 0 }} />
+    </span>
+  );
+};
+
+const contactKind = (contact: EntityContact) => {
+  if (contact.kind === 'ice') {
+    return `ICE${contact.ice_kind === 'hunter' ? ' · охотник' : contact.ice_kind === 'sentry' ? ' · сторож' : ''}`;
+  }
+  if (contact.kind === 'bot') {
+    return [botKindLabel(contact.bot_kind), factionLabel('bot', contact.faction)].filter(Boolean).join(' · ');
+  }
+  return 'Сущность';
+};
 
 export const EntityContacts = (props: {
   address: string;
@@ -32,6 +65,8 @@ const ContactCard = (props: { contact: EntityContact; pending: boolean }) => {
   const { contact, pending } = props;
   const [message, setMessage] = useState('');
   const canMessage = !pending && contact.can_message;
+  const bot = contact.kind === 'bot';
+  const accent = bot ? FACTION_COLORS[contact.faction ?? ''] : undefined;
   const send = () => {
     const text = message.trim();
     if (!canMessage || !text) { return; }
@@ -39,16 +74,19 @@ const ContactCard = (props: { contact: EntityContact; pending: boolean }) => {
     setMessage('');
   };
   return (
-    <Box p={1} mb={0.5} style={{ background: THEME.bg, border: `1px solid ${THEME.line}` }}>
-      <Box bold>
-        {contact.kind === 'entity' ? <EntityAvatar avatar={contact.persona?.avatar} accent={contact.persona?.accent} size={28} /> : <Icon name="shield-halved" mr={0.5} />}
+    <Box p={1} mb={0.5} data-net-contact={contact.kind}
+      style={{ background: THEME.bg, border: `1px solid ${accent || THEME.line}` }}>
+      <Box bold color={accent}>
+        {contact.kind === 'entity' ? <EntityAvatar avatar={contact.persona?.avatar} accent={contact.persona?.accent} size={28} />
+          : bot ? <BotAvatar kind={contact.bot_kind} faction={contact.faction} /> : <Icon name="shield-halved" mr={0.5} />}
         {contact.name}{contact.self ? ' · вы' : ''}
       </Box>
       {!!contact.persona?.tagline && <Box className="netrun-contact-tagline">{contact.persona.tagline}</Box>}
       <Box color={THEME.muted} fontSize="11px">
-        {contact.kind === 'ice' ? `ICE${contact.ice_kind === 'hunter' ? ' · охотник' : contact.ice_kind === 'sentry' ? ' · сторож' : ''}` : 'Сущность'} · {contact.state}
+        {contactKind(contact)} · {contact.state}
         {' · '}{contact.integrity}/{contact.max_integrity}
       </Box>
+      {bot && !!contact.goal && <Box fontSize="11px">Задача: {contact.goal}</Box>}
       {!!contact.threat && <Box mt={0.5} color={THEME.warn} fontSize="11px">{contact.threat}</Box>}
       {!contact.self && contact.kind === 'entity' && (
         <Box mt={0.5}>

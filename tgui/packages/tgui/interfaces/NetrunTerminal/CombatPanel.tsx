@@ -1,9 +1,18 @@
-import { memo, useEffect, useState } from 'react';
+import { CSSProperties, memo, useEffect, useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
 import { ActionTooltip } from './CommandTooltip';
 import { EntityAvatar } from './EntityAvatar';
-import { CombatTarget, IncomingProgram, NetrunData, THEME } from './types';
+import { BotAvatar, botKindLabel, factionLabel } from './EntityContacts';
+import {
+  CombatTarget,
+  FACTION_COLORS,
+  FORTRESS_MODULE_ICONS,
+  FORTRESS_MODULE_NAMES,
+  IncomingProgram,
+  NetrunData,
+  THEME,
+} from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 const ROLE_COLORS: Record<string, string> = {
@@ -14,18 +23,113 @@ const ROLE_COLORS: Record<string, string> = {
   purge: THEME.warn,
 };
 
-const IntegrityBar = (props: { cur: number; max: number }) => {
-  const ratio = props.max ? Math.max(0, props.cur / props.max) : 0;
+/** Slim gauge shared by integrity, memory and fortress slots. Integrity is green when
+ * full; usage warns as it fills. A zero maximum with content reads as full. */
+export const Meter = (props: {
+  value: number;
+  max: number;
+  label: string;
+  tone?: 'integrity' | 'usage';
+  color?: string;
+  height?: number;
+  style?: CSSProperties;
+}) => {
+  const { value, max, tone = 'integrity', height = 6 } = props;
+  const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : value > 0 ? 1 : 0;
+  const color = props.color || (tone === 'usage'
+    ? ratio >= 0.95 ? THEME.bad : ratio >= 0.75 ? THEME.warn : THEME.accent
+    : ratio > 0.5 ? THEME.good : ratio > 0.25 ? THEME.warn : THEME.bad);
   return (
-    <Box mt={0.5} style={{ height: '6px', background: THEME.line }}>
-      <Box
-        style={{
-          height: '6px',
-          width: `${ratio * 100}%`,
-          background: ratio > 0.5 ? THEME.good : ratio > 0.25 ? THEME.warn : THEME.bad,
-          transition: 'width 0.3s',
-        }}
-      />
+    <div role="meter" aria-label={props.label} aria-valuemin={0} aria-valuemax={Math.max(0, max)}
+      aria-valuenow={value} aria-valuetext={`${value}/${max}`} title={`${props.label}: ${value}/${max}`}
+      style={{ height: `${height}px`, background: THEME.line, borderRadius: `${height / 2}px`, overflow: 'hidden', ...props.style }}>
+      <div style={{ height: '100%', width: `${ratio * 100}%`, background: color, transition: 'width 0.3s' }} />
+    </div>
+  );
+};
+
+export const IntegrityBar = (props: { cur: number; max: number; label?: string }) => (
+  <Meter value={props.cur} max={props.max} label={props.label || 'Целостность'} style={{ marginTop: '0.5rem' }} />
+);
+
+/** Bots and fortress modules carry their archetype and allegiance on the card. */
+const TargetIcon = ({ target }: { target: CombatTarget }) => {
+  switch (target.kind) {
+    case 'entity':
+      return <EntityAvatar avatar={target.persona?.avatar} accent={target.persona?.accent} size={30} />;
+    case 'bot':
+      return <BotAvatar kind={target.bot_kind} faction={target.faction} size={30} />;
+    case 'fortress':
+      return (<Icon name={FORTRESS_MODULE_ICONS[target.module ?? ''] || 'chess-rook'} mr={1}
+        color={FACTION_COLORS[target.faction ?? ''] || THEME.muted} />);
+    default:
+      return <Icon name="skull" mr={1} />;
+  }
+};
+
+const targetRole = (target: CombatTarget) => {
+  if (target.kind === 'bot') {
+    return [botKindLabel(target.bot_kind), factionLabel('bot', target.faction)].filter(Boolean).join(' · ');
+  }
+  if (target.kind === 'fortress') {
+    return [FORTRESS_MODULE_NAMES[target.module ?? ''] || 'Модуль крепости', factionLabel('fortress', target.faction)]
+      .filter(Boolean).join(' · ');
+  }
+  return null;
+};
+
+const TargetCard = (props: {
+  target: CombatTarget;
+  selected: boolean;
+  localNode: string | null;
+  onSelect: (ref: string) => void;
+}) => {
+  const { target: t, selected, localNode, onSelect } = props;
+  const role = targetRole(t);
+  // Outer works of a neighbouring fortress are engaged across the link.
+  const siege = t.kind === 'fortress' && !!t.node && !!localNode && t.node !== localNode;
+  return (
+    <Box
+      className="netrun-combat-target"
+      data-net-target={t.kind}
+      mb={0.5}
+      p={1}
+      onClick={() => !t.unavailable_reason && onSelect(t.ref)}
+      style={{
+        cursor: t.unavailable_reason ? 'default' : 'pointer',
+        background: selected ? THEME.line : THEME.panel,
+        border: `1px solid ${selected ? THEME.accent : t.hostile ? THEME.bad : THEME.line}`,
+        borderRadius: '8px',
+      }}
+    >
+      <Box color={t.hostile ? THEME.bad : THEME.text}>
+        <TargetIcon target={t} />
+        {t.name}
+        {t.stunned ? <Box inline ml={1} color={THEME.warn}>оглушён</Box> : null}
+        {t.shielded ? <Box inline ml={1} color={THEME.accent}>щит</Box> : null}
+        {siege ? <Box inline ml={1} color={THEME.warn}>осада</Box> : null}
+        {selected ? <Box inline ml={1} color={THEME.accent}>● цель</Box> : null}
+      </Box>
+      {!!role && <Box fontSize="11px" color={FACTION_COLORS[t.faction ?? ''] || THEME.muted}>{role}</Box>}
+      {siege && (
+        <Box fontSize="11px" color={THEME.muted}>
+          Укрепления соседнего узла: удар идёт через канал осады.
+        </Box>
+      )}
+      {!!t.persona?.tagline && <Box className="netrun-contact-tagline">{t.persona.tagline}</Box>}
+      {!!t.node && <Box color={THEME.muted} fontSize="10px">{t.node_name} {t.node}</Box>}
+      {!!t.unavailable_reason && <Box color={THEME.warn} fontSize="11px">{t.unavailable_reason}</Box>}
+      <IntegrityBar cur={t.integrity} max={t.max_integrity} label={`Целостность ${t.name}`} />
+      <Box fontSize="10px" color={THEME.muted}>
+        {t.integrity}/{t.max_integrity}
+      </Box>
+      {!!t.casting && <Box bold color={THEME.bad}>Готовит {t.casting.name}: {t.casting.remaining} с</Box>}
+      {t.programs?.map((p) => (
+        <Box key={p.name} fontSize="11px" color={p.ready_in ? THEME.muted : THEME.warn}
+          title={`${p.desc} · сила ${p.power} · подготовка ${p.windup} с · кулдаун ${p.cooldown} с`}>
+          {p.name}: {p.ready_in > 0 ? `перезарядка ${p.ready_in} с` : 'готова'}
+        </Box>
+      ))}
     </Box>
   );
 };
@@ -101,10 +205,12 @@ const CombatPanelView = () => {
   const [target, setTarget] = useState<string | null>(null);
 
   // Preserve a usable selection and replace removed or disconnected targets in one update.
+  // Fortress modules are never picked automatically: a siege, like an attack on your own
+  // or the station's works, starts with a deliberate selection.
   const targets = combat?.targets ?? [];
   useEffect(() => {
     const usable = targets.find((t) => t.ref === target && !t.unavailable_reason)
-      ?? targets.find((t) => t.hostile && !t.unavailable_reason);
+      ?? targets.find((t) => t.hostile && t.kind !== 'fortress' && !t.unavailable_reason);
     setTarget(usable?.ref ?? null);
   }, [targets, target]);
 
@@ -149,41 +255,7 @@ const CombatPanelView = () => {
         <Box color={THEME.muted} mb={1}>Других процессов нет.</Box>
       ) : (
         targets.map((t: CombatTarget) => (
-          <Box
-            key={t.ref}
-            className="netrun-combat-target"
-            mb={0.5}
-            p={1}
-            onClick={() => !t.unavailable_reason && setTarget(t.ref)}
-            style={{
-              cursor: t.unavailable_reason ? 'default' : 'pointer',
-              background: target === t.ref ? THEME.line : THEME.panel,
-              border: `1px solid ${target === t.ref ? THEME.accent : t.hostile ? THEME.bad : THEME.line}`,
-              borderRadius: '8px',
-            }}
-          >
-            <Box color={t.hostile ? THEME.bad : THEME.text}>
-              {t.kind === 'entity' ? <EntityAvatar avatar={t.persona?.avatar} accent={t.persona?.accent} size={30} /> : <Icon name="skull" mr={1} />}
-              {t.name}
-              {t.stunned ? <Box inline ml={1} color={THEME.warn}>оглушён</Box> : null}
-              {t.shielded ? <Box inline ml={1} color={THEME.accent}>щит</Box> : null}
-              {target === t.ref ? <Box inline ml={1} color={THEME.accent}>● цель</Box> : null}
-            </Box>
-            {!!t.persona?.tagline && <Box className="netrun-contact-tagline">{t.persona.tagline}</Box>}
-            {!!t.node && <Box color={THEME.muted} fontSize="10px">{t.node_name} {t.node}</Box>}
-            {!!t.unavailable_reason && <Box color={THEME.warn} fontSize="11px">{t.unavailable_reason}</Box>}
-            <IntegrityBar cur={t.integrity} max={t.max_integrity} />
-            <Box fontSize="10px" color={THEME.muted}>
-              {t.integrity}/{t.max_integrity}
-            </Box>
-            {!!t.casting && <Box bold color={THEME.bad}>Готовит {t.casting.name}: {t.casting.remaining} с</Box>}
-            {t.programs?.map((p) => (
-              <Box key={p.name} fontSize="11px" color={p.ready_in ? THEME.muted : THEME.warn}
-                title={`${p.desc} · сила ${p.power} · подготовка ${p.windup} с · кулдаун ${p.cooldown} с`}>
-                {p.name}: {p.ready_in > 0 ? `перезарядка ${p.ready_in} с` : 'готова'}
-              </Box>
-            ))}
-          </Box>
+          <TargetCard key={t.ref} target={t} selected={target === t.ref} localNode={combat.node} onSelect={setTarget} />
         ))
       )}
 
