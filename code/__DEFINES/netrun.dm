@@ -187,6 +187,10 @@
 #define COMSIG_NETRUN_INVENTORY_CHANGED "netrun_inventory_changed"
 /// ICE and console: combat state changed.
 #define COMSIG_NETRUN_COMBAT_CHANGED "netrun_combat_changed"
+#define COMSIG_NETRUN_TURN_CHANGED "netrun_turn_changed"
+/// One encounter owns the current participant's decision deadline.
+#define NETRUN_COMBAT_AP 3
+#define NETRUN_COMBAT_DECISION_TIME (12 SECONDS)
 /// Shared UI state outside the physical map: (network), and a new channel message.
 #define COMSIG_NETRUN_NETWORK_CHANGED "netrun_network_changed"
 #define COMSIG_NETRUN_CHAT_CHANGED "netrun_chat_changed"

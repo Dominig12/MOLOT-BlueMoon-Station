@@ -124,11 +124,12 @@
 	var/datum/netrun_file/copied = source.transfer_to(destination, file, move)
 	if(!copied)
 		return FALSE
-	if(!move)
+	if(!move && !istype(copied, /datum/netrun_file/acquired_key))
 		copied.name = netrun_file_name("Копия [file.name]")
 		if(copied.picture)
 			copied.picture.picture_name = copied.name
 		inventory.selected_file_uid = copied.uid
 		destination.notify_changed()
+	inventory.selected_file_uid = copied.uid
 	log_line("[move ? "Перемещён" : "Скопирован"] файл [file.name].", "good")
 	return TRUE

@@ -62,10 +62,9 @@
 
 /// Processes this program attacks on sight (besides ICE attacking it and remembered attackers).
 /datum/netrun_bot_program/proc/is_enemy(datum/netrun_bot_brain/brain, mob/camera/netrun_entity/entity)
-	var/mob/camera/netrun_entity/bot/other = entity
-	if(!istype(other))
+	if(!istype(entity) || QDELETED(entity))
 		return FALSE
-	return netrun_bot_factions_hostile(brain.owner.net_faction, other.net_faction)
+	return netrun_bot_factions_hostile(brain.owner.net_faction, entity.netrun_faction())
 
 /// Patrol scope: null means every reachable LAN.
 /datum/netrun_bot_program/proc/patrol_networks(datum/netrun_bot_brain/brain)
@@ -105,7 +104,7 @@
 	desc = "Дикий боевой процесс: дерётся с ICE и станционными процессами своей ЛВС, подбирает обломки."
 	faction = NETRUN_FACTION_ROGUE
 	max_integrity = 120
-	programs = list("assault", "strike", "barrier")
+	programs = list("assault", "strike", "barrier", "needle")
 	name_prefix = "RAID"
 	avatar = "fox"
 	accent = "rose"
@@ -130,7 +129,7 @@
 	id = "scavenger"
 	name = "Сборщик обломков"
 	desc = "Залётный процесс: ищет брошенные файлы, хранит добычу и отступает при угрозе."
-	programs = list("strike", "barrier", "patch")
+	programs = list("strike", "barrier", "patch", "renew")
 	name_prefix = "SCRAP"
 	avatar = "moth"
 	accent = "amber"
@@ -156,7 +155,7 @@
 	faction = NETRUN_FACTION_STATION
 	sanctioned = TRUE
 	max_integrity = 100
-	programs = list("strike", "patch")
+	programs = list("strike", "patch", "needle")
 	name_prefix = "CLEAN"
 	avatar = "orb"
 	accent = "mint"
@@ -190,7 +189,7 @@
 	faction = NETRUN_FACTION_OWNER
 	max_integrity = 120
 	storage = 4 * NETRUN_STORAGE_SCALE
-	programs = list("strike", "blackout", "barrier")
+	programs = list("strike", "blackout", "barrier", "lance")
 	name_prefix = "GUARD"
 	avatar = "eye"
 	accent = "violet"
@@ -204,6 +203,13 @@
 	brain.push_goal(new /datum/netrun_bot_goal/guard(brain, brain.post_node()))
 
 /datum/netrun_bot_program/sentinel/is_enemy(datum/netrun_bot_brain/brain, mob/camera/netrun_entity/entity)
+	if(!istype(entity) || QDELETED(entity))
+		return FALSE
+	var/personal_id = brain.owner.net_faction
+	if(personal_id != NETRUN_FACTION_OWNER && SSnetrun.netrun_faction_family(personal_id) == NETRUN_FACTION_OWNER)
+		if(personal_id == entity.netrun_faction())
+			return FALSE
+		return ..() || (brain.at_post() && entity.defense_threat() && entity.console.node_level(brain.owner.host_node) < NETRUN_ACCESS_USER)
 	if(..())
 		return TRUE
 	return brain.at_post() && brain.trespasser(entity)
@@ -216,7 +222,7 @@
 	faction = NETRUN_FACTION_OWNER
 	max_integrity = 80
 	storage = 4 * NETRUN_STORAGE_SCALE
-	programs = list("patch")
+	programs = list("patch", "renew")
 	name_prefix = "MEND"
 	avatar = "ghost"
 	accent = "mint"
@@ -242,7 +248,7 @@
 	faction = NETRUN_FACTION_OWNER
 	max_integrity = 70
 	storage = 8 * NETRUN_STORAGE_SCALE
-	programs = list("blackout", "patch")
+	programs = list("blackout", "patch", "jam")
 	name_prefix = "SURVEY"
 	avatar = "moth"
 	accent = "cyan"
@@ -271,7 +277,7 @@
 	faction = NETRUN_FACTION_OWNER
 	max_integrity = 80
 	storage = 12 * NETRUN_STORAGE_SCALE
-	programs = list("barrier", "patch")
+	programs = list("barrier", "patch", "needle")
 	name_prefix = "COLLECT"
 	avatar = "orb"
 	accent = "amber"
@@ -299,7 +305,7 @@
 	desc = "Страж с усиленной целостностью и оглушением: удерживает пост или патрулирует по приказу владельца."
 	max_integrity = 150
 	storage = 6 * NETRUN_STORAGE_SCALE
-	programs = list("blackout", "strike", "fortify")
+	programs = list("blackout", "strike", "fortify", "lance")
 	name_prefix = "INTERCEPT"
 	avatar = "eye"
 	accent = "mint"
@@ -315,7 +321,7 @@
 	faction = NETRUN_FACTION_OWNER
 	max_integrity = 90
 	storage = 8 * NETRUN_STORAGE_SCALE
-	programs = list("blackout", "patch")
+	programs = list("blackout", "patch", "jam")
 	daemons = list("autobreach", "cloak")
 	name_prefix = "HACK"
 	avatar = "cipher"
@@ -341,7 +347,7 @@
 	desc = "Более живучий взломщик с боевыми программами и icepick.exe; защита, стены крепостей и трассировка действуют обычно."
 	max_integrity = 140
 	storage = 10 * NETRUN_STORAGE_SCALE
-	programs = list("assault", "barrier", "patch")
+	programs = list("assault", "barrier", "patch", "aegis")
 	daemons = list("autobreach", "icepick", "cloak")
 	name_prefix = "BREACH"
 	avatar = "fox"

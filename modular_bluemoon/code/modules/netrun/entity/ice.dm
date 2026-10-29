@@ -16,6 +16,7 @@
 	var/datum/netrun_ice_reaction/reaction
 	var/datum/netrun_ice_agent/agent
 	var/datum/weakref/deployer_ref
+	var/datum/weakref/deployer_principal_ref
 	/// Reconnectable personal guards must not become an unlimited salvage source.
 	var/drops_loot = TRUE
 	/// Only a guard raised by an intrusion uses the dormant-nest lifecycle.
@@ -82,6 +83,7 @@
 	QDEL_NULL(reaction)
 	QDEL_NULL(agent)
 	deployer_ref = null
+	deployer_principal_ref = null
 	cancel_program()
 	SSnetrun.ice_processes -= src
 	SSnetrun.task_scheduler?.cancel("ice", src)
@@ -142,18 +144,23 @@
 
 /datum/netrun_ice/proc/program_payload()
 	. = list()
+	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
 	for(var/id in program_ids)
 		var/datum/netrun_program/program = SSnetrun.get_program(id)
 		if(!program)
 			continue
 		var/list/entry = program.ui_entry()
 		entry["ready_in"] = max(0, CEILING(((program_cd[id] || 0) - world.time) / (1 SECONDS), 0.1))
+		if(encounter?.active)
+			entry["ready_in"] = 0
+			entry["ready_turns"] = encounter.cooldown_remaining(src, program)
 		. += list(entry)
 
 /datum/netrun_ice/proc/casting_payload()
 	if(!pending_program)
 		return null
 	return list("name" = pending_program.name, "role" = pending_program.role,
+		"stun_turns" = pending_program.role == NETRUN_PROGRAM_STUN ? pending_program.stun_turns : 0,
 		"power" = pending_program.role == NETRUN_PROGRAM_ATTACK ? round(pending_program.power * damage_factor) : pending_program.power,
 		"remaining" = max(0, CEILING(round((attack_at - world.time) / (1 SECONDS), 0.01), 0.1)))
 
@@ -276,6 +283,8 @@
 
 /// Population inspects cheap deadlines; only due patrols and active combat queue AI work.
 /datum/netrun_ice/proc/needs_netrun_tick()
+	if(get_combat_encounter()?.active)
+		return FALSE
 	if(reactive && dormant)
 		return FALSE
 	if(QDELETED(node) || QDELETED(node.parent) || pending_program)
@@ -299,10 +308,21 @@
 	return FALSE
 
 /datum/netrun_ice/proc/process_ai(delta)
+	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+	if(encounter?.active && !encounter.has_turn(src))
+		return
+	var/was_casting = !!pending_program
 	if(reactive && (pending_program || has_reactive_threat()))
 		dormant = FALSE
 		reactive_sleep_at = world.time + reactive_quiet_timeout
 	agent.advance(delta)
+	if(!QDELETED(src))
+		encounter = get_combat_encounter()
+		if(encounter?.active && reactive && dormant)
+			encounter.remove(encounter.member(src))
+			return
+		if(encounter?.active && encounter.has_turn(src) && !pending_program && !was_casting)
+			encounter.pass(src)
 
 /// Local residents and the bounded active-breach index are the only wake interests.
 /datum/netrun_ice/proc/has_reactive_threat()
@@ -335,14 +355,27 @@
 
 /// Immunity belongs to the deploying principal, including its owned agents.
 /// Both direct combat and remote countertrace recheck it at delivery.
-/datum/netrun_ice/proc/is_deployer(datum/netrun_console/console)
-	var/datum/netrun_console/deployer = deployer_ref?.resolve()
-	if(!deployer || QDELETED(console))
+/datum/netrun_ice/proc/bind_deployer(datum/netrun_console/console)
+	if(QDELETED(console))
 		return FALSE
-	if(console == deployer)
-		return TRUE
-	var/mob/camera/netrun_entity/entity = console.host
-	return istype(entity) && entity.netrun_owner_console() == deployer
+	var/datum/principal = console.personal_faction_principal()
+	var/mob/camera/netrun_entity/bot/bot = console.combat_self()
+	if(istype(bot) && bot.launched_by_owner)
+		principal = bot.agent_orphaned() ? null : bot.owner_principal_ref?.resolve()
+	if(QDELETED(principal))
+		return FALSE
+	deployer_ref = WEAKREF(console)
+	deployer_principal_ref = WEAKREF(principal)
+	return TRUE
+
+/datum/netrun_ice/proc/is_deployer(datum/netrun_console/console)
+	var/datum/principal = deployer_principal_ref?.resolve()
+	if(QDELETED(principal) || QDELETED(console))
+		return FALSE
+	var/mob/camera/netrun_entity/bot/bot = console.combat_self()
+	if(istype(bot) && bot.launched_by_owner)
+		return !bot.agent_orphaned() && bot.owner_principal_ref?.resolve() == principal
+	return console.personal_faction_principal() == principal
 
 /// Нарушитель в узле: нелегальная сущность или тот, кто спровоцировал этот ICE.
 /datum/netrun_ice/proc/find_intruder(datum/component/netrun_node/where)
@@ -360,7 +393,12 @@
 	return best
 
 /datum/netrun_ice/proc/try_attack(mob/camera/netrun_entity/prey)
-	if(world.time < next_attack || QDELETED(prey))
+	if(QDELETED(prey))
+		return
+	var/datum/netrun_combat_encounter/encounter = node.get_combat_encounter()
+	if(!encounter.admit(src, 1, prey))
+		return
+	if(!encounter.active && world.time < next_attack)
 		return
 	// A damaged guard visibly raises its barrier before returning to its attacks.
 	if(integrity <= max_integrity * 0.75 && world.time >= combat_shield_until)
@@ -370,7 +408,9 @@
 				return
 	for(var/id in program_ids)
 		var/datum/netrun_program/program = SSnetrun.get_program(id)
-		if(!program || world.time < (program_cd[id] || 0) || program.role == NETRUN_PROGRAM_TRACE)
+		if(!program || program.role == NETRUN_PROGRAM_TRACE)
+			continue
+		if(encounter.active ? (encounter.cooldown_remaining(src, program) || program.ap_cost > encounter.remaining_ap(src)) : world.time < (program_cd[id] || 0))
 			continue
 		if(program.role == NETRUN_PROGRAM_SHIELD && (integrity > max_integrity * 0.75 || world.time < combat_shield_until))
 			continue
@@ -415,9 +455,16 @@
 	entity.console?.release_path_tree(tree)
 
 /datum/netrun_ice/proc/begin_program(datum/netrun_program/program, datum/target)
-	if(!program || pending_program || is_stunned() || !node?.is_online() || world.time < next_attack || !(program.id in program_ids) || world.time < (program_cd[program.id] || 0))
+	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+	if(!program || pending_program || is_stunned() || !node?.is_online() || !(program.id in program_ids))
+		return FALSE
+	if(encounter?.active ? encounter.cooldown_remaining(src, program) : (world.time < next_attack || world.time < (program_cd[program.id] || 0)))
 		return FALSE
 	if(!valid_program_target(program, target, TRUE))
+		return FALSE
+	if(!encounter && netrun_turn_actor(target) != src)
+		encounter = node.get_combat_encounter()
+	if(encounter && (!encounter.admit(src, program.ap_cost, target) || !encounter.can_apply_program_status(program, target) || !encounter.commit_program(src, program, TRUE)))
 		return FALSE
 	pending_program = program
 	pending_target_ref = WEAKREF(target)
@@ -429,6 +476,8 @@
 		var/mob/camera/netrun_entity/entity = target
 		victim = entity.console
 		var/counterplay = program.role == NETRUN_PROGRAM_STUN ? "Оглушение ICE или выход из узла сорвут оглушение." : "Щит снизит урон; оглушение ICE или выход из узла сорвут атаку."
+		if(encounter?.active)
+			counterplay = program.role == NETRUN_PROGRAM_STUN ? "Подавление пропустит ход. Контрмеры доступны в ваш ход; выход стоит 1 ОД." : "Подготовьте щит в свой ход. В свой ход можно отступить за 1 ОД."
 		if(agent?.profile.illegal)
 			counterplay += " Чёрный ICE опасен для нейронного канала и тела!"
 		to_chat(entity, span_userdanger("[name] готовит [program.name]: до срабатывания [telegraph / (1 SECONDS)] с! [counterplay]"))
@@ -441,13 +490,15 @@
 		SEND_SIGNAL(victim, COMSIG_NETRUN_ICE_CAST_STARTED, src, victim)
 	SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
 	var/trace_advice = program.role == NETRUN_PROGRAM_TRACE ? " Прервите взлом или оглушите ICE, чтобы сорвать трассировку." : ""
+	if(program.role == NETRUN_PROGRAM_TRACE && encounter?.active)
+		trace_advice = " Прервите взлом, чтобы сорвать трассировку; подавление ICE доступно в ваш ход."
 	victim?.log_line("[name] готовит [program.name], срабатывание через [telegraph / (1 SECONDS)] с.[trace_advice]", "bad")
 	node.add_log("[name]: подготовка [program.name].")
 	reaction.schedule_at(attack_at)
 	victim?.finish_user_action()
 	return TRUE
 
-/datum/netrun_ice/proc/cancel_program()
+/datum/netrun_ice/proc/cancel_program(resolve_turn = TRUE)
 	reaction?.clear_timer()
 	var/had_program = !!pending_program
 	pending_program = null
@@ -456,6 +507,8 @@
 	attack_at = 0
 	if(had_program)
 		SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
+		if(resolve_turn)
+			get_combat_encounter()?.resolve(src)
 
 /datum/netrun_ice/proc/resolve_program()
 	if(!pending_program)
@@ -469,12 +522,23 @@
 		if(pending_breach_ref?.resolve() != victim.intrusion.breach)
 			cancel_program()
 			return
+	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+	if(encounter?.active && (!encounter.has_turn(src) || !encounter.deferred))
+		cancel_program(FALSE)
+		encounter.expire_turn()
+		return
+	if(encounter?.active && !encounter.can_apply_program_status(pending_program, target))
+		cancel_program()
+		return
 	if(world.time < attack_at)
 		return
 	var/datum/netrun_program/program = pending_program
-	cancel_program()
+	cancel_program(FALSE)
 	next_attack = world.time + 0.5 SECONDS
 	netrun_apply_program(program, target, null, damage_factor)
+	if(!QDELETED(encounter))
+		encounter.apply_program_status(program, target)
+		encounter.resolve(src)
 	SEND_SIGNAL(src, COMSIG_NETRUN_ICE_PROGRAM_RESOLVED, program, target)
 	if(istype(target, /datum/netrun_console))
 		var/datum/netrun_console/victim = target
@@ -488,7 +552,8 @@
 /// Сторож без прямой цели давит на тех, кто ломает его узел или сеть.
 /datum/netrun_ice/proc/harass_intruders()
 	var/datum/netrun_program/program = SSnetrun.get_program("trace")
-	if(world.time < next_attack || world.time < (program_cd[program.id] || 0))
+	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+	if(encounter?.active ? (encounter.cooldown_remaining(src, program) || program.ap_cost > encounter.remaining_ap(src)) : (world.time < next_attack || world.time < (program_cd[program.id] || 0)))
 		return FALSE
 	// During the subsystem pass this is one shared, bounded breach snapshot.
 	// Standalone callers still inspect live consoles; execution checks every candidate.

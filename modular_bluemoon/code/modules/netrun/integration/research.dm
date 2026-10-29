@@ -135,7 +135,7 @@
 	name = "data shard (advanced network defense)"
 	desc = "Тяжёлый удар и программа прерывания враждебных процессов."
 	icon_state = "datadisk3"
-	preload_programs = list("assault", "blackout", "fortify")
+	preload_programs = list("assault", "blackout", "fortify", "lance", "aegis", "jam")
 
 /datum/design/netrun_assault_suite
 	name = "Advanced Network Defense Suite"

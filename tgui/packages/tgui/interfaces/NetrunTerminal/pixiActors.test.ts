@@ -28,6 +28,41 @@ test('keyed movement reuses geometry, interpolates hit targets, and settles with
   layer.destroy(); expect(a.destroyed && b.destroyed).toBe(true);
 });
 
+test('live map actors show role glyphs and faction colours, and repaint only the changed occupant summary', () => {
+  const original = { ...node('A'), bots: 1, processes: [{ kind: 'bot' as const, bot_kind: 'hacker', faction: 'redshift', count: 1 }] };
+  const scene = new GraphScene(); scene.update([original, { ...node('B', 200), bots: 1,
+    processes: [{ kind: 'bot', bot_kind: 'recycler', faction: 'owner:3', faction_color: '#123456', count: 1 }] }], []);
+  const layer = new PixiActors(mockPixi), state = overlay(), edges = [];
+  layer.update(scene, state, edges, scene.adjacency, 0);
+  const a = MockContainer.instances.find((entry) => entry.label === 'device:A').children[1] as MockGraphics;
+  const b = MockContainer.instances.find((entry) => entry.label === 'device:B').children[1] as MockGraphics;
+  expect(a.calls.filter((call) => call.op === 'fill').map((call) => call.args[0])).toContainEqual({ color: 0xf18f65 });
+  expect(b.calls.filter((call) => call.op === 'fill').map((call) => call.args[0])).toContainEqual({ color: 0x123456 });
+  const cipherGeometry = a.calls.filter((call) => call.op === 'lineTo').map((call) => call.args);
+  const beforeB = b.clears;
+  const next = new GraphScene(); next.update([{ ...original, processes: [{ kind: 'bot', bot_kind: 'breacher',
+    faction: 'collective', count: 1 }] }, scene.nodes[1]], scene.edges, scene);
+  layer.update(next, state, edges, next.adjacency, 1);
+  expect(a.calls.filter((call) => call.op === 'fill').map((call) => call.args[0])).toContainEqual({ color: 0xb7a0ff });
+  expect(a.calls.filter((call) => call.op === 'lineTo').map((call) => call.args)).not.toEqual(cipherGeometry);
+  expect(b.clears).toBe(beforeB);
+  expect(layer.animate(1000)).toBe(false);
+});
+
+test('map process markers keep unknown profiles visible, bound group geometry, and retain total overflow', () => {
+  const scene = new GraphScene(); scene.update([{ ...node('A'), bots: 9, processes: Array.from({ length: 9 }, (_, i) => ({
+    kind: 'bot' as const, bot_kind: `future-${i}`, faction: 'owner:9', faction_color: 'var(--bad)', count: 1,
+  })) }], []);
+  const layer = new PixiActors(mockPixi); layer.update(scene, overlay(), [], scene.adjacency, 0);
+  const actor = MockContainer.instances.find((entry) => entry.label === 'device:A');
+  const marks = actor.children[1] as MockGraphics;
+  expect(marks.calls.filter((call) => call.op === 'fill')).toHaveLength(6);
+  expect(marks.calls.filter((call) => call.op === 'fill').every((call) => (call.args[0] as { color: number }).color === 0x77d9ad)).toBe(true);
+  expect(actor.children.slice(2).map((label) => (label as unknown as { text: string }).text)).toEqual(['+3']);
+  layer.setViewport({ left: -200, right: 200, top: -200, bottom: 200 }, .2);
+  expect(actor.children.slice(2).every((label) => !label.visible)).toBe(true); // Shapes, not tiny text, identify roles at overview zoom.
+});
+
 test('all dynamic links and routes longer than 256 hops survive, including a crossing link', () => {
   const scene = new GraphScene();
   const nodes = Array.from({ length: 301 }, (_, i) => node(`N${i}`, i * 10));

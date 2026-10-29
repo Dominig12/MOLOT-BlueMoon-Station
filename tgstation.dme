@@ -5485,6 +5485,8 @@
 #include "modular_bluemoon\code\modules\netrun\entity\recycling_transfer.dm"
 #include "modular_bluemoon\code\modules\netrun\entity\bots.dm"
 #include "modular_bluemoon\code\modules\netrun\entity\combat.dm"
+#include "modular_bluemoon\code\modules\netrun\entity\turn_combat.dm"
+#include "modular_bluemoon\code\modules\netrun\entity\turn_fortress.dm"
 #include "modular_bluemoon\code\modules\netrun\entity\combatant.dm"
 #include "modular_bluemoon\code\modules\netrun\entity\dive_link.dm"
 #include "modular_bluemoon\code\modules\netrun\entity\entity.dm"

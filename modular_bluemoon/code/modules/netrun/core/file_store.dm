@@ -4,6 +4,9 @@
 	var/list/datum/netrun_file/files = list()
 	var/capacity = 8 * NETRUN_STORAGE_SCALE
 	var/revision = 0
+	/// Per-medium aggregation: a local disk and removable shard remain separate.
+	var/canonical_grants_uid
+	var/merging_grants = FALSE
 
 /datum/netrun_file_store/New(datum/owner, capacity = 8 * NETRUN_STORAGE_SCALE)
 	owner_ref = owner ? WEAKREF(owner) : null
@@ -34,19 +37,89 @@
 	return netrun_storage_used(files)
 
 /datum/netrun_file_store/proc/can_fit(datum/netrun_file/file)
-	return !QDELETED(file) && file.can_store(src) && used() + file.size <= capacity
+	if(QDELETED(file) || !file.can_store(src))
+		return FALSE
+	var/used_size = used()
+	if(capacity <= 0 || used_size > capacity)
+		return FALSE
+	if(istype(file, /datum/netrun_file/acquired_key) && ((file in files) || acquired_key_target(file)))
+		return TRUE
+	return used_size + file.size <= capacity
 
 /// Map preloads may intentionally exceed the writable capacity of a disk.
 /datum/netrun_file_store/proc/insert(datum/netrun_file/file, preload = FALSE)
+	RETURN_TYPE(/datum/netrun_file)
 	if(QDELETED(file) || !file.can_store(src))
-		return FALSE
+		return null
 	if(file in files)
-		return TRUE
+		if(istype(file, /datum/netrun_file/acquired_key))
+			consolidate_acquired_keys()
+			return acquired_key_target()
+		return file
 	if(!preload && !can_fit(file))
-		return FALSE
+		return null
+	if(istype(file, /datum/netrun_file/acquired_key))
+		var/datum/netrun_file/acquired_key/incoming = file
+		var/datum/netrun_file/acquired_key/canonical = acquired_key_target(incoming)
+		if(canonical)
+			canonical.merge_from(incoming)
+			var/datum/netrun_inventory/inventory = owner_ref?.resolve()
+			if(istype(inventory) && inventory.selected_file_uid == incoming.uid)
+				inventory.selected_file_uid = canonical.uid
+			qdel(incoming)
+			consolidate_acquired_keys(FALSE)
+			notify_changed()
+			return canonical
+		canonical_grants_uid = incoming.uid
 	files += file
 	notify_changed()
-	return TRUE
+	return file
+
+/// Prefer the medium's stable survivor, then its owning inventory's tracked key.
+/datum/netrun_file_store/proc/acquired_key_target(datum/netrun_file/exclude)
+	RETURN_TYPE(/datum/netrun_file/acquired_key)
+	var/datum/netrun_inventory/inventory = owner_ref?.resolve()
+	var/preferred_uid = istype(inventory) ? inventory.canonical_key_uid : null
+	var/datum/netrun_file/acquired_key/first
+	var/datum/netrun_file/acquired_key/preferred
+	for(var/datum/netrun_file/acquired_key/key as anything in files)
+		if(!istype(key) || QDELETED(key) || key == exclude)
+			continue
+		if(key.uid == canonical_grants_uid)
+			return key
+		if(key.uid == preferred_uid)
+			preferred = key
+		if(!first)
+			first = key
+	var/datum/netrun_file/acquired_key/result = preferred ? preferred : first
+	canonical_grants_uid = result?.uid
+	return result
+
+/// Legacy duplicate media are consolidated on storage facts/mount, never on UI
+/// reads. Complete all ownership changes before notifying either shared viewer.
+/datum/netrun_file_store/proc/consolidate_acquired_keys(publish = TRUE)
+	if(merging_grants)
+		return FALSE
+	var/datum/netrun_file/acquired_key/canonical = acquired_key_target()
+	if(!canonical)
+		canonical_grants_uid = null
+		return FALSE
+	merging_grants = TRUE
+	var/changed = FALSE
+	var/datum/netrun_inventory/inventory = owner_ref?.resolve()
+	for(var/datum/netrun_file/acquired_key/key as anything in files.Copy())
+		if(!istype(key) || QDELETED(key) || key == canonical)
+			continue
+		canonical.merge_from(key)
+		files -= key
+		if(istype(inventory) && inventory.selected_file_uid == key.uid)
+			inventory.selected_file_uid = canonical.uid
+		qdel(key)
+		changed = TRUE
+	merging_grants = FALSE
+	if(changed && publish)
+		notify_changed()
+	return changed
 
 /// Removing transfers ownership to the caller; deletion is an explicit operation.
 /datum/netrun_file_store/proc/remove(datum/netrun_file/file)
@@ -87,11 +160,16 @@
 		return null
 	if(move)
 		files -= file
-	destination.files += result
+	var/datum/netrun_file/stored = destination.insert(result)
+	if(!stored)
+		if(move)
+			files += file
+		else
+			qdel(result)
+		return null
 	if(move)
 		notify_changed()
-	destination.notify_changed()
-	return result
+	return stored
 
 /datum/netrun_file_store/proc/notify_changed()
 	revision++
@@ -214,8 +292,9 @@
 	notify_changed()
 
 /datum/netrun_inventory/proc/store_file(datum/netrun_file/file, to_shard = FALSE)
+	RETURN_TYPE(/datum/netrun_file)
 	var/datum/netrun_file_store/destination = to_shard ? shard?.file_store : local_store
-	return destination?.insert(file) || FALSE
+	return destination?.insert(file)
 
 /datum/netrun_inventory/proc/delete_file(datum/netrun_file/file)
 	var/datum/netrun_file_store/source = store_for(file)
@@ -244,6 +323,7 @@
 			UnregisterSignal(shard.file_store, COMSIG_NETRUN_STORAGE_CHANGED)
 	shard = QDELETED(new_shard) ? null : new_shard
 	if(shard)
+		shard.file_store.consolidate_acquired_keys()
 		RegisterSignal(shard, COMSIG_PARENT_QDELETING, PROC_REF(on_shard_deleted))
 		RegisterSignal(shard, COMSIG_MOVABLE_MOVED, PROC_REF(on_shard_moved))
 		RegisterSignal(shard.file_store, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_store_changed))

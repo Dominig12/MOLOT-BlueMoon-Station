@@ -285,6 +285,7 @@
 	data["can_breach"] = intrusion.can_breach
 	data["can_autobreach"] = intrusion.can_breach && !!daemon_bonus("autobreach")
 	data["log"] = log
+	data["notices"] = notices
 	data["security"] = workspace_view == "breach" ? list("defended" = null, "entries" = list()) : security_session.payload()
 	data["file_exchange"] = file_exchange.payload()
 	data["access_export"] = workspace_view == "files" ? acquired_key_payload() : null
@@ -351,6 +352,9 @@
 	else if((workspace_view in list("map", "files", "pinned")) && node && node_visible(node))
 		var/level = node_level(node)
 		selected = node.ui_entry(src)
+		if(origin == NETRUN_ORIGIN_ENTITY && istype(host, /mob/camera/netrun_entity))
+			var/mob/camera/netrun_entity/entity = host
+			selected["movement"] = entity.navigation?.movement_payload(node, ui_routes)
 		selected["network"] = node.network?.short_name
 		selected["legit"] = legit_node_level(node)
 		selected["commands"] = node.command_entries(src)
@@ -608,6 +612,8 @@
 
 /// Dispatch follows the ordinary TGUI permission check; denied domain actions still get receipt.
 /datum/netrun_console/proc/handle_ui_action(action, list/params, datum/tgui/ui, input_nonce)
+	if(action == "combat_pass")
+		return pass_combat_turn()
 	if(action == "access_export")
 		return !!export_acquired_key(params["name"], !!params["to_shard"])
 	if(action == "entity_file_offer")

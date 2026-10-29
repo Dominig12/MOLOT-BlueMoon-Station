@@ -1,4 +1,4 @@
-/// The visible recovery window must agree with the action and preserve unspent resources.
+/// The visible turn budget/cooldown agrees with action admission and unspent resources.
 /datum/unit_test/netrun_combat_action_recovery/Run()
 	var/obj/item/host = allocate(/obj/item)
 	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
@@ -8,17 +8,22 @@
 	var/datum/netrun_ice/ice = allocate(/datum/netrun_ice, node)
 	TEST_ASSERT(console.program_use("builtin:sting", REF(ice)), "An available attack must execute")
 	var/list/payload = console.combat_payload()
-	TEST_ASSERT_EQUAL(payload["action_ready_in"], 0.5, "The common recovery window must be visible immediately")
+	TEST_ASSERT_EQUAL(payload["action_ready_in"], 0, "Turn programs do not advertise a legacy wall-clock recovery")
+	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter()
+	TEST_ASSERT_EQUAL(encounter.remaining_ap(console), 2, "The light attack spends one actual point")
 	var/trace_before = console.intrusion.trace
-	TEST_ASSERT(!console.program_use("builtin:shell", null), "A second program must wait for common recovery")
-	TEST_ASSERT_NULL(console.combat_context.program_cd["shell"], "A rejected action must not spend its program cooldown")
+	TEST_ASSERT(!console.program_use("builtin:surge", REF(ice)), "A heavy program cannot spend more points than remain")
+	TEST_ASSERT_NULL(console.combat_context.program_cd["surge"], "A rejected action must not spend its program cooldown")
 	TEST_ASSERT_EQUAL(console.intrusion.trace, trace_before, "A rejected action must not add trace")
-	console.combat_context.program_cd["sting"] = world.time + 0.25
+	var/datum/netrun_turn_participant/participant = encounter.member(console)
+	participant.program_turn_cooldowns["sting"] = participant.own_turn + 1
 	var/list/entry = console.combat_context.program_entry(SSnetrun.get_program("sting"), "builtin:sting", TRUE)
-	TEST_ASSERT_EQUAL(entry["ready_in"], 0.1, "A positive remaining cooldown must never be advertised as ready")
-	console.combat_context.next_program = world.time
-	payload = console.combat_payload()
-	TEST_ASSERT_EQUAL(payload["action_ready_in"], 0, "Common recovery must clear exactly at its deadline")
+	TEST_ASSERT_EQUAL(entry["ready_turns"], 1, "A positive own-turn cooldown is not advertised as ready")
+	encounter.pass(console)
+	encounter.pass(ice)
+	entry = console.combat_context.program_entry(SSnetrun.get_program("sting"), "builtin:sting", TRUE)
+	TEST_ASSERT_EQUAL(entry["ready_turns"], 0, "A new own turn releases the program cooldown")
+	TEST_ASSERT_EQUAL(encounter.remaining_ap(console), NETRUN_COMBAT_AP, "Exactly the next own turn replenishes the budget")
 
 /// Disengagement is lost only after an actual offensive action, including non-damaging stun.
 /datum/unit_test/netrun_combat_offense_reveals_process/Run()

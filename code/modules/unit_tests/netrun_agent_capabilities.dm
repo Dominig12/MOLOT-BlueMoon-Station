@@ -7,7 +7,14 @@
 	var/datum/netrun_ice/black = allocate(/datum/netrun_ice, scene.node_a, NETRUN_ICE_BLACK)
 	TEST_ASSERT_NOTNULL(legal.agent.memory, "Protection agents own program memory")
 	TEST_ASSERT(legal.agent.memory != black.agent.memory, "Agent storage is never shared")
-	TEST_ASSERT_EQUAL(length(legal.agent.memory.files), 3, "The guard receives its declared loadout")
+	TEST_ASSERT_EQUAL(length(legal.agent.memory.files), length(legal.agent.profile.program_ids), "The guard receives its declared loadout")
+	for(var/id in legal.agent.profile.program_ids)
+		var/found = FALSE
+		for(var/datum/netrun_file/file as anything in legal.agent.memory.files)
+			if(file.content == id && file.kind == NETRUN_FILE_PROGRAM)
+				found = TRUE
+				break
+		TEST_ASSERT(found, "Every declared guard program [id] must occupy an actual owned file")
 	TEST_ASSERT(!legal.is_intruder(entity), "Ordinary ICE respects legitimate host residency")
 	TEST_ASSERT(black.is_intruder(entity), "Illegal ICE remains dangerous even to a USER")
 	legal.process_ai(1)
@@ -22,11 +29,37 @@
 	TEST_ASSERT_NOTNULL(black.pending_program, "The same agent attacks once its combat capability is enabled")
 	TEST_ASSERT(black.attack_at >= world.time + NETRUN_ICE_MIN_TELEGRAPH, "Illegal protection retains a counterplay telegraph")
 	black.cancel_program()
-	black.deployer_ref = WEAKREF(entity.console)
+	TEST_ASSERT(black.bind_deployer(entity.console), "The native deployer binding captures the actual principal")
 	TEST_ASSERT(!black.is_intruder(entity), "The deploying principal is not attacked by its own ICE")
 	TEST_ASSERT(entity.console.start_breach("node", scene.node_a.address), "The deploying principal can begin its ordinary host breach")
 	TEST_ASSERT(!black.valid_trace_target(entity.console), "Its own ICE cannot attack its deployer through countertrace either")
 	entity.console.intrusion.breach.finish()
+
+/// Illegal protection retains its captured owner across devices and operator changes.
+/datum/unit_test/netrun_black_ice_personal_deployer/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/mob/living/carbon/human/owner = allocate(/mob/living/carbon/human, run_loc_floor_bottom_left)
+	var/mob/living/carbon/human/other = allocate(/mob/living/carbon/human, run_loc_floor_bottom_left)
+	owner.mind_initialize()
+	other.mind_initialize()
+	var/datum/mind/principal = owner.mind
+	var/datum/netrun_console/shared = allocate(/datum/netrun_console, scene.node_a.parent)
+	var/datum/netrun_console/second_client = allocate(/datum/netrun_console, allocate(/obj/item))
+	shared.operator = owner
+	second_client.operator = owner
+	var/mob/camera/netrun_entity/bot/agent = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_a, NETRUN_BOT_SENTINEL, shared)
+	var/datum/netrun_ice/black = allocate(/datum/netrun_ice, scene.node_a, NETRUN_ICE_BLACK)
+	TEST_ASSERT(black.bind_deployer(shared), "Deployment captures the issuing mind")
+	TEST_ASSERT(black.is_deployer(shared) && black.is_deployer(second_client), "The issuer retains immunity across its real clients")
+	TEST_ASSERT(!black.is_intruder(agent), "The issuer's actual personal agent shares immunity")
+	shared.operator = other
+	TEST_ASSERT(!black.is_deployer(shared), "A subsequent shared-console operator does not inherit the captured immunity")
+	TEST_ASSERT_NULL(agent.netrun_owner_console(), "The changed console no longer receives the agent's reports")
+	TEST_ASSERT(!black.is_intruder(agent) && black.is_deployer(second_client), "A reporting-client change cannot remove the original principal's immunity")
+	qdel(shared)
+	TEST_ASSERT(!black.is_intruder(agent) && black.is_deployer(second_client), "Deleting the deployment device preserves immunity for its living owner")
+	qdel(principal)
+	TEST_ASSERT(!black.is_deployer(second_client), "Deletion of the actual principal does not grant immunity to a replacement body identity")
 
 /// Feedback is delivered only after a valid hostile program. Leaving cancels
 /// both digital damage and body damage; shields mitigate both effects.
@@ -45,6 +78,7 @@
 	TEST_ASSERT_EQUAL(body.getOrganLoss(ORGAN_SLOT_BRAIN) - before, 3, "A 50 percent shield also halves feedback")
 	black.next_attack = 0
 	black.program_cd.Cut()
+	TEST_ASSERT(netrun_test_yield_to(black, TRUE), "A second heavy attack waits for its own next turn and turn cooldown")
 	TEST_ASSERT(black.begin_program(program, entity), "Another attack is announced independently")
 	before = body.getOrganLoss(ORGAN_SLOT_BRAIN)
 	entity.leave_node()

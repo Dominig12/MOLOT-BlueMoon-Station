@@ -9,14 +9,16 @@
 	combat.observe(ice)
 	TEST_ASSERT(!combat.needs_live_refresh(), "An idle observed ICE has no visible countdown")
 	TEST_ASSERT(ice.begin_program(SSnetrun.get_program("strike"), entity), "A real ICE must prepare its attack")
-	TEST_ASSERT(combat.needs_live_refresh(), "An incoming cast needs live HUD updates on every page")
+	TEST_ASSERT(!combat.needs_live_refresh(), "A turn-owned cast has its native deadline and needs no blanket UI polling")
 	ice.cancel_program()
 	TEST_ASSERT(!combat.needs_live_refresh(), "Cancelling the cast must allow the UI to become quiet again")
 	combat.program_cd["strike"] = world.time + 10 SECONDS
 	entity.console.workspace_view = "terminal"
 	TEST_ASSERT(!combat.needs_live_refresh(), "Hidden program cooldowns should not poll the terminal")
 	entity.console.workspace_view = "combat"
-	TEST_ASSERT(combat.needs_live_refresh(), "Visible program cooldowns must keep counting down")
+	TEST_ASSERT(!combat.needs_live_refresh(), "Active turn cooldowns count own turns instead of polling wall-clock program timestamps")
+	qdel(entity.console.get_combat_encounter())
+	TEST_ASSERT(combat.needs_live_refresh(), "Outside an encounter the legacy real-time recovery still updates while visible")
 
 /// Hidden window and map animation data must not wake unrelated workspaces.
 /datum/unit_test/netrun_refresh_hidden_workspace/Run()

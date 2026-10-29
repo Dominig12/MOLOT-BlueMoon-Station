@@ -404,6 +404,9 @@
 
 /datum/netrun_entity_module/navigation/handle_action(action, list/params, mob/user)
 	switch(action)
+		if("move")
+			navigation.move_to(SSnetrun.find_node(params["address"]))
+			return TRUE
 		if("hop", "relay_hop")
 			var/datum/component/netrun_node/target = SSnetrun.find_node(params["address"])
 			var/success = action == "hop" ? owner.hop(target) : owner.relay_hop(target)
@@ -449,6 +452,8 @@
 	wake_behavior()
 
 /datum/netrun_entity_module/vitals/needs_processing()
+	if(owner.console?.get_combat_encounter()?.active)
+		return FALSE
 	return !!owner.client || owner.integrity < owner.max_integrity || world.time < owner.combat_stun_until || world.time < owner.combat_shield_until || world.time < owner.combat_ignore_until || world.time < owner.next_hop
 
 /datum/netrun_entity_module/vitals/process_tick(delta)
@@ -456,7 +461,7 @@
 		var/turf/here = owner.host_node.physical_turf()
 		if(here && owner.loc != here)
 			owner.abstract_move(here)
-	if(owner.integrity < owner.max_integrity)
+	if(owner.integrity < owner.max_integrity && !owner.console?.get_combat_encounter()?.active)
 		var/calm = world.time - owner.console.intrusion.last_illegal > 20 SECONDS
 		owner.integrity = min(owner.max_integrity, owner.integrity + delta * (calm ? 0.5 : 0.25))
 	owner.update_vision()
@@ -551,9 +556,12 @@
 	var/mob/camera/netrun_entity/bot/bot = owner
 	if(!istype(bot))
 		return
-	var/datum/netrun_console/master = bot.netrun_owner_console()
-	if(!QDELETED(master))
-		listen(master, COMSIG_PARENT_QDELETING, PROC_REF(on_owner_deleted))
+	var/datum/principal = bot.owner_principal_ref?.resolve()
+	if(!QDELETED(principal))
+		listen(principal, COMSIG_PARENT_QDELETING, PROC_REF(on_owner_deleted))
+	var/datum/netrun_faction/faction = bot.owner_faction_ref?.resolve()
+	if(!QDELETED(faction))
+		listen(faction, COMSIG_PARENT_QDELETING, PROC_REF(on_owner_deleted))
 	if(bot.expires_at != expiry_at)
 		if(expiry_timer)
 			deltimer(expiry_timer)
@@ -615,6 +623,12 @@
 	return TRUE
 
 /datum/netrun_entity_module/bot_stun/proc/arm_recovery()
+	if(owner.console?.get_combat_encounter()?.active)
+		if(stun_timer)
+			deltimer(stun_timer)
+		stun_timer = null
+		stun_until = owner.combat_stun_until
+		return
 	if(owner.combat_stun_until == stun_until)
 		return
 	if(stun_timer)

@@ -151,13 +151,73 @@
 			var/datum/component/netrun_node/node = graph.nodes[neighbor]
 			if(QDELETED(node) || !netrun_link_available(current, node))
 				continue
-			if(owner.console.node_level(node, tree) < NETRUN_ACCESS_USER && !owner.console.has_key(node.network, TRUE))
+			if(!owner.console.can_traverse_node(node, tree))
 				continue
 			visited[neighbor] = TRUE
 			previous[neighbor] = address
 			frontier += neighbor
 	qdel(tree)
 	return result
+
+/// Selected-node admission is cheap: no BFS and no path promise on a UI pass.
+/// A permitted distant destination may still have a closed intermediate node;
+/// start() resolves the complete live route only when the user actually clicks.
+/datum/netrun_entity_navigation/proc/movement_payload(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
+	if(QDELETED(owner) || QDELETED(owner.console))
+		return list("action" = "travel", "allowed" = FALSE, "reason" = "Процесс или его сеанс недоступен.")
+	var/owns_tree = !tree
+	if(owns_tree)
+		tree = owner.console.connection.read_path_tree(TRUE)
+	var/reason = movement_denial(node, tree)
+	var/action = !reason && world.time >= owner.next_hop && owner.can_enter(node, tree) ? "hop" : "travel"
+	if(owns_tree)
+		owner.console.release_path_tree(tree)
+	return list("action" = action, "allowed" = !reason, "reason" = reason)
+
+/datum/netrun_entity_navigation/proc/movement_denial(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
+	if(QDELETED(owner.host_node))
+		return "Нет текущего узла для перехода."
+	if(QDELETED(node) || QDELETED(node.parent))
+		return "Узел назначения больше не существует."
+	if(node == owner.host_node)
+		return "Вы уже находитесь в этом узле."
+	if(owner.console.is_locked())
+		return "Точка подключения заблокирована трассировкой."
+	if(owner.is_stunned())
+		return "Процесс оглушён."
+	var/datum/netrun_combat_encounter/encounter = owner.console.get_combat_encounter()
+	if(encounter?.active && (encounter.is_waiting(owner.console) || encounter.remaining_ap(owner.console) < 1))
+		return "Для выхода из боя нужен ваш ход и одно очко действий."
+	if(!node.is_online())
+		return "Узел назначения отключён."
+	if(!owner.console.can_route(node, tree))
+		return "До узла назначения нет действующего сетевого маршрута."
+	if(!owner.console.can_traverse_node(node, tree))
+		if(node.fortress?.gate_blocks(owner.console))
+			return "Врата крепости требуют доступа ПОЛЬЗОВАТЕЛЯ к узлу; вход или ключ ЛВС не подходят."
+		return "Нужен доступ ПОЛЬЗОВАТЕЛЯ к узлу, добытый вход ЛВС или её ключ."
+	return null
+
+/// Native dispatch repeats admission with fresh physical routes and access.
+/// A neighbour is one normal hop; every other move uses the existing autopilot.
+/datum/netrun_entity_navigation/proc/move_to(datum/component/netrun_node/node)
+	if(QDELETED(owner) || QDELETED(owner.console))
+		return FALSE
+	var/datum/netrun_path_tree/tree = owner.console.connection.read_path_tree(TRUE)
+	var/list/admission = movement_payload(node, tree)
+	owner.console.release_path_tree(tree)
+	if(!admission["allowed"])
+		owner.console.log_line("Переход невозможен: [admission["reason"]]", "bad")
+		return FALSE
+	if(admission["action"] == "hop")
+		if(owner.hop(node))
+			return TRUE
+		owner.console.log_line(owner.hop_denial(node), "bad")
+		return FALSE
+	if(start(node))
+		return TRUE
+	owner.console.log_line("Автопроход невозможен: промежуточные узлы отключены, закрыты вратами или требуют отдельного доступа.", "bad")
+	return FALSE
 
 /datum/netrun_entity_navigation/proc/start(datum/component/netrun_node/target)
 	if(QDELETED(owner) || target == owner.host_node || owner.is_stunned())

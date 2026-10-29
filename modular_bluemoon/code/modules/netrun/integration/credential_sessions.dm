@@ -106,8 +106,41 @@
 	var/datum/netrun_grant_scope/scope = network_scopes[network?.id]
 	return scope?.valid_network(network) ? clamp(network_grants[network.id] || 0, NETRUN_ACCESS_NONE, NETRUN_ACCESS_ROOT) : NETRUN_ACCESS_NONE
 
+/// Consume only currently valid stronger scopes. Copy the original stamps;
+/// never rebuild a scope from today's node/network while importing an old file.
+/datum/netrun_file/acquired_key/proc/merge_from(datum/netrun_file/acquired_key/incoming)
+	if(QDELETED(incoming) || incoming == src)
+		return FALSE
+	var/changed = FALSE
+	for(var/address in incoming.node_grants)
+		var/datum/component/netrun_node/node = SSnetrun.find_node(address)
+		var/level = incoming.node_level(node)
+		if(level <= node_level(node))
+			continue
+		var/datum/netrun_grant_scope/scope = incoming.node_scopes[address]
+		var/datum/netrun_grant_scope/previous = node_scopes[address]
+		node_grants[address] = level
+		node_scopes[address] = scope.copy()
+		qdel(previous)
+		changed = TRUE
+	for(var/id in incoming.network_grants)
+		var/datum/netrun_network/network = SSnetrun.networks[id]
+		var/level = incoming.network_level(network)
+		if(level <= network_level(network))
+			continue
+		var/datum/netrun_grant_scope/scope = incoming.network_scopes[id]
+		var/datum/netrun_grant_scope/previous = network_scopes[id]
+		network_grants[id] = level
+		network_scopes[id] = scope.copy()
+		qdel(previous)
+		changed = TRUE
+	update_description()
+	return changed
+
 /datum/netrun_file/acquired_key/proc/update_description()
-	size = max(1, CEILING((length(node_grants) + length(network_grants)) / 10, 1))
+	// Reserve one real metadata cell before a breach; adding scopes cannot grow
+	// an existing key past its disk capacity when the operation completes.
+	size = 1
 	var/list/lines = list("Добытые сетевые права. Не являются ID-доступами; экран, смена сети или ключа отзывают соответствующую область.")
 	for(var/address in node_grants)
 		lines += "Узел [address]: [netrun_access_name(node_grants[address])]"
@@ -246,46 +279,144 @@
 	var/datum/netrun_grant_scope/scope = network_grant_scopes[network?.id]
 	return scope ? min(direct_network_level(network), scope.export_level) : NETRUN_ACCESS_NONE
 
-/datum/netrun_console/proc/acquired_key_payload()
+/datum/netrun_inventory
+	var/canonical_key_uid
+
+/// Resolve actual local/shard membership, never a retained file reference.
+/datum/netrun_console/proc/canonical_acquired_key(create = FALSE)
+	RETURN_TYPE(/datum/netrun_file/acquired_key)
+	var/datum/netrun_file/acquired_key/key = inventory.find_file(inventory.canonical_key_uid)
+	if(istype(key) && !QDELETED(key) && inventory.store_for(key))
+		return key
+	inventory.canonical_key_uid = null
+	for(var/datum/netrun_file/acquired_key/owned as anything in inventory.get_acquired_keys())
+		if(QDELETED(owned) || inventory.find_file(owned.uid) != owned || !inventory.store_for(owned))
+			continue
+		inventory.canonical_key_uid = owned.uid
+		return owned
+	if(!create)
+		return null
+	key = new("acquired.grants")
+	var/datum/netrun_file/acquired_key/stored = store_file(key)
+	if(!stored)
+		stored = store_file(key, TRUE)
+	if(!stored)
+		qdel(key)
+		return null
+	key = stored
+	inventory.canonical_key_uid = key.uid
+	return key
+
+/// Only the newly hacked scope is refreshed. Unrelated old scopes, including
+/// invalid ones, retain their original stamps and cannot be revived by merging.
+/datum/netrun_console/proc/record_breach_grant(kind, id, level)
+	if(!(kind in list("node", "network")) || !isnum(level) || level <= NETRUN_ACCESS_NONE)
+		return FALSE
+	var/datum/netrun_file/acquired_key/key = canonical_acquired_key(TRUE)
+	if(!key)
+		return FALSE
+	if(kind == "node")
+		var/datum/component/netrun_node/node = SSnetrun.find_node(id)
+		if(QDELETED(node) || !node.network)
+			return FALSE
+		var/granted = max(key.node_level(node), clamp(level, NETRUN_ACCESS_NONE, NETRUN_ACCESS_ROOT))
+		var/datum/netrun_grant_scope/previous = key.node_scopes[id]
+		key.node_grants[id] = granted
+		key.node_scopes[id] = new /datum/netrun_grant_scope(node.network, node)
+		qdel(previous)
+	else
+		var/datum/netrun_network/network = SSnetrun.networks[id]
+		if(QDELETED(network))
+			return FALSE
+		var/granted = max(key.network_level(network), min(level, NETRUN_ACCESS_GUEST))
+		var/datum/netrun_grant_scope/previous = key.network_scopes[id]
+		key.network_grants[id] = granted
+		key.network_scopes[id] = new /datum/netrun_grant_scope(network)
+		qdel(previous)
+	key.update_description()
+	var/datum/netrun_file_store/store = inventory.store_for(key)
+	store.notify_changed()
+	return TRUE
+
+/// A value union of currently proven rights. Reading or exporting a mounted key
+/// never merges its authority into permanent direct-session tables.
+/datum/netrun_console/proc/acquired_grant_summary(include_scopes = FALSE)
 	access_session.process_events()
-	var/node_count = 0
-	var/network_count = 0
+	var/list/nodes = list()
+	var/list/networks = list()
+	var/list/node_scopes = include_scopes ? list() : null
+	var/list/network_scopes = include_scopes ? list() : null
 	for(var/address in access_session.node_access)
-		if(access_session.exportable_node_level(SSnetrun.find_node(address)))
-			node_count++
+		var/level = access_session.exportable_node_level(SSnetrun.find_node(address))
+		if(level)
+			nodes[address] = level
+			if(include_scopes)
+				node_scopes[address] = access_session.node_grant_scopes[address]
 	for(var/id in access_session.network_access)
-		if(access_session.exportable_network_level(SSnetrun.networks[id]))
-			network_count++
+		var/level = access_session.exportable_network_level(SSnetrun.networks[id])
+		if(level)
+			networks[id] = level
+			if(include_scopes)
+				network_scopes[id] = access_session.network_grant_scopes[id]
+	for(var/datum/netrun_file/acquired_key/key as anything in inventory.get_acquired_keys())
+		if(QDELETED(key) || inventory.find_file(key.uid) != key || !inventory.store_for(key))
+			continue
+		for(var/address in key.node_grants)
+			var/level = key.node_level(SSnetrun.find_node(address))
+			if(level > (nodes[address] || 0))
+				nodes[address] = level
+				if(include_scopes)
+					node_scopes[address] = key.node_scopes[address]
+		for(var/id in key.network_grants)
+			var/level = key.network_level(SSnetrun.networks[id])
+			if(level > (networks[id] || 0))
+				networks[id] = level
+				if(include_scopes)
+					network_scopes[id] = key.network_scopes[id]
+	return list("nodes" = nodes, "networks" = networks, "node_scopes" = node_scopes, "network_scopes" = network_scopes)
+
+/datum/netrun_console/proc/acquired_key_payload()
+	var/list/summary = acquired_grant_summary()
+	var/node_count = length(summary["nodes"])
+	var/network_count = length(summary["networks"])
+	var/datum/netrun_file/acquired_key/key = canonical_acquired_key()
 	return list("node_count" = node_count, "network_count" = network_count, "can_export" = !!(node_count || network_count),
+		"key_uid" = key?.uid, "key_name" = key?.name,
 		"reason" = (node_count || network_count) ? null : "Нет добытых прав для выпуска ключа. ID, проживание и прошивка в ключ не входят.")
+
+/datum/netrun_console/proc/snapshot_acquired_key(file_name, node_cap = NETRUN_ACCESS_ROOT)
+	RETURN_TYPE(/datum/netrun_file/acquired_key)
+	var/list/summary = acquired_grant_summary(TRUE)
+	var/list/nodes = summary["nodes"]
+	var/list/networks = summary["networks"]
+	var/list/node_scopes = summary["node_scopes"]
+	var/list/network_scopes = summary["network_scopes"]
+	if(!length(nodes) && !length(networks))
+		return null
+	var/datum/netrun_file/acquired_key/key = new(file_name)
+	for(var/address in nodes)
+		var/datum/netrun_grant_scope/scope = node_scopes[address]
+		key.node_grants[address] = min(nodes[address], node_cap)
+		key.node_scopes[address] = scope.copy()
+	for(var/id in networks)
+		var/datum/netrun_grant_scope/scope = network_scopes[id]
+		key.network_grants[id] = networks[id]
+		key.network_scopes[id] = scope.copy()
+	key.update_description()
+	return key
 
 /datum/netrun_console/proc/export_acquired_key(file_name, to_shard = FALSE)
 	RETURN_TYPE(/datum/netrun_file/acquired_key)
-	access_session.process_events()
-	var/datum/netrun_file/acquired_key/key = new(file_name)
-	for(var/address in access_session.node_access)
-		var/datum/component/netrun_node/node = SSnetrun.find_node(address)
-		var/level = access_session.exportable_node_level(node)
-		if(!level)
-			continue
-		key.node_grants[address] = level
-		key.node_scopes[address] = new /datum/netrun_grant_scope(node.network, node)
-	for(var/id in access_session.network_access)
-		var/datum/netrun_network/network = SSnetrun.networks[id]
-		var/level = access_session.exportable_network_level(network)
-		if(!level)
-			continue
-		key.network_grants[id] = level
-		key.network_scopes[id] = new /datum/netrun_grant_scope(network)
-	if(!length(key.node_grants) && !length(key.network_grants))
-		qdel(key)
+	var/datum/netrun_file/acquired_key/key = snapshot_acquired_key(file_name)
+	if(!key)
 		log_line("Нет добытых сетевых прав для выпуска ключа.", "bad")
 		return null
-	key.update_description()
-	if(!store_file(key, to_shard))
+	var/datum/netrun_file/acquired_key/stored = store_file(key, to_shard)
+	if(!stored)
 		qdel(key)
 		log_line("Недостаточно памяти для ключа добытых прав.", "bad")
 		return null
+	key = stored
 	inventory.selected_file_uid = key.uid
-	log_line("Выпущен [key.name]: [length(key.node_grants)] узлов, [length(key.network_grants)] ЛВС.", "good")
+	log_line("Сохранён ключ [key.name]: [length(key.node_grants)] узлов, [length(key.network_grants)] ЛВС.", "good")
 	return key

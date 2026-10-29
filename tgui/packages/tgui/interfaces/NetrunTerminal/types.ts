@@ -14,6 +14,8 @@ export type NetNode = {
   /** Player/ghost-role residents; autonomous bots are counted separately. */
   entities: number;
   bots?: number;
+  /** Bounded, authorized occupant aggregates for role/faction map markers. */
+  processes?: MapProcess[];
   /** A network police process is present on the node. */
   police?: boolean;
   ice?: number;
@@ -25,7 +27,17 @@ export type NetNode = {
   fortress?: FortressSummary | null;
 };
 
-export type NetFaction = 'station' | 'owner' | 'rogue';
+export type MapProcess = {
+  kind: 'entity' | 'bot' | 'ice';
+  bot_kind?: string;
+  ice_kind?: IceKind;
+  faction?: string;
+  faction_color?: string;
+  count: number;
+};
+
+/** Faction registry ids also include personal owner:<id> factions. */
+export type NetFaction = string;
 
 /** Map overlay summary of a node fortress (live layer, never static scenery). */
 export type FortressSummary = {
@@ -34,6 +46,7 @@ export type FortressSummary = {
   /** Intact walls (siege layer). */
   walls: number;
   faction: NetFaction;
+  faction_color?: string | null;
   damaged: boolean;
   online: boolean;
 };
@@ -160,6 +173,8 @@ export type EntityContact = {
 };
 
 export type SelectedNode = NetNode & {
+  /** Cheap movement admission; the server validates every transit hop on dispatch. */
+  movement?: { action: 'hop' | 'travel'; allowed: boolean; reason: string | null };
   network: string;
   legit: number;
   commands: NetCommand[];
@@ -271,6 +286,8 @@ export type CombatTarget = {
   bot_kind?: string | null;
   ice_kind?: IceKind;
   faction?: NetFaction | null;
+  faction_name?: string | null;
+  faction_color?: string | null;
   /** Fortress module kind for structure targets. */
   module?: string | null;
   persona?: Persona;
@@ -286,8 +303,14 @@ export type CombatTarget = {
   unavailable_reason?: string | null;
 };
 
-export type IncomingProgram = { name: string; role: string; power: number; remaining: number; source?: string; source_ref?: string; source_node?: string | null };
-export type EnemyProgram = { name: string; desc: string; role: string; power: number; cooldown: number; windup: number; ready_in: number };
+export type IncomingProgram = {
+  name: string; role: string; power: number; remaining: number;
+  source?: string; source_ref?: string; source_node?: string | null; stun_turns?: number;
+};
+export type EnemyProgram = {
+  name: string; desc: string; role: string; power: number; cooldown: number; windup: number; ready_in: number;
+  ap_cost?: number; ready_turns?: number; cooldown_turns?: number;
+};
 
 export type CombatProgram = {
   id: string;
@@ -303,6 +326,24 @@ export type CombatProgram = {
   icon: string;
   ready_in: number;
   unavailable_reason?: string | null;
+  ap_cost?: number;
+  ready_turns?: number;
+  cooldown_turns?: number;
+  shield_turns?: number;
+  stun_turns?: number;
+};
+
+export type CombatTurn = {
+  round: number;
+  actor_ref: string;
+  actor_name: string;
+  your_turn: boolean;
+  ap: number;
+  max_ap: number;
+  remaining: number;
+  decision_seconds?: number;
+  can_pass: boolean;
+  participants?: { ref: string; name: string; current: boolean; ap: number; max_ap: number }[];
 };
 
 export type CombatState = {
@@ -313,6 +354,7 @@ export type CombatState = {
   programs: CombatProgram[];
   /** Shared launch recovery, in seconds rounded up by the server. */
   action_ready_in?: number;
+  turn?: CombatTurn | null;
   incoming?: IncomingProgram[];
   loot?: NetFile[];
   pursuit_available?: boolean;
@@ -395,11 +437,19 @@ export type IncomingFileOffer = {
   reason?: string | null;
 };
 
+export type NetrunNotice = {
+  id: number;
+  text: string;
+  kind: 'good' | 'bad' | 'average' | 'label';
+};
+
 export type NetrunData = {
+  notices?: NetrunNotice[];
   operations?: NetOperation[];
   security?: SecurityState | null;
   file_exchange?: { incoming: IncomingFileOffer[]; max_offers: number } | null;
-  access_export?: { node_count: number; network_count: number; can_export: boolean; reason?: string | null } | null;
+  access_export?: { node_count: number; network_count: number; can_export: boolean; reason?: string | null;
+    key_uid?: string | null; key_name?: string | null } | null;
   /** Receipt of a UI request; it does not imply the game action succeeded. */
   input_ack?: string | null;
   workspace_view?: WorkspaceView;
@@ -698,38 +748,7 @@ export const NODE_ICONS: Record<string, string> = {
   deck: 'keyboard',
 };
 
-/** Autonomous bot archetypes (server ids) and their display names. */
-export const BOT_NAMES: Record<string, string> = {
-  raider: 'Рейдер',
-  custodian: 'Санитар сети',
-  police: 'Сетевая полиция',
-  mender: 'Агент-ремонтник',
-  sentinel: 'Агент-страж',
-  surveyor: 'Агент-разведчик',
-  collector: 'Агент-сборщик',
-  interceptor: 'Агент-перехватчик',
-  hacker: 'Агент-взломщик',
-  breacher: 'Агент-пробойник',
-};
-
-export const BOT_ICONS: Record<string, string> = {
-  raider: 'skull',
-  custodian: 'broom',
-  police: 'shield-halved',
-  mender: 'screwdriver-wrench',
-  sentinel: 'tower-observation',
-  surveyor: 'compass',
-  collector: 'box-archive',
-  interceptor: 'crosshairs',
-  hacker: 'key',
-  breacher: 'burst',
-};
-
-export const FACTION_COLORS: Record<string, string> = {
-  station: '#6fb6ff',
-  owner: '#7be0a8',
-  rogue: '#ff7a8a',
-};
+export { BOT_ICONS, BOT_NAMES, FACTION_COLORS } from './actorTaxonomy';
 
 export const FORTRESS_MODULE_NAMES: Record<string, string> = {
   wall: 'Стена',

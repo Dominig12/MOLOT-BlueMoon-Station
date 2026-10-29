@@ -1,21 +1,21 @@
 import { useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
+import { botRole, factionColor, factionFamily, factionName } from './actorTaxonomy';
 import { EntityAvatar } from './EntityAvatar';
 import { FileOffer } from './FileExchange';
-import { BOT_ICONS, BOT_NAMES, EntityContact, FACTION_COLORS, IceKind, THEME } from './types';
+import { botSvgPaths } from './processGlyphs';
+import { EntityContact, IceKind, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
-const FACTION_LABELS: Record<'bot' | 'fortress', Record<string, string>> = {
-  bot: { station: 'станция', owner: 'агент', rogue: 'дикий' },
-  fortress: { station: 'станция', owner: 'частная', rogue: 'подпольная' },
+/** Allegiance wording differs for processes and structures. */
+export const factionLabel = (context: 'bot' | 'fortress', faction?: string | null) => {
+  const family = factionFamily(faction);
+  const structure: Record<string, string> = { owner: 'частная', rogue: 'подпольная' };
+  return (context === 'fortress' && structure[family]) || factionName(faction);
 };
 
-/** Allegiance wording differs for processes and structures. */
-export const factionLabel = (context: 'bot' | 'fortress', faction?: string | null) =>
-  (faction && FACTION_LABELS[context][faction]) || null;
-
-export const botKindLabel = (kind?: string | null) => BOT_NAMES[kind ?? ''] || 'Автономный процесс';
+export const botKindLabel = (kind?: string | null) => botRole(kind).name;
 
 export const BLACK_ICE_COLOR = '#dba0ff';
 export const iceKindLabel = (kind?: IceKind) => kind === 'black' ? 'BLACK ICE · нелегальный'
@@ -35,13 +35,17 @@ export const BlackIceWarning = () => (
 );
 
 /** Archetype pictogram framed in the faction colour (contacts, combat, agents). */
-export const BotAvatar = (props: { kind?: string | null; faction?: string | null; size?: number }) => {
+export const BotAvatar = (props: { kind?: string | null; faction?: string | null; factionColor?: string | null; size?: number }) => {
   const { kind, faction, size = 28 } = props;
+  const glyph = botSvgPaths(kind);
   return (
     <span className="netrun-avatar" role="img" aria-label={`Бот: ${botKindLabel(kind)}`}
-      style={{ color: FACTION_COLORS[faction ?? ''] || THEME.muted, width: size, height: size,
-        fontSize: `${Math.round(size / 2)}px` }}>
-      <Icon name={BOT_ICONS[kind ?? ''] || 'robot'} style={{ margin: 0 }} />
+      data-bot-glyph={botRole(kind).glyph}
+      style={{ color: factionColor(faction, props.factionColor), width: size, height: size }}>
+      <svg viewBox="-1.4 -1.4 2.8 2.8" aria-hidden="true" width={size} height={size}>
+        <path d={glyph.body} fill="currentColor" stroke="#07151f" strokeWidth=".16" />
+        <path d={glyph.ink} fill="none" stroke="#10212b" strokeWidth=".17" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
     </span>
   );
 };
@@ -85,7 +89,7 @@ const ContactCard = (props: { address: string; contact: EntityContact; pending: 
   const canMessage = !pending && contact.can_message;
   const bot = contact.kind === 'bot';
   const blackIce = contact.kind === 'ice' && contact.ice_kind === 'black';
-  const accent = blackIce ? BLACK_ICE_COLOR : bot ? FACTION_COLORS[contact.faction ?? ''] : undefined;
+  const accent = blackIce ? BLACK_ICE_COLOR : bot ? factionColor(contact.faction, contact.faction_color) : undefined;
   const send = () => {
     const text = message.trim();
     if (!canMessage || !text) { return; }
@@ -97,9 +101,9 @@ const ContactCard = (props: { address: string; contact: EntityContact; pending: 
       style={{ background: THEME.bg, border: `1px solid ${accent || THEME.line}` }}>
       <Box bold color={accent}>
         {contact.kind === 'entity' ? <EntityAvatar avatar={contact.persona?.avatar} accent={contact.persona?.accent} size={28} />
-          : bot ? <BotAvatar kind={contact.bot_kind} faction={contact.faction} /> : <IceAvatar kind={contact.ice_kind} />}
+          : bot ? <BotAvatar kind={contact.bot_kind} faction={contact.faction} factionColor={contact.faction_color} /> : <IceAvatar kind={contact.ice_kind} />}
         {contact.name}{contact.self ? ' · вы' : ''}
-        {!!contact.faction_name && <Box inline ml={0.5} fontSize="10px" color={contact.faction_color || THEME.muted}>
+        {!!contact.faction_name && <Box inline ml={0.5} fontSize="10px" color={factionColor(contact.faction, contact.faction_color)}>
           <Icon name="flag" mr={0.5} />{contact.faction_name}
                                    </Box>}
       </Box>

@@ -44,6 +44,73 @@ const sent = (topic, action: string) => topic.mock.calls
   });
 
 describe('Node and process interactions', () => {
+  // sendAct keeps its 50 ms duplicate guard across store/window replacements.
+  // Separate human interactions explicitly, including clicks that must be denied,
+  // so the transport cannot conceal an incorrectly enabled stale control.
+  let actionTime = Date.now();
+  const nextInteraction = () => {
+    actionTime += 1000;
+    jest.mocked(Date.now).mockReturnValue(actionTime);
+  };
+  beforeEach(() => {
+    jest.spyOn(Date, 'now');
+    nextInteraction();
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  test('an authorized non-neighbor uses the shared movement action instead of a disabled direct hop', () => {
+    const { topic } = setup({
+      origin: 'entity',
+      entity: { host: 'SOURCE', integrity: 100, max_integrity: 100 } as NetrunData['entity'],
+      selected: { ...node, can_hop: false, movement: { action: 'travel', allowed: true, reason: null } },
+    });
+    const panel = render(<NodePanel />);
+    const button = panel.getByText('Перейти в узел').closest('.Button')!;
+    expect(button.classList.contains('Button--disabled')).toBe(false);
+    expect(panel.queryByText('Пройти к узлу')).toBeNull();
+    fireEvent.click(button);
+    expect(sent(topic, 'move')).toEqual([{ address: node.address }]);
+    expect(sent(topic, 'hop')).toEqual([]);
+  });
+
+  test('movement admission updates after gaining and losing access without reopening the panel', () => {
+    const { store, topic } = setup({
+      origin: 'entity',
+      entity: { host: 'SOURCE', integrity: 100, max_integrity: 100 } as NetrunData['entity'],
+      selected: { ...node, access: 0, can_hop: false,
+        movement: { action: 'travel', allowed: false, reason: 'Нужен доступ пользователя или право прохода по ЛВС.' } },
+    });
+    const panel = render(<NodePanel />);
+    fireEvent.click(panel.getByText('Перейти в узел'));
+    expect(sent(topic, 'move')).toEqual([]);
+    act(() => store.dispatch(backendUpdate({ data: { selected: {
+      ...node, can_hop: false, movement: { action: 'travel', allowed: true, reason: null },
+    } } })));
+    fireEvent.click(panel.getByText('Перейти в узел'));
+    expect(sent(topic, 'move')).toEqual([{ address: node.address }]);
+    act(() => store.dispatch(backendUpdate({ data: { selected: {
+      ...node, can_hop: true, movement: { action: 'hop', allowed: false, reason: 'Врата крепости закрыты.' },
+    } } })));
+    nextInteraction();
+    fireEvent.click(panel.getByText('Перейти в узел'));
+    expect(sent(topic, 'move')).toHaveLength(1);
+  });
+
+  test('a neighboring node also lets the server choose the current movement mode', () => {
+    const { store, topic } = setup({
+      origin: 'entity',
+      entity: { host: 'SOURCE', integrity: 100, max_integrity: 100 } as NetrunData['entity'],
+      selected: { ...node, can_hop: true, movement: { action: 'hop', allowed: true, reason: null } },
+    });
+    const panel = render(<NodePanel />);
+    fireEvent.click(panel.getByText('Перейти в узел'));
+    expect(sent(topic, 'move')).toEqual([{ address: node.address }]);
+    act(() => store.dispatch(backendUpdate({ data: { workspace_view: 'terminal', map: null, selected: null } })));
+    nextInteraction();
+    fireEvent.click(panel.getByText('Перейти в узел'));
+    expect(sent(topic, 'move')).toHaveLength(1);
+  });
+
   test('the selected entry exposes dive and reacts to revoked availability', () => {
     const { store, topic } = setup();
     const panel = render(<NodePanel />);

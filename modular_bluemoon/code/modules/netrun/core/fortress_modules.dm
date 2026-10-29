@@ -53,7 +53,7 @@
 		remaining = max(0, CEILING((build_until - world.time) / (1 SECONDS), 1))
 	else if(kind == NETRUN_FORT_TRAP && ready_at > world.time)
 		remaining = CEILING((ready_at - world.time) / (1 SECONDS), 1)
-	if(is_jammed())
+	if(is_jammed() && jammed_until < INFINITY)
 		remaining = CEILING((jammed_until - world.time) / (1 SECONDS), 1)
 	return list("ref" = REF(src), "id" = id, "kind" = kind, "name" = name, "desc" = desc,
 		"integrity" = round(integrity), "max_integrity" = max_integrity,
@@ -133,7 +133,7 @@
 /datum/netrun_fortress_module/turret
 	kind = NETRUN_FORT_TURRET
 	name = "Турель"
-	desc = "Раз в 3 секунды с предупреждением бьёт нарушителей в узле и недавних осаждающих в соседних узлах. Оглушение заклинивает турель."
+	desc = "В бою залп стоит батарее 2 ОД и готовится с предупреждением; бьёт нарушителей и недавних осаждающих в соседних узлах. Вне боя интервал — 3 секунды. Оглушение заклинивает турель."
 	max_integrity = 90
 	build_time = 30 SECONDS
 	slot_cost = 2
@@ -169,7 +169,7 @@
 /datum/netrun_fortress_module/regen
 	kind = NETRUN_FORT_REGEN
 	name = "Регенератор"
-	desc = "Каждые 5 секунд чинит самый повреждённый модуль и восстанавливает ICE в узле."
+	desc = "Чинит самый повреждённый модуль и восстанавливает ICE. В бою — один раз за свой ход за 1 ОД, вне боя — раз в 5 секунд."
 	max_integrity = 80
 	build_time = 25 SECONDS
 	slot_cost = 2

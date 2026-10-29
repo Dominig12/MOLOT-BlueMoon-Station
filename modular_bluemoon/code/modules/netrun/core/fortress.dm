@@ -16,6 +16,7 @@
 	var/datum/weakref/owner_ref
 	var/owner_ckey
 	var/owner_name
+	var/owner_faction_id
 	var/timer_id
 	var/next_wake = 0
 	var/next_alarm = 0
@@ -38,8 +39,11 @@
 	src.faction = faction
 	if(owner)
 		set_owner(owner)
+		if(faction == NETRUN_FACTION_OWNER)
+			src.faction = owner.get_personal_faction_id()
 	SSnetrun.fortress_nodes[node.address] = node
 	RegisterSignal(node, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(on_node_changed))
+	RegisterSignal(node, COMSIG_NETRUN_TURN_CHANGED, PROC_REF(on_turn_changed))
 	refresh_defenders()
 
 /datum/netrun_fortress/Destroy()
@@ -49,6 +53,7 @@
 	var/datum/component/netrun_node/old = node
 	if(old)
 		UnregisterSignal(old, COMSIG_NETRUN_NODE_CHANGED)
+		UnregisterSignal(old, COMSIG_NETRUN_TURN_CHANGED)
 		SSnetrun.fortress_nodes -= old.address
 		apply_vault_bonus(0)
 		if(old.fortress == src)
@@ -57,6 +62,9 @@
 	QDEL_LIST(modules)
 	owner_ref = null
 	besiegers = null
+	turn_siege_leases = null
+	turn_jammed_modules = null
+	QDEL_NULL(turn_volley_definition)
 	for(var/datum/netrun_ice/ice as anything in observed_ice)
 		UnregisterSignal(ice, list(COMSIG_NETRUN_COMBAT_CHANGED, COMSIG_PARENT_QDELETING))
 	observed_ice.Cut()
@@ -69,12 +77,13 @@
 	owner_ref = WEAKREF(owner)
 	owner_ckey = owner.operator?.ckey
 	owner_name = owner.get_handle()
+	owner_faction_id = owner.get_personal_faction_id()
 
 /// A ruined fortress (every module destroyed) can be claimed by whoever rebuilds it.
 /datum/netrun_fortress/proc/claim(datum/netrun_console/console)
 	clear_ruins()
 	set_owner(console)
-	faction = NETRUN_FACTION_OWNER
+	faction = console.get_personal_faction_id()
 	name = "Крепость [owner_name]"
 	preset_id = null
 	preset_name = null
@@ -98,6 +107,8 @@
 /datum/netrun_fortress/proc/is_owner(datum/netrun_console/console)
 	if(QDELETED(console))
 		return FALSE
+	if(owner_faction_id && owner_faction_id != NETRUN_FACTION_OWNER && SSnetrun.netrun_faction_family(owner_faction_id) == NETRUN_FACTION_OWNER)
+		return console.get_personal_faction_id() == owner_faction_id
 	var/datum/netrun_console/owner = owner_ref?.resolve()
 	if(owner && console == owner)
 		return TRUE
@@ -116,6 +127,8 @@
 		return FALSE
 	if(is_owner(console))
 		return TRUE
+	if(faction != NETRUN_FACTION_OWNER && SSnetrun.netrun_faction_family(faction) == NETRUN_FACTION_OWNER)
+		return console.get_personal_faction_id() == faction
 	var/mob/camera/netrun_entity/entity = console.combat_self()
 	switch(faction)
 		if(NETRUN_FACTION_ROGUE)
@@ -385,6 +398,12 @@
 /datum/netrun_fortress/proc/changed()
 	if(QDELETED(src) || QDELETED(node))
 		return
+	if(!has_turn_battery())
+		var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+		for(var/datum/netrun_turn_participant/participant as anything in encounter?.participants)
+			if(participant.actor() == src)
+				encounter.remove(participant)
+				break
 	node.notify_changed()
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_FORTRESS_CHANGED, node)
 	schedule()
@@ -414,6 +433,11 @@
 		if(module.status == NETRUN_FORT_MODULE_ONLINE && module.ready_at > world.time)
 			. = min(., module.ready_at)
 	if(slots_max() <= 0 || !node.is_online())
+		return
+	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+	if(encounter?.active)
+		if(encounter.has_turn(src) && turret_fire_at)
+			. = min(., turret_fire_at)
 		return
 	if(turret_fire_at)
 		. = min(., turret_fire_at)
@@ -466,8 +490,11 @@
 	if(slots_max() <= 0 || !node.is_online())
 		cancel_turret()
 	else
-		process_turret()
-		if(intact_count(NETRUN_FORT_REGEN) && world.time >= next_regen && needs_regen())
+		if(get_combat_encounter()?.active)
+			process_turn_battery()
+		else
+			process_turret()
+		if(!get_combat_encounter()?.active && intact_count(NETRUN_FORT_REGEN) && world.time >= next_regen && needs_regen())
 			next_regen = world.time + 5 SECONDS
 			regenerate()
 			updated = TRUE
@@ -491,7 +518,9 @@
 		return FALSE
 	var/hit_at = besiegers[WEAKREF(entity)]
 	if(isnull(hit_at) || world.time - hit_at > 20 SECONDS)
-		return FALSE
+		var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+		if(!encounter?.active || !encounter.contains(entity) || !turn_siege_leases[WEAKREF(entity)])
+			return FALSE
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	return (node.address in graph.neighbors(entity.host_node.address, FALSE)) && netrun_link_available(entity.host_node, node)
 
@@ -515,9 +544,12 @@
 			return entity
 	return null
 
-/datum/netrun_fortress/proc/cancel_turret()
+/datum/netrun_fortress/proc/cancel_turret(release_turn = TRUE)
+	var/had_volley = !!turret_fire_at
 	turret_target_ref = null
 	turret_fire_at = 0
+	if(had_volley && release_turn)
+		get_combat_encounter()?.resolve(src)
 
 /// Turrets warn first (like ICE), then strike if the target is still a valid one.
 /datum/netrun_fortress/proc/process_turret()
@@ -525,30 +557,47 @@
 	if(!turrets)
 		cancel_turret()
 		return
+	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+	if(!encounter)
+		var/mob/camera/netrun_entity/hostile = pick_turret_target()
+		if(hostile)
+			encounter = node.get_combat_encounter()
+			encounter.join(src)
+			if(!encounter.admit(src, 2, hostile) && !encounter.active)
+				return
+	if(encounter?.active && (!encounter.has_turn(src) || encounter.expired_input()))
+		return
 	if(turret_fire_at)
 		if(world.time < turret_fire_at)
 			return
 		var/mob/camera/netrun_entity/target = turret_target_ref?.resolve()
-		cancel_turret()
+		cancel_turret(FALSE)
 		next_turret = world.time + 3 SECONDS
 		if(!valid_turret_target(target))
+			encounter?.resolve(src)
 			return
 		var/datum/netrun_program/strike = SSnetrun.get_program("strike")
-		for(var/i in 1 to turrets)
+		for(var/i in 1 to min(3, turrets))
 			if(QDELETED(target))
-				return
+				break
 			netrun_apply_program(strike, target, null, 0.85)
+		if(!QDELETED(encounter))
+			encounter.resolve(src)
 		if(QDELETED(target))
 			return
 		node.add_log("Турели крепости [name] бьют по [target.real_name].")
 		target.console?.log_line("Турели крепости [name] поразили ваш процесс.", "bad")
 		SSnetrun.post_event("intrusion", null, node.address)
 		return
-	if(world.time < next_turret)
+	if(!encounter?.active && world.time < next_turret)
 		return
 	var/mob/camera/netrun_entity/target = pick_turret_target()
 	if(!target)
 		return
+	if(encounter?.active)
+		var/datum/netrun_program/volley = turn_volley_program()
+		if(encounter.cooldown_remaining(src, volley) || !encounter.admit(src, volley.ap_cost, target) || !encounter.commit_program(src, volley, TRUE))
+			return
 	turret_target_ref = WEAKREF(target)
 	turret_fire_at = world.time + NETRUN_ICE_MIN_TELEGRAPH
 	to_chat(target, span_userdanger("Турели крепости [name] наводятся на ваш процесс: [NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS)] с до выстрела. Уйдите из зоны поражения или оглушите турель."))
@@ -657,7 +706,7 @@
 		return null
 	var/datum/netrun_fortress/fortress = node.fortress
 	if(!fortress)
-		fortress = new(node, "Крепость [console.get_handle()]", NETRUN_FACTION_OWNER, console)
+		fortress = new(node, "Крепость [console.get_handle()]", console.get_personal_faction_id(), console)
 		node.fortress = fortress
 		node.add_log("Заложена крепость: [fortress.name].")
 	else if(fortress.ruined() && !fortress.is_friendly(console) && console.legit_node_level(node) < NETRUN_ACCESS_ROOT)

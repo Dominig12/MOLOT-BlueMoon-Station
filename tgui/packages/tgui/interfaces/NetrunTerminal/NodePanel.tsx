@@ -8,6 +8,7 @@ import { EntityContacts } from './EntityContacts';
 import { isTransferableFile, SESSION_FILE_REASON } from './filePermissions';
 import { FortressPanel } from './FortressPanel';
 import { NodeInteractions } from './NodeInteractions';
+import { NodeMovement } from './NodeMovement';
 import { PacketJournal } from './PacketJournal';
 import {
   ACCESS_COLORS,
@@ -254,28 +255,7 @@ const NodePanelView = () => {
           onCommand={(id) => act('command', { id })}
         />
       </Box>
-      {!!display.entity && display.entity.host !== selected.address && (
-        <Button
-          mt={1}
-          icon="person-walking-arrow-right"
-          color="good"
-          content="Перейти в узел"
-          disabled={pending || !(selected.can_hop ?? (selected.access >= 2 && selected.online))}
-          tooltip="Нужно разрешение на переход в соседний узел: доступ пользователя или ключ сети."
-          onClick={() => act('hop', { address: selected.address })}
-        />
-      )}
-      {!!display.entity && display.entity.host !== selected.address && (
-        <Button
-          mt={1}
-          ml={1}
-          icon="route"
-          content="Пройти к узлу"
-          disabled={pending}
-          tooltip="Автопроход шаг за шагом по уже открытым узлам (online и с доступом пользователя или ключом) до выбранного."
-          onClick={() => act('travel', { address: selected.address })}
-        />
-      )}
+      <NodeMovement selected={selected} host={display.entity?.host} pending={pending} act={act} />
       {!!can_breach && selected.access < 3 && (
         <Button
           mt={1}

@@ -235,3 +235,130 @@
 	qdel(subroom)
 	TEST_ASSERT_NULL(local_room.sub_areas, "Deleting a sub-area must unlink it from the base area without a runtime")
 
+/// A completed gateway hack opens real traversal without inventing machine USER.
+/datum/unit_test/netrun_navigation_gateway_grant/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
+	entity.console.operator = entity
+	TEST_ASSERT(entity.console.store_file(netrun_daemon_file("autobreach")), "The test uses the actual gateway breach pipeline")
+	TEST_ASSERT(entity.console.start_breach("network", scene.node_b.network.id, TRUE), "The ordinary automatic gateway hack starts")
+	var/datum/netrun_breach/automatic/breach = entity.console.intrusion.breach
+	breach.deadline = world.time
+	breach.finish()
+	TEST_ASSERT(!entity.console.has_key(scene.node_b.network, TRUE), "No ordinary passcode file was silently created")
+	TEST_ASSERT_EQUAL(entity.console.node_level(scene.node_b), NETRUN_ACCESS_GUEST, "Gateway authority remains GUEST on the destination")
+	TEST_ASSERT(entity.can_enter(scene.apc_node), "The acquired gateway permits the first physical hop")
+	var/list/path = entity.enterable_path(scene.node_b)
+	TEST_ASSERT_EQUAL(length(path), 2, "The destination still requires A → APC → B")
+	var/datum/netrun_ice/guard = allocate(/datum/netrun_ice, scene.apc_node, NETRUN_ICE_SENTRY)
+	TEST_ASSERT(guard.is_intruder(entity, scene.apc_node), "Traversal permission does not make the process safe from ICE")
+	TEST_ASSERT_NOTNULL(entity.navigation.threat_at(scene.apc_node), "Autopilot still detects a hostile patrol on the next step")
+	qdel(guard)
+	TEST_ASSERT(entity.hop(scene.apc_node), "An explicit first hop uses the normal movement operation")
+	entity.next_hop = world.time
+	TEST_ASSERT(entity.hop(scene.node_b), "The next actual edge reaches the destination")
+	TEST_ASSERT_EQUAL(entity.console.node_level(scene.node_b), NETRUN_ACCESS_GUEST, "Arrival never grants implicit USER")
+	TEST_ASSERT_EQUAL(length(entity.console.user_access(TRUE)), 0, "Gateway traversal never creates native station credentials")
+
+/// A copied acquired key has the same traversal, but removal/rotation stops the next step.
+/datum/unit_test/netrun_navigation_acquired_key_revocation/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/mob/camera/netrun_entity/issuer = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
+	issuer.console.access_session.grant_network(scene.node_b.network, NETRUN_ACCESS_GUEST, NETRUN_ACCESS_GUEST)
+	var/datum/netrun_file/acquired_key/key = issuer.console.export_acquired_key("traversal.grants")
+	TEST_ASSERT_NOTNULL(key, "A proven gateway grant can be exported")
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
+	var/datum/netrun_file/acquired_key/copy = key.copy()
+	TEST_ASSERT(entity.console.store_file(copy), "The recipient owns its actual source file")
+	TEST_ASSERT(entity.navigation.move_to(scene.node_b), "A network-only acquired key admits ordinary autopilot")
+	TEST_ASSERT_EQUAL(entity.host_node, scene.apc_node, "Admission performs one real edge, never a teleport")
+	TEST_ASSERT(entity.navigation.timer, "The next edge waits on the normal cooldown")
+	entity.console.delete_local_file(copy)
+	entity.next_hop = world.time
+	deltimer(entity.navigation.timer)
+	entity.navigation.advance_route(entity.navigation.generation)
+	TEST_ASSERT_EQUAL(entity.host_node, scene.apc_node, "Deleting the last key prevents the already-planned next step")
+	TEST_ASSERT(!entity.navigation.is_active(), "Lost authority cancels the route instead of retrying it")
+	copy = key.copy()
+	TEST_ASSERT(entity.console.store_file(copy), "An independent still-valid copy may be mounted")
+	entity.next_hop = world.time + 5 SECONDS
+	TEST_ASSERT(entity.navigation.move_to(scene.node_b), "A neighbouring destination can wait through cooldown")
+	var/previous_passcode = scene.node_b.network.passcode
+	scene.node_b.network.passcode = "navigation-rotated-passcode"
+	entity.next_hop = world.time
+	deltimer(entity.navigation.timer)
+	entity.navigation.advance_route(entity.navigation.generation)
+	TEST_ASSERT_EQUAL(entity.host_node, scene.apc_node, "Rotating the gateway revokes a copied key before its next hop")
+	TEST_ASSERT(!entity.navigation.is_active(), "A stale key leaves no scheduled movement behind")
+	scene.node_b.network.passcode = previous_passcode
+	entity.console.delete_local_file(copy)
+	entity.console.access_session.grant_network(scene.node_b.network, NETRUN_ACCESS_GUEST, NETRUN_ACCESS_GUEST)
+	entity.next_hop = world.time + 5 SECONDS
+	TEST_ASSERT(entity.navigation.move_to(scene.node_b), "A directly reacquired gateway grant also permits traversal")
+	entity.console.access_session.revoke_all()
+	entity.next_hop = world.time
+	deltimer(entity.navigation.timer)
+	entity.navigation.advance_route(entity.navigation.generation)
+	TEST_ASSERT_EQUAL(entity.host_node, scene.apc_node, "Revoking a direct gateway grant also blocks the planned next edge")
+
+/// Planning and live hops agree on a closed fortress gate.
+/datum/unit_test/netrun_navigation_gateway_gate/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
+	entity.console.access_session.grant_network(scene.node_b.network, NETRUN_ACCESS_GUEST)
+	var/datum/netrun_fortress/fortress = new(scene.node_b, "Movement gate", NETRUN_FACTION_STATION)
+	scene.node_b.fortress = fortress
+	fortress.add_module(NETRUN_FORT_GATE, TRUE)
+	TEST_ASSERT(!entity.console.can_traverse_node(scene.node_b), "Gateway GUEST does not pass a closed gate")
+	TEST_ASSERT_EQUAL(length(entity.enterable_path(scene.node_b)), 0, "BFS rejects the gate before starting an unusable route")
+	var/list/admission = entity.navigation.movement_payload(scene.node_b)
+	TEST_ASSERT(!admission["allowed"] && findtext(admission["reason"], "Врата"), "The selected-node explanation names the gate")
+	entity.console.access_session.grant_node(scene.node_b, NETRUN_ACCESS_USER)
+	TEST_ASSERT(entity.console.can_traverse_node(scene.node_b), "Actual node USER passes the same gate")
+	TEST_ASSERT_EQUAL(length(entity.enterable_path(scene.node_b)), 2, "The newly authorized route still follows both real edges")
+
+/// UI admission is selected-only and cheap; the module resolves a full route on click.
+/datum/unit_test/netrun_navigation_move_admission/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
+	entity.console.operator = entity
+	entity.console.access_session.grant_node(scene.node_b, NETRUN_ACCESS_USER)
+	var/datum/netrun_path_tree/tree = entity.console.connection.read_path_tree(TRUE)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/copies_before = graph.route_snapshot_copies
+	var/list/admission = entity.navigation.movement_payload(scene.node_b, tree)
+	TEST_ASSERT(admission["allowed"] && admission["action"] == "travel", "A remote USER destination admits travel rather than falsely claiming direct adjacency")
+	TEST_ASSERT_EQUAL(graph.route_snapshot_copies, copies_before, "Rendering one selected admission does not build an owned route/BFS snapshot")
+	entity.console.release_path_tree(tree)
+	TEST_ASSERT(entity.dispatch_module_action("move", list("address" = scene.node_b.address), entity), "The shared navigation module handles the real action")
+	TEST_ASSERT_EQUAL(entity.host_node, scene.node_a, "A closed intermediate APC cannot be crossed just because the target has USER")
+	TEST_ASSERT(!entity.navigation.is_active(), "Failed complete-path validation leaves no autopilot work")
+	entity.console.ui_node_levels = list()
+	entity.console.ui_node_levels[scene.apc_node.address] = NETRUN_ACCESS_GUEST
+	entity.console.access_session.grant_node(scene.apc_node, NETRUN_ACCESS_USER)
+	admission = entity.navigation.movement_payload(scene.apc_node)
+	TEST_ASSERT(admission["allowed"] && admission["action"] == "hop", "Fresh adjacent USER overrides a previously cached GUEST result immediately")
+	TEST_ASSERT(entity.dispatch_module_action("move", list("address" = scene.node_b.address), entity), "The same module action can now start the complete authorized route")
+	TEST_ASSERT_EQUAL(entity.host_node, scene.apc_node, "The dispatch chooses an actual first hop through the APC")
+	TEST_ASSERT(entity.navigation.timer, "The second edge retains the ordinary cooldown")
+	entity.next_hop = world.time
+	deltimer(entity.navigation.timer)
+	entity.navigation.advance_route(entity.navigation.generation)
+	TEST_ASSERT_EQUAL(entity.host_node, scene.node_b, "The second scheduled hop reaches the selected node")
+	admission = entity.navigation.movement_payload(scene.node_b)
+	TEST_ASSERT(!admission["allowed"], "The current host is never another movement destination")
+
+/// Bot searches reuse traversal rights without granting police inspection authority.
+/datum/unit_test/netrun_navigation_bot_gateway_search/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/mob/camera/netrun_entity/bot/bot = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_a, "collector")
+	bot.console.access_session.grant_network(scene.node_b.network, NETRUN_ACCESS_GUEST)
+	scene.node_b.salvage += new /datum/netrun_file("reachable.txt", NETRUN_FILE_TEXT, "reachable")
+	TEST_ASSERT_EQUAL(bot.brain.find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_has_salvage)), scene.node_b, "A gateway-open bot can find actual salvage behind the APC")
+	bot.brain.patrol_candidates = list(scene.node_b.address)
+	bot.brain.patrol_cursor = 1
+	TEST_ASSERT_EQUAL(bot.brain.patrol_destination(list(scene.node_b.network.id)), scene.node_b, "Ordinary patrol accepts the same traversal destination")
+	bot.brain.patrol_candidates = list(scene.node_b.address)
+	bot.brain.patrol_cursor = 1
+	TEST_ASSERT_NULL(bot.brain.patrol_destination(list(scene.node_b.network.id), TRUE), "Police inspection still requires node USER in addition to traversal")
+

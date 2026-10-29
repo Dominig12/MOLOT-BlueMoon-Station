@@ -492,14 +492,22 @@
 	var/residents = 0
 	var/bots = 0
 	var/police = FALSE
+	var/list/process_groups
 	for(var/mob/camera/netrun_entity/entity as anything in entities)
+		if(QDELETED(entity))
+			continue
 		var/bot_kind = entity.netrun_bot_kind()
+		var/datum/netrun_faction/faction = SSnetrun.get_netrun_faction(entity.netrun_faction())
+		process_groups = netrun_map_add_process(process_groups, bot_kind ? "bot" : "entity", bot_kind, null, faction?.id, faction?.color)
 		if(!bot_kind)
 			residents++
 			continue
 		bots++
 		if(bot_kind == NETRUN_BOT_POLICE)
 			police = TRUE
+	for(var/datum/netrun_ice/ice as anything in netrun_ice)
+		if(!QDELETED(ice))
+			process_groups = netrun_map_add_process(process_groups, "ice", null, ice.kind)
 	. = list(
 		"address" = address,
 		"name" = get_name(),
@@ -521,9 +529,35 @@
 		"last_seen" = last_seen_at,
 		"fortress" = fortress?.map_summary(),
 	)
+	if(length(process_groups))
+		var/list/processes = list()
+		for(var/key in process_groups)
+			processes += list(process_groups[key])
+		.["processes"] = processes
 	if(console.origin == NETRUN_ORIGIN_ENTITY && istype(console.host, /mob/camera/netrun_entity))
 		var/mob/camera/netrun_entity/entity = console.host
 		.["can_hop"] = entity.can_enter(src, console.ui_routes)
+
+/// The map receives role/faction aggregates, never process refs or per-client
+/// actor copies. Empty nodes allocate no group list; crowded nodes keep totals.
+/proc/netrun_map_add_process(list/groups, kind, bot_kind, ice_kind, faction, faction_color)
+	if(!groups)
+		groups = list()
+	var/key = "[kind]|[bot_kind]|[ice_kind]|[faction]"
+	var/list/entry = groups[key]
+	if(entry)
+		entry["count"]++
+	else if(length(groups) < 6)
+		entry = list("kind" = kind, "count" = 1)
+		if(bot_kind)
+			entry["bot_kind"] = bot_kind
+		if(ice_kind)
+			entry["ice_kind"] = ice_kind
+		if(faction)
+			entry["faction"] = faction
+			entry["faction_color"] = faction_color
+		groups[key] = entry
+	return groups
 
 /// Найти узел на атоме или внутри него (для подключения деки и сканеров)
 /proc/netrun_find_node(atom/A)

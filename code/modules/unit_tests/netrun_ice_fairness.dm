@@ -1,3 +1,22 @@
+/// Advance fixtures through real passes, never by editing AP or bypassing admission.
+/// A prepared action must resolve/cancel before any participant may yield.
+/proc/netrun_test_yield_to(datum/actor, fresh_turn = FALSE)
+	var/datum/netrun_combat_encounter/encounter = netrun_turn_encounter(actor)
+	var/datum/netrun_turn_participant/participant = encounter?.member(actor)
+	if(!participant || !encounter.active)
+		return FALSE
+	var/initial_turn = participant.own_turn
+	for(var/attempt in 1 to length(encounter.participants) * 2 + 1)
+		if(encounter.has_turn(actor) && (!fresh_turn || participant.own_turn > initial_turn))
+			return TRUE
+		if(encounter.deferred || !encounter.pass(encounter.current()?.actor()))
+			return FALSE
+		if(QDELETED(encounter))
+			return FALSE
+		if(QDELETED(participant))
+			return FALSE
+	return FALSE
+
 /// USER prevents unsolicited combat, but attacking a guard remains a provocation.
 /datum/unit_test/netrun_ice_target_authority/Run()
 	var/obj/item/host = allocate(/obj/item)
@@ -17,6 +36,7 @@
 	ice.program_cd.Cut()
 	ice.enemy_ref = null
 	entity.console.access_session.node_access -= node.address
+	TEST_ASSERT(netrun_test_yield_to(ice, TRUE), "The next warning waits for a fresh guard turn after cancellation")
 	TEST_ASSERT(ice.begin_program(strike, entity), "An unauthorized resident must receive a normal warning")
 	entity.console.access_session.node_access[node.address] = NETRUN_ACCESS_USER
 	var/initial_integrity = entity.integrity
@@ -28,6 +48,7 @@
 	entity.combat_ignore_until = world.time + NETRUN_DISENGAGE_GRACE
 	TEST_ASSERT(!ice.is_intruder(entity, node), "Disengagement must hide an unauthorized resident for its grace period")
 	ice.program_cd.Cut()
+	TEST_ASSERT(netrun_test_yield_to(ice, TRUE), "The grace denial is checked with a fresh affordable guard turn")
 	TEST_ASSERT(!ice.begin_program(strike, entity), "A direct cast must not bypass disengagement grace")
 
 /// The final check protects movement, disengagement, disabled hosts, and late stun state.
@@ -47,6 +68,7 @@
 	TEST_ASSERT_EQUAL(entity.integrity, initial_integrity, "A stale lock must not bypass grace")
 	entity.combat_ignore_until = 0
 	ice.program_cd.Cut()
+	TEST_ASSERT(netrun_test_yield_to(ice, TRUE), "A cancelled windup retains its AP cost until the guard's next turn")
 	TEST_ASSERT(ice.begin_program(strike, entity), "An expired grace period must allow a fresh warning")
 	node.offline_until = world.time + 5 SECONDS
 	ice.attack_at = world.time
@@ -55,6 +77,7 @@
 	TEST_ASSERT_EQUAL(entity.integrity, initial_integrity, "Offline ICE must not deal delayed damage")
 	node.offline_until = 0
 	ice.program_cd.Cut()
+	TEST_ASSERT(netrun_test_yield_to(ice, TRUE), "Restored power does not refund the cancelled attack's turn budget")
 	TEST_ASSERT(ice.begin_program(strike, entity), "Restoring the host must allow a fresh warning")
 	ice.combat_stun_until = world.time + 5 SECONDS
 	ice.attack_at = world.time
@@ -63,6 +86,7 @@
 	TEST_ASSERT_EQUAL(entity.integrity, initial_integrity, "Stunned ICE must not deal delayed damage")
 	ice.combat_stun_until = 0
 	ice.program_cd.Cut()
+	TEST_ASSERT(netrun_test_yield_to(ice, TRUE), "Recovering from a native stun still waits for a fresh guard turn")
 	TEST_ASSERT(ice.begin_program(strike, entity), "Recovering from stun must allow a fresh warning")
 	entity.leave_node()
 	ice.attack_at = world.time
@@ -87,6 +111,7 @@
 	TEST_ASSERT(findtext(last_log["text"], "через [NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS)] с"), "The console warning must not claim the unenforced short windup")
 	ice.cancel_program()
 	var/datum/netrun_program/blackout = SSnetrun.get_program("blackout")
+	TEST_ASSERT(netrun_test_yield_to(ice, TRUE), "Changing programs cannot reuse the AP spent on the cancelled preparation")
 	TEST_ASSERT(ice.begin_program(blackout, entity), "A hunter must be able to prepare its stun")
 	casting = ice.casting_payload()
 	TEST_ASSERT_EQUAL(casting["power"], blackout.power, "Damage scaling must never shorten a displayed stun duration")
@@ -108,7 +133,8 @@
 	TEST_ASSERT(ice.program_cd["barrier"] > world.time, "Preparing the shield must retain the program's normal cooldown")
 	ice.next_attack = world.time
 	ice.try_attack(entity)
-	TEST_ASSERT_EQUAL(ice.pending_program?.id, "strike", "An active barrier must let the guard return to its available attack")
+	TEST_ASSERT_EQUAL(ice.pending_program?.id, "needle", "An active barrier leaves one AP for the sentry's owned light attack")
+	TEST_ASSERT_EQUAL(ice.get_combat_encounter().remaining_ap(ice), 0, "Barrier and the affordable needle consume the same three-point turn")
 	ice.cancel_program()
 	ice.apply_shield(65, 5 SECONDS)
 	var/strong_factor = ice.combat_shield_factor
@@ -135,6 +161,7 @@
 	entity.console.ui_node_levels[node.address] = NETRUN_ACCESS_GUEST
 	ice.program_cd.Cut()
 	ice.next_attack = world.time
+	TEST_ASSERT(netrun_test_yield_to(ice, TRUE), "A second delivery check starts on the next legal guard turn")
 	TEST_ASSERT(ice.begin_program(strike, entity), "The actual unauthorized resident must remain attackable")
 	entity.console.access_session.node_access[node.address] = NETRUN_ACCESS_USER
 	initial_integrity = entity.integrity
@@ -142,6 +169,7 @@
 	ice.resolve_program()
 	TEST_ASSERT_EQUAL(entity.integrity, initial_integrity, "An old UI GUEST snapshot must not override newly obtained USER at delivery")
 	ice.program_cd.Cut()
+	TEST_ASSERT(netrun_test_yield_to(ice, TRUE), "The USER denial is checked with a fresh affordable guard turn")
 	TEST_ASSERT(!ice.begin_program(strike, entity), "Beginning a cast must also ignore an old unauthorized UI snapshot")
 	entity.console.ui_node_levels = null
 
@@ -168,6 +196,7 @@
 	TEST_ASSERT_EQUAL(console.intrusion.trace, before_trace, "The replacement attempt must not inherit the previous attempt's incoming trace")
 	TEST_ASSERT(ice.program_cd[trace.id] > world.time, "Invalidating an old attempt must preserve the trace cooldown")
 	ice.program_cd.Cut()
+	TEST_ASSERT(netrun_test_yield_to(ice, TRUE), "A replacement breach cannot refund the previous trace's AP or own-turn cooldown")
 	TEST_ASSERT(ice.begin_program(trace, console), "The replacement breach must still permit its own freshly announced trace")
 	ice.attack_at = world.time
 	ice.resolve_program()

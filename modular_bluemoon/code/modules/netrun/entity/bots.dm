@@ -9,8 +9,12 @@
 	var/net_faction = NETRUN_FACTION_ROGUE
 	var/datum/netrun_bot_program/program
 	var/datum/netrun_bot_brain/brain
-	/// Agents: the launching console.
+	/// Last explicitly accepted reporting/recall client, never the ownership authority.
 	var/datum/weakref/owner_ref
+	/// A native dive's physical return client is known without scanning other consoles.
+	var/datum/weakref/owner_fallback_ref
+	var/datum/weakref/owner_principal_ref
+	var/datum/weakref/owner_faction_ref
 	var/launched_by_owner = FALSE
 	/// Agents: the program file returns to the owner on recall.
 	var/datum/netrun_file/agent_file
@@ -37,12 +41,22 @@
 /mob/camera/netrun_entity/bot/Initialize(mapload, datum/component/netrun_node/start, program_id, datum/netrun_console/owner)
 	program = SSnetrun.get_bot_program(program_id) || SSnetrun.get_bot_program(NETRUN_BOT_RAIDER)
 	bot_kind = program.id
-	net_faction = program.faction
+	net_faction = owner ? owner.get_personal_faction_id() : program.faction
 	console_type = program.console_type
 	max_integrity = program.max_integrity
 	integrity = max_integrity
 	if(owner)
 		owner_ref = WEAKREF(owner)
+		owner_principal_ref = WEAKREF(owner.personal_faction_principal())
+		var/datum/netrun_faction/faction = SSnetrun.get_netrun_faction(net_faction)
+		owner_faction_ref = faction ? WEAKREF(faction) : null
+		var/mob/camera/netrun_entity/resident = owner.combat_self()
+		var/datum/netrun_console/fallback = istype(resident) ? resident.dive_link?.entry_client_ref?.resolve() : null
+		if(!fallback)
+			var/datum/netrun_inventory/borrowed = owner.inventory?.borrowed_inventory_ref?.resolve()
+			fallback = borrowed?.owner
+		if(fallback && fallback != owner)
+			owner_fallback_ref = WEAKREF(fallback)
 		launched_by_owner = TRUE
 	. = ..(mapload, start)
 	if(QDELETED(src) || QDELETED(console))
@@ -73,6 +87,9 @@
 	QDEL_NULL(brain)
 	QDEL_NULL(agent_file)
 	owner_ref = null
+	owner_fallback_ref = null
+	owner_principal_ref = null
+	owner_faction_ref = null
 	program = null
 	return ..()
 
@@ -93,7 +110,19 @@
 	return net_faction
 
 /mob/camera/netrun_entity/bot/netrun_owner_console()
-	return owner_ref?.resolve()
+	RETURN_TYPE(/datum/netrun_console)
+	var/datum/netrun_console/client = owner_ref?.resolve()
+	if(owned_by(client))
+		return client
+	client = owner_fallback_ref?.resolve()
+	return owned_by(client) ? client : null
+
+/// A physical device can be shared, replaced or destroyed without changing its issuer.
+/mob/camera/netrun_entity/bot/proc/owned_by(datum/netrun_console/client)
+	if(QDELETED(client) || agent_orphaned())
+		return FALSE
+	var/datum/principal = owner_principal_ref?.resolve()
+	return launched_by_owner && client.personal_faction_principal() == principal && client.get_personal_faction_id() == net_faction
 
 /mob/camera/netrun_entity/bot/contact_state()
 	if(is_stunned())
@@ -104,10 +133,13 @@
 	RETURN_TYPE(/datum/component/netrun_combatant)
 	return LoadComponent(/datum/component/netrun_combatant/entity/bot)
 
-/// An agent whose launching console is gone has nobody to report to.
+/// Only loss of the actual principal or its membership ends the owned lifetime.
 /mob/camera/netrun_entity/bot/proc/agent_orphaned()
-	var/datum/netrun_console/owner = owner_ref?.resolve()
-	return launched_by_owner && QDELETED(owner)
+	if(!launched_by_owner)
+		return FALSE
+	var/datum/principal = owner_principal_ref?.resolve()
+	var/datum/netrun_faction/private/personal/faction = owner_faction_ref?.resolve()
+	return QDELETED(principal) || QDELETED(faction) || !istype(faction) || faction.id != net_faction || faction.principal_ref?.resolve() != principal
 
 /// Visiting processes depart without being destroyed or generating free combat loot.
 /mob/camera/netrun_entity/bot/proc/retire()
@@ -161,12 +193,14 @@
 		node.refresh_salvage()
 
 /// Recall: the agent becomes a file in its owner's memory again (or debris when there is no room).
-/mob/camera/netrun_entity/bot/proc/return_to_owner()
-	var/datum/netrun_console/master = netrun_owner_console()
+/mob/camera/netrun_entity/bot/proc/return_to_owner(datum/netrun_console/master)
+	master = master || netrun_owner_console()
 	var/datum/component/netrun_node/node = host_node
-	if(QDELETED(master))
+	if(agent_orphaned())
 		dissolve()
-		return
+		return FALSE
+	if(QDELETED(master) || !master.owns_agent(src))
+		return FALSE
 	var/datum/component/netrun_node/source = master.route_source()
 	if(return_pending || !node || !source || !agent_file)
 		return FALSE
@@ -310,9 +344,15 @@
 
 /datum/netrun_console/proc/agents()
 	. = list()
+	var/personal_id = get_personal_faction_id()
+	if(!personal_id)
+		return
 	for(var/mob/camera/netrun_entity/bot/bot as anything in SSnetrun.bots)
-		if(!QDELETED(bot) && bot.netrun_owner_console() == src)
+		if(!QDELETED(bot) && bot.net_faction == personal_id && bot.owned_by(src))
 			. += bot
+
+/datum/netrun_console/proc/owns_agent(mob/camera/netrun_entity/bot/agent)
+	return !QDELETED(agent) && agent.owned_by(src)
 
 /datum/netrun_console/proc/agents_payload()
 	if(!length(SSnetrun.bots))
@@ -360,34 +400,73 @@
 	if(inventory.selected_file_uid == file.uid)
 		inventory.selected_file_uid = null
 	var/mob/camera/netrun_entity/bot/agent = SSnetrun.spawn_bot(program.id, site, src)
-	if(!agent)
+	if(!agent || !owns_agent(agent))
+		if(agent)
+			qdel(agent)
 		store.insert(file, TRUE)
 		log_line("Агента не удалось запустить.", "bad")
+		return FALSE
+	var/datum/netrun_file/acquired_key/delegated = snapshot_acquired_key("agent-access.grants", NETRUN_ACCESS_USER)
+	var/original_size = file.size
+	var/had_stored_files = FALSE
+	var/required_memory = agent.console.inventory.local_store.used()
+	var/credential_memory = delegated?.size || 0
+	if(delegated && agent.console.inventory.local_store.acquired_key_target())
+		credential_memory = 0
+	if(istype(file, /datum/netrun_file/bot))
+		var/datum/netrun_file/bot/saved = file
+		if(!isnull(saved.stored_files))
+			had_stored_files = TRUE
+			required_memory = netrun_storage_used(saved.stored_files)
+			for(var/datum/netrun_file/acquired_key/key as anything in saved.stored_files)
+				if(istype(key))
+					credential_memory = 0
+					break
+	if(delegated && required_memory + credential_memory > agent.console.inventory.local_store.capacity)
+		qdel(delegated)
+		qdel(agent)
+		store.insert(file, TRUE)
+		log_line("В памяти агента нет ячейки для передаваемого ключа; исходный файл и его память сохранены.", "bad")
 		return FALSE
 	agent.agent_file = file
 	if(istype(file, /datum/netrun_file/bot))
 		var/datum/netrun_file/bot/saved = file
 		if(!saved.restore_agent(agent))
+			qdel(delegated)
 			agent.agent_file = null
 			qdel(agent)
 			store.insert(file, TRUE)
 			return FALSE
-	// A snapshot of the owner's acquired grants; legal ID access is never copied.
+	if(delegated)
+		var/datum/netrun_file/acquired_key/installed = agent.console.store_file(delegated)
+		if(!installed)
+			if(had_stored_files)
+				var/datum/netrun_file/bot/saved = file
+				saved.remember_agent(agent)
+				file.size = original_size
+			agent.agent_file = null
+			qdel(delegated)
+			qdel(agent)
+			store.insert(file, TRUE)
+			return FALSE
+		agent.console.inventory.canonical_key_uid = installed.uid
+	// Unsigned bootstrap/delegated residency remains non-exportable. Actual
+	// hacked/file authority is carried only by the removable owned key above.
 	for(var/address_key in access_session.node_access)
 		var/datum/component/netrun_node/known_node = SSnetrun.find_node(address_key)
-		if(known_node)
-			agent.console.access_session.grant_node(known_node, min(access_session.direct_node_level(known_node), NETRUN_ACCESS_USER), min(access_session.exportable_node_level(known_node), NETRUN_ACCESS_USER))
+		if(known_node && !access_session.exportable_node_level(known_node))
+			agent.console.access_session.grant_node(known_node, min(access_session.direct_node_level(known_node), NETRUN_ACCESS_USER))
 	for(var/network_key in access_session.network_access)
 		var/datum/netrun_network/known_network = SSnetrun.networks[network_key]
-		if(known_network)
-			agent.console.access_session.grant_network(known_network, access_session.direct_network_level(known_network), access_session.exportable_network_level(known_network))
+		if(known_network && !access_session.exportable_network_level(known_network))
+			agent.console.access_session.grant_network(known_network, access_session.direct_network_level(known_network))
 	log_line("Агент [agent.real_name] запущен в узле [site.get_name()] [site.address].", "good")
 	site.add_log("[log_source()]: запущен агент [agent.real_name].")
 	return TRUE
 
 /datum/netrun_console/proc/agent_order(ref, order, address, list/options)
 	var/mob/camera/netrun_entity/bot/agent = locate(ref)
-	if(!istype(agent) || QDELETED(agent) || agent.netrun_owner_console() != src)
+	if(!istype(agent) || !owns_agent(agent))
 		log_line("Агент не найден.", "bad")
 		return FALSE
 	var/known_order = FALSE
@@ -416,6 +495,19 @@
 
 /// Called only by an authenticated, freshly delivered control packet.
 /datum/netrun_console/proc/apply_agent_order(mob/camera/netrun_entity/bot/agent, list/options)
+	if(!owns_agent(agent))
+		return FALSE
+	// Extension handlers use the reporting client too. Commit this destination
+	// only if the already authenticated delivery accepts its actual action.
+	var/datum/weakref/previous_client = agent.owner_ref
+	agent.owner_ref = WEAKREF(src)
+	. = execute_agent_order(agent, options)
+	if(!. && !QDELETED(agent))
+		agent.owner_ref = previous_client
+
+/datum/netrun_console/proc/execute_agent_order(mob/camera/netrun_entity/bot/agent, list/options)
+	if(!owns_agent(agent))
+		return FALSE
 	if(SEND_SIGNAL(agent, COMSIG_NETRUN_AGENT_CONTROL, src, options))
 		return TRUE
 	var/order = options["order"]
@@ -499,7 +591,7 @@
 	return ..()
 
 /datum/netrun_request/agent_control/execute()
-	if(QDELETED(agent) || agent.netrun_owner_console() != console || agent.host_node != node || sender != console.operator || console.is_locked())
+	if(!console.owns_agent(agent) || agent.host_node != node || sender != console.operator || console.is_locked())
 		return reject("Агент, владелец или место назначения изменились.")
 	node.join_network()
 	var/datum/netrun_path_tree/tree = console.make_path_tree()
@@ -539,7 +631,7 @@
 	return ..()
 
 /datum/netrun_request/agent_recall/execute()
-	if(QDELETED(agent) || !agent.agent_file || agent.netrun_owner_console() != console || agent.host_node != node || sender != console.operator || console.is_locked())
+	if(!console.owns_agent(agent) || !agent.agent_file || agent.host_node != node || sender != console.operator || console.is_locked())
 		return reject("Процесс или его владелец изменились до возврата.")
 	var/datum/component/netrun_node/current_source = console.route_source()
 	var/datum/netrun_path_tree/tree = console.make_path_tree()

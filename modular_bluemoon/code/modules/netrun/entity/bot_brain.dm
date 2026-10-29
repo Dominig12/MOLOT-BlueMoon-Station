@@ -67,6 +67,9 @@
 /datum/netrun_bot_brain/proc/schedule_next()
 	if(QDELETED(src) || QDELETED(owner))
 		return
+	// Actual turns and completion signals own combat scheduling, including AP leftovers.
+	if(owner.console?.get_combat_encounter()?.active)
+		return
 	// Completion, stun recovery and return delivery own their exact wakeups.
 	// A waiting agent does not poll the same fact every think_busy interval.
 	if(owner.client || !owner.host_node || owner.is_stunned() || owner.return_pending)
@@ -313,7 +316,7 @@
 				continue
 			if(scope && !(next.network?.id in scope))
 				continue
-			if(console.node_level(next, tree) < NETRUN_ACCESS_USER && !console.has_key(next.network, TRUE))
+			if(!console.can_traverse_node(next, tree))
 				continue
 			queue += address
 	console.release_path_tree(tree)
@@ -357,7 +360,7 @@
 			continue
 		if(scope && !(node.network?.id in scope))
 			continue
-		if(console.node_level(node, tree) < NETRUN_ACCESS_USER && (police || !console.has_key(node.network, TRUE)))
+		if(!console.can_traverse_node(node, tree) || (police && console.node_level(node, tree) < NETRUN_ACCESS_USER))
 			continue
 		var/inspected = police ? SSnetrun.police_inspected[address] : visited[address]
 		var/score = isnull(inspected) ? -INFINITY : inspected
@@ -391,13 +394,25 @@
 			. += entity
 
 /datum/netrun_bot_brain/proc/combat_step()
+	var/datum/netrun_combat_encounter/encounter = owner.console.get_combat_encounter()
+	if(encounter?.active && encounter.is_waiting(owner.console))
+		in_combat = TRUE
+		state = "ожидание хода"
+		return TRUE
 	var/list/foes = hostiles()
 	if(!length(foes))
+		if(encounter?.active && encounter.has_turn(owner.console))
+			encounter.pass(owner.console)
+			return TRUE
 		in_combat = FALSE
 		pending_attack_ref = null
 		return FALSE
 	in_combat = TRUE
 	state = "бой"
+	if(!encounter)
+		encounter = owner.host_node.get_combat_encounter()
+		if(!encounter.admit(owner.console, 1, foes[1]))
+			return TRUE
 	// Navigation must not carry a fighting process away between two brain tasks.
 	if(owner.navigation.is_active())
 		owner.navigation.cancel()
@@ -413,13 +428,21 @@
 		var/datum/netrun_ice/ice = target
 		if(ice.pending_program && use_role(NETRUN_PROGRAM_STUN, ice))
 			return TRUE
-		use_role(NETRUN_PROGRAM_ATTACK, ice)
+		if(!use_role(NETRUN_PROGRAM_ATTACK, ice))
+			pass_if_idle()
 		return TRUE
-	if(!istype(target, /mob/camera/netrun_entity/bot))
+	if(!encounter?.active && !istype(target, /mob/camera/netrun_entity/bot))
 		telegraphed_attack(target)
 		return TRUE
-	use_role(NETRUN_PROGRAM_ATTACK, target)
+	if(!use_role(NETRUN_PROGRAM_ATTACK, target))
+		pass_if_idle()
 	return TRUE
+
+/// No affordable legal program means a deliberate pass, rather than periodic retries.
+/datum/netrun_bot_brain/proc/pass_if_idle()
+	var/datum/netrun_combat_encounter/encounter = owner.console.get_combat_encounter()
+	if(encounter?.active && encounter.has_turn(owner.console) && !encounter.deferred)
+		encounter.pass(owner.console)
 
 /datum/netrun_bot_brain/proc/pick_target(list/foes)
 	var/datum/pending = pending_attack_ref?.resolve()
@@ -437,20 +460,21 @@
 /datum/netrun_bot_brain/proc/use_role(role, datum/target)
 	var/datum/netrun_console/console = owner.console
 	var/datum/netrun_combat_context/combat = console.combat_context
-	if(QDELETED(target) || world.time < combat.next_program)
+	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter()
+	if(QDELETED(target) || (encounter?.active ? encounter.is_waiting(console) : world.time < combat.next_program))
 		return FALSE
 	var/best_uid
 	var/best_power = -1
 	for(var/id in console.builtin_program_ids())
 		var/datum/netrun_program/program = SSnetrun.get_program(id)
-		if(program?.role == role && world.time >= (combat.program_cd[program.id] || 0) && program.power > best_power)
+		if(program?.role == role && (encounter?.active ? (!encounter.cooldown_remaining(console, program) && program.ap_cost <= encounter.remaining_ap(console) && encounter.can_apply_program_status(program, target)) : world.time >= (combat.program_cd[program.id] || 0)) && program.power > best_power)
 			best_uid = "builtin:[id]"
 			best_power = program.power
 	for(var/datum/netrun_file/file as anything in console.all_files())
 		if(file.kind != NETRUN_FILE_PROGRAM)
 			continue
 		var/datum/netrun_program/program = SSnetrun.get_program(file.content)
-		if(program?.role == role && world.time >= (combat.program_cd[program.id] || 0) && program.power > best_power)
+		if(program?.role == role && (encounter?.active ? (!encounter.cooldown_remaining(console, program) && program.ap_cost <= encounter.remaining_ap(console) && encounter.can_apply_program_status(program, target)) : world.time >= (combat.program_cd[program.id] || 0)) && program.power > best_power)
 			best_uid = file.uid
 			best_power = program.power
 	if(!best_uid)
