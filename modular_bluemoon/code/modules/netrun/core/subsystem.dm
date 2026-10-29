@@ -393,17 +393,19 @@ SUBSYSTEM_DEF(netrun)
 	if(task_scheduler?.pending() || length(node_publications) || length(network_publications))
 		wait = world.tick_lag
 		return
-	var/next_due = world.time + NETRUN_DEFAULT_FIRE_INTERVAL
+	var/next_wait = NETRUN_DEFAULT_FIRE_INTERVAL
 	// Quiet maintenance rests for twenty deciseconds. Live UI/gameplay clocks
 	// still honor configured population intervals after the queue has drained.
 	if(length(active_consoles) || length(pending_requests) || length(active_defense_networks) || ice_clock_active)
-		next_due = min(next_due, next_task_population)
+		next_wait = min(next_wait, next_task_population - world.time)
 	// Stale minima after cancellation cost at most one population, never a spin.
 	// Native deadlines are sampled by the existing population cadence rather than
 	// introducing a full node-index scan on every packet-ready worker pass.
 	if(next_node_deadline < INFINITY)
-		next_due = min(next_due, max(next_task_population, next_node_deadline))
-	wait = max(world.tick_lag, next_due - world.time)
+		next_wait = min(next_wait, max(next_task_population, next_node_deadline) - world.time)
+	// Keep the idle interval relative: adding/subtracting a large fractional
+	// world.time can otherwise turn exactly twenty deciseconds into 19.999998.
+	wait = max(world.tick_lag, next_wait)
 
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
 	var/slice_start_usage = TICK_USAGE

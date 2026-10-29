@@ -83,10 +83,13 @@
 	if(QDELETED(offer) || world.time >= offer.expires_at)
 		return FALSE
 	if(accept)
-		if(!owner.inventory.local_store.insert(offer.file))
+		var/file_name = offer.file.name
+		var/datum/netrun_file/received = owner.inventory.local_store.insert(offer.file)
+		if(!received)
 			owner.log_line("Для копии [offer.file.name] нет места в памяти.", "bad")
 			return FALSE
-		owner.log_line("Принята копия [offer.file.name] от [offer.sender_name].", "good")
+		owner.inventory.selected_file_uid = received.uid
+		owner.log_line("Принята копия [file_name] от [offer.sender_name].", "good")
 		offer.file = null
 	else
 		owner.log_line("Предложение [offer.sender_name] отклонено.")

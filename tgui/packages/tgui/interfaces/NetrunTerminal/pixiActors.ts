@@ -1,13 +1,14 @@
 import type { Container, Graphics, Text } from 'pixi.js';
 
+import { factionColor } from './actorTaxonomy';
 import { GRAPH_TILE } from './graphLayout';
 import { boxesIntersect, GraphBox, GraphOverlay, markerColor, markerScale, physicalPoint, segmentBox } from './graphPresentation';
 import type { GraphScene, PlacedNode } from './graphScene';
 import type { GraphPoint } from './mapLayout';
 import { drawBody, drawGlyph, GLYPH_MIN_ZOOM, glyphRadius } from './nodeGlyphs';
 import { destroyDisplay, edgeAlpha, edgeColor, edgeWidth, pixiColor, PixiLibrary, segmentPath, strokeLod } from './pixiPrimitives';
-import { drawProcessGlyph } from './processGlyphs';
-import { FACTION_COLORS, NetEdge, NetEvent, PACKET_COLORS } from './types';
+import { drawBotGlyph, drawProcessGlyph, drawTintedProcessGlyph } from './processGlyphs';
+import { NetEdge, NetEvent, PACKET_COLORS } from './types';
 
 type Actor = { group: Container; body: Graphics; marks: Graphics; labels: Text[]; node: PlacedNode;
   signature: string; px: number; py: number; fromX: number; fromY: number; movedAt: number; appearedAt: number };
@@ -34,7 +35,9 @@ const sameOverlayData = (a: GraphOverlay | null, b: GraphOverlay) => a
   && a.showEndpointLinks === b.showEndpointLinks;
 const sameLocalState = (a: GraphOverlay, b: GraphOverlay) => a.selected === b.selected
   && a.hovered === b.hovered && a.selectionPending === b.selectionPending;
-const needsActor = (node: PlacedNode, overlay: GraphOverlay) => node.dynamic || node.entities || node.ice || node.active
+const processSummaryKey = (node: PlacedNode) => node.processes?.slice(0, 6).map((process) =>
+  `${process.kind}/${process.bot_kind}/${process.ice_kind}/${process.faction}/${process.faction_color}/${process.count}`).join('|') || '';
+const needsActor = (node: PlacedNode, overlay: GraphOverlay) => node.dynamic || node.entities || node.ice || node.active || node.processes?.length
   || node.bots || node.police || node.fortress
   || node.type === 'gateway' || node.type === 'relay' || node.address === overlay.selected
   || node.address === overlay.hovered || node.address === overlay.entityHost || node.address === overlay.jacked;
@@ -216,8 +219,8 @@ export class PixiActors {
     const jacked = node.address === overlay.jacked, hovered = node.address === overlay.hovered;
     const fill = pixiColor(markerColor(node), 0x678698), border = pixiColor(overlay.gateways.get(node.network)?.color, 0x82a9ba);
     const fortress = node.fortress;
-    const fortressKey = fortress ? `${fortress.tier}/${fortress.walls}/${fortress.faction}/${fortress.damaged}/${fortress.online}` : '';
-    const signature = `${node.type}:${!!node.dynamic}:${node.online}:${fill}:${border}:${node.entities}:${node.ice}:${node.bots || 0}:${!!node.police}:${fortressKey}:${node.active}:${selected}:${overlay.selectionPending}:${hosted}:${jacked}:${hovered}:${this.scale}:${this.detailed}`;
+    const fortressKey = fortress ? `${fortress.tier}/${fortress.walls}/${fortress.faction}/${fortress.faction_color}/${fortress.damaged}/${fortress.online}` : '';
+    const signature = `${node.type}:${!!node.dynamic}:${node.online}:${fill}:${border}:${node.entities}:${node.ice}:${node.bots || 0}:${!!node.police}:${processSummaryKey(node)}:${fortressKey}:${node.active}:${selected}:${overlay.selectionPending}:${hosted}:${jacked}:${hovered}:${this.scale}:${this.detailed}`;
     if (actor.signature === signature) { return; }
     actor.signature = signature; actor.body.clear(); actor.marks.clear();
     // No LOD enlargement of ordinary device bodies. This scale is reserved
@@ -227,7 +230,7 @@ export class PixiActors {
       if (this.zoom >= GLYPH_MIN_ZOOM) { drawGlyph(actor.body, node.type, 0, 0); }
     }
     const radius = glyphRadius(node.type), marks = actor.marks;
-    const scale = node.ice || node.entities || node.bots || node.police || fortress
+    const scale = node.ice || node.entities || node.bots || node.police || node.processes?.length || fortress
       || node.type === 'gateway' || node.type === 'relay' ? this.scale : 1;
     if (fortress) { this.paintFortress(marks, fortress, (radius + 9) * scale, scale); }
     if (node.type === 'gateway' || node.type === 'relay') {
@@ -241,20 +244,43 @@ export class PixiActors {
     if (node.ice) {
       marks.circle(0, 0, (radius + 10) * scale).stroke({ color: 0x101721, width: 4.4 * scale, alpha: .9 });
       marks.circle(0, 0, (radius + 10) * scale).stroke({ color: 0xff8996, width: 2 * scale, alpha: .95 });
-      drawProcessGlyph(marks, 'ice', -(radius + 8) * scale, -(radius + 7) * scale, (this.detailed ? 10 : 8) * scale);
     } else if (node.active && (this.detailed || selected || hovered)) {
       marks.circle(0, 0, (radius + 5) * scale).stroke({ color: 0xffc26b, width: 1.6 * scale, alpha: .65 });
     }
-    if (node.entities) {
+    this.paintProcessMarkers(actor, radius, scale);
+  }
+
+  /** All occupant geometry belongs to the retained live layer, including compatibility with count-only payloads. */
+  private paintProcessMarkers(actor: Actor, radius: number, scale: number) {
+    const node = actor.node, marks = actor.marks, processes = node.processes?.slice(0, 6);
+    if (!processes?.length && node.ice) {
+      drawProcessGlyph(marks, 'ice', -(radius + 8) * scale, -(radius + 7) * scale, (this.detailed ? 10 : 8) * scale);
+    }
+    if (!processes?.length && node.entities) {
       drawProcessGlyph(marks, 'entity', (radius + 9) * scale, -(radius + 7) * scale, (this.detailed ? 10 : 8) * scale);
     }
-    if (node.bots && !(node.police && node.bots === 1)) {
+    if (!processes?.length && node.bots && !(node.police && node.bots === 1)) {
       drawProcessGlyph(marks, 'bots', (radius + 9) * scale, (radius + 9) * scale, (this.detailed ? 10 : 8) * scale);
     }
-    if (node.police) {
+    if (!processes?.length && node.police) {
       drawProcessGlyph(marks, 'police', -(radius + 9) * scale, (radius + 9) * scale, (this.detailed ? 10 : 8) * scale);
     }
-    const badges = this.detailed ? [node.ice > 1 ? { value: String(node.ice), x: -(radius + 16) * scale, y: -(radius + 17) * scale } : null,
+    const processBadges: { value: string; x: number; y: number }[] = [];
+    for (let i = 0; i < (processes?.length || 0); i++) {
+      const process = processes[i];
+      const angle = -Math.PI / 4 + i * 2 * Math.PI / Math.max(4, processes.length);
+      const orbit = (radius + 15) * scale, x = Math.cos(angle) * orbit, y = Math.sin(angle) * orbit;
+      const tint = process.kind === 'ice' ? process.ice_kind === 'black' ? 0xdba0ff : 0xff8996
+        : pixiColor(factionColor(process.faction, process.faction_color), 0x8ca9b8);
+      const markerRadius = (this.detailed ? 10 : 8) * scale;
+      if (process.kind === 'bot') { drawBotGlyph(marks, process.bot_kind, x, y, markerRadius, tint); }
+      else { drawTintedProcessGlyph(marks, process.kind === 'ice' ? 'ice' : 'entity', x, y, markerRadius, tint); }
+      if (process.count > 1) { processBadges.push({ value: String(process.count), x: x + markerRadius * .8, y: y + markerRadius }); }
+    }
+    const represented = processes?.reduce((count, process) => count + process.count, 0) || 0;
+    const overflow = (node.entities || 0) + (node.bots || 0) + (node.ice || 0) - represented;
+    if (processes?.length && overflow > 0) { processBadges.push({ value: `+${overflow}`, x: 0, y: (radius + 31) * scale }); }
+    const badges = this.detailed ? processes?.length ? processBadges : [node.ice > 1 ? { value: String(node.ice), x: -(radius + 16) * scale, y: -(radius + 17) * scale } : null,
       node.entities > 1 ? { value: String(node.entities), x: (radius + 17) * scale, y: -(radius + 17) * scale } : null,
       node.bots > 1 ? { value: String(node.bots), x: (radius + 17) * scale, y: (radius + 19) * scale } : null].filter(Boolean) : [];
     for (let i = 0; i < badges.length; i++) {
@@ -271,7 +297,7 @@ export class PixiActors {
 
   /** Crenellated ring in the faction colour: merlons for standing walls, a broken ring when damaged. */
   private paintFortress(marks: Graphics, fortress: NonNullable<PlacedNode['fortress']>, ring: number, scale: number) {
-    const color = fortress.online ? pixiColor(FACTION_COLORS[fortress.faction], 0x6fb6ff) : 0x5d6b75;
+    const color = fortress.online ? pixiColor(factionColor(fortress.faction, fortress.faction_color), 0x72ddea) : 0x5d6b75;
     const steps = 24;
     for (let i = 0; i < steps; i++) {
       if (fortress.damaged && i % 3 === 2) { continue; }

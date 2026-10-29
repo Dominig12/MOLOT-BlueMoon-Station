@@ -54,9 +54,11 @@
 	var/expected_hit = round(strike.power * ice.damage_factor) * 0.5
 	TEST_ASSERT_EQUAL(entity.integrity, initial_integrity - expected_hit, "ICE damage must use the same shield-aware dispatcher, scaled by the ICE damage factor")
 	ice.next_attack = world.time
-	TEST_ASSERT(!ice.begin_program(strike, entity), "The program's own cooldown must prevent another immediate cast")
+	TEST_ASSERT(!ice.begin_program(strike, entity), "The turn's remaining AP must prevent another immediate two-point cast")
 	ice.program_cd.Cut()
-	TEST_ASSERT(ice.begin_program(strike, entity), "An expired program cooldown must allow a new warning")
+	TEST_ASSERT(!ice.begin_program(strike, entity), "Clearing a realtime cooldown cannot refill the active turn's AP")
+	TEST_ASSERT(netrun_test_yield_to(ice, TRUE), "The victim and guard explicitly pass to the guard's next own turn")
+	TEST_ASSERT(ice.begin_program(strike, entity), "A fresh turn and ready program must allow a new warning")
 	ice.apply_stun(2 SECONDS)
 	TEST_ASSERT_NULL(ice.pending_program, "Stunning ICE must interrupt its prepared program")
 	ice.resolve_program()
@@ -117,23 +119,32 @@
 	var/datum/netrun_ice/unrelated = allocate(/datum/netrun_ice, node)
 	var/datum/netrun_program/trace = SSnetrun.get_program("trace")
 	TEST_ASSERT(first.begin_program(trace, console), "The first sentry must announce its real trace")
-	TEST_ASSERT(second.begin_program(trace, console), "A second sentry must obtain an independent contact")
+	TEST_ASSERT(!second.begin_program(trace, console), "A second sentry must wait for its own turn rather than cast beside another telegraph")
+	TEST_ASSERT_NULL(second.pending_program, "An off-turn guard cannot manufacture an incoming cast")
+	TEST_ASSERT_NULL(second.program_cd[trace.id], "Off-turn rejection spends no cooldown")
+	first.attack_at = world.time
+	first.resolve_program()
+	TEST_ASSERT(netrun_test_yield_to(second), "The first guard and remote console explicitly yield to the second guard")
+	TEST_ASSERT(second.begin_program(trace, console), "A second sentry obtains its own independent contact on its turn")
 	var/before_combat_paths = SSnetrun.combat_ui_tree_builds
 	var/before_combat_copies = SSnetrun.get_topology().route_snapshot_copies
 	var/list/warnings_only = console.combat_context.status_payload()
-	TEST_ASSERT_EQUAL(length(warnings_only["incoming"]), 2, "The compact warning must still identify both attackers")
+	TEST_ASSERT_EQUAL(length(warnings_only["incoming"]), 1, "The compact warning identifies the current telegraph while prior contacts remain")
 	TEST_ASSERT(!("targets" in warnings_only) && !("programs" in warnings_only), "A warning must not build hidden combat cards or program inventory")
 	TEST_ASSERT_EQUAL(SSnetrun.combat_ui_tree_builds, before_combat_paths, "The compact HUD must never build a routing tree")
 	var/list/payload = console.breach_combat_payload()
 	TEST_ASSERT_EQUAL(SSnetrun.combat_ui_tree_builds, before_combat_paths + 1, "One combat payload with several targets must acquire only one routing tree")
 	TEST_ASSERT_EQUAL(SSnetrun.get_topology().route_snapshot_copies, before_combat_copies, "Combat cards must borrow current physical routes without copying every network endpoint")
 	TEST_ASSERT_EQUAL(length(payload["targets"]), 2, "The puzzle must expose both actual attackers and no unrelated ICE")
-	TEST_ASSERT_EQUAL(length(payload["incoming"]), 2, "Both announced attacks must remain visible")
+	TEST_ASSERT_EQUAL(length(payload["incoming"]), 1, "Only the current guard's prepared attack is pending")
 	TEST_ASSERT_EQUAL(length(payload["programs"]), 4, "Installed counterattacks remain available and player trace stays hidden")
 	var/list/incoming = payload["incoming"]
 	var/list/warning = incoming[1]
-	TEST_ASSERT_EQUAL(warning["source_ref"], REF(first), "Warnings must identify a real selectable source")
+	TEST_ASSERT_EQUAL(warning["source_ref"], REF(second), "Warnings must identify the guard actually preparing on its own turn")
 	TEST_ASSERT_EQUAL(warning["source_node"], node.address, "A LAN warning must name the actual source node")
+	second.attack_at = world.time
+	second.resolve_program()
+	TEST_ASSERT(netrun_test_yield_to(console), "Remote replies wait for the console's own turn after incoming delivery")
 	TEST_ASSERT(!console.program_use(strike.uid, REF(unrelated)), "An arbitrary ICE REF must not inherit a contact's access exemption")
 	TEST_ASSERT(!console.program_use("builtin:sting", REF(first)), "Remote consoles must not gain free entity attacks")
 	TEST_ASSERT(!console.program_use(trace_program.uid, REF(first)), "A stored trace file must remain ICE-only")
@@ -141,13 +152,12 @@
 	TEST_ASSERT(!console.program_use(patch.uid, null), "A terminal or deck still has no entity to repair")
 	TEST_ASSERT(!console.run_command(node, "purge"), "Combat contacts must not bypass ROOT machine command permissions")
 	TEST_ASSERT(console.program_use(blackout.uid, REF(first)), "The actual attacker can be stunned before LAN guest access is obtained")
-	TEST_ASSERT_NULL(first.pending_program, "The reply must cancel the prepared trace")
+	TEST_ASSERT_EQUAL(console.get_combat_encounter().member(first).stun_turns, 1, "The accepted reply must stun the actual attacker for its next own turn")
 	TEST_ASSERT_EQUAL(length(console.combat_targets()), 2, "Stun must not make the enemy disappear from the combat list")
-	second.attack_at = world.time
-	second.resolve_program()
 	TEST_ASSERT_EQUAL(length(console.combat_targets()), 2, "A completed cast and its cooldown must retain the contact")
 	console.map_view.selected_address = null
 	console.combat_context.next_program = world.time
+	TEST_ASSERT(netrun_test_yield_to(console, TRUE), "A second two-point reply waits for the next console turn instead of refilling AP")
 	TEST_ASSERT(console.program_use(strike.uid, REF(second)), "Selection changes and enemy cooldown do not prevent a reply")
 	var/datum/netrun_program/strike_definition = SSnetrun.get_program("strike")
 	TEST_ASSERT_EQUAL(second.integrity, second.max_integrity - strike_definition.power, "The response must apply the original program power")
@@ -161,7 +171,12 @@
 	TEST_ASSERT_EQUAL(length(console.combat_targets()), 0, "A new breach must not inherit the previous attacker's exemption")
 	first.combat_stun_until = 0
 	first.program_cd.Cut()
-	TEST_ASSERT(first.begin_program(trace, console), "A fresh incoming trace may establish a new contact")
+	// The previous remote principal left when its breach ended. The guards may
+	// retain their local queue, so the fresh breach still waits for a guard turn.
+	var/datum/netrun_combat_encounter/remaining_encounter = first.get_combat_encounter()
+	if(remaining_encounter?.active)
+		TEST_ASSERT(netrun_test_yield_to(first, TRUE), "A new breach waits for the old encounter's ordinary next guard turn")
+	TEST_ASSERT(first.begin_program(trace, console), "A fresh incoming trace may establish a new contact on its own turn")
 	TEST_ASSERT_EQUAL(length(console.combat_targets()), 1, "Only the fresh attacker should appear in the new breach")
 	qdel(first)
 	TEST_ASSERT_EQUAL(length(console.combat_targets()), 0, "Deleting an attacker must immediately revoke the contact")
@@ -194,6 +209,9 @@
 	TEST_ASSERT(!console.program_use(strike.uid, REF(ice)), "The action must recheck the actual route, regardless of the last UI payload")
 	TEST_ASSERT_NULL(console.combat_context.program_cd["strike"], "A rejected reply must not spend cooldown")
 	apc.set_machine_stat(0)
+	ice.attack_at = world.time
+	ice.resolve_program()
+	TEST_ASSERT(netrun_test_yield_to(console), "Restoring a route does not let the console reply outside its own turn")
 	TEST_ASSERT(console.program_use(strike.uid, REF(ice)), "Restoring the same route during the breach must restore the reply")
 	ice.enter_node(source_node)
 	TEST_ASSERT_EQUAL(length(console.combat_targets()), 0, "A moved attacker must not retain its original remote contact")

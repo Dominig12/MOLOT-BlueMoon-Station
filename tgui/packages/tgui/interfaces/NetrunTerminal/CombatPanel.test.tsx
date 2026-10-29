@@ -4,7 +4,7 @@ import { combineReducers, createStore, setGlobalStore } from 'common/redux';
 import { backendReducer, backendUpdate } from '../../backend';
 import { debugReducer } from '../../debug';
 import { CombatPanel, IncomingAttacks } from './CombatPanel';
-import { CombatState, CombatTarget, IncomingProgram } from './types';
+import { CombatState, CombatTarget, CombatTurn, IncomingProgram } from './types';
 
 const enemy: CombatTarget = {
   ref: 'ice-1', name: 'ICE-SENTRY', kind: 'ice', hostile: true,
@@ -39,6 +39,15 @@ const uses = (topic) => topic.mock.calls
   .filter((call) => call[0]?.type === 'act/program_use')
   .map((call) => JSON.parse(call[0].payload));
 
+const ownTurn: CombatTurn = {
+  round: 2, actor_ref: 'self', actor_name: 'Вы', your_turn: true,
+  ap: 2, max_ap: 3, remaining: 12, decision_seconds: 12, can_pass: true,
+  participants: [
+    { ref: 'self', name: 'Вы', current: true, ap: 2, max_ap: 3 },
+    { ref: enemy.ref, name: enemy.name, current: false, ap: 3, max_ap: 3 },
+  ],
+};
+
 describe('Netrun combat contacts', () => {
   let actionTime = Date.now();
   beforeEach(() => {
@@ -52,6 +61,16 @@ describe('Netrun combat contacts', () => {
     const panel = render(<CombatPanel />);
     expect(panel.getByRole('img', { name: 'BLACK ICE · нелегальный' }).querySelector('.fa-skull-crossbones')).toBeTruthy();
     expect(panel.getByText(/нейрообратная связь может повредить телу/)).toBeTruthy();
+  });
+
+  test('combat bot identity uses its role glyph and the delivered private faction color and name', () => {
+    setup({ targets: [{ ...enemy, kind: 'bot', bot_kind: 'hacker', faction: 'owner:console-42',
+      faction_name: 'Агенты Лиса', faction_color: '#12ab34' }] });
+    const panel = render(<CombatPanel />);
+    const avatar = panel.getByRole('img', { name: 'Бот: Агент-взломщик' });
+    expect(avatar.getAttribute('data-bot-glyph')).toBe('cipher');
+    expect(avatar.style.color).toBe('rgb(18, 171, 52)');
+    expect(panel.getByText('Агент-взломщик · Агенты Лиса')).toBeTruthy();
   });
 
   test('incoming countdown is shown once in reserved session status, not repeated inside combat', () => {
@@ -241,6 +260,100 @@ describe('Netrun combat contacts', () => {
     expect(uses(topic)).toHaveLength(0);
   });
 
+  test('cooldown and changing target casts preserve the same action tiles and their order', () => {
+    const { store, combat } = setup({ programs: [strike,
+      { ...strike, uid: 'shield', name: 'barrier.exe', needs_target: false }] });
+    const panel = render(<CombatPanel />);
+    const tiles = Array.from(panel.container.querySelectorAll('[data-net-program]'));
+    const status = panel.container.querySelector('.netrun-combat-action-status');
+    const cast = panel.container.querySelector('.netrun-target-cast');
+    act(() => store.dispatch(backendUpdate({ data: { combat: {
+      ...combat, action_ready_in: 0.5,
+      programs: combat.programs.map((program) => ({ ...program, ready_in: 20 })),
+      targets: [{ ...enemy, casting: { name: 'Очень длинное название программы', role: 'attack', power: 20, remaining: 3 } }],
+    } } })));
+    expect(Array.from(panel.container.querySelectorAll('[data-net-program]'))).toEqual(tiles);
+    tiles.forEach((tile) => expect(panel.container.contains(tile)).toBe(true));
+    expect(panel.container.querySelector('.netrun-combat-action-status')).toBe(status);
+    expect(panel.container.querySelector('.netrun-target-cast')).toBe(cast);
+    act(() => store.dispatch(backendUpdate({ data: { combat } })));
+    expect(panel.container.querySelector('[data-net-program="file-strike"]')).toBe(tiles[0]);
+    expect(panel.container.querySelector('.netrun-combat-action-status')).toBe(status);
+    expect(panel.queryByRole('status')).toBeNull();
+  });
+
+  test('a hidden summary preserves full actions and deliberate selection, while an active null clears them', () => {
+    const lawful = { ...enemy, ref: 'guard', name: 'GUARD', hostile: false };
+    const { store, combat, topic } = setup({ targets: [enemy, lawful] });
+    const panel = render(<CombatPanel />);
+    fireEvent.click(panel.getByText('GUARD'));
+    const tile = panel.container.querySelector('[data-net-program="file-strike"]');
+    act(() => store.dispatch(backendUpdate({ data: { workspace_view: 'files', combat: { incoming: [] } } })));
+    expect(panel.container.querySelector('[data-net-program="file-strike"]')).toBe(tile);
+    act(() => store.dispatch(backendUpdate({ data: { workspace_view: 'combat', combat } })));
+    expect(panel.container.querySelector('[data-net-program="file-strike"]')).toBe(tile);
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toEqual([{ uid: strike.uid, target: lawful.ref }]);
+    act(() => store.dispatch(backendUpdate({ data: { workspace_view: 'combat', combat: null } })));
+    expect(panel.queryByText('strike')).toBeNull();
+    expect(panel.queryByText('GUARD')).toBeNull();
+    expect(panel.getByText(/Нет боевого контакта/)).toBeTruthy();
+  });
+
+  test('turn AP and cooldowns admit only affordable ready programs, and passing sends one explicit action', () => {
+    const { topic } = setup({ turn: ownTurn, programs: [
+      { ...strike, ap_cost: 2, ready_in: 30, ready_turns: 0, cooldown_turns: 3, shield_turns: 2, stun_turns: 1 },
+      { ...strike, uid: 'expensive', name: 'overload.exe', ap_cost: 3 },
+      { ...strike, uid: 'cooling', name: 'blackout.exe', ap_cost: 1, ready_turns: 1 },
+    ] });
+    const panel = render(<CombatPanel />);
+    expect(panel.getByText('Ваш ход')).toBeTruthy();
+    expect(panel.getByText('Раунд 2')).toBeTruthy();
+    expect(panel.getByRole('meter', { name: 'Очки действия текущего хода' }).getAttribute('aria-valuenow')).toBe('2');
+    const strikeTile = panel.container.querySelector('[data-net-program="file-strike"]')!;
+    fireEvent.mouseEnter(strikeTile);
+    const facts = document.querySelector('[role="tooltip"] dl')!;
+    expect(facts.textContent).toContain('Перезарядка3 ход.');
+    expect(facts.textContent).toContain('Длительность щита2 ход.');
+    expect(facts.textContent).toContain('Оглушение1 ход.');
+    fireEvent.mouseLeave(strikeTile);
+    fireEvent.click(panel.getByText('overload'));
+    fireEvent.click(panel.getByText('blackout'));
+    expect(uses(topic)).toHaveLength(0);
+    expect(panel.getByText('Нужно 3 ОД, осталось 2.')).toBeTruthy();
+    expect(panel.getByText('Перезарядка: ещё 1 ход.')).toBeTruthy();
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toEqual([{ uid: strike.uid, target: enemy.ref }]);
+    fireEvent.click(panel.getByText('Завершить ход'));
+    const passes = topic.mock.calls.filter(([message]) => message.type === 'act/combat_pass');
+    expect(passes).toHaveLength(1);
+    expect(JSON.parse(passes[0][0].payload)).toEqual({});
+  });
+
+  test('another actor blocks actions and pass until the server publishes the own turn', () => {
+    const { topic, combat, store } = setup({ turn: { ...ownTurn, your_turn: false, can_pass: false, actor_ref: enemy.ref, actor_name: enemy.name } });
+    const panel = render(<CombatPanel />);
+    expect(panel.getByText('Ход: ICE-SENTRY')).toBeTruthy();
+    fireEvent.click(panel.getByText('strike'));
+    fireEvent.click(panel.getByText('Завершить ход'));
+    expect(topic).not.toHaveBeenCalled();
+    act(() => store.dispatch(backendUpdate({ data: { combat: { ...combat, turn: ownTurn } } })));
+    expect(panel.getByText('Ваш ход')).toBeTruthy();
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toEqual([{ uid: strike.uid, target: enemy.ref }]);
+  });
+
+  test('enemy turn cooldown and AP stay distinct from an already pending attack in seconds', () => {
+    setup({ turn: ownTurn, targets: [{ ...enemy,
+      casting: { name: 'trace.exe', role: 'trace', power: 6, remaining: 0.8 },
+      programs: [{ name: 'trace.exe', desc: 'Трассировка', role: 'trace', power: 6,
+        cooldown: 5, windup: 0.8, ready_in: 0, ap_cost: 2, ready_turns: 2, cooldown_turns: 3 }],
+    }] });
+    const panel = render(<CombatPanel />);
+    expect(panel.getByText('Готовит trace.exe: 0.8 с')).toBeTruthy();
+    expect(panel.getByText('trace.exe: перезарядка 2 ход. · 2 ОД').title).toContain('перезарядка 3 ход.');
+  });
+
   test.each([
     [true, 0, 'Вы оглушены: дождитесь окончания оглушения.'],
     [false, 3, 'Терминал заблокирован: ещё 3 с.'],
@@ -285,6 +398,31 @@ describe('Netrun combat contacts', () => {
     expect(tooltip).toContain('Щит не защищает от оглушения.');
   });
 
+  test('enemy-turn warnings show skipped turns and reserve program counterplay for the own turn in both formats', () => {
+    const { topic, store, combat } = setup({ turn: { ...ownTurn, actor_ref: enemy.ref, actor_name: enemy.name, your_turn: false, can_pass: false }, incoming: [
+      { source: enemy.name, name: 'blackout.exe', role: 'stun', power: 20, stun_turns: 2, remaining: 0.7 },
+      { source: enemy.name, name: 'strike.exe', role: 'attack', power: 16, remaining: 1.2 },
+      { source: enemy.name, name: 'trace.exe', role: 'trace', power: 6, remaining: 1.5 },
+    ] });
+    const panel = render(<IncomingAttacks onCombat={() => {}} />);
+    for (const compact of [false, true]) {
+      panel.rerender(<IncomingAttacks compact={compact} onCombat={() => {}} />);
+      const warning = panel.getByRole('alert');
+      const guidance = warning.textContent + (warning.querySelector('[title]')?.getAttribute('title') || '');
+      expect(warning.textContent).toContain('пропуск 2 ходов');
+      expect(guidance).not.toContain('с оглушения');
+      expect(guidance).toContain('Щит подготовьте в свой ход; отступление стоит 1 ОД.');
+      expect(guidance).toContain('Подавление ICE подготовьте в свой ход.');
+      expect(guidance).toContain('Прервите взлом, чтобы сорвать трассировку; подавление ICE доступно в свой ход.');
+      expect(guidance).not.toMatch(/Оглушите ICE|Включите щит|выйдите из узла/);
+    }
+    act(() => store.dispatch(backendUpdate({ data: { combat: { ...combat,
+      incoming: [{ ...combat.incoming![0], stun_turns: undefined }],
+    } } })));
+    expect(panel.getByRole('alert').textContent).toContain('пропуск 1 хода');
+    expect(topic).not.toHaveBeenCalled();
+  });
+
   test('detailed warnings distinguish damage, stun and trace effects', () => {
     setup({ incoming: [
       { source: enemy.name, name: 'strike.exe', role: 'attack', power: 14, remaining: 2 },
@@ -307,4 +445,34 @@ describe('Netrun combat contacts', () => {
     expect(alert.textContent).toContain('Оглушите ICE или выйдите из узла');
     expect(alert.textContent).not.toContain('Щит снижает урон');
   });
+});
+
+test('the decision clock runs locally only in the active workspace and never restarts on an AP update', () => {
+  jest.useFakeTimers({ doNotFake: ['performance'] });
+  let now = 0;
+  const clock = jest.spyOn(performance, 'now').mockImplementation(() => now);
+  const { store, combat, topic } = setup({ turn: ownTurn });
+  const panel = render(<CombatPanel />);
+  const advance = (milliseconds: number) => act(() => { now += milliseconds; jest.advanceTimersByTime(milliseconds); });
+  try {
+    expect(panel.getByLabelText('Осталось 12 с')).toBeTruthy();
+    expect(jest.getTimerCount()).toBe(1);
+    advance(2000);
+    expect(panel.getByLabelText('Осталось 10 с')).toBeTruthy();
+    act(() => store.dispatch(backendUpdate({ data: { combat: { ...combat, turn: { ...ownTurn, ap: 1 } } } })));
+    expect(panel.getByLabelText('Осталось 10 с')).toBeTruthy();
+    act(() => store.dispatch(backendUpdate({ data: { workspace_view: 'files', combat: null } })));
+    expect(jest.getTimerCount()).toBe(0);
+    advance(2000);
+    act(() => store.dispatch(backendUpdate({ data: { workspace_view: 'combat', combat: { ...combat, turn: { ...ownTurn, remaining: 8 } } } })));
+    expect(panel.getByLabelText('Осталось 8 с')).toBeTruthy();
+    advance(8000);
+    expect(panel.getByLabelText('Осталось 0 с')).toBeTruthy();
+    expect(jest.getTimerCount()).toBe(0);
+    expect(topic).not.toHaveBeenCalled();
+  } finally {
+    panel.unmount();
+    clock.mockRestore();
+    jest.useRealTimers();
+  }
 });

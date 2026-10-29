@@ -8,14 +8,14 @@
 	var/damage_factor = 0.78
 	var/storage = 32
 	var/illegal = FALSE
-	var/list/program_ids = list("strike", "barrier", "trace")
+	var/list/program_ids = list("strike", "barrier", "trace", "needle")
 	var/list/behavior_types = list(/datum/netrun_ice_behavior/lifecycle, /datum/netrun_ice_behavior/availability,
 		/datum/netrun_ice_behavior/cast, /datum/netrun_ice_behavior/local_combat, /datum/netrun_ice_behavior/trace)
 
 /datum/netrun_ice_profile/hunter
 	id = NETRUN_ICE_HUNTER
 	name = "ICE-HUNTER"
-	program_ids = list("assault", "strike", "blackout", "trace")
+	program_ids = list("assault", "strike", "blackout", "trace", "lance")
 
 /datum/netrun_ice_profile/hunter/New()
 	behavior_types = behavior_types.Copy()
@@ -27,7 +27,7 @@
 	integrity = 120
 	damage_factor = 1
 	illegal = TRUE
-	program_ids = list("assault", "barrier", "trace")
+	program_ids = list("assault", "barrier", "trace", "aegis", "jam")
 
 /datum/netrun_ice_profile/black/New()
 	behavior_types = behavior_types.Copy()
@@ -232,7 +232,7 @@
 	id = "black_ice"
 	required_daemon = "black_ice"
 	name = "Развернуть чёрный ICE"
-	desc = "Запустить нелегального агента в узле. Опасен для всех, кроме развёрнувшего клиента. Поднимает тревогу."
+	desc = "Запустить нелегального агента в узле. Опасен для всех, кроме владельца и его агентов. Поднимает тревогу."
 	access = NETRUN_ACCESS_ROOT
 	trace = 20
 	danger = TRUE
@@ -258,7 +258,9 @@
 	var/datum/netrun_ice/ice = SSnetrun.spawn_ice(node, NETRUN_ICE_BLACK)
 	if(!ice)
 		return "Развёртывание не удалось."
-	ice.deployer_ref = WEAKREF(console)
+	if(!ice.bind_deployer(console))
+		qdel(ice)
+		return "Не удалось установить владельца чёрного ICE."
 	console.next_black_ice = world.time + 2 MINUTES
 	SSnetrun.report_incident("black_ice", node, null, NETRUN_INCIDENT_HIGH, "Обнаружен нелегальный BLACK ICE.")
 	return "Чёрный ICE активен. Нейронная обратная связь опасна для подключённых раннеров; доступ USER не защищает от этого агента."

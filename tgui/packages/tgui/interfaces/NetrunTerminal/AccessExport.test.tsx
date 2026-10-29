@@ -16,17 +16,21 @@ const setup = () => {
   return { sent, update };
 };
 
-test('acquired access can be saved as a named key while a server denial prevents export', () => {
+test('the accumulated access file can be opened and copied while a server denial prevents export', () => {
   const { sent, update } = setup();
   const panel = render(<AccessExport />);
   expect(panel.getByText('Узлов: 2 · сетей: 1')).toBeTruthy();
+  update({ access_export: { node_count: 2, network_count: 1, can_export: true,
+    key_uid: 'owned-grants', key_name: 'Мои доступы.grants' } });
+  fireEvent.click(panel.getByText('Мои доступы.grants'));
+  expect(sent('file_select')).toEqual([{ uid: 'owned-grants' }]);
   fireEvent.change(panel.getByLabelText('Имя ключа'), { target: { value: 'Инженерный.key' } });
   fireEvent.change(panel.getByLabelText('Сохранить ключ'), { target: { value: 'shard' } });
-  fireEvent.click(panel.getByText('Создать ключ'));
+  fireEvent.click(panel.getByText('Скопировать ключ'));
   expect(sent('access_export')).toEqual([{ name: 'Инженерный.key', to_shard: true }]);
   update({ access_export: { node_count: 0, network_count: 0, can_export: false, reason: 'Нет полученных взломом прав.' } });
   expect(panel.getByText('Нет полученных взломом прав.')).toBeTruthy();
-  fireEvent.click(panel.getByText('Создать ключ'));
+  fireEvent.click(panel.getByText('Скопировать ключ'));
   expect(sent('access_export')).toHaveLength(1);
 });
 

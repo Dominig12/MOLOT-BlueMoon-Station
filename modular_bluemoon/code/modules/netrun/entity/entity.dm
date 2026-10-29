@@ -108,6 +108,19 @@
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_NODE_CHANGED, old, null)
 	old.wake_defenses()
 
+/// Movement authority is separate from machine USER and native ID access.
+/// Acquired gateway GUEST and an ordinary LAN key open the same traversal;
+/// fortress gates still require USER on their own node.
+/datum/netrun_console/proc/can_traverse_node(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
+	if(QDELETED(node) || !node.network)
+		return FALSE
+	var/level = node_level(node, tree)
+	if(level >= NETRUN_ACCESS_USER)
+		return TRUE
+	if(node.fortress?.gate_blocks(src))
+		return FALSE
+	return access_session.acquired_network_level(node.network) >= NETRUN_ACCESS_GUEST || has_key(node.network, TRUE)
+
 /// Можно ли перепрыгнуть в узел
 /mob/camera/netrun_entity/proc/can_enter(datum/component/netrun_node/node, datum/netrun_path_tree/tree)
 	if(!node || node == host_node || !host_node || console.is_locked())
@@ -122,11 +135,7 @@
 	var/owns_tree = !tree
 	if(owns_tree)
 		tree = console.connection.read_path_tree(TRUE)
-	var/level = console.node_level(node, tree)
-	. = level >= NETRUN_ACCESS_USER || console.has_key(node.network, TRUE)
-	// Closed fortress gates admit only the node's users and the fortress owner, never a LAN key.
-	if(. && level < NETRUN_ACCESS_USER && node.fortress?.gate_blocks(console))
-		. = FALSE
+	. = console.can_traverse_node(node, tree)
 	if(owns_tree)
 		console.release_path_tree(tree)
 
@@ -145,17 +154,23 @@
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	if(!(node.address in graph.neighbors(host_node.address)) || !netrun_link_available(host_node, node))
 		return "Переход невозможен: узел не является прямым соседом или связь с ним недоступна."
-	if(node.fortress?.gate_blocks(console) && console.has_key(node.network, TRUE))
+	if(node.fortress?.gate_blocks(console) && console.node_level(node) < NETRUN_ACCESS_USER)
 		return "Переход невозможен: врата крепости закрыты — ключ ЛВС не действует, нужен доступ ПОЛЬЗОВАТЕЛЯ к узлу."
-	return "Переход невозможен: нужен доступ ПОЛЬЗОВАТЕЛЯ к узлу или ключ его ЛВС."
+	return "Переход невозможен: нужен доступ ПОЛЬЗОВАТЕЛЯ к узлу, добытый вход ЛВС или её ключ."
 
 /mob/camera/netrun_entity/proc/hop(datum/component/netrun_node/node, following_route = FALSE)
 	if(!following_route)
 		navigation?.cancel()
 	if(world.time < next_hop || is_stunned() || !can_enter(node))
 		return FALSE
+	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter()
+	if(encounter?.active && !encounter.spend(console, 1, TRUE))
+		console.log_line("Для выхода из боя нужен ваш ход и одно очко действий.", "bad")
+		return FALSE
 	next_hop = world.time + 1 SECONDS
 	enter_node(node, following_route)
+	if(!QDELETED(encounter))
+		encounter.resolve(console)
 	return TRUE
 
 /// A gateway transition is an ordinary authorized hop between two operational relays.
@@ -276,9 +291,9 @@
 /mob/camera/netrun_entity/proc/defense_threat()
 	return TRUE
 
-/// Allegiance of an autonomous process (NETRUN_FACTION_*); null for players.
+/// Resident players and their owned agents share the real owner's personal identity.
 /mob/camera/netrun_entity/proc/netrun_faction()
-	return null
+	return console?.get_personal_faction_id()
 
 /// Console that launched this process as its agent; null for independent processes.
 /mob/camera/netrun_entity/proc/netrun_owner_console()
@@ -503,6 +518,8 @@
 		return
 	var/mob/camera/netrun_entity/entity = host
 	if(!entity)
+		return FALSE
+	if(get_combat_encounter()?.active)
 		return FALSE
 	// Integrity self-repair, stun/shield windows, hop cooldown and auto-travel all advance by time.
 	return entity.integrity < entity.max_integrity || entity.is_stunned() || world.time < entity.combat_shield_until || world.time < entity.next_hop || entity.navigation?.is_active()

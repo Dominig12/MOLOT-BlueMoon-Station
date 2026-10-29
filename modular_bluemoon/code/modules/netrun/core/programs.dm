@@ -27,6 +27,12 @@
 	var/icon = "bolt"
 	/// ICE announces this preparation period before applying the same effect.
 	var/windup = 2.5 SECONDS
+	/// Encounter costs are shared by players, bots and ICE; legacy clocks remain
+	/// available to out-of-encounter consumers of the same ordinary program files.
+	var/ap_cost = 2
+	var/cooldown_turns = 0
+	var/shield_turns = 1
+	var/stun_turns = 1
 
 /datum/netrun_program/proc/create_file()
 	return new /datum/netrun_file(name, NETRUN_FILE_PROGRAM, id, size)
@@ -44,6 +50,10 @@
 		"needs_target" = needs_target,
 		"icon" = icon,
 		"windup" = windup / (1 SECONDS),
+		"ap_cost" = ap_cost,
+		"cooldown_turns" = cooldown_turns,
+		"shield_turns" = shield_turns,
+		"stun_turns" = stun_turns,
 	)
 
 // MARK: Реестр
@@ -81,7 +91,8 @@
 	name = "sting"
 	desc = "Встроенный процессорный удар. Слабый, но бесплатный и не теряется."
 	role = NETRUN_PROGRAM_ATTACK
-	power = 12
+	power = 8
+	ap_cost = 1
 	cooldown = 2 SECONDS
 	size = 0
 	trace = 2
@@ -91,9 +102,11 @@
 /datum/netrun_program/shell
 	id = "shell"
 	name = "shell"
-	desc = "Встроенный защитный контур: входящий урон меньше на треть на 5 секунд."
+	desc = "Встроенный защитный контур: снижает входящий урон на четверть на один ход."
 	role = NETRUN_PROGRAM_SHIELD
-	power = 35
+	power = 25
+	ap_cost = 1
+	cooldown_turns = 1
 	cooldown = 12 SECONDS
 	size = 0
 	needs_target = FALSE
@@ -117,6 +130,8 @@
 	desc = "Тяжёлый эксплойт: много урона, но долгая перезарядка и заметный след."
 	role = NETRUN_PROGRAM_ATTACK
 	power = 40
+	ap_cost = 3
+	cooldown_turns = 1
 	cooldown = 5 SECONDS
 	size = 4
 	trace = 7
@@ -129,6 +144,7 @@
 	help = "Карточка расходуется при применении."
 	role = NETRUN_PROGRAM_ATTACK
 	power = 70
+	ap_cost = 3
 	cooldown = 1 SECONDS
 	size = 3
 	consumable = TRUE
@@ -140,7 +156,8 @@
 /datum/netrun_program/blackout
 	id = "blackout"
 	name = "blackout.exe"
-	desc = "Глушит цель: на несколько секунд она не может атаковать и не преследует."
+	desc = "Прерывает действия цели оглушением на один ход."
+	cooldown_turns = 2
 	role = NETRUN_PROGRAM_STUN
 	power = 4 SECONDS
 	cooldown = 8 SECONDS
@@ -151,7 +168,9 @@
 /datum/netrun_program/emp
 	id = "emp"
 	name = "emp.card"
-	desc = "Одноразовый ЭМИ-разряд: долгое оглушение цели. Сгорает после запуска, заметный след."
+	desc = "Одноразовый ЭМИ-разряд: оглушает на два хода. Сгорает после запуска, заметный след."
+	ap_cost = 3
+	stun_turns = 2
 	help = "Карточка расходуется при применении."
 	role = NETRUN_PROGRAM_STUN
 	power = 6 SECONDS
@@ -164,7 +183,8 @@
 /datum/netrun_program/barrier
 	id = "barrier"
 	name = "barrier.exe"
-	desc = "Поднимает защитный контур: входящий урон вдвое меньше на 5 секунд."
+	desc = "Снижает входящий урон вдвое на один ход."
+	cooldown_turns = 1
 	role = NETRUN_PROGRAM_SHIELD
 	power = 50
 	cooldown = 10 SECONDS
@@ -176,7 +196,10 @@
 /datum/netrun_program/fortify
 	id = "fortify"
 	name = "fortify.exe"
-	desc = "Тяжёлый защитный контур: входящий урон меньше на две трети на 5 секунд. Долгая перезарядка."
+	desc = "Тяжёлый защитный контур: снижает входящий урон на 65% на два хода."
+	ap_cost = 3
+	cooldown_turns = 2
+	shield_turns = 2
 	role = NETRUN_PROGRAM_SHIELD
 	power = 65
 	cooldown = 14 SECONDS
@@ -191,6 +214,7 @@
 	desc = "Восстанавливает часть собственной целостности."
 	role = NETRUN_PROGRAM_REPAIR
 	power = 30
+	cooldown_turns = 1
 	cooldown = 8 SECONDS
 	size = 2
 	needs_target = FALSE
@@ -204,9 +228,111 @@
 	desc = "Увеличивает трассировку активного взломщика после предупреждения."
 	role = NETRUN_PROGRAM_TRACE
 	power = 6
+	cooldown_turns = 1
 	cooldown = 5 SECONDS
 	windup = 3 SECONDS
 	icon = "fingerprint"
+
+// MARK: Встроенные варианты и печатная тактика
+
+/datum/netrun_program/pulse
+	id = "pulse"
+	name = "pulse"
+	desc = "Встроенный средний удар: 18 урона за 2 ОД. Не занимает память."
+	power = 18
+	size = 0
+	trace = 2
+	icon = "wave-square"
+
+/datum/netrun_program/surge
+	id = "surge"
+	name = "surge"
+	desc = "Встроенный тяжёлый удар: 28 урона за 3 ОД. Не занимает память."
+	power = 28
+	ap_cost = 3
+	size = 0
+	trace = 4
+	icon = "burst"
+
+/datum/netrun_program/mend
+	id = "mend"
+	name = "mend"
+	desc = "Встроенное восстановление: 8 целостности за 1 ОД. Слабее файлов ремонта."
+	role = NETRUN_PROGRAM_REPAIR
+	power = 8
+	ap_cost = 1
+	cooldown_turns = 1
+	cooldown = 8 SECONDS
+	size = 0
+	needs_target = FALSE
+	trace = 0
+	icon = "kit-medical"
+
+/datum/netrun_program/needle
+	id = "needle"
+	name = "needle.exe"
+	desc = "Компактный быстрый удар: 12 урона за 1 ОД. Оставляет действия для защиты или ремонта."
+	power = 12
+	ap_cost = 1
+	size = 2
+	cooldown = 1 SECONDS
+	trace = 2
+	icon = "syringe"
+
+/datum/netrun_program/lance
+	id = "lance"
+	name = "lance.exe"
+	desc = "Точный тяжёлый пакет: 34 урона за 2 ОД. Требует перезарядки между ходами и больше памяти, чем strike."
+	power = 34
+	ap_cost = 2
+	cooldown_turns = 1
+	cooldown = 5 SECONDS
+	size = 4
+	trace = 6
+	icon = "crosshairs"
+
+/datum/netrun_program/aegis
+	id = "aegis"
+	name = "aegis.exe"
+	desc = "Дорогая оборона: снижает входящий урон на 70% на два хода, занимая все 3 ОД."
+	role = NETRUN_PROGRAM_SHIELD
+	power = 70
+	ap_cost = 3
+	shield_turns = 2
+	cooldown_turns = 2
+	cooldown = 16 SECONDS
+	size = 5
+	needs_target = FALSE
+	trace = 3
+	icon = "shield"
+
+/datum/netrun_program/renew
+	id = "renew"
+	name = "renew.exe"
+	desc = "Быстрый ремонт: восстанавливает 18 целостности за 1 ОД с перезарядкой между ходами."
+	role = NETRUN_PROGRAM_REPAIR
+	power = 18
+	ap_cost = 1
+	cooldown_turns = 1
+	cooldown = 10 SECONDS
+	size = 3
+	needs_target = FALSE
+	trace = 1
+	icon = "heart-pulse"
+
+/datum/netrun_program/jam
+	id = "jam"
+	name = "jam.exe"
+	desc = "Экономное подавление: оглушает цель на один ход за 1 ОД, затем долго перезаряжается."
+	role = NETRUN_PROGRAM_STUN
+	power = 2 SECONDS
+	ap_cost = 1
+	stun_turns = 1
+	cooldown_turns = 2
+	cooldown = 12 SECONDS
+	size = 3
+	trace = 4
+	icon = "ban"
 
 /// Shared effect dispatcher: ICE cannot bypass entity shields with raw damage.
 /// damage_scale lets ICE hit softer than a player running the same program file,
@@ -236,15 +362,15 @@
 
 /obj/item/netrun_shard/combat
 	name = "data shard (combat suite)"
-	desc = "Боевой набор сетевика: удар, щит и патч."
+	desc = "Боевой набор сетевика: стандартный и быстрый удары, щит и два варианта ремонта."
 	icon_state = "datadisk3"
-	preload_programs = list("strike", "barrier", "patch")
+	preload_programs = list("strike", "barrier", "patch", "needle", "renew")
 
 /obj/item/netrun_shard/assault
 	name = "data shard (assault.exe)"
 	desc = "Шард с тяжёлой атакующей программой."
 	icon_state = "datadisk2"
-	preload_programs = list("assault")
+	preload_programs = list("assault", "lance")
 
 /obj/item/netrun_shard/logic_bomb
 	name = "data shard (logic_bomb.card)"
@@ -255,7 +381,7 @@
 /obj/item/netrun_shard/blackout
 	name = "data shard (blackout.exe)"
 	icon_state = "datadisk2"
-	preload_programs = list("blackout")
+	preload_programs = list("blackout", "jam")
 
 /obj/item/netrun_shard/emp
 	name = "data shard (emp.card)"
@@ -267,4 +393,4 @@
 	name = "data shard (fortify.exe)"
 	desc = "Шард с тяжёлой защитной программой сетевика."
 	icon_state = "datadisk2"
-	preload_programs = list("fortify")
+	preload_programs = list("fortify", "aegis")

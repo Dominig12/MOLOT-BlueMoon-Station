@@ -15,6 +15,7 @@
 	/// The resident gets USER at its initial host for residency, not as a transferable hack.
 	var/initial_residency_only = FALSE
 	var/datum/netrun_file/access/session_snapshot/identity_snapshot
+	var/datum/weakref/personal_principal_ref
 
 /datum/netrun_dive_link/New(mob/camera/netrun_entity/owner)
 	src.owner = owner
@@ -37,6 +38,8 @@
 		QDEL_NULL(identity_snapshot)
 		body = null
 		return FALSE
+	personal_principal_ref = WEAKREF(body.netrun_personal_principal())
+	body.netrun_personal_dive_ref = WEAKREF(src)
 	entry_address = entry.address
 	route_chain = list(entry.address)
 	RegisterSignal(body, COMSIG_MOB_APPLY_DAMAGE, PROC_REF(on_body_damage))
@@ -92,6 +95,8 @@
 	// were never allowed, so no other disk can retain this session's authority.
 	expire_identity_snapshot()
 	if(body)
+		if(body.netrun_personal_dive_ref?.resolve() == src)
+			body.netrun_personal_dive_ref = null
 		UnregisterSignal(body, list(COMSIG_MOB_APPLY_DAMAGE, COMSIG_LIVING_DEATH, COMSIG_PARENT_QDELETING, COMSIG_MOVABLE_MOVED))
 	var/datum/netrun_console/implant/client = entry_client_ref?.resolve()
 	if(client)
@@ -105,6 +110,7 @@
 	entry_client_ref = null
 	entry_jack_ref = null
 	initial_residency_only = FALSE
+	personal_principal_ref = null
 
 /datum/netrun_dive_link/proc/expire_identity_snapshot()
 	owner?.console?.inventory.clear_session_store()

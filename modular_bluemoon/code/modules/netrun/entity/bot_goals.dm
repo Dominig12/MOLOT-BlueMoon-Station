@@ -193,9 +193,12 @@
 /datum/netrun_bot_goal/recall/advance()
 	var/mob/camera/netrun_entity/bot/agent = brain.owner
 	var/datum/netrun_console/master = agent.netrun_owner_console()
-	if(QDELETED(master))
+	if(agent.agent_orphaned())
 		agent.dissolve()
 		return NETRUN_BOT_GOAL_DONE
+	if(QDELETED(master))
+		brain.state = "ожидание владельца"
+		return NETRUN_BOT_GOAL_FAILED
 	brain.state = "возврат"
 	if(agent.host_node && master.can_route(agent.host_node))
 		agent.return_to_owner()

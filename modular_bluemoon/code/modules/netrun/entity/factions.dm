@@ -6,12 +6,14 @@
 	var/list/enemies = list()
 	var/arrival_weight = 0
 	var/list/visitors = list()
+	/// Stable policy family; a personal owner's distinct ID still belongs to owner.
+	var/family
 
 /datum/netrun_faction/proc/hostile_to(other)
 	if(!other || other == id)
 		return FALSE
 	var/datum/netrun_faction/faction = SSnetrun.get_netrun_faction(other)
-	return (other in enemies) || (id in faction?.enemies)
+	return (other in enemies) || (SSnetrun.netrun_faction_family(other) in enemies) || (id in faction?.enemies) || ((family || id) in faction?.enemies)
 
 /datum/netrun_faction/rogue
 	id = NETRUN_FACTION_ROGUE
@@ -28,8 +30,41 @@
 
 /datum/netrun_faction/private
 	id = NETRUN_FACTION_OWNER
+	family = NETRUN_FACTION_OWNER
 	name = "Частные агенты"
 	color = "#77d9ad"
+
+/// One principal owns its faction across devices; consoles only cache the lookup.
+/datum/netrun_faction/private/personal
+	id = null
+	var/datum/weakref/principal_ref
+	var/principal_key
+
+/datum/netrun_faction/private/personal/New(datum/principal, faction_id, label)
+	if(QDELETED(principal))
+		return
+	id = faction_id
+	name = "Личная сеть [label]"
+	var/static/list/personal_colors = list("#77d9ad", "#78bfff", "#d9a5ff", "#f2bf6c", "#74d9e8", "#e9a2c8", "#b8d77e", "#a6acef", "#efb191", "#79c7b4", "#d8c98b", "#a8c7e0")
+	color = personal_colors[((max(1, SSnetrun.personal_faction_serial) - 1) % length(personal_colors)) + 1]
+	principal_ref = WEAKREF(principal)
+	principal_key = REF(principal)
+	RegisterSignal(principal, COMSIG_PARENT_QDELETING, PROC_REF(on_owner_deleted))
+
+/datum/netrun_faction/private/personal/proc/on_owner_deleted(datum/source)
+	SIGNAL_HANDLER
+	qdel(src)
+
+/datum/netrun_faction/private/personal/Destroy()
+	var/datum/principal = principal_ref?.resolve()
+	if(principal)
+		UnregisterSignal(principal, COMSIG_PARENT_QDELETING)
+	if(id && SSnetrun.netrun_factions?[id] == src)
+		SSnetrun.netrun_factions -= id
+	if(principal_key && SSnetrun.personal_factions_by_principal[principal_key] == src)
+		SSnetrun.personal_factions_by_principal -= principal_key
+	principal_ref = null
+	return ..()
 
 /datum/netrun_faction/redshift
 	id = "redshift"
@@ -57,6 +92,84 @@
 
 /datum/controller/subsystem/netrun
 	var/list/netrun_factions
+	var/personal_faction_serial = 0
+	var/list/personal_factions_by_principal = list()
+
+/datum/controller/subsystem/netrun/proc/netrun_faction_family(id)
+	var/datum/netrun_faction/faction = get_netrun_faction(id)
+	if(faction)
+		return faction.family || faction.id
+	// Orphan cleanup is queued; an old personal ID cannot become immune in that gap.
+	return istext(id) && findtext(id, "owner:") == 1 ? NETRUN_FACTION_OWNER : id
+
+/datum/netrun_console
+	var/personal_faction_id
+	var/datum/weakref/personal_faction_principal_ref
+
+/mob
+	/// Exact native body link; lookup never scans implants, players or consoles.
+	var/datum/weakref/netrun_personal_dive_ref
+
+/mob/proc/netrun_personal_principal()
+	if(QDELETED(src))
+		return null
+	if(!QDELETED(mind))
+		return mind
+	var/datum/netrun_dive_link/link = netrun_personal_dive_ref?.resolve()
+	if(link?.body == src && !link.returning)
+		var/datum/principal = link.personal_principal_ref?.resolve()
+		if(!QDELETED(principal))
+			return principal
+	return src
+
+/// A mind/body is authoritative. An unused console is only a bounded fallback
+/// for native fixtures or operator-less storage ownership, never a user identity.
+/datum/netrun_console/proc/personal_faction_principal()
+	var/datum/netrun_console/current = src
+	for(var/step in 1 to 8)
+		var/mob/camera/netrun_entity/entity = current.combat_self()
+		if(istype(entity))
+			var/datum/netrun_dive_link/link = entity.dive_link
+			var/datum/principal = link?.personal_principal_ref?.resolve()
+			if(!QDELETED(principal) && !QDELETED(link.body) && !link.returning)
+				return principal
+			if(!QDELETED(entity.mind))
+				return entity.mind
+		if(!isnull(current.operator))
+			return current.operator.netrun_personal_principal()
+		var/datum/netrun_inventory/source = current.inventory?.borrowed_inventory_ref?.resolve()
+		if(!QDELETED(source?.owner) && source.owner != current)
+			current = source.owner
+			continue
+		return istype(entity) ? entity : current
+	return src
+
+/datum/netrun_console/proc/get_personal_faction_id()
+	if(QDELETED(src))
+		return null
+	var/mob/camera/netrun_entity/bot/bot = combat_self()
+	if(istype(bot))
+		// An agent snapshots the issuing player. Reusing its owner's console
+		// cannot transfer the agent's allegiance to the next operator.
+		return bot.net_faction
+	var/datum/principal = personal_faction_principal()
+	if(QDELETED(principal))
+		return null
+	if(personal_faction_principal_ref?.resolve() == principal && personal_faction_id && SSnetrun.get_netrun_faction(personal_faction_id))
+		return personal_faction_id
+	SSnetrun.get_netrun_faction(null)
+	var/key = REF(principal)
+	var/datum/netrun_faction/private/personal/faction = SSnetrun.personal_factions_by_principal[key]
+	if(QDELETED(faction) || faction.principal_ref?.resolve() != principal)
+		if(!QDELETED(faction))
+			qdel(faction)
+		var/new_id = "owner:[++SSnetrun.personal_faction_serial]"
+		faction = new(principal, new_id, get_handle())
+		SSnetrun.netrun_factions[new_id] = faction
+		SSnetrun.personal_factions_by_principal[key] = faction
+	personal_faction_principal_ref = WEAKREF(principal)
+	personal_faction_id = faction.id
+	return personal_faction_id
 
 /datum/controller/subsystem/netrun/proc/get_netrun_faction(id)
 	RETURN_TYPE(/datum/netrun_faction)

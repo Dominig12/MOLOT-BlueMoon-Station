@@ -21,6 +21,12 @@
 	var/datum/netrun_map_view/map_view
 	var/datum/netrun_remote_session/remote_session
 	var/list/log = list()
+	/// Small primitive event ring; presentation never inserts rows into gameplay panels.
+	var/list/notices = list()
+	var/notice_serial = 0
+	var/last_notice_text
+	var/last_notice_kind
+	var/last_notice_at = -INFINITY
 	/// Последний оператор - от его ID считается легальный доступ
 	var/mob/operator
 	var/next_command = 0
@@ -748,6 +754,9 @@
 			security = 5
 			target_name = "прошивка [target_name]"
 		node.touch()
+	if((kind in list("node", "network")) && !owner.canonical_acquired_key(TRUE))
+		owner.log_line("Взлом не начат: для файла добытых прав нужна одна свободная ячейка в памяти или подключённом шарде.", "bad")
+		return FALSE
 	breach = automatic ? new /datum/netrun_breach/automatic(owner, kind, id, target_name, security) : new /datum/netrun_breach(owner, kind, id, target_name, security)
 	last_breach_tick = world.time
 	SSnetrun.currentbreaches |= owner
@@ -821,13 +830,15 @@
 		owner.log_line("Взлом провален.", "bad")
 		owner.add_trace(25)
 	else
+		var/stored = !reward || owner.record_breach_grant(finished.target_kind, finished.target_id, reward)
 		if(finished.target_kind == "network")
-			owner.access_session.grant_network(SSnetrun.networks[finished.target_id], reward, reward)
 			owner.map_view.invalidate_network_access(finished.target_id)
 		else
-			owner.access_session.grant_node(SSnetrun.find_node(finished.target_id), reward, reward)
 			owner.map_view.invalidate_node_access(finished.target_id)
-		owner.log_line("Взлом завершён: [finished.target_name], уровень [netrun_access_name(reward)].", "good")
+		if(stored)
+			owner.log_line("Взлом завершён: [finished.target_name], уровень [netrun_access_name(reward)] записан в файл добытых прав.", "good")
+		else
+			owner.log_line("Взлом завершён, но доступ НЕ получен: файл прав вынесен или удалён, а свободной ячейки для нового ключа нет. Освободите память и повторите взлом.", "bad")
 		if(clean)
 			trace = 0
 			owner.disengage_combat()
@@ -887,9 +898,26 @@
 	SEND_SIGNAL(src, COMSIG_NETRUN_CONSOLE_EVENT, text, kind)
 	if(length(log) > NETRUN_MAX_CONSOLE_LOG)
 		log.Cut(1, length(log) - NETRUN_MAX_CONSOLE_LOG + 1)
+	if(kind in list("good", "bad", "average"))
+		push_notice(text, kind, FALSE)
 	// A new log line is an event-less UI change (it can arrive from async delivery, ICE, timers);
 	// wake the console so it flushes instead of relying on a blanket per-second repaint.
 	invalidate_ui()
+
+/datum/netrun_console/proc/push_notice(text, kind = "label", immediate = TRUE)
+	if(autonomous() || !istext(text) || !length(text))
+		return
+	var/clean = copytext_char(strip_html_tags(text, TRUE), 1, 321)
+	if(clean == last_notice_text && kind == last_notice_kind && world.time - last_notice_at < 1 SECONDS)
+		return
+	last_notice_text = clean
+	last_notice_kind = kind
+	last_notice_at = world.time
+	notices += list(list("id" = ++notice_serial, "text" = clean, "kind" = kind))
+	if(length(notices) > 8)
+		notices.Cut(1, length(notices) - 7)
+	if(immediate)
+		invalidate_ui()
 
 /proc/netrun_access_name(level)
 	switch(level)

@@ -19,7 +19,14 @@
 	return host
 
 /datum/netrun_console/proc/builtin_program_ids()
-	return combat_self() ? list("sting", "shell") : list()
+	return combat_self() ? list("sting", "pulse", "surge", "shell", "mend") : list()
+
+/datum/netrun_console/proc/pass_combat_turn()
+	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+	if(!encounter?.pass(src))
+		log_line("Сейчас нельзя завершить ход: дождитесь своей очереди и окончания программы.", "bad")
+		return FALSE
+	return TRUE
 
 /datum/netrun_console/proc/combat_targets()
 	return combat_context.targets()
@@ -113,6 +120,7 @@
 	var/datum/weakref/observed_breach
 	/// Last visible opponents, for expiring status badges without rebuilding routes.
 	var/list/visible_status_sources = list()
+	var/datum/weakref/observed_turn_node
 
 /datum/netrun_combat_context/New(datum/netrun_console/console)
 	src.console = console
@@ -120,6 +128,7 @@
 
 /datum/netrun_combat_context/Destroy()
 	UnregisterSignal(console, COMSIG_NETRUN_ICE_CAST_STARTED)
+	observe_turns(null)
 	clear_contacts()
 	for(var/id in observed_ice)
 		var/datum/weakref/reference = observed_ice[id]
@@ -133,6 +142,29 @@
 
 /datum/netrun_combat_context/proc/changed()
 	SEND_SIGNAL(console, COMSIG_NETRUN_COMBAT_CHANGED)
+
+/// Spectators subscribe only to the encounter they are inspecting. Turn facts
+/// refresh its panel without updating map markers or polling every participant.
+/datum/netrun_combat_context/proc/observe_turns(datum/component/netrun_node/node)
+	var/datum/component/netrun_node/previous = observed_turn_node?.resolve()
+	if(previous == node)
+		return
+	if(previous)
+		UnregisterSignal(previous, list(COMSIG_NETRUN_TURN_CHANGED, COMSIG_PARENT_QDELETING))
+	observed_turn_node = node ? WEAKREF(node) : null
+	if(node)
+		RegisterSignal(node, COMSIG_NETRUN_TURN_CHANGED, PROC_REF(on_turn_changed))
+		RegisterSignal(node, COMSIG_PARENT_QDELETING, PROC_REF(on_turn_node_deleted))
+
+/datum/netrun_combat_context/proc/on_turn_changed(datum/source)
+	SIGNAL_HANDLER
+	if(console.workspace_view == "combat" || console.get_combat_encounter())
+		changed()
+
+/datum/netrun_combat_context/proc/on_turn_node_deleted(datum/source)
+	SIGNAL_HANDLER
+	observe_turns(null)
+	changed()
 
 /datum/netrun_combat_context/proc/observe(datum/netrun_ice/ice)
 	var/id = REF(ice)
@@ -148,7 +180,8 @@
 	if(victim != console || QDELETED(ice))
 		return
 	observe(ice)
-	if(!console.combat_self() && ice.pending_program?.role == NETRUN_PROGRAM_TRACE)
+	var/mob/camera/netrun_entity/entity = console.combat_self()
+	if(ice.pending_program?.role == NETRUN_PROGRAM_TRACE && (!entity || entity.host_node != ice.node))
 		register_attacker(ice, console.intrusion.breach)
 	changed()
 
@@ -211,6 +244,9 @@
 		return "Цель покинула узел."
 	if(console.is_locked())
 		return "Точка подключения заблокирована."
+	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter()
+	if(encounter?.active && encounter.node_ref?.resolve() != node)
+		return "Сначала завершите текущий бой или выйдите из него: цель находится в другом узле."
 	// During one combat payload the local node has already been resolved once.
 	var/datum/component/netrun_node/local = local_known ? local_node : console.combat_node(tree)
 	if(node == local)
@@ -277,6 +313,16 @@
 	entry["builtin"] = builtin
 	entry["ready_in"] = max(0, CEILING(((program_cd[program.id] || 0) - world.time) / (1 SECONDS), 0.1))
 	entry["unavailable_reason"] = !program.needs_target && !console.combat_self() ? "Нужна собственная сущность в сети." : null
+	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter()
+	if(encounter?.active)
+		entry["ready_in"] = 0
+		entry["ready_turns"] = encounter.cooldown_remaining(console, program)
+		if(encounter.is_waiting(console))
+			entry["unavailable_reason"] = "Дождитесь своего хода и окончания текущей программы."
+		else if(encounter.remaining_ap(console) < program.ap_cost)
+			entry["unavailable_reason"] = "Недостаточно очков действий: нужно [program.ap_cost]."
+		else if(entry["ready_turns"])
+			entry["unavailable_reason"] = "Программа восстанавливается: ещё [entry["ready_turns"]] ход(а)."
 	return entry
 
 /datum/netrun_combat_context/proc/programs()
@@ -311,6 +357,10 @@
 /// Observation is a subscription, not a countdown: idle observed ICE must not
 /// force permanent UI polling after the first encounter. Cast start/end emits signals.
 /datum/netrun_combat_context/proc/needs_live_refresh()
+	// The browser counts down a turn locally. Infinite turn-owned shield/stun
+	// markers must not reactivate the legacy wall-clock polling of all targets.
+	if(console.get_combat_encounter()?.active)
+		return FALSE
 	var/datum/self = console.combat_self()
 	for(var/id in observed_ice)
 		var/datum/weakref/reference = observed_ice[id]
@@ -338,9 +388,10 @@
 /datum/netrun_combat_context/proc/status_payload()
 	SSnetrun.combat_summary_payloads++
 	var/list/warnings = incoming()
-	if(!length(warnings))
+	var/list/turn = console.get_combat_encounter()?.payload(console)
+	if(!length(warnings) && !turn)
 		return null
-	return list("incoming" = warnings)
+	return list("incoming" = warnings, "turn" = turn)
 
 /datum/netrun_combat_context/proc/payload()
 	SSnetrun.combat_full_payloads++
@@ -352,6 +403,7 @@
 		tree = console.connection.read_path_tree(TRUE)
 		SSnetrun.combat_ui_tree_builds++
 	var/datum/component/netrun_node/node = console.combat_node(tree)
+	observe_turns(node)
 	var/list/target_entries = targets(tree, node, TRUE)
 	var/list/incoming_entries = incoming()
 	if(!node && !length(target_entries) && !length(incoming_entries))
@@ -365,6 +417,10 @@
 		"self" = hp ? list("integrity" = hp["cur"], "max_integrity" = hp["max"], "stunned" = hp["stunned"], "shielded" = hp["shielded"]) : null,
 		"targets" = target_entries, "programs" = programs(), "incoming" = incoming_entries, "loot" = loot,
 		"action_ready_in" = max(0, CEILING((next_program - world.time) / (1 SECONDS), 0.1)))
+	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter() || node?.combat_encounter
+	result["turn"] = encounter?.payload(console)
+	if(encounter?.active)
+		result["action_ready_in"] = 0
 	var/mob/camera/netrun_entity/entity = self
 	result["pursuit_available"] = istype(entity) && !!entity.navigation
 	result["pursuit"] = istype(entity) ? entity.navigation?.pursuit_payload() : null
@@ -379,7 +435,8 @@
 /datum/netrun_combat_context/proc/use_program(uid, target_ref)
 	if(console.is_locked())
 		return FALSE
-	if(world.time < next_program)
+	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter()
+	if(!encounter?.active && world.time < next_program)
 		console.log_line("Предыдущая программа ещё выполняется: осталось [max(0, CEILING((next_program - world.time) / (1 SECONDS), 0.1))] с.", "bad")
 		return FALSE
 	var/builtin = findtext("[uid]", "builtin:") == 1
@@ -398,7 +455,7 @@
 	if(!program || program.role == NETRUN_PROGRAM_TRACE)
 		return FALSE
 	var/executable_name = file?.name || program.name
-	if(world.time < (program_cd[program.id] || 0))
+	if(!encounter?.active && world.time < (program_cd[program.id] || 0))
 		console.log_line("[executable_name]: идёт перезарядка.", "bad")
 		return FALSE
 	var/datum/self = console.combat_self()
@@ -421,6 +478,32 @@
 	if(denial)
 		console.log_line(denial, "bad")
 		return FALSE
+	var/datum/netrun_fortress_module/module = target
+	if(istype(module) && module.fortress?.has_turn_battery())
+		if(encounter?.active && (encounter.is_waiting(console) || encounter.remaining_ap(console) < program.ap_cost || encounter.cooldown_remaining(console, program)))
+			console.log_line("Для этой атаки нужен ваш ход, готовая программа и достаточно очков действий.", "bad")
+			return FALSE
+		if(!module.fortress.authorize_turn_siege(console, module))
+			console.log_line("Нет действующего канала осады к этой крепости.", "bad")
+			return FALSE
+	if(!encounter)
+		// A self buff outside an encounter retains its ordinary cooldown. An
+		// attack enrolls actual active actors; passive structures take no turns.
+		encounter = node?.combat_encounter
+		if(!encounter && netrun_turn_actor(target) && netrun_turn_actor(target) != console)
+			encounter = node?.get_combat_encounter()
+	if(encounter)
+		if(encounter.cooldown_remaining(console, program))
+			console.log_line("[executable_name]: восстановление ещё [encounter.cooldown_remaining(console, program)] ход(а).", "bad")
+			return FALSE
+		if(!encounter.admit(console, program.ap_cost, target))
+			console.log_line("Дождитесь своего хода; для программы нужно [program.ap_cost] очк(а) действий.", "bad")
+			return FALSE
+		if(!encounter.can_apply_program_status(program, target))
+			console.log_line(program.role == NETRUN_PROGRAM_STUN ? "Цель адаптировалась к оглушению: она должна получить полноценный ход перед повторным подавлением." : "Более сильный защитный контур уже действует.", "bad")
+			return FALSE
+		if(!encounter.commit_program(console, program, TRUE))
+			return FALSE
 	next_program = world.time + 0.5 SECONDS
 	program_cd[program.id] = world.time + program.cooldown
 	// Attacking reveals the process again, including an otherwise authorized user.
@@ -438,6 +521,9 @@
 					ice.next_attack = min(ice.next_attack, world.time)
 				ice.register_enemy(console)
 	console.apply_program_effect(program, target, node, executable_name)
+	if(!QDELETED(encounter))
+		encounter.apply_program_status(program, target)
+		encounter.resolve(console)
 	if(program.trace)
 		console.add_trace(program.trace)
 	SSnetrun.post_event("intrusion", node.network?.id, node.address)
@@ -466,13 +552,15 @@
 	for(var/datum/netrun_file/file as anything in node.salvage)
 		if(file.uid != uid)
 			continue
-		if(!store_file(file))
+		var/file_name = file.name
+		var/datum/netrun_file/recovered = store_file(file)
+		if(!recovered)
 			log_line("Нет места для [file.name]. Освободите память.", "bad")
 			return FALSE
 		node.salvage -= file
 		node.refresh_salvage()
-		SEND_SIGNAL(entity, COMSIG_NETRUN_SALVAGE_RECOVERED, file, node)
-		log_line("Получено из обломков: [file.name].", "good")
+		SEND_SIGNAL(entity, COMSIG_NETRUN_SALVAGE_RECOVERED, recovered, node)
+		log_line("Получено из обломков: [file_name].", "good")
 		return TRUE
 	return FALSE
 
