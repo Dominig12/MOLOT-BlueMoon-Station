@@ -93,6 +93,7 @@
 /datum/netrun_machine_service/camera_viewer/security/show_feed(obj/machinery/camera/camera)
 	var/obj/machinery/computer/security/console = host
 	console.active_camera = camera
+	console.last_camera = WEAKREF(camera)
 	console.last_camera_turf = null
 	console.update_active_camera_screen()
 	SStgui.update_uis(console)
