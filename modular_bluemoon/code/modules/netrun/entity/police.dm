@@ -17,12 +17,14 @@
 	accent = "cyan"
 	tagline = "служит и защищает сеть"
 	console_type = /datum/netrun_console/entity/bot/police
+	extra_behavior_modules = list(/datum/netrun_entity_module/bot_local/watch/police)
 	think_idle = 3 SECONDS
 	flee_ratio = 0.15
 	lifetime = 8 MINUTES
 
 /datum/netrun_bot_program/police/on_spawn(mob/camera/netrun_entity/bot/bot)
-	bot.brain.listen_incidents()
+	. = ..()
+	bot.get_netrun_machine_service("security.monitor")
 
 /datum/netrun_bot_program/police/plan(datum/netrun_bot_brain/brain)
 	var/datum/netrun_incident/incident = brain.claimed_incident() || brain.claim_incident()
@@ -54,24 +56,6 @@
 	var/datum/weakref/incident_ref
 	/// weakref(process) -> world.time of the warning.
 	var/list/warned = list()
-	var/listening_incidents = FALSE
-
-/datum/netrun_bot_brain/proc/listen_incidents()
-	if(listening_incidents)
-		return
-	listening_incidents = TRUE
-	RegisterSignal(SSnetrun, COMSIG_NETRUN_INCIDENT_REPORTED, PROC_REF(on_incident_reported))
-
-/datum/netrun_bot_brain/proc/on_incident_reported(datum/source, datum/netrun_incident/incident)
-	SIGNAL_HANDLER
-	if(QDELETED(owner) || claimed_incident() || incident.severity < NETRUN_INCIDENT_MEDIUM)
-		return
-	var/datum/claimer = incident.claimed_by()
-	if(!claimer || claimer == src)
-		if(istype(current_goal(), /datum/netrun_bot_goal/police_patrol))
-			clear_goals()
-		wake_now()
-
 /// Cancellation/expiry must not reserve an incident until this entire process dies.
 /datum/netrun_bot_brain/proc/release_incident()
 	var/datum/netrun_incident/incident = incident_ref?.resolve()

@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
 import { EntityAvatar } from './EntityAvatar';
-import { BOT_ICONS, BOT_NAMES, EntityContact, FACTION_COLORS, THEME } from './types';
+import { BOT_ICONS, BOT_NAMES, EntityContact, FACTION_COLORS, IceKind, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 const FACTION_LABELS: Record<'bot' | 'fortress', Record<string, string>> = {
@@ -15,6 +15,23 @@ export const factionLabel = (context: 'bot' | 'fortress', faction?: string | nul
   (faction && FACTION_LABELS[context][faction]) || null;
 
 export const botKindLabel = (kind?: string | null) => BOT_NAMES[kind ?? ''] || 'Автономный процесс';
+
+export const BLACK_ICE_COLOR = '#dba0ff';
+export const iceKindLabel = (kind?: IceKind) => kind === 'black' ? 'BLACK ICE · нелегальный'
+  : `ICE${kind === 'hunter' ? ' · охотник' : kind === 'sentry' ? ' · сторож' : ''}`;
+export const IceAvatar = ({ kind, size = 28 }: { kind?: IceKind; size?: number }) => (
+  <span className="netrun-avatar" role="img" aria-label={iceKindLabel(kind)}
+    style={{ color: kind === 'black' ? BLACK_ICE_COLOR : THEME.bad, width: size, height: size, fontSize: `${Math.round(size / 2)}px`,
+      background: kind === 'black' ? '#271332' : undefined }}>
+    <Icon name={kind === 'black' ? 'skull-crossbones' : 'shield-halved'} style={{ margin: 0 }} />
+  </span>
+);
+export const BlackIceWarning = () => (
+  <Box mt={0.5} color={BLACK_ICE_COLOR} fontSize="11px">
+    <Icon name="triangle-exclamation" mr={0.5} />
+    Нелегальный BLACK ICE: нейрообратная связь может повредить телу при нейроподключении.
+  </Box>
+);
 
 /** Archetype pictogram framed in the faction colour (contacts, combat, agents). */
 export const BotAvatar = (props: { kind?: string | null; faction?: string | null; size?: number }) => {
@@ -30,7 +47,7 @@ export const BotAvatar = (props: { kind?: string | null; faction?: string | null
 
 const contactKind = (contact: EntityContact) => {
   if (contact.kind === 'ice') {
-    return `ICE${contact.ice_kind === 'hunter' ? ' · охотник' : contact.ice_kind === 'sentry' ? ' · сторож' : ''}`;
+    return iceKindLabel(contact.ice_kind);
   }
   if (contact.kind === 'bot') {
     return [botKindLabel(contact.bot_kind), factionLabel('bot', contact.faction)].filter(Boolean).join(' · ');
@@ -66,7 +83,8 @@ const ContactCard = (props: { contact: EntityContact; pending: boolean }) => {
   const [message, setMessage] = useState('');
   const canMessage = !pending && contact.can_message;
   const bot = contact.kind === 'bot';
-  const accent = bot ? FACTION_COLORS[contact.faction ?? ''] : undefined;
+  const blackIce = contact.kind === 'ice' && contact.ice_kind === 'black';
+  const accent = blackIce ? BLACK_ICE_COLOR : bot ? FACTION_COLORS[contact.faction ?? ''] : undefined;
   const send = () => {
     const text = message.trim();
     if (!canMessage || !text) { return; }
@@ -78,7 +96,7 @@ const ContactCard = (props: { contact: EntityContact; pending: boolean }) => {
       style={{ background: THEME.bg, border: `1px solid ${accent || THEME.line}` }}>
       <Box bold color={accent}>
         {contact.kind === 'entity' ? <EntityAvatar avatar={contact.persona?.avatar} accent={contact.persona?.accent} size={28} />
-          : bot ? <BotAvatar kind={contact.bot_kind} faction={contact.faction} /> : <Icon name="shield-halved" mr={0.5} />}
+          : bot ? <BotAvatar kind={contact.bot_kind} faction={contact.faction} /> : <IceAvatar kind={contact.ice_kind} />}
         {contact.name}{contact.self ? ' · вы' : ''}
       </Box>
       {!!contact.persona?.tagline && <Box className="netrun-contact-tagline">{contact.persona.tagline}</Box>}
@@ -87,6 +105,7 @@ const ContactCard = (props: { contact: EntityContact; pending: boolean }) => {
         {' · '}{contact.integrity}/{contact.max_integrity}
       </Box>
       {bot && !!contact.goal && <Box fontSize="11px">Задача: {contact.goal}</Box>}
+      {blackIce && <BlackIceWarning />}
       {!!contact.threat && <Box mt={0.5} color={THEME.warn} fontSize="11px">{contact.threat}</Box>}
       {!contact.self && contact.kind === 'entity' && (
         <Box mt={0.5}>

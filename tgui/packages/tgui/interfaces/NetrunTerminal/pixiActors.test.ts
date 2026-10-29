@@ -112,7 +112,7 @@ test('a sent packet flies its hop route for its real transit time, then reports 
   expect(layer.animate(6300)).toBe(false);
 });
 
-test('a fast packet first observed with its receipt keeps its actual path without replaying a flight', () => {
+test('a fast packet first observed with its receipt traverses its actual path once within its original expiry', () => {
   const scene = new GraphScene();
   scene.update([node('A'), node('B', 0, 100), node('C', 100, 100)], [
     { id: 'AB', from: 'A', to: 'B', kind: 'apc' }, { id: 'BC', from: 'B', to: 'C', kind: 'apc' },
@@ -121,11 +121,43 @@ test('a fast packet first observed with its receipt keeps its actual path withou
     route: ['A', 'B', 'C'], phase: 'send' as const, duration: .01, age: .2, remaining_ms: 0, lifetime_ms: 1000 };
   const layer = new PixiActors(mockPixi);
   layer.update(scene, overlay({ events: [sent, { ...sent, phase: 'done', age: .19 }] }), [], scene.adjacency, 0);
-  layer.animate(0);
+  layer.animate(325);
   const effects = MockGraphics.graphics.find((entry) => entry.label === 'traffic-and-ping');
   expect(effects.calls.filter((call) => call.op === 'lineTo').map((call) => call.args)).toEqual([[0, 100], [100, 100]]);
-  expect(effects.calls.filter((call) => call.op === 'circle')).toHaveLength(1); // Outcome ring, no invented second comet.
+  expect(effects.calls.filter((call) => call.op === 'circle').at(-1).args.slice(0, 2)).toEqual([0, 100]);
+  layer.update(scene, overlay({ events: [{ ...sent, phase: 'done', age: .69, lifetime_ms: 500 }] }), [], scene.adjacency, 500);
+  layer.animate(650);
+  expect(effects.calls.filter((call) => call.op === 'circle')).toHaveLength(1); // One outcome, no restarted comet.
+  expect(effects.calls.filter((call) => call.op === 'circle')[0].args.slice(0, 2)).toEqual([100, 100]);
   expect(layer.animate(1100)).toBe(false);
+});
+
+test('a receipt continues an already drawn dispatch and never replays it from the source', () => {
+  const scene = new GraphScene(); scene.update([node('A'), node('B', 200)], [{ id: 'AB', from: 'A', to: 'B', kind: 'apc' }]);
+  const layer = new PixiActors(mockPixi);
+  const sent = { kind: 'packet' as const, id: 'seen', from: 'A', to: 'B', route: ['A', 'B'], phase: 'send' as const, duration: 2, age: 0 };
+  layer.update(scene, overlay({ events: [sent] }), [], scene.adjacency, 0); layer.animate(1000);
+  layer.update(scene, overlay({ events: [{ ...sent, phase: 'done' }] }), [], scene.adjacency, 1000); layer.animate(1000);
+  const effects = MockGraphics.graphics.find((entry) => entry.label === 'traffic-and-ping');
+  expect(effects.calls.filter((call) => call.op === 'circle').at(-1).args.slice(0, 2)).toEqual([100, 0]);
+  layer.animate(1325);
+  expect(effects.calls.filter((call) => call.op === 'circle')).toHaveLength(1);
+  expect(effects.calls.filter((call) => call.op === 'circle')[0].args.slice(0, 2)).toEqual([200, 0]);
+});
+
+test('completed paths retain private gaps and missing route metadata never invents a BFS path', () => {
+  const scene = new GraphScene(); scene.update([node('A'), node('B', 100), node('C', 200), node('D', 300)], [
+    { id: 'AB', from: 'A', to: 'B', kind: 'apc' }, { id: 'BC', from: 'B', to: 'C', kind: 'apc' }, { id: 'CD', from: 'C', to: 'D', kind: 'apc' },
+  ]);
+  const layer = new PixiActors(mockPixi);
+  layer.update(scene, overlay({ events: [{ kind: 'packet', id: 'gap', from: 'A', to: 'D', phase: 'done', age: 0,
+    route: ['A', 'B', '', 'C', 'D'] }] }), [], scene.adjacency, 0); layer.animate(325);
+  const effects = MockGraphics.graphics.find((entry) => entry.label === 'traffic-and-ping');
+  expect(effects.calls.filter((call) => call.op === 'lineTo').map((call) => call.args)).toEqual([[100, 0], [300, 0]]);
+  expect(effects.calls.filter((call) => call.op === 'circle')).toHaveLength(0);
+  layer.update(scene, overlay({ events: [{ kind: 'packet', id: 'legacy', from: 'A', to: 'D', phase: 'done', age: 0 }] }), [], scene.adjacency, 2000);
+  layer.animate(2100);
+  expect(effects.calls.some((call) => call.op === 'lineTo')).toBe(false);
 });
 
 test('explicit redacted packet routes never fall back to a fabricated visible BFS route', () => {

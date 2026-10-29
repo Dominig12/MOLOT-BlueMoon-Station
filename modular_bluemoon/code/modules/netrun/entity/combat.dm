@@ -24,6 +24,28 @@
 /datum/netrun_console/proc/combat_targets()
 	return combat_context.targets()
 
+/// The same action facade is used by the combat panel and CLI.
+/datum/netrun_console/proc/start_pursuit(target_ref)
+	var/mob/camera/netrun_entity/entity = host
+	if(!istype(entity) || !entity.navigation)
+		log_line("Преследовать цель может только сетевая сущность.", "bad")
+		return FALSE
+	if(!istext(target_ref))
+		return FALSE
+	var/mob/camera/netrun_entity/target = locate(target_ref)
+	if(!istype(target))
+		log_line("Для преследования выберите процесс, а не ICE или укрепление.", "bad")
+		return FALSE
+	return entity.navigation.pursue(target)
+
+/datum/netrun_console/proc/stop_pursuit()
+	var/mob/camera/netrun_entity/entity = host
+	if(!istype(entity) || !entity.navigation)
+		return FALSE
+	entity.navigation.cancel()
+	log_line("Преследование остановлено.")
+	return TRUE
+
 /datum/netrun_console/proc/combat_programs()
 	return combat_context.programs()
 
@@ -94,10 +116,10 @@
 
 /datum/netrun_combat_context/New(datum/netrun_console/console)
 	src.console = console
-	RegisterSignal(SSnetrun, COMSIG_NETRUN_ICE_CAST_STARTED, PROC_REF(on_cast_started))
+	RegisterSignal(console, COMSIG_NETRUN_ICE_CAST_STARTED, PROC_REF(on_cast_started))
 
 /datum/netrun_combat_context/Destroy()
-	UnregisterSignal(SSnetrun, COMSIG_NETRUN_ICE_CAST_STARTED)
+	UnregisterSignal(console, COMSIG_NETRUN_ICE_CAST_STARTED)
 	clear_contacts()
 	for(var/id in observed_ice)
 		var/datum/weakref/reference = observed_ice[id]
@@ -123,7 +145,7 @@
 
 /datum/netrun_combat_context/proc/on_cast_started(datum/source, datum/netrun_ice/ice, datum/netrun_console/victim)
 	SIGNAL_HANDLER
-	if(victim != console)
+	if(victim != console || QDELETED(ice))
 		return
 	observe(ice)
 	if(!console.combat_self() && ice.pending_program?.role == NETRUN_PROGRAM_TRACE)
@@ -343,6 +365,9 @@
 		"self" = hp ? list("integrity" = hp["cur"], "max_integrity" = hp["max"], "stunned" = hp["stunned"], "shielded" = hp["shielded"]) : null,
 		"targets" = target_entries, "programs" = programs(), "incoming" = incoming_entries, "loot" = loot,
 		"action_ready_in" = max(0, CEILING((next_program - world.time) / (1 SECONDS), 0.1)))
+	var/mob/camera/netrun_entity/entity = self
+	result["pursuit_available"] = istype(entity) && !!entity.navigation
+	result["pursuit"] = istype(entity) ? entity.navigation?.pursuit_payload() : null
 	if(owns_tree)
 		console.release_path_tree(tree)
 	if(measuring)

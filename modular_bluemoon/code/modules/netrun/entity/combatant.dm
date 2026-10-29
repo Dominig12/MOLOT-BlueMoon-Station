@@ -8,6 +8,7 @@
 	return LoadComponent(/datum/component/netrun_combatant/entity)
 
 /datum/netrun_ice/get_netrun_combatant()
+	RETURN_TYPE(/datum/component/netrun_combatant)
 	return LoadComponent(/datum/component/netrun_combatant/ice)
 
 /datum/component/netrun_combatant
@@ -125,13 +126,16 @@
 	ice.apply_heal(amount)
 
 /datum/component/netrun_combatant/ice/protected_by_station()
-	return TRUE
+	var/datum/netrun_ice/ice = parent
+	return !ice.agent?.profile.illegal
 
 /datum/component/netrun_combatant/ice/ui_entry()
 	. = ..()
 	var/datum/netrun_ice/ice = parent
 	.["programs"] = ice.program_payload()
 	.["casting"] = ice.casting_payload()
+	.["ice_kind"] = ice.kind
+	.["state"] = ice.agent?.state
 
 /// Compatibility helpers route effects through the owner's polymorphic component.
 /proc/netrun_combatant_integrity(datum/thing)

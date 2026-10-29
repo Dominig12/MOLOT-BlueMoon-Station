@@ -1,8 +1,18 @@
-/// A resident process uses the same display and public signals as neural implants and AR glasses.
-/mob/camera/netrun_entity/Initialize(mapload, datum/component/netrun_node/start)
-	. = ..()
-	var/datum/component/neural_interface/interface = LoadComponent(/datum/component/neural_interface)
-	AddComponent(/datum/component/netrun_neural_feedback, interface, console, "NETRUN_PROCESS")
+/// Optional presentation capability. Autonomous agents share gameplay resources
+/// with players without allocating screen monitors or a mobile display endpoint.
+/datum/netrun_entity_module/neural_feedback
+	id = "neural_feedback"
+	priority = 60
+	requires = list("console")
+	var/datum/component/netrun_neural_feedback/feedback
+
+/datum/netrun_entity_module/neural_feedback/on_install()
+	var/datum/component/neural_interface/interface = owner.LoadComponent(/datum/component/neural_interface)
+	feedback = owner.AddComponent(/datum/component/netrun_neural_feedback, interface, owner.console, "NETRUN_PROCESS")
+	return !QDELETED(feedback)
+
+/datum/netrun_entity_module/neural_feedback/on_remove()
+	QDEL_NULL(feedback)
 
 /// Feedback is composable: pAI and future clients can attach it without copying the display logic.
 /datum/component/netrun_neural_feedback

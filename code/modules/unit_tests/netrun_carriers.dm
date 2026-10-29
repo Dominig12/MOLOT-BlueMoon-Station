@@ -73,6 +73,7 @@
 	var/datum/netrun_carrier_scene/scene = allocate(/datum/netrun_carrier_scene, run_loc_floor_bottom_left)
 	var/obj/item/clothing/under/color/grey/uniform = new(scene.spots[2])
 	var/obj/item/modular_computer/pda/pda = new(scene.spots[2])
+	pda.enabled = TRUE
 	var/obj/item/clothing/glasses/hud/health/glasses = new(scene.spots[2])
 	var/obj/item/organ/cyberimp/brain/netlink/implant = new(scene.spots[2])
 	scene.owned += uniform
@@ -89,6 +90,7 @@
 	var/list/nodes = list(pda.GetComponent(/datum/component/netrun_node), glasses.GetComponent(/datum/component/netrun_node), implant.GetComponent(/datum/component/netrun_node), adapter.endpoint.GetComponent(/datum/component/netrun_node))
 	for(var/datum/component/netrun_node/node as anything in nodes)
 		TEST_ASSERT_NOTNULL(node, "Every native carried device must provide its actual network component")
+		TEST_ASSERT(node.is_online(), "Fresh location announcements require an operational native endpoint")
 		TEST_ASSERT_EQUAL(node.physical_carrier, scene.first, "Worn and installed endpoints must subscribe to their common wearer")
 	scene.warm(nodes)
 	var/datum/netrun_carrier_probe/probe = allocate(/datum/netrun_carrier_probe, nodes)

@@ -124,5 +124,12 @@ describe('Node and process interactions', () => {
     expect(panel.getByText(/ICE · сторож · охраняет узел/)).toBeTruthy();
     expect(panel.getByText('Доступ ПОЛЬЗОВАТЕЛЯ позволяет пройти.')).toBeTruthy();
     expect(panel.queryByText('Опасный вход: ICE атакует ваш процесс.')).toBeNull();
+    act(() => store.dispatch(backendUpdate({ data: { selected: { ...node, contacts: [{
+      ...contact, kind: 'ice', name: 'BLACK ICE', ice_kind: 'black',
+      state: 'охраняет узел', can_signal: false, can_message: false,
+    }] } } })));
+    expect(panel.getByText(/BLACK ICE · нелегальный · охраняет узел/)).toBeTruthy();
+    expect(panel.getByRole('img', { name: 'BLACK ICE · нелегальный' }).querySelector('.fa-skull-crossbones')).toBeTruthy();
+    expect(panel.getByText(/нейрообратная связь может повредить телу/)).toBeTruthy();
   });
 });

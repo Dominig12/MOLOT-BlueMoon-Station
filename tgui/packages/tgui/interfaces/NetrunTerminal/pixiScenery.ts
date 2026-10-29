@@ -7,7 +7,7 @@ import {
   BODY_ALPHA, BODY_STROKE, GLYPH_INK, GLYPH_MIN_ZOOM, GLYPH_STROKE, glyphRadius,
   traceBody, traceGlyphFills, traceGlyphStrokes, traceOfflineSlash,
 } from './nodeGlyphs';
-import { destroyDisplay, edgeColor, edgeWidth, pixiColor, PixiLibrary, segmentPath, strokeLod } from './pixiPrimitives';
+import { destroyDisplay, edgeAlpha, edgeColor, edgeWidth, pixiColor, PixiLibrary, segmentPath, strokeLod } from './pixiPrimitives';
 import type { NetEdge } from './types';
 
 type Stroke = { from: { px: number; py: number }; to: { px: number; py: number }; offline?: boolean };
@@ -135,7 +135,7 @@ export class PixiScenery {
     if (previous && previous.edge.kind === edge.kind && previous.edge.online === edge.online
       && previous.fromX === from.px && previous.fromY === from.py && previous.toX === to.px && previous.toY === to.py) { return previous; }
     const part: Part = { bucket: bucketAt('1-edge', from.px, from.py), key: edge.id,
-      color: edgeColor(edge.kind, edge.online !== false), alpha: edge.online === false ? .22 : edge.kind === 'endpoint' ? .28 : .48,
+      color: edgeColor(edge.kind, edge.online !== false), alpha: edgeAlpha(edge.kind, edge.online !== false),
       width: edgeWidth(edge.kind), stroke: { from, to, offline: edge.online === false },
       signature: `${edge.id}:${from.px},${from.py},${to.px},${to.py}`, bounds: segmentBox(from, to) };
     return { edge, fromX: from.px, fromY: from.py, toX: to.px, toY: to.py, part };

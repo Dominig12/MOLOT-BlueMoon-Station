@@ -139,6 +139,9 @@
 // Враждебные процессы (ICE)
 #define NETRUN_ICE_SENTRY "sentry"
 #define NETRUN_ICE_HUNTER "hunter"
+#define NETRUN_ICE_BLACK "black"
+#define COMSIG_NETRUN_ICE_PROGRAM_RESOLVED "netrun_ice_program_resolved"
+#define COMSIG_NETRUN_ENTITY_SPEAK "netrun_entity_speak"
 /// Сколько персистентных патрульных процессов поднимается в начале раунда
 #define NETRUN_MAX_PATROLS 400
 /// Сколько лорных документов раскладывается по серверам станции в начале раунда
@@ -147,6 +150,9 @@
 /// События расширений: источник сигнала — сущность или её консоль.
 #define COMSIG_NETRUN_ENTITY_NODE_CHANGED "netrun_entity_node_changed"
 #define COMSIG_NETRUN_ENTITY_TICK "netrun_entity_tick"
+#define COMSIG_NETRUN_ENTITY_GOALS_CHANGED "netrun_entity_goals_changed"
+#define COMSIG_NETRUN_ENTITY_COMMAND_FINISHED "netrun_entity_command_finished"
+#define COMSIG_NETRUN_ENTITY_MODULE_READY "netrun_entity_module_ready"
 #define COMSIG_NETRUN_ENTITY_INTEGRITY "netrun_entity_integrity"
 #define COMSIG_NETRUN_CONSOLE_EVENT "netrun_console_event"
 /// Нелегальный сетевой доступ к кибернетическому узлу носителя: (datum/netrun_console, datum/component/netrun_node)

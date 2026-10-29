@@ -31,17 +31,9 @@
 
 /mob/camera/netrun_entity/Initialize(mapload, datum/component/netrun_node/start)
 	. = ..()
-	persona = new(src)
-	RegisterSignal(src, COMSIG_MOB_ON_NEW_MIND, PROC_REF(on_persona_mind_changed))
-	dive_link = new(src)
-	console = new console_type(src, NETRUN_ORIGIN_ENTITY)
-	navigation = new(src)
-	RegisterSignal(src, COMSIG_MOB_ALLOWED, PROC_REF(on_credential_access_check))
+	if(!assemble_modules())
+		return INITIALIZE_HINT_QDEL
 	SSnetrun.entities += src
-	console_action = new
-	console_action.Grant(src)
-	rename_action = new
-	rename_action.Grant(src)
 	if(start)
 		// Initial residency authorizes only this host, without opening its LAN.
 		console.access_session.node_access[start.address] = NETRUN_ACCESS_USER
@@ -49,13 +41,9 @@
 
 /mob/camera/netrun_entity/Destroy()
 	SSnetrun.entities -= src
-	persona = null // The entity or its mind owns the profile's deletion signal.
-	QDEL_NULL(navigation)
+	navigation?.cancel()
 	leave_node()
-	QDEL_NULL(console)
-	QDEL_NULL(console_action)
-	QDEL_NULL(rename_action)
-	QDEL_NULL(dive_link)
+	destroy_modules()
 	return ..()
 
 /mob/camera/netrun_entity/Login()
@@ -63,6 +51,8 @@
 	get_persona()
 	if(!client)
 		return
+	if(!entity_modules["neural_feedback"])
+		install_module(/datum/netrun_entity_module/neural_feedback)
 	console?.activate()
 	to_chat(src, span_notice("Вы — процесс в сети станции. Мир виден через доступную оптику: камеры, киберглаза и взломанные HUD-очки. \
 		В окне устройства включите «Смотреть». Говорить и слышать можно через интеркомы — включите микрофон или динамик. Кнопка «Сеть» \
@@ -92,7 +82,7 @@
 	console.map_view.viewed_network_id = node.network?.id
 	console.map_view.selected_address = node.address
 	node.touch()
-	update_vision()
+	node.notify_changed(NETRUN_CHANGED_OCCUPANTS)
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_NODE_CHANGED, null, node)
 	// Traps and alarms react to the arrival itself; a listener may delete this process.
 	node.fortress?.on_arrival(src)
@@ -104,7 +94,7 @@
 /// Запоминаем пройденный путь погружения. При возврате на уже пройденный узел
 /// петля срезается - цепочка остаётся кратчайшей фактически пройденной.
 /mob/camera/netrun_entity/proc/track_route(datum/component/netrun_node/node)
-	return dive_link.track_route(node)
+	return dive_link?.track_route(node)
 
 /mob/camera/netrun_entity/proc/leave_node()
 	if(!host_node)
@@ -180,11 +170,11 @@
 
 /// Путь из соседних узлов, в каждый из которых процесс может войти (online + USER/ключ).
 /mob/camera/netrun_entity/proc/enterable_path(datum/component/netrun_node/target)
-	return navigation.path_to(target)
+	return navigation?.path_to(target) || list()
 
 /// Автопроход по уже открытому пути: шаг за шагом к выбранному узлу.
 /mob/camera/netrun_entity/proc/travel_to(datum/component/netrun_node/target)
-	return navigation.start(target)
+	return navigation?.start(target) || FALSE
 
 /mob/camera/netrun_entity/Move(NewLoc, direct)
 	// Перемещение по сети идёт по положению узлов НА КАРТЕ, а не по их физическим
@@ -198,7 +188,7 @@
 /// Empty resident processes have no clock to advance. Navigation and link changes
 /// own their timers; players, neural bodies and integrity repair still need ticks.
 /mob/camera/netrun_entity/proc/needs_processing()
-	return !!client || !QDELETED(dive_link?.body) || integrity < max_integrity
+	return !!client || modules_need_processing()
 
 /mob/camera/netrun_entity/proc/on_host_moved(datum/source, datum/component/netrun_node/node, turf/old_position, turf/position)
 	SIGNAL_HANDLER
@@ -207,32 +197,22 @@
 
 /// Синхронизация активного процесса с носителем, вызывается консолью раз в секунду
 /mob/camera/netrun_entity/proc/process_tick(delta)
-	if(host_node)
-		var/turf/T = host_node.physical_turf()
-		if(T && loc != T)
-			abstract_move(T)
-	// A slow self-repair even mid-fight, faster once the heat is off, so a single
-	// mistake no longer means certain death against ICE.
-	if(integrity < max_integrity)
-		var/calm = world.time - console.intrusion.last_illegal > 20 SECONDS
-		integrity = min(max_integrity, integrity + delta * (calm ? 0.5 : 0.25))
-	dive_link.process_tick(delta)
+	process_modules(delta)
 	if(QDELETED(src))
 		return
-	update_vision()
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_TICK, delta)
 
 /// Есть ли ещё физический маршрут от текущего узла назад к точке входа погружения.
 /mob/camera/netrun_entity/proc/dive_link_intact()
-	return dive_link.link_intact()
+	return dive_link?.link_intact() || FALSE
 
 /// Broken physical return paths eject the neural user on the first failed check.
 /mob/camera/netrun_entity/proc/check_dive_link(delta)
-	return dive_link.check_link(delta)
+	return dive_link?.check_link(delta) || FALSE
 
 /// Compatibility entry point: neural processes cannot remain stranded after a break.
 /mob/camera/netrun_entity/proc/strand_in_network()
-	return dive_link.strand_in_network()
+	return dive_link?.strand_in_network()
 
 // MARK: Зрение через доступные оптические устройства
 
@@ -400,7 +380,7 @@
 /mob/camera/netrun_entity/proc/dissolve()
 	if(QDELETED(src))
 		return
-	if(dive_link.body)
+	if(dive_link?.body)
 		to_chat(src, span_userdanger("Связь с сетью разорвана! Вас выбрасывает обратно в тело."))
 		var/mob/living/carbon/body = dive_link.body
 		return_to_body()
@@ -433,23 +413,8 @@
 		to_chat(other, span_notice("\[шина [host_node.address]] [span_name(real_name)]: [message]"))
 		if(other != src)
 			heard_locally = TRUE
-	var/atom/movable/speaker = host_node?.parent
-	if(!istype(speaker))
-		if(!heard_locally)
-			to_chat(src, span_warning("Здесь нет ни динамика, ни других процессов."))
-		return
-	log_talk(message, LOG_SAY, tag = "netrun via [speaker]")
-	if(istype(speaker, /obj/item/radio/intercom))
-		var/obj/item/radio/intercom/intercom = speaker
-		if(!intercom.on || intercom.emped)
-			to_chat(src, span_warning("Интерком обесточен."))
-			return
-		if(intercom.broadcasting) // микрофон включён — голос уходит в эфир
-			intercom.talk_into(src, message, null, spans)
-		// динамик интеркома: локальный вывод голоса
-		intercom.audible_message(span_name("[intercom]") + span_radio(" передаёт, \"[message]\""), null, intercom.canhear_range)
-		return
-	speaker.audible_message(span_name("[speaker]") + span_radio(" передаёт, \"[message]\""))
+	if(!(SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_SPEAK, message, spans)) && !heard_locally)
+		to_chat(src, span_warning("У этого узла нет доступного микрофона с динамиком. Речь остаётся во внутренней шине."))
 
 /mob/camera/netrun_entity/emote(act, m_type = 1, message = null, intentional = FALSE, forced = FALSE)
 	return
@@ -469,10 +434,10 @@
 	return entity
 
 /mob/camera/netrun_entity/proc/return_to_body()
-	return dive_link.return_to_body()
+	return dive_link?.return_to_body()
 
 /mob/camera/netrun_entity/proc/release_body()
-	return dive_link.release_body()
+	return dive_link?.release_body()
 
 // MARK: Консоль сущности
 
@@ -485,6 +450,14 @@
 /datum/netrun_console/entity/New(atom/host, origin)
 	. = ..()
 	state_override = GLOB.always_state
+
+/datum/netrun_console/entity/ui_status(mob/user, datum/ui_state/state)
+	return user == host ? ..() : UI_CLOSE
+
+/datum/netrun_console/entity/ui_interact(mob/user, datum/tgui/ui)
+	if(user != host)
+		return
+	return ..()
 
 /datum/netrun_console/entity/proc/entity()
 	return host
@@ -507,7 +480,7 @@
 		return access_cache
 	. = credential_access(fresh)
 	var/mob/camera/netrun_entity/entity = host
-	if(!QDELETED(entity?.dive_link.body))
+	if(!QDELETED(entity?.dive_link?.body))
 		. |= netrun_mob_access(entity.dive_link.body)
 
 /datum/netrun_console/entity/add_ui_context_sources(list/targets)
@@ -519,7 +492,7 @@
 /// A connected shard remains in the unconscious body's implant, not in the process.
 /datum/netrun_console/entity/eject_shard(mob/user)
 	var/mob/camera/netrun_entity/entity = host
-	if(entity?.dive_link.body)
+	if(entity?.dive_link?.body)
 		log_line("Шард находится в теле; извлечь его из сети нельзя.", "bad")
 		return
 	return ..()
@@ -545,33 +518,15 @@
 /datum/netrun_console/entity/host_actions()
 	. = ..()
 	var/mob/camera/netrun_entity/entity = host
-	if(entity?.dive_link.body)
+	if(entity?.dive_link?.body)
 		. += list(list("id" = "return", "name" = "Вернуться в тело", "icon" = "person-walking-arrow-right"))
 
 /datum/netrun_console/entity/host_act(action, list/params, mob/user)
 	var/mob/camera/netrun_entity/entity = host
-	switch(action)
-		if("relay_hop")
-			var/datum/component/netrun_node/dest = SSnetrun.find_node(params["address"])
-			if(!entity.relay_hop(dest))
-				log_line(entity.hop_denial(dest), "bad")
-			return TRUE
-		if("hop")
-			var/datum/component/netrun_node/dest = SSnetrun.find_node(params["address"])
-			if(!entity.hop(dest))
-				log_line(entity.hop_denial(dest), "bad")
-			return TRUE
-		if("travel")
-			if(!entity.travel_to(SSnetrun.find_node(params["address"])))
-				log_line("Автопроход невозможен: нет открытого пути к узлу.", "bad")
-			return TRUE
-		if("travel_cancel")
-			entity.navigation.cancel()
-			log_line("Автопроход отменён.")
-			return TRUE
-		if("return")
-			entity.return_to_body()
-			return TRUE
+	if(user != entity)
+		return FALSE
+	if(entity?.dispatch_module_action(action, params, user))
+		return TRUE
 	return ..()
 
 /datum/netrun_console/entity/entity_data()
@@ -585,8 +540,8 @@
 		"max_integrity" = entity.max_integrity,
 		"host" = entity.host_node?.address,
 		"host_name" = entity.host_node?.get_name(),
-		"diving" = !!entity.dive_link.body,
-		"travel" = entity.navigation.ui_payload(),
+		"diving" = !!entity.dive_link?.body,
+		"travel" = entity.navigation?.ui_payload(),
 	)
 
 /datum/action/innate/netrun_console

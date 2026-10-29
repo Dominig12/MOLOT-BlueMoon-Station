@@ -1,18 +1,23 @@
 /**
  * ICE (Intrusion Countermeasure) - враждебный сетевой процесс.
  *
- * Два вида:
+ * Профили защиты:
  *  - СТОРОЖ (sentry): закреплён за узлом, атакует несанкционированных гостей и
  *    поднимает трассировку тем, кто ломает его узел.
  *  - ОХОТНИК (hunter): путешествует по сети, преследует нарушителей по графу узлов
  *    и бьёт их, догнав. Живёт ограниченное время без целей.
+ *  - ЧЁРНЫЙ ЛЁД (black): нелегальная защита с нейронной обратной связью.
  *
  * ICE - лёгкий датум, а не моб: он не смотрит камерами и не говорит, только дерётся.
- * Обрабатывается в SSnetrun.fire().
+ * Поведение собирается netrun_ice_agent и выполняется в бюджете SSnetrun.
  */
 /datum/netrun_ice
 	var/last_netrun_tick = 0 // scheduler
 	var/datum/netrun_ice_reaction/reaction
+	var/datum/netrun_ice_agent/agent
+	var/datum/weakref/deployer_ref
+	/// Reconnectable personal guards must not become an unlimited salvage source.
+	var/drops_loot = TRUE
 	var/name = "ICE"
 	var/datum/component/netrun_node/node
 	var/kind = NETRUN_ICE_SENTRY
@@ -53,14 +58,15 @@
 	reaction = new(src)
 	if(ice_kind)
 		kind = ice_kind
+	var/datum/netrun_ice_profile/profile = SSnetrun.get_ice_profile(kind)
+	name = profile.name
+	integrity = profile.integrity
+	max_integrity = profile.integrity
+	damage_factor = profile.damage_factor
+	program_ids = profile.program_ids.Copy()
+	agent = new(src, profile)
 	if(kind == NETRUN_ICE_HUNTER)
-		name = "ICE-HUNTER"
-		integrity = 90
-		max_integrity = 90
-		program_ids = list("assault", "strike", "blackout", "trace")
 		idle_expires_at = world.time + patrol_life * (1 SECONDS)
-	else
-		name = "ICE-SENTRY"
 	SSnetrun.ice_processes += src
 	if(start)
 		enter_node(start)
@@ -69,6 +75,8 @@
 /datum/netrun_ice/Destroy()
 	SSnetrun.unregister_hunter(src)
 	QDEL_NULL(reaction)
+	QDEL_NULL(agent)
+	deployer_ref = null
 	cancel_program()
 	SSnetrun.ice_processes -= src
 	SSnetrun.task_scheduler?.cancel("ice", src)
@@ -110,7 +118,7 @@
 /datum/netrun_ice/proc/host_lost()
 	var/datum/netrun_network/network = defense_network()
 	leave_node()
-	if(kind == NETRUN_ICE_SENTRY)
+	if(kind != NETRUN_ICE_HUNTER)
 		qdel(src)
 		return
 	var/list/candidates = list()
@@ -192,7 +200,8 @@
 	node?.network?.add_log("Процесс защиты [name] уничтожен.")
 	node?.add_log("[name]: процесс завершён.")
 	SSnetrun.post_event("purge", null, node?.address)
-	drop_loot(killer)
+	if(drops_loot)
+		drop_loot(killer)
 	qdel(src)
 
 /// Лут с ICE. В первую очередь - в память убившей консоли (включая раннера за терминалом/декой),
@@ -287,35 +296,7 @@
 	return FALSE
 
 /datum/netrun_ice/proc/process_ai(delta)
-	if(QDELETED(node) || QDELETED(node.parent))
-		host_lost()
-		return
-	if(kind == NETRUN_ICE_HUNTER && node.network != defense_network())
-		host_lost()
-		return
-	if(kind == NETRUN_ICE_HUNTER && !persistent && !pending_program && world.time >= idle_expires_at)
-		node?.network?.add_log("Охотничий процесс свёрнут: цель не найдена.")
-		qdel(src)
-		return
-	if(is_stunned() || !node.is_online())
-		cancel_program()
-		return
-	if(pending_program)
-		resolve_program()
-		return
-	var/mob/camera/netrun_entity/prey = find_intruder(node)
-	if(prey)
-		idle_expires_at = world.time + patrol_life * (1 SECONDS)
-		try_attack(prey)
-		return
-	if(harass_intruders())
-		return
-	if(kind == NETRUN_ICE_SENTRY)
-		return
-	if(world.time < hop_cooldown)
-		return
-	if(!hunt())
-		patrol()
+	agent.advance(delta)
 
 /// May also inspect a destination before arrival; presence is checked by the caller.
 /datum/netrun_ice/proc/is_intruder(mob/camera/netrun_entity/entity, datum/component/netrun_node/where, datum/netrun_path_tree/tree)
@@ -323,7 +304,20 @@
 		where = node
 	if(!istype(entity) || QDELETED(entity) || QDELETED(where) || world.time < entity.combat_ignore_until)
 		return FALSE
+	if(agent?.profile.illegal)
+		return !is_deployer(entity.console)
 	return enemy_ref?.resolve() == entity || entity.console?.node_level(where, tree) < NETRUN_ACCESS_USER
+
+/// Immunity belongs to the deploying principal, including its owned agents.
+/// Both direct combat and remote countertrace recheck it at delivery.
+/datum/netrun_ice/proc/is_deployer(datum/netrun_console/console)
+	var/datum/netrun_console/deployer = deployer_ref?.resolve()
+	if(!deployer || QDELETED(console))
+		return FALSE
+	if(console == deployer)
+		return TRUE
+	var/mob/camera/netrun_entity/entity = console.host
+	return istype(entity) && entity.netrun_owner_console() == deployer
 
 /// Нарушитель в узле: нелегальная сущность или тот, кто спровоцировал этот ICE.
 /datum/netrun_ice/proc/find_intruder(datum/component/netrun_node/where)
@@ -364,6 +358,8 @@
 /// A console is a valid trace target only while it is still attacking this node/LAN.
 /datum/netrun_ice/proc/valid_trace_target(datum/netrun_console/console)
 	if(!istype(console) || QDELETED(console))
+		return FALSE
+	if(agent?.profile.illegal && is_deployer(console))
 		return FALSE
 	var/datum/netrun_breach/breach = console?.intrusion.breach
 	return !QDELETED(console) && !console.is_locked() && breach && ((breach.target_kind == "network" && node?.network && breach.target_id == node.network.id) || (breach.target_kind != "network" && breach.target_id == node?.address))
@@ -408,12 +404,16 @@
 		var/mob/camera/netrun_entity/entity = target
 		victim = entity.console
 		var/counterplay = program.role == NETRUN_PROGRAM_STUN ? "Оглушение ICE или выход из узла сорвут оглушение." : "Щит снизит урон; оглушение ICE или выход из узла сорвут атаку."
+		if(agent?.profile.illegal)
+			counterplay += " Чёрный ICE опасен для нейронного канала и тела!"
 		to_chat(entity, span_userdanger("[name] готовит [program.name]: до срабатывания [telegraph / (1 SECONDS)] с! [counterplay]"))
 	else if(istype(target, /datum/netrun_console))
 		victim = target
 		if(program.role == NETRUN_PROGRAM_TRACE)
 			pending_breach_ref = WEAKREF(victim.intrusion.breach)
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_ICE_CAST_STARTED, src, victim)
+	if(victim)
+		SEND_SIGNAL(victim, COMSIG_NETRUN_ICE_CAST_STARTED, src, victim)
 	SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
 	var/trace_advice = program.role == NETRUN_PROGRAM_TRACE ? " Прервите взлом или оглушите ICE, чтобы сорвать трассировку." : ""
 	victim?.log_line("[name] готовит [program.name], срабатывание через [telegraph / (1 SECONDS)] с.[trace_advice]", "bad")
@@ -450,6 +450,7 @@
 	cancel_program()
 	next_attack = world.time + 0.5 SECONDS
 	netrun_apply_program(program, target, null, damage_factor)
+	SEND_SIGNAL(src, COMSIG_NETRUN_ICE_PROGRAM_RESOLVED, program, target)
 	if(istype(target, /datum/netrun_console))
 		var/datum/netrun_console/victim = target
 		victim.finish_user_action()
@@ -609,6 +610,9 @@
 /// а при высокой трассировке с ближайшего реле/сервера выходит охотник.
 /datum/controller/subsystem/netrun/proc/raise_defenses(datum/netrun_console/console, datum/component/netrun_node/target)
 	if(QDELETED(target) || QDELETED(target.parent))
+		return
+	var/atom/host = target.parent
+	if(!host.netrun_reactive_defense_allowed())
 		return
 	if(target.get_security() >= 3 && ice_count(target) < 1)
 		spawn_ice(target, NETRUN_ICE_SENTRY)

@@ -442,6 +442,8 @@
 	var/datum/netrun_command/command = SSnetrun.get_command(command_id)
 	if(!command)
 		return reject_operation(operation, "Команда не найдена.")
+	if(!command.visible_to(src))
+		return reject_operation(operation, "Для команды нужна [command.required_daemon].exe.")
 	operation.label = command.display_name(node, netrun_command_arg(command_id))
 	packet_id = command_id == "packet_decrypt" && istext(packet_id) ? copytext_char(packet_id, 1, 65) : null
 	operation.capture(list("command" = command_id, "packet_id" = packet_id))
@@ -499,6 +501,10 @@
 		qdel(tree)
 		log_line("[node.address]: узел не отвечает.", "bad")
 		operation?.finish("rejected", "Узел не отвечает.")
+		return FALSE
+	if(!command.visible_to(src))
+		qdel(tree)
+		operation?.finish("rejected", "Необходимая программа больше не подключена.")
 		return FALSE
 	illegal = legit_node_level(node, tree) < command.access
 	qdel(tree)

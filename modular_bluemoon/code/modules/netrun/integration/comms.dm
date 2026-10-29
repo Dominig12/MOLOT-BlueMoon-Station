@@ -40,7 +40,7 @@
 
 /mob/camera/netrun_entity/Initialize(mapload, datum/component/netrun_node/start)
 	. = ..()
-	if(!has_messenger)
+	if(. == INITIALIZE_HINT_QDEL || !has_messenger)
 		return
 	messenger_pda = new(src)
 	messenger_action = new

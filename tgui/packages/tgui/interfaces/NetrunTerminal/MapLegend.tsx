@@ -1,6 +1,7 @@
 import { Button } from '../../components';
 import { GLYPH_INK_CSS, glyphSvgPaths } from './nodeGlyphs';
 import { edgeColor, edgeWidth } from './pixiPrimitives';
+import { PROCESS_GLYPHS, processSvgPaths } from './processGlyphs';
 import { ACCESS_COLORS, ACCESS_NAMES, FACTION_COLORS, NODE_NAMES, PACKET_COLORS, PACKET_NAMES } from './types';
 
 const hex = (value: number) => `#${value.toString(16).padStart(6, '0')}`;
@@ -34,12 +35,13 @@ const Dot = (props: { color: string; ring?: boolean }) => (
   </svg>
 );
 
-const Badge = (props: { shape: 'bots' | 'police' | 'entity' | 'ice' | 'fortress' }) => (
+const Badge = (props: { shape: 'bots' | 'police' | 'entity' | 'ice' | 'fortress' }) => props.shape !== 'fortress' ? (
+  <svg width="18" height="18" viewBox="-1.4 -1.4 2.8 2.8" aria-hidden="true">
+    <path d={processSvgPaths(props.shape).body} fill={hex(PROCESS_GLYPHS[props.shape].color)} stroke="#07151f" strokeWidth=".25" />
+    <path d={processSvgPaths(props.shape).ink} fill="none" stroke="#10212b" strokeWidth=".16" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+) : (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-    {props.shape === 'bots' && <rect x="2" y="3" width="12" height="10" rx="3" fill="#c9e66b" stroke="#1c2a10" />}
-    {props.shape === 'police' && <path d="M2 2H14V9L8 15L2 9Z" fill="#6fb6ff" stroke="#e8f4ff" />}
-    {props.shape === 'entity' && <rect x="2" y="3" width="12" height="10" rx="2" fill="#f19bdc" />}
-    {props.shape === 'ice' && <circle cx="8" cy="8" r="6" fill="none" stroke="#ef6b7c" strokeWidth="2" />}
     {props.shape === 'fortress' && <>
       <circle cx="8" cy="8" r="5.5" fill="none" stroke={FACTION_COLORS.station} strokeWidth="2" />
       <rect x="6.5" y="0.5" width="3" height="3" fill={FACTION_COLORS.station} />
@@ -82,7 +84,7 @@ export const MapLegend = (props: { types: string[]; entity: boolean; onClose: ()
         <span><LinkSample kind="endpoint" /> устройство ↔ APC</span>
         <span><LinkSample kind="apc" online={false} /> связь нарушена</span>
       </div>
-      <p className="netrun-map-legend__hint">Кабели устройств скрыты в обзоре. Включите их в фильтрах; связь выбранного устройства и путь отправленного пакета видны всегда.</p>
+      <p className="netrun-map-legend__hint">Тонкие кабели устройств видны по умолчанию; их можно скрыть в фильтрах. Яркий след показывает реальный путь отправленного пакета.</p>
     </section>
     <section>
       <h4>Пакеты в полёте</h4>

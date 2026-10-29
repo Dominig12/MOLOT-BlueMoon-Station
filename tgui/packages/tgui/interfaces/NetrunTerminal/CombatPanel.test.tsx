@@ -47,6 +47,13 @@ describe('Netrun combat contacts', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
+  test('BLACK ICE has a distinct combat identity and warns about neural harm', () => {
+    setup({ targets: [{ ...enemy, name: 'BLACK ICE', ice_kind: 'black' }] });
+    const panel = render(<CombatPanel />);
+    expect(panel.getByRole('img', { name: 'BLACK ICE · нелегальный' }).querySelector('.fa-skull-crossbones')).toBeTruthy();
+    expect(panel.getByText(/нейрообратная связь может повредить телу/)).toBeTruthy();
+  });
+
   test('incoming countdown is shown once in reserved session status, not repeated inside combat', () => {
     const { store, combat } = setup({
       incoming: [{ source: 'ICE-SENTRY', name: 'strike.exe', role: 'attack',

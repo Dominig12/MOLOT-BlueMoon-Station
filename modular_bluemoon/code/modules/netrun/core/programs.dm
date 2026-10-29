@@ -81,7 +81,7 @@
 	name = "sting"
 	desc = "Встроенный процессорный удар. Слабый, но бесплатный и не теряется."
 	role = NETRUN_PROGRAM_ATTACK
-	power = 16
+	power = 12
 	cooldown = 2 SECONDS
 	size = 0
 	trace = 2
@@ -105,7 +105,7 @@
 	name = "strike.exe"
 	desc = "Короткий пакетный удар по целостности процесса. Малая перезарядка."
 	role = NETRUN_PROGRAM_ATTACK
-	power = 18
+	power = 22
 	cooldown = 2 SECONDS
 	size = 2
 	trace = 3
@@ -116,7 +116,7 @@
 	name = "assault.exe"
 	desc = "Тяжёлый эксплойт: много урона, но долгая перезарядка и заметный след."
 	role = NETRUN_PROGRAM_ATTACK
-	power = 36
+	power = 40
 	cooldown = 5 SECONDS
 	size = 4
 	trace = 7

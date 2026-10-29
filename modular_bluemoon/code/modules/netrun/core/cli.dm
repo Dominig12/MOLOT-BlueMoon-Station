@@ -615,6 +615,27 @@
 	for(var/list/entry as anything in targets)
 		console.log_line("[entry["name"]] · [entry["integrity"]]/[entry["max_integrity"]] · [entry["ref"]][entry["unavailable_reason"] ? " · [entry["unavailable_reason"]]" : ""]")
 
+/datum/netrun_cli_command/pursue
+	id = "pursue"
+	args = "<REF цели|stop>"
+	desc = "Зафиксировать процесс и идти за ним по разрешённым узлам; атаки запускаются вручную."
+	category = "Действия"
+
+/datum/netrun_cli_command/pursue/execute(datum/netrun_console/console, list/words, raw)
+	if(length(words) < 2)
+		console.log_line("Использование: pursue <REF из targets> или pursue stop.", "average")
+		return
+	if(lowertext(words[2]) == "stop")
+		console.stop_pursuit()
+	else
+		console.start_pursuit(words[2])
+
+/datum/netrun_cli_command/pursue/completions(datum/netrun_console/console, partial)
+	. = list("stop")
+	for(var/list/target as anything in console.combat_targets())
+		if(target["kind"] in list("entity", "bot"))
+			. += target["ref"]
+
 /datum/netrun_cli_command/cat
 	id = "cat"
 	args = "<имя|#UID>"

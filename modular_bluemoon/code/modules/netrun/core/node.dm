@@ -73,7 +73,7 @@
 	if(!isatom(parent))
 		return COMPONENT_INCOMPATIBLE
 	src.node_type = node_type
-	src.command_ids = list("scan", "ping", "node_log", "packet_log", "packet_decrypt", "extract", "traceroute", "countertrace", "siphon", "spoof_log") | (command_ids || list())
+	src.command_ids = list("scan", "ping", "probe_location", "node_log", "packet_log", "packet_decrypt", "extract", "traceroute", "countertrace", "siphon", "spoof_log", "black_ice") | (command_ids || list())
 	base_security = security
 	src.required_access = required_access
 	// Firmware documentation is available even on endpoints without writable storage.
@@ -86,6 +86,7 @@
 	SSnetrun.get_topology()
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_NODE_REGISTERED, src)
 	join_network()
+	observe_location(TRUE)
 	notify_changed(NETRUN_CHANGED_BINDING)
 
 /datum/component/netrun_node/RegisterWithParent()
@@ -173,6 +174,7 @@
 		notify_changed(NETRUN_CHANGED_BINDING)
 
 /datum/component/netrun_node/proc/physical_turf()
+	RETURN_TYPE(/turf)
 	var/atom/host = parent
 	return host?.netrun_turf()
 
@@ -444,7 +446,7 @@
 	. = list()
 	for(var/command_id in all_command_ids())
 		var/datum/netrun_command/command = SSnetrun.get_command(command_id)
-		if(command)
+		if(command && command.visible_to(console))
 			. += list(command.ui_entry(src, console, command_id))
 	if(console.ui_commands)
 		console.ui_commands[address] = .
@@ -471,8 +473,8 @@
 
 /datum/component/netrun_node/proc/ui_entry(datum/netrun_console/console)
 	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
-	var/turf/T = physical_turf()
-	var/datum/component/netrun_node/uplink = uplink_node()
+	uplink_node()
+	var/turf/T = observe_location()
 	// Bots are entities for routing and combat, but the map marks them separately.
 	var/residents = 0
 	var/bots = 0
@@ -501,8 +503,9 @@
 		"police" = police,
 		"ice" = LAZYLEN(netrun_ice),
 		"active" = world.time - last_activity < limits.node_activity_duration,
-		"uplink" = uplink?.address,
-		"apc" = bound_apc?.address,
+		"uplink" = last_known_apc,
+		"apc" = last_known_apc,
+		"last_seen" = last_seen_at,
 		"fortress" = fortress?.map_summary(),
 	)
 	if(console.origin == NETRUN_ORIGIN_ENTITY && istype(console.host, /mob/camera/netrun_entity))

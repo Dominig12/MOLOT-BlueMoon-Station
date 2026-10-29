@@ -3,7 +3,7 @@ import { CSSProperties, memo, useEffect, useState } from 'react';
 import { Box, Button, Icon } from '../../components';
 import { ActionTooltip } from './CommandTooltip';
 import { EntityAvatar } from './EntityAvatar';
-import { BotAvatar, botKindLabel, factionLabel } from './EntityContacts';
+import { BlackIceWarning, BotAvatar, botKindLabel, factionLabel, IceAvatar, iceKindLabel } from './EntityContacts';
 import {
   CombatTarget,
   FACTION_COLORS,
@@ -59,6 +59,8 @@ const TargetIcon = ({ target }: { target: CombatTarget }) => {
       return <EntityAvatar avatar={target.persona?.avatar} accent={target.persona?.accent} size={30} />;
     case 'bot':
       return <BotAvatar kind={target.bot_kind} faction={target.faction} size={30} />;
+    case 'ice':
+      return <IceAvatar kind={target.ice_kind} size={30} />;
     case 'fortress':
       return (<Icon name={FORTRESS_MODULE_ICONS[target.module ?? ''] || 'chess-rook'} mr={1}
         color={FACTION_COLORS[target.faction ?? ''] || THEME.muted} />);
@@ -68,6 +70,7 @@ const TargetIcon = ({ target }: { target: CombatTarget }) => {
 };
 
 const targetRole = (target: CombatTarget) => {
+  if (target.kind === 'ice' && target.ice_kind) { return iceKindLabel(target.ice_kind); }
   if (target.kind === 'bot') {
     return [botKindLabel(target.bot_kind), factionLabel('bot', target.faction)].filter(Boolean).join(' · ');
   }
@@ -112,6 +115,7 @@ const TargetCard = (props: {
         {selected ? <Box inline ml={1} color={THEME.accent}>● цель</Box> : null}
       </Box>
       {!!role && <Box fontSize="11px" color={FACTION_COLORS[t.faction ?? ''] || THEME.muted}>{role}</Box>}
+      {t.kind === 'ice' && t.ice_kind === 'black' && <BlackIceWarning />}
       {siege && (
         <Box fontSize="11px" color={THEME.muted}>
           Укрепления соседнего узла: удар идёт через канал осады.

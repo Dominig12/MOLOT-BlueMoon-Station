@@ -34,6 +34,8 @@
 
 /// Describe the viewer's actual risk without granting access to undiscovered residents.
 /datum/netrun_console/proc/ice_contact_threat(datum/netrun_ice/ice, datum/component/netrun_node/node)
+	if(ice.agent?.profile.illegal)
+		return "Нелегальный BLACK ICE: доступ USER не защищает. Нейронная обратная связь повреждает тело при нейроподключении. Щит ослабляет удар, выход из узла или отмена взлома срывают доставку."
 	var/mob/camera/netrun_entity/entity = combat_self()
 	if(!istype(entity))
 		return "Атакует процессы без доступа ПОЛЬЗОВАТЕЛЯ. Трассирует активный взлом своего узла или ЛВС."

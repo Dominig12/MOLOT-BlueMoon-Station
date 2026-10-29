@@ -22,6 +22,11 @@
 	var/read_only = FALSE
 	/// Interface section that renders this command instead of the generic list (e.g. "fortress").
 	var/group
+	/// Optional executable requirement, shared by cards and late delivery checks.
+	var/required_daemon
+
+/datum/netrun_command/proc/visible_to(datum/netrun_console/console)
+	return !required_daemon || !!console.daemon_bonus(required_daemon)
 
 /// Выполнить команду. Возвращает текст результата или null при неудаче (причину пишет в консоль сам)
 /datum/netrun_command/proc/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
@@ -47,6 +52,8 @@
 	var/reason
 	if(console.is_locked())
 		reason = "Сетевой клиент заблокирован."
+	else if(required_daemon && !console.daemon_bonus(required_daemon))
+		reason = "Нужна программа [required_daemon].exe."
 	else if(!reachable)
 		reason = "Нет действующего маршрута к узлу."
 	else if(!online)
@@ -162,6 +169,8 @@
 	works_offline = TRUE
 
 /datum/netrun_command/scan/execute(datum/component/netrun_node/node, datum/netrun_console/console)
+	node.observe_location(TRUE)
+	node.queue_presentation(NETRUN_CHANGED_STATE)
 	var/atom/A = node.parent
 	var/list/lines = list("[node.get_name()] [node.address] — [node.is_online() ? "в сети" : "НЕ ОТВЕЧАЕТ"], защита [node.get_security()]")
 	lines += A.netrun_status()

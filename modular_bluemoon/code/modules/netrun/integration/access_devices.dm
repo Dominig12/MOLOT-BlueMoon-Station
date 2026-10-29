@@ -65,7 +65,7 @@
 	return owner && netrun_console_owner(source) == owner ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_NONE
 
 /obj/item/organ/cyberimp/brain/netlink/netrun_online(remote = TRUE)
-	return owner && owner.stat != DEAD && !netrun_suppressed()
+	return owner && owner.stat != DEAD && !netrun_suppressed() && owner.netrun_network_enabled()
 
 /obj/item/organ/cyberimp/brain/netlink/netrun_name()
 	return "[owner ? owner.name : name] — нейролинк"

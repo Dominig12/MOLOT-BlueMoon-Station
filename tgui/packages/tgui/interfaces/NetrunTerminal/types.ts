@@ -103,6 +103,22 @@ export type Storage = {
   capacity: number;
 };
 
+export type AgentBuilder = {
+  template_uid: string;
+  profile: string;
+  name: string;
+  description: string;
+  capacity: number;
+  base_size: number;
+  defaults: { id: string; name: string; size: number }[];
+  programs: { uid: string; name: string; program_id: string; size: number }[];
+  orders: { id: string; name: string }[];
+  avatars: { id: string; name: string }[];
+  accents: { id: string; name: string; color: string }[];
+  themes: string[];
+  max_programs?: number;
+};
+
 export type NodeInteraction = {
   id: string;
   name: string;
@@ -110,6 +126,8 @@ export type NodeInteraction = {
   enabled: boolean;
   reason?: string | null;
 };
+
+export type IceKind = 'sentry' | 'hunter' | 'black';
 
 export type EntityContact = {
   ref: string;
@@ -127,7 +145,7 @@ export type EntityContact = {
   can_signal: boolean;
   can_message: boolean;
   threat?: string | null;
-  ice_kind?: 'sentry' | 'hunter';
+  ice_kind?: IceKind;
   persona?: Persona;
 };
 
@@ -241,6 +259,7 @@ export type CombatTarget = {
   name: string;
   kind: 'entity' | 'ice' | 'bot' | 'fortress';
   bot_kind?: string | null;
+  ice_kind?: IceKind;
   faction?: NetFaction | null;
   /** Fortress module kind for structure targets. */
   module?: string | null;
@@ -383,6 +402,8 @@ export type NetrunData = {
     width?: number;
     height?: number;
     source: 'local' | 'shard';
+    can_import?: boolean;
+    agent_builder?: AgentBuilder | null;
   }) | null;
 };
 
@@ -634,6 +655,9 @@ export const BOT_NAMES: Record<string, string> = {
   police: 'Сетевая полиция',
   mender: 'Агент-ремонтник',
   sentinel: 'Агент-страж',
+  surveyor: 'Агент-разведчик',
+  collector: 'Агент-сборщик',
+  interceptor: 'Агент-перехватчик',
 };
 
 export const BOT_ICONS: Record<string, string> = {
@@ -642,6 +666,9 @@ export const BOT_ICONS: Record<string, string> = {
   police: 'shield-halved',
   mender: 'screwdriver-wrench',
   sentinel: 'tower-observation',
+  surveyor: 'compass',
+  collector: 'box-archive',
+  interceptor: 'crosshairs',
 };
 
 export const FACTION_COLORS: Record<string, string> = {

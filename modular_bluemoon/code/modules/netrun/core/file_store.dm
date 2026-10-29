@@ -192,6 +192,20 @@
 	var/datum/netrun_file_store/source = store_for(file)
 	return source?.delete_file(file) || FALSE
 
+/// Explicit local import resolves the live physical disk, never a cached UI
+/// entry. A failed copy/move preserves both the removable file and its UID.
+/datum/netrun_inventory/proc/import_from_shard(uid, move = FALSE)
+	RETURN_TYPE(/datum/netrun_file)
+	if(QDELETED(shard) || QDELETED(shard.file_store) || QDELETED(local_store))
+		return null
+	var/datum/netrun_file/file = shard.file_store.find_file(uid)
+	if(QDELETED(file))
+		return null
+	var/datum/netrun_file/imported = shard.file_store.transfer_to(local_store, file, move)
+	if(imported)
+		selected_file_uid = imported.uid
+	return imported
+
 /datum/netrun_inventory/proc/set_shard(obj/item/netrun_shard/new_shard)
 	if(shard == new_shard)
 		return

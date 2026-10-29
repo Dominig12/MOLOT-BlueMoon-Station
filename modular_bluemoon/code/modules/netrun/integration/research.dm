@@ -3,7 +3,7 @@
 	display_name = "Сетевая инфраструктура"
 	description = "Проводные терминалы, серверы данных и инструменты для работы с локальными сетями станции."
 	prereq_ids = list("comptech", "datatheory")
-	design_ids = list("netrun_terminal", "netrun_server", "netrun_shard", "netrun_deck", "netrun_daemon_buffer", "netrun_daemon_autobreach", "netrun_daemon_forge", "netrun_agent_mender")
+	design_ids = list("netrun_terminal", "netrun_server", "netrun_shard", "netrun_deck", "netrun_daemon_buffer", "netrun_daemon_autobreach", "netrun_daemon_forge", "netrun_agent_mender", "netrun_combat_suite")
 	research_costs = list(TECHWEB_POINT_TYPE_GENERIC = 2000)
 
 /datum/techweb_node/netrunning_neural
@@ -11,7 +11,7 @@
 	display_name = "Нейросетевые интерфейсы"
 	description = "Прямое подключение нервной системы к сети и выращивание самообучающихся сетевых процессов."
 	prereq_ids = list("netrunning", "cyber_implants")
-	design_ids = list("ci-netlink", "netrun_seed", "netrun_deck_advanced", "netrun_daemon_icepick", "netrun_daemon_cloak", "netrun_agent_sentinel")
+	design_ids = list("ci-netlink", "netrun_seed", "netrun_deck_advanced", "netrun_daemon_icepick", "netrun_daemon_cloak", "netrun_agent_sentinel", "netrun_agent_workshop", "netrun_assault_suite")
 	research_costs = list(TECHWEB_POINT_TYPE_GENERIC = 4000)
 
 /datum/design/board/netrun_terminal
@@ -118,5 +118,31 @@
 	build_type = PROTOLATHE
 	materials = list(/datum/material/glass = 600, /datum/material/silver = 200, /datum/material/gold = 400, /datum/material/bluespace = 100)
 	build_path = /obj/item/netrun_shard/cloak
+	category = list("Computer Parts")
+	departmental_flags = DEPARTMENTAL_FLAG_SCIENCE
+
+/datum/design/netrun_combat_suite
+	name = "Network Defense Suite"
+	desc = "Базовые программы сетевой защиты: strike.exe, barrier.exe, patch.exe."
+	id = "netrun_combat_suite"
+	build_type = PROTOLATHE
+	materials = list(/datum/material/glass = 700, /datum/material/silver = 400, /datum/material/gold = 300)
+	build_path = /obj/item/netrun_shard/combat
+	category = list("Computer Parts")
+	departmental_flags = DEPARTMENTAL_FLAG_ENGINEERING | DEPARTMENTAL_FLAG_SCIENCE
+
+/obj/item/netrun_shard/assault_suite
+	name = "data shard (advanced network defense)"
+	desc = "Тяжёлый удар и программа прерывания враждебных процессов."
+	icon_state = "datadisk3"
+	preload_programs = list("assault", "blackout", "fortify")
+
+/datum/design/netrun_assault_suite
+	name = "Advanced Network Defense Suite"
+	desc = "Программы assault.exe, blackout.exe и fortify.exe."
+	id = "netrun_assault_suite"
+	build_type = PROTOLATHE
+	materials = list(/datum/material/glass = 900, /datum/material/gold = 600, /datum/material/diamond = 300)
+	build_path = /obj/item/netrun_shard/assault_suite
 	category = list("Computer Parts")
 	departmental_flags = DEPARTMENTAL_FLAG_SCIENCE

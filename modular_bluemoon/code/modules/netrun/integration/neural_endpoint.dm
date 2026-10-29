@@ -35,6 +35,29 @@
 	. = ..()
 	src.interface = interface
 	AddComponent(/datum/component/netrun_node, NETRUN_NODE_NEURAL, list("neural_status", "neural_notify", "neural_data", "neural_mark", "neural_toggle"), 3, list())
+	refresh_cyber_defense()
+
+/// A display is a third endpoint on the wearer's uplink, with the same owned guard policy.
+/obj/effect/netrun_endpoint/neural/proc/refresh_cyber_defense(reconnect = FALSE)
+	var/datum/component/netrun_node/node = GetComponent(/datum/component/netrun_node)
+	var/mob/living/carbon/wearer = interface?.host_mob
+	if(!istype(wearer) || !wearer.netrun_has_cyber_uplink())
+		var/datum/component/netrun_cyber_guard/retired = GetComponent(/datum/component/netrun_cyber_guard)
+		QDEL_NULL(retired)
+		node?.notify_changed(NETRUN_CHANGED_STATE)
+		return
+	var/datum/component/netrun_cyber_guard/defense = LoadComponent(/datum/component/netrun_cyber_guard, node)
+	if(reconnect)
+		defense.reconnect()
+	node.notify_changed(NETRUN_CHANGED_STATE)
+
+/obj/effect/netrun_endpoint/neural/netrun_reactive_defense_allowed()
+	return !iscarbon(interface?.host_mob)
+
+/obj/effect/netrun_endpoint/neural/publish_netrun_security_event(datum/netrun_incident/incident)
+	var/datum/component/netrun_node/node = GetComponent(/datum/component/netrun_node)
+	node?.wake_defenses()
+	interface?.host_mob?.publish_netrun_security_event(incident)
 
 /obj/effect/netrun_endpoint/neural/Destroy()
 	interface = null
@@ -45,6 +68,9 @@
 
 /obj/effect/netrun_endpoint/neural/netrun_online(remote = TRUE)
 	return !QDELETED(interface) && interface.host_mob && interface.host_mob.netrun_online(remote)
+
+/obj/effect/netrun_endpoint/neural/netrun_network_enabled()
+	return !QDELETED(interface) && interface.host_mob?.netrun_network_enabled()
 
 /obj/effect/netrun_endpoint/neural/netrun_status()
 	if(QDELETED(interface))

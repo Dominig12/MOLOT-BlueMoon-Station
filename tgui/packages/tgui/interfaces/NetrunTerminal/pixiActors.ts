@@ -5,7 +5,8 @@ import { boxesIntersect, GraphBox, GraphOverlay, markerColor, markerScale, physi
 import type { GraphScene, PlacedNode } from './graphScene';
 import type { GraphPoint } from './mapLayout';
 import { drawBody, drawGlyph, GLYPH_MIN_ZOOM, glyphRadius } from './nodeGlyphs';
-import { destroyDisplay, edgeColor, edgeWidth, pixiColor, PixiLibrary, segmentPath, strokeLod } from './pixiPrimitives';
+import { destroyDisplay, edgeAlpha, edgeColor, edgeWidth, pixiColor, PixiLibrary, segmentPath, strokeLod } from './pixiPrimitives';
+import { drawProcessGlyph } from './processGlyphs';
 import { FACTION_COLORS, NetEdge, NetEvent, PACKET_COLORS } from './types';
 
 type Actor = { group: Container; body: Graphics; marks: Graphics; labels: Text[]; node: PlacedNode;
@@ -17,11 +18,13 @@ type Traffic = { born: number; point: GraphPoint; tint: number; segments: Segmen
 type Pulse = { born: number; point: GraphPoint; tint: number };
 /** One packet owns one clock and route; a terminal receipt settles its existing flight. */
 type Flight = { key: string; phase: 'send' | 'done' | 'fail'; born: number; duration: number;
+  travelStart: number; travelDuration: number; travelFrom: number; drawn: boolean;
   until: number; segments: Segment[]; end: GraphPoint | null; endAddress: string | null; tint: number; own: boolean };
 const NO_BOX: GraphBox = { left: -Infinity, right: Infinity, top: -Infinity, bottom: Infinity };
 const ARRIVAL_MS = 900;
 const OUTCOME_MS = 1200;
 const MAX_FLIGHTS = 48;
+const RECEIPT_TRAVEL_MS = 650;
 const DONE_TINT = 0x5bdab1;
 const FAIL_TINT = pixiColor(PACKET_COLORS.fail, 0xff6470);
 const sameOverlayData = (a: GraphOverlay | null, b: GraphOverlay) => a
@@ -77,6 +80,7 @@ export class PixiActors {
   private traffic: Traffic[] = [];
   private pulses: Pulse[] = [];
   private flights = new Map<string, Flight>();
+  private drawnPackets = new Set<string>();
   private zoom = 1;
   private scale = 1;
   private lod = 1;
@@ -202,7 +206,7 @@ export class PixiActors {
     link.graphic.clear();
     segmentPath(link.graphic, from, to, edge.online === false ? 8 * this.lod : 0);
     link.graphic.stroke({ color: edgeColor(edge.kind, edge.online !== false), width: edgeWidth(edge.kind) * this.lod,
-      alpha: edge.online === false ? .22 : edge.kind === 'endpoint' ? .28 : .48 });
+      alpha: edgeAlpha(edge.kind, edge.online !== false) });
   }
 
   /** Bots, police and fortresses decorate the live node; bodies of static nodes stay in scenery. */
@@ -235,35 +239,32 @@ export class PixiActors {
       if (selected) { marks.circle(0, 0, radius + 12).stroke({ color: 0x70e6cd, width: 1.2, alpha: .3 }); }
     }
     if (node.ice) {
-      marks.circle(0, 0, (radius + 10) * scale).stroke({ color: 0xef6b7c, width: 1.6 * scale, alpha: .8 });
-      marks.circle(-(radius + 4) * scale, -(radius + 4) * scale, (this.detailed ? 8 : 4) * scale).fill({ color: 0xff6470 });
-      marks.circle(0, 0, (radius + 15) * scale).stroke({ color: 0xff6470, width: Math.min(2.5, 1.1 * scale), alpha: .28 });
+      marks.circle(0, 0, (radius + 10) * scale).stroke({ color: 0x101721, width: 4.4 * scale, alpha: .9 });
+      marks.circle(0, 0, (radius + 10) * scale).stroke({ color: 0xff8996, width: 2 * scale, alpha: .95 });
+      drawProcessGlyph(marks, 'ice', -(radius + 8) * scale, -(radius + 7) * scale, (this.detailed ? 10 : 8) * scale);
     } else if (node.active && (this.detailed || selected || hovered)) {
       marks.circle(0, 0, (radius + 5) * scale).stroke({ color: 0xffc26b, width: 1.6 * scale, alpha: .65 });
     }
     if (node.entities) {
-      marks.roundRect((radius - 2) * scale, -(radius + 10) * scale, (this.detailed ? 16 : 7) * scale, (this.detailed ? 13 : 7) * scale, 2 * scale).fill({ color: 0xf19bdc });
+      drawProcessGlyph(marks, 'entity', (radius + 9) * scale, -(radius + 7) * scale, (this.detailed ? 10 : 8) * scale);
     }
-    if (node.bots) {
-      marks.roundRect((radius - 2) * scale, (radius - 3) * scale, (this.detailed ? 16 : 7) * scale, (this.detailed ? 13 : 7) * scale, 3 * scale)
-        .fill({ color: 0xc9e66b }).stroke({ color: 0x1c2a10, width: scale, alpha: .8 });
+    if (node.bots && !(node.police && node.bots === 1)) {
+      drawProcessGlyph(marks, 'bots', (radius + 9) * scale, (radius + 9) * scale, (this.detailed ? 10 : 8) * scale);
     }
     if (node.police) {
-      // Shield badge: police presence reads at a glance even at overview zoom.
-      const s = scale * (this.detailed ? 1 : .6), x = -(radius + 6) * scale, y = (radius - 2) * scale;
-      marks.moveTo(x, y).lineTo(x + 14 * s, y).lineTo(x + 14 * s, y + 8 * s).lineTo(x + 7 * s, y + 15 * s).lineTo(x, y + 8 * s).closePath()
-        .fill({ color: 0x6fb6ff }).stroke({ color: 0xe8f4ff, width: scale, alpha: .9 });
+      drawProcessGlyph(marks, 'police', -(radius + 9) * scale, (radius + 9) * scale, (this.detailed ? 10 : 8) * scale);
     }
-    const badges = this.detailed ? [node.ice ? { value: String(node.ice), x: -(radius + 4) * scale, y: -(radius + 4) * scale, color: 0x2d1017 } : null,
-      node.entities ? { value: String(node.entities), x: (radius + 6) * scale, y: -(radius + 4) * scale, color: 0x2d1026 } : null,
-      node.bots ? { value: String(node.bots), x: (radius + 6) * scale, y: (radius + 3) * scale, color: 0x1c2a10 } : null].filter(Boolean) : [];
+    const badges = this.detailed ? [node.ice > 1 ? { value: String(node.ice), x: -(radius + 16) * scale, y: -(radius + 17) * scale } : null,
+      node.entities > 1 ? { value: String(node.entities), x: (radius + 17) * scale, y: -(radius + 17) * scale } : null,
+      node.bots > 1 ? { value: String(node.bots), x: (radius + 17) * scale, y: (radius + 19) * scale } : null].filter(Boolean) : [];
     for (let i = 0; i < badges.length; i++) {
       const badge = badges[i]; let label = actor.labels[i];
       if (!label) {
-        label = new this.pixi.Text({ text: '', style: { fontFamily: 'monospace', fontSize: 9, fill: badge.color } });
+        label = new this.pixi.Text({ text: '', style: { fontFamily: 'monospace', fontSize: 10, fontWeight: 'bold', fill: 0xf3f8ff,
+          stroke: { color: 0x07151f, width: 3 } } });
         label.anchor.set(.5); actor.group.addChild(label); actor.labels.push(label);
       }
-      label.text = badge.value; label.style.fill = badge.color; label.position.set(badge.x, badge.y); label.scale.set(1 / this.zoom); label.visible = true;
+      label.text = badge.value; label.position.set(badge.x, badge.y); label.scale.set(1 / this.zoom); label.visible = true;
     }
     for (let i = badges.length; i < actor.labels.length; i++) { actor.labels[i].visible = false; }
   }
@@ -313,19 +314,28 @@ export class PixiActors {
       const phase = event.phase === 'done' || event.phase === 'fail' ? event.phase : 'send';
       const key = event.id, previous = this.flights.get(key);
       if (previous && (previous.phase === phase || phase === 'send')) { continue; }
+      if (!previous && phase === 'send' && this.drawnPackets.has(key)) { continue; }
       const born = now - Math.max(0, event.age) * 1000;
       const end = this.scene!.byAddress.get(event.to) || null;
       // An explicit route is authoritative, including redacted/missing hops.
-      // Legacy packets without route data can still use their real visible adjacency.
+      // Without route data only an actual direct edge is known; never invent a BFS route.
       const segments = event.route ? this.segments(event.route, true)
-        : previous?.segments || this.eventPath(event.from, event.to);
+        : previous?.segments || this.segments([event.from, event.to]);
       if (!segments.length && !end) { continue; }
       const duration = phase === 'send' ? Math.max(1, (event.duration || 0) * 1000) : OUTCOME_MS;
       const remaining = phase === 'send' ? (event.remaining_ms ?? Math.max(0, duration - (now - born))) + ARRIVAL_MS
         : Math.max(0, OUTCOME_MS - (now - born));
       const until = now + Math.min(remaining, event.lifetime_ms ?? remaining);
       if (until <= now) { continue; }
+      // A receipt can arrive before the browser rendered its dispatch. Give it
+      // one bounded traversal of the disclosed path, within the server expiry.
+      // An already drawn dispatch continues from its current position instead.
+      const travelFrom = previous?.drawn && previous.phase === 'send'
+        ? Math.min(1, Math.max(0, (now - previous.born) / previous.duration)) : this.drawnPackets.has(key) ? 1 : 0;
+      const travelDuration = phase === 'send' ? duration : segments.length && travelFrom < 1
+        ? Math.min(RECEIPT_TRAVEL_MS * (1 - travelFrom), Math.max(0, until - now - 250)) : 0;
       this.flights.set(key, { key, phase, born, duration, until, segments,
+        travelStart: phase === 'send' ? born : now, travelDuration, travelFrom: phase === 'send' ? 0 : travelFrom, drawn: false,
         end: end ? physicalPoint(end) : null, endAddress: event.to,
         tint: phase === 'send' ? packetTint(event) : phase === 'done' ? DONE_TINT : FAIL_TINT, own: !!event.own });
     }
@@ -450,15 +460,20 @@ export class PixiActors {
   }
 
   private drawFlight(flight: Flight, now: number) {
-    const elapsed = now - flight.born;
     if (now >= flight.until) { return false; }
+    flight.drawn = true;
+    this.drawnPackets.add(flight.key);
+    if (this.drawnPackets.size > MAX_FLIGHTS * 3) { this.drawnPackets.delete(this.drawnPackets.values().next().value); }
+    const travelling = now < flight.travelStart + flight.travelDuration;
+    const elapsed = flight.phase === 'send' ? now - flight.born
+      : now - (flight.travelDuration ? flight.travelStart + flight.travelDuration : flight.born);
     // The whole actual dispatch route is visible before delivery. A very fast
     // packet first observed with its outcome still leaves this completed path.
-    const fade = flight.phase === 'send' ? 1 : Math.max(0, 1 - elapsed / flight.duration);
+    const fade = flight.phase === 'send' || travelling ? 1 : Math.max(0, 1 - elapsed / flight.duration);
     for (const segment of flight.segments) { segmentPath(this.effects, segment.from, segment.to, segment.jump ? 8 * this.lod : 0); }
     if (flight.segments.length) { this.effects.stroke({ color: flight.tint, width: (flight.own ? 3.2 : 1.8) * this.lod,
       alpha: (flight.own ? .62 : .25) * fade }); }
-    if (flight.phase !== 'send') {
+    if (flight.phase !== 'send' && (!travelling || this.reducedMotion)) {
       if (elapsed >= flight.duration) { return false; }
       if (!flight.end) { return flight.segments.length > 0; }
       const progress = Math.max(0, elapsed / flight.duration);
@@ -479,8 +494,9 @@ export class PixiActors {
       if (flight.end) { this.effects.circle(flight.end.px, flight.end.py, 22).stroke({ color: flight.tint, width: 1.5, alpha: .65 }); }
       return true;
     }
-    if (elapsed < flight.duration && flight.segments.length) {
-      const progress = Math.max(0, elapsed / flight.duration), tail = Math.max(0, progress - .16);
+    if (travelling && flight.segments.length) {
+      const progress = flight.travelFrom + (1 - flight.travelFrom) * Math.max(0, (now - flight.travelStart) / flight.travelDuration);
+      const tail = Math.max(flight.travelFrom, progress - .16);
       // Comet tail: the travelled stretch fades behind the packet.
       const head = packetPoint(flight.segments, progress), back = packetPoint(flight.segments, tail);
       if (head && back) {
@@ -574,5 +590,5 @@ export class PixiActors {
     }
     return best;
   }
-  destroy() { this.nodes.clear(); this.links.clear(); this.traffic = []; this.pulses = []; this.flights.clear(); this.scene = null; this.overlay = null; destroyDisplay(this.world); }
+  destroy() { this.nodes.clear(); this.links.clear(); this.traffic = []; this.pulses = []; this.flights.clear(); this.drawnPackets.clear(); this.scene = null; this.overlay = null; destroyDisplay(this.world); }
 }

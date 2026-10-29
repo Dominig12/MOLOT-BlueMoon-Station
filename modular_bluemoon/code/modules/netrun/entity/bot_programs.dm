@@ -18,6 +18,14 @@
 	var/accent = "silver"
 	var/tagline = ""
 	var/console_type = /datum/netrun_console/entity/bot
+	/// Capabilities are assembled from data; new behavior does not change the brain dispatcher.
+	var/list/behavior_modules = list(
+		/datum/netrun_entity_module/bot_lifecycle,
+		/datum/netrun_entity_module/bot_stun,
+		/datum/netrun_entity_module/bot_local/combat,
+		/datum/netrun_entity_module/bot_return_wait,
+		/datum/netrun_entity_module/bot_goals)
+	var/list/extra_behavior_modules = list()
 	var/think_idle = 4 SECONDS
 	var/think_busy = 2 SECONDS
 	var/think_combat = 1.2 SECONDS
@@ -150,6 +158,7 @@
 	accent = "mint"
 	tagline = "обслуживание сети"
 	console_type = /datum/netrun_console/entity/bot/custodian
+	extra_behavior_modules = list(/datum/netrun_entity_module/bot_local/watch)
 	think_idle = 6 SECONDS
 
 /datum/netrun_bot_program/custodian/patrol_networks(datum/netrun_bot_brain/brain)
@@ -166,9 +175,6 @@
 			brain.push_goal(new /datum/netrun_bot_goal/repair(brain, node))
 			return
 	brain.push_goal(new /datum/netrun_bot_goal/patrol(brain, scope))
-
-/datum/netrun_bot_program/custodian/on_spawn(mob/camera/netrun_entity/bot/bot)
-	bot.brain.watch_for_rogues = TRUE
 
 // MARK: Агенты игроков
 
@@ -223,6 +229,79 @@
 		return
 	brain.push_goal(new /datum/netrun_bot_goal/guard(brain, post))
 
+/// A private surveyor travels through the owner's actual grants and saves only
+/// responses to delivered scan commands. It has no station inspection authority.
+/datum/netrun_bot_program/surveyor
+	id = "surveyor"
+	name = "Агент-разведчик"
+	desc = "Патрулирует доступные узлы и сохраняет результаты штатного сканирования в своей памяти."
+	faction = NETRUN_FACTION_OWNER
+	max_integrity = 70
+	storage = 8 * NETRUN_STORAGE_SCALE
+	programs = list("blackout", "patch")
+	name_prefix = "SURVEY"
+	avatar = "moth"
+	accent = "cyan"
+	tagline = "наблюдает и записывает"
+	flee_ratio = 0.6
+	file_size = 4
+
+/datum/netrun_bot_program/surveyor/on_spawn(mob/camera/netrun_entity/bot/bot)
+	bot.brain.order = "patrol"
+
+/datum/netrun_bot_program/surveyor/plan(datum/netrun_bot_brain/brain)
+	if(brain.order == "guard")
+		brain.push_goal(new /datum/netrun_bot_goal/guard(brain, brain.post_node()))
+		return
+	var/datum/component/netrun_node/target = brain.patrol_destination(patrol_networks(brain))
+	if(target)
+		brain.push_goal(new /datum/netrun_bot_goal/survey(brain, target))
+	else
+		brain.push_goal(new /datum/netrun_bot_goal/guard(brain, brain.post_node()))
+
+/// A private collector reuses ordinary salvage recovery and real memory limits.
+/datum/netrun_bot_program/collector
+	id = "collector"
+	name = "Агент-сборщик"
+	desc = "Ищет доступные обломки программ, собирает настоящие файлы и возвращает добычу при отзыве."
+	faction = NETRUN_FACTION_OWNER
+	max_integrity = 80
+	storage = 12 * NETRUN_STORAGE_SCALE
+	programs = list("barrier", "patch")
+	name_prefix = "COLLECT"
+	avatar = "orb"
+	accent = "amber"
+	tagline = "ничего не теряет"
+	flee_ratio = 0.65
+	file_size = 5
+
+/datum/netrun_bot_program/collector/on_spawn(mob/camera/netrun_entity/bot/bot)
+	bot.brain.order = "patrol"
+
+/datum/netrun_bot_program/collector/plan(datum/netrun_bot_brain/brain)
+	if(brain.order == "guard")
+		brain.push_goal(new /datum/netrun_bot_goal/guard(brain, brain.post_node()))
+		return
+	var/datum/component/netrun_node/salvage = brain.find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_has_salvage))
+	if(salvage)
+		brain.push_goal(new /datum/netrun_bot_goal/salvage(brain, salvage))
+	else
+		..()
+
+/// A different loadout shares sentinel goals, faction policy and combat modules.
+/datum/netrun_bot_program/sentinel/interceptor
+	id = "interceptor"
+	name = "Агент-перехватчик"
+	desc = "Страж с усиленной целостностью и оглушением: удерживает пост или патрулирует по приказу владельца."
+	max_integrity = 150
+	storage = 6 * NETRUN_STORAGE_SCALE
+	programs = list("blackout", "strike", "fortify")
+	name_prefix = "INTERCEPT"
+	avatar = "eye"
+	accent = "mint"
+	tagline = "перекрывает проход"
+	file_size = 5
+
 /obj/item/netrun_shard/agent_sentinel
 	name = "data shard (sentinel.bot)"
 	desc = "Шард с программой агента-стража. Запустите её из памяти сетевого клиента."
@@ -240,6 +319,27 @@
 /obj/item/netrun_shard/agent_mender/Initialize(mapload)
 	. = ..()
 	file_store.insert(netrun_bot_file(NETRUN_BOT_MENDER), TRUE)
+
+/// Printable templates enable the in-world agent builder on any local client.
+/obj/item/netrun_shard/agent_workshop
+	name = "data shard (agent workshop)"
+	desc = "Шаблоны частных агентов: страж, ремонтник, разведчик, сборщик и перехватчик. Скопируйте шаблон в свою память или создайте из него собственную конфигурацию."
+	icon_state = "datadisk3"
+
+/obj/item/netrun_shard/agent_workshop/Initialize(mapload)
+	. = ..()
+	for(var/id in list(NETRUN_BOT_SENTINEL, NETRUN_BOT_MENDER, "surveyor", "collector", "interceptor"))
+		file_store.insert(netrun_bot_file(id), TRUE)
+
+/datum/design/netrun_agent_workshop
+	name = "Agent Workshop Templates"
+	desc = "Шард с пятью шаблонами частных агентов для настройки поведения, программ и персоны."
+	id = "netrun_agent_workshop"
+	build_type = PROTOLATHE
+	materials = list(/datum/material/glass = 1200, /datum/material/gold = 500, /datum/material/silver = 500)
+	build_path = /obj/item/netrun_shard/agent_workshop
+	category = list("Computer Parts")
+	departmental_flags = DEPARTMENTAL_FLAG_ENGINEERING | DEPARTMENTAL_FLAG_SCIENCE
 
 /datum/design/netrun_agent_mender
 	name = "Mender Agent Program"

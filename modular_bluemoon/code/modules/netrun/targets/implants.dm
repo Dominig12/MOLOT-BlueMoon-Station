@@ -13,6 +13,8 @@
 /obj/item/organ/Remove(special)
 	var/mob/living/carbon/prev_owner = owner
 	. = ..()
+	var/datum/component/netrun_cyber_guard/defense = GetComponent(/datum/component/netrun_cyber_guard)
+	QDEL_NULL(defense)
 	if(prev_owner && !QDELETED(prev_owner))
 		prev_owner.netrun_refresh_cyber_node(removing = src)
 
@@ -30,12 +32,12 @@
 
 /// Узел носителя: есть, пока есть кибернетика; список команд - из органов
 /mob/living/carbon/proc/netrun_refresh_cyber_node(obj/item/organ/removing)
+	netrun_rebuild_cyber_uplinks(removing)
 	var/list/command_ids = list()
-	var/has_cyber = FALSE
+	var/has_cyber = netrun_has_cyber_uplink(removing)
 	for(var/obj/item/organ/organ as anything in internal_organs)
-		if(organ == removing || !organ.netrun_is_cyber())
+		if(!has_cyber || organ == removing || !organ.netrun_is_cyber())
 			continue
-		has_cyber = TRUE
 		if(!organ.slot)
 			continue
 		for(var/hack in organ.netrun_hacks())
@@ -45,14 +47,16 @@
 		if(node)
 			qdel(node)
 		netrun_update_firewall_action()
+		netrun_refresh_cyber_security()
 		return
 	if(!node)
 		node = AddComponent(/datum/component/netrun_node, NETRUN_NODE_IMPLANT, list(), 2)
-	node.command_ids = list("scan", "ping") + command_ids
+	node.command_ids = list("scan", "ping", "probe_location") + command_ids
 	netrun_update_firewall_action()
+	netrun_refresh_cyber_security()
 
 /mob/living/carbon/netrun_online(remote = TRUE)
-	return stat != DEAD
+	return stat != DEAD && netrun_cyber_uplink_available()
 
 /mob/living/carbon/netrun_status()
 	. = list()
@@ -75,7 +79,7 @@
 	if(!istype(host) || !slot)
 		return
 	var/obj/item/organ/organ = host.getorganslot(slot)
-	if(organ && (id in organ.netrun_hacks()))
+	if(host.netrun_cyber_uplink_available() && organ && (id in organ.netrun_hacks()))
 		return organ
 
 /datum/netrun_command/organ/display_name(datum/component/netrun_node/node, arg)
@@ -123,9 +127,10 @@
 
 /datum/netrun_command/organ/imp_suppress
 	id = "imp_suppress"
+	access = NETRUN_ACCESS_ROOT
+	danger = TRUE
 	name = "подавить"
 	desc = "Заблокировать имплант на 30 секунд: он не активируется, активная функция выключается."
-	access = NETRUN_ACCESS_ROOT
 	icon = "ban"
 	trace = 8
 
@@ -185,6 +190,8 @@
 
 /datum/netrun_command/organ/rebooter_fault
 	id = "rebooter_fault"
+	access = NETRUN_ACCESS_ROOT
+	danger = TRUE
 	name = "сбой ребутера"
 	desc = "Перевести ребутер ЦНС в аварийный перезапуск."
 	icon = "rotate"
@@ -261,6 +268,8 @@
 
 /datum/netrun_command/organ/netlink_sever
 	id = "netlink_sever"
+	access = NETRUN_ACCESS_ROOT
+	danger = TRUE
 	name = "разорвать сессию"
 	desc = "Выбить нейролинк из сети и заблокировать повторный вход."
 	icon = "link-slash"
@@ -304,6 +313,8 @@
 
 /datum/netrun_command/organ/heart_arrhythmia
 	id = "heart_arrhythmia"
+	access = NETRUN_ACCESS_ROOT
+	danger = TRUE
 	name = "аритмия"
 	desc = "Сбить ритм искусственного сердца: головокружение и одышка."
 	icon = "heart-pulse"
@@ -333,6 +344,8 @@
 
 /datum/netrun_command/organ/lungs_choke
 	id = "lungs_choke"
+	access = NETRUN_ACCESS_ROOT
+	danger = TRUE
 	name = "сбой дыхания"
 	desc = "Сбить цикл искусственных лёгких на несколько вдохов."
 	icon = "lungs"
@@ -360,6 +373,8 @@
 
 /datum/netrun_command/organ/eyes_flash
 	id = "eyes_flash"
+	access = NETRUN_ACCESS_ROOT
+	danger = TRUE
 	name = "засветить"
 	desc = "Перегрузить сенсор искусственных глаз: ослепление на пару секунд."
 	icon = "sun"
@@ -387,6 +402,8 @@
 
 /datum/netrun_command/organ/ears_deafen
 	id = "ears_deafen"
+	access = NETRUN_ACCESS_ROOT
+	danger = TRUE
 	name = "глушение"
 	desc = "Забить слуховой модуль шумом."
 	icon = "ear-deaf"
@@ -407,6 +424,8 @@
 
 /datum/netrun_command/organ/tongue_mute
 	id = "tongue_mute"
+	access = NETRUN_ACCESS_ROOT
+	danger = TRUE
 	name = "отключить синтезатор"
 	desc = "Выключить синтезатор речи на несколько секунд."
 	icon = "comment-slash"
@@ -433,6 +452,8 @@
 
 /datum/netrun_command/organ/organ_halt
 	id = "organ_halt"
+	access = NETRUN_ACCESS_ROOT
+	danger = TRUE
 	name = "остановить"
 	desc = "Перевести искусственный орган в аварийный простой на 30 секунд."
 	icon = "pause"
@@ -450,6 +471,8 @@
 
 /datum/netrun_command/organ/cell_drain
 	id = "cell_drain"
+	access = NETRUN_ACCESS_ROOT
+	danger = TRUE
 	name = "утечка заряда"
 	desc = "Сбросить часть заряда внутренней батареи синтетика."
 	icon = "battery-quarter"

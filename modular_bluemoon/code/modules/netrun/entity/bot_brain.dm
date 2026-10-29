@@ -8,6 +8,7 @@
 	var/mob/camera/netrun_entity/bot/owner
 	var/list/datum/netrun_bot_goal/goals = list()
 	var/state = "запуск"
+	var/handling_behavior = FALSE
 	var/in_combat = FALSE
 	var/timer_id
 	/// address -> world.time of the last visit, bounded.
@@ -21,8 +22,6 @@
 	/// Agent order and its node (guard post).
 	var/order
 	var/datum/weakref/order_node_ref
-	/// Custodians report rogue processes they meet.
-	var/watch_for_rogues = FALSE
 	var/next_rogue_report = 0
 	/// Exactly one ordinary command may be outstanding for this brain.
 	var/command_serial = 0
@@ -41,12 +40,10 @@
 
 /datum/netrun_bot_brain/New(mob/camera/netrun_entity/bot/owner)
 	src.owner = owner
-	RegisterSignal(SSnetrun, COMSIG_NETRUN_ICE_CAST_STARTED, PROC_REF(on_ice_cast))
 
 /datum/netrun_bot_brain/Destroy()
 	clear_timer()
 	SSnetrun.task_scheduler?.cancel("bot", src)
-	UnregisterSignal(SSnetrun, list(COMSIG_NETRUN_ICE_CAST_STARTED, COMSIG_NETRUN_INCIDENT_REPORTED))
 	QDEL_LIST(goals)
 	pending_attack_ref = null
 	order_node_ref = null
@@ -70,6 +67,20 @@
 /datum/netrun_bot_brain/proc/schedule_next()
 	if(QDELETED(src) || QDELETED(owner))
 		return
+	// Completion, stun recovery and return delivery own their exact wakeups.
+	// A waiting agent does not poll the same fact every think_busy interval.
+	if(owner.client || !owner.host_node || owner.is_stunned() || owner.return_pending)
+		return
+	var/datum/netrun_entity_module/goals_module = owner.entity_modules["bot_goals"]
+	if(!goals_module?.enabled && !in_combat)
+		return
+	if(command_nonce && !(command_phase in list("completed", "rejected", "cancelled")))
+		schedule(max(NETRUN_EXECUTION_MIN_INTERVAL, command_deadline - world.time))
+		return
+	var/datum/netrun_bot_goal/guard/guard = current_goal()
+	if(istype(guard) && at_post() && !in_combat)
+		schedule(max(NETRUN_EXECUTION_MIN_INTERVAL, guard.expires_at - world.time))
+		return
 	var/datum/netrun_bot_program/program = owner.program
 	var/interval = in_combat ? program.think_combat : (length(goals) ? program.think_busy : program.think_idle)
 	schedule(interval + rand(-5, 5))
@@ -81,37 +92,16 @@
 		return
 	SSnetrun.get_task_scheduler().enqueue("bot", src, NETRUN_TASK_NORMAL)
 
-/datum/netrun_bot_brain/proc/on_ice_cast(datum/source, datum/netrun_ice/ice, datum/netrun_console/victim)
-	SIGNAL_HANDLER
-	if(victim && victim == owner?.console)
-		wake_now()
-
 /datum/netrun_bot_brain/proc/think()
-	if(QDELETED(owner) || QDELETED(owner.console) || owner.client)
+	if(QDELETED(owner) || QDELETED(owner.console) || owner.client || handling_behavior)
 		return
-	prune_memory()
-	if(owner.agent_orphaned())
-		owner.console.log_line("Связь с владельцем потеряна.", "bad")
-		owner.dissolve()
-		return
-	if(owner.expires_at && world.time >= owner.expires_at)
-		owner.retire()
-		return
-	if(!owner.host_node)
-		state = "без узла"
-		return
-	if(owner.is_stunned())
-		state = "оглушён"
-		return
-	if(watch_for_rogues)
-		report_rogues()
-	if(combat_step())
-		return
-	// A dispatched return still owns the live process until the receiver accepts
-	// its file. Starting another patrol here would move the source mid-transfer.
-	if(owner.return_pending)
-		state = "возврат пакета"
-		return
+	handling_behavior = TRUE
+	owner.process_behavior(src)
+	if(!QDELETED(src))
+		handling_behavior = FALSE
+
+/// Goal execution is a capability; policy and reactions live in installed modules.
+/datum/netrun_bot_brain/proc/advance_goals()
 	var/datum/netrun_bot_goal/goal = current_goal()
 	if(goal && world.time >= goal.expires_at)
 		finish_goal(goal)
@@ -138,6 +128,7 @@
 		var/datum/netrun_bot_goal/oldest = goals[1]
 		goals.Cut(1, 2)
 		qdel(oldest)
+	SEND_SIGNAL(owner, COMSIG_NETRUN_ENTITY_GOALS_CHANGED, handling_behavior)
 
 /datum/netrun_bot_brain/proc/current_goal()
 	return length(goals) ? goals[1] : null
@@ -151,6 +142,7 @@
 	clear_command()
 	goals -= goal
 	qdel(goal)
+	SEND_SIGNAL(owner, COMSIG_NETRUN_ENTITY_GOALS_CHANGED, handling_behavior)
 
 /datum/netrun_bot_brain/proc/clear_goals()
 	// A one-shot device mutation must never replay after recall/relaunch.
@@ -163,6 +155,7 @@
 	owner?.navigation?.cancel()
 	clear_command()
 	release_incident()
+	SEND_SIGNAL(owner, COMSIG_NETRUN_ENTITY_GOALS_CHANGED, handling_behavior)
 
 /datum/netrun_bot_brain/proc/goal_text()
 	var/datum/netrun_bot_goal/goal = current_goal()
@@ -175,7 +168,7 @@
 	command_phase = operation.phase
 	if(operation.finished)
 		command_result = operation.result
-		wake_now()
+		SEND_SIGNAL(owner, COMSIG_NETRUN_ENTITY_COMMAND_FINISHED, operation.id)
 
 /datum/netrun_bot_brain/proc/clear_command()
 	var/datum/netrun_request/command/packet = command_packet_ref?.resolve()

@@ -19,6 +19,18 @@
 	var/return_pending = FALSE
 	var/static/serial = 0
 
+/mob/camera/netrun_entity/bot/entity_module_types()
+	var/list/types = ..()
+	// Autonomous agents do not need a rendered HUD, its fastprocess monitors,
+	// or a second moving network endpoint. A player login can add the capability.
+	types -= /datum/netrun_entity_module/neural_feedback
+	var/navigation_slot = types.Find(/datum/netrun_entity_module/navigation)
+	if(navigation_slot)
+		types[navigation_slot] = /datum/netrun_entity_module/navigation/bot
+	types |= program.behavior_modules
+	types |= program.extra_behavior_modules
+	return types
+
 /mob/camera/netrun_entity/bot/Initialize(mapload, datum/component/netrun_node/start, program_id, datum/netrun_console/owner)
 	program = SSnetrun.get_bot_program(program_id) || SSnetrun.get_bot_program(NETRUN_BOT_RAIDER)
 	bot_kind = program.id
@@ -32,8 +44,6 @@
 	. = ..(mapload, start)
 	if(QDELETED(src) || QDELETED(console))
 		return
-	QDEL_NULL(navigation)
-	navigation = new /datum/netrun_entity_navigation/bot(src)
 	console.operator = src
 	console.inventory.local_store.capacity = program.storage
 	serial++
@@ -50,6 +60,7 @@
 	program.equip(src)
 	SSnetrun.bots |= src
 	program.on_spawn(src)
+	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_MODULE_READY, null)
 	host_node?.network?.add_log("Запущен автономный процесс [real_name] ([program.name]).")
 	brain.schedule(1 SECONDS)
 
@@ -61,6 +72,13 @@
 	owner_ref = null
 	program = null
 	return ..()
+
+/// Player possession suspends the autonomous clock. Returning control is a fact
+/// that resumes behavior and releases presentation-only resources immediately.
+/mob/camera/netrun_entity/bot/Logout()
+	. = ..()
+	remove_module("neural_feedback")
+	brain?.wake_now()
 
 /mob/camera/netrun_entity/bot/netrun_bot_kind()
 	return bot_kind
@@ -487,6 +505,7 @@
 /datum/netrun_request/agent_recall/Destroy()
 	if(!QDELETED(agent))
 		agent.return_pending = FALSE
+		agent.brain?.wake_now()
 	agent = null
 	owner_node = null
 	return ..()

@@ -102,6 +102,7 @@
 	if(!kind)
 		return null
 	var/address = node?.address
+	var/atom/security_host = node?.parent
 	for(var/datum/netrun_incident/incident as anything in incidents)
 		if(!incident.is_open() || incident.kind != kind || incident.address != address)
 			continue
@@ -117,11 +118,13 @@
 		if(!known && suspect)
 			incident.set_suspect(suspect)
 		SEND_SIGNAL(src, COMSIG_NETRUN_INCIDENT_REPORTED, incident)
+		security_host?.publish_netrun_security_event(incident)
 		return incident
 	var/datum/netrun_incident/incident = new(kind, node, suspect, severity, text)
 	incidents += incident
 	prune_incidents()
 	SEND_SIGNAL(src, COMSIG_NETRUN_INCIDENT_REPORTED, incident)
+	security_host?.publish_netrun_security_event(incident)
 	return incident
 
 /// Closed and stale records go first; open records are evicted only past twice the bound.
