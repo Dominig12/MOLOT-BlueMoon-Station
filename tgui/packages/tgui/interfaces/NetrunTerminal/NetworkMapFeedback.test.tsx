@@ -13,9 +13,9 @@ const mount = jest.mocked(mountNetrunPixi);
 const source = { address: 'SOURCE', name: 'APC', type: 'apc', x: 0, y: 0, online: true,
   security: 1, access: 2, legit: 2, entities: 0, active: false, uplink: null, commands: [], status: [] };
 const peer = { ...source, address: 'PEER', name: 'Сервер', type: 'server', x: 20, access: 0, legit: 0 };
-const View = (props: { suspended?: boolean; focusRequest?: MapFocusRequest } = {}) => <NetrunFeedbackProvider><StationMap suspended={props.suspended} focusRequest={props.focusRequest} /></NetrunFeedbackProvider>;
+const View = (props: { suspended?: boolean; focusRequest?: MapFocusRequest; onInspect?: () => void } = {}) => <NetrunFeedbackProvider><StationMap suspended={props.suspended} focusRequest={props.focusRequest} onInspect={props.onInspect} /></NetrunFeedbackProvider>;
 
-const setup = () => {
+const setup = (onInspect?: () => void) => {
   const topic = jest.fn();
   (global as any).Byond = { winset: () => {}, topic };
   const store = createStore(combineReducers({ backend: backendReducer, debug: debugReducer }));
@@ -26,10 +26,10 @@ const setup = () => {
     selected: source, selected_network: null, entity: null, jack: null, ping_route: null,
     map: { nodes: [source, peer], edges: [], gateways: [], focus: source.address, revision: 1 },
   } }));
-  const panel = render(<View />);
+  const panel = render(<View onInspect={onInspect} />);
   const update = (data: object) => {
     act(() => store.dispatch(backendUpdate({ data })));
-    panel.rerender(<View />);
+    panel.rerender(<View onInspect={onInspect} />);
   };
   const selection = () => topic.mock.calls.filter((call) => call[0]?.type === 'act/select')
     .map((call) => JSON.parse(call[0].payload));
@@ -73,6 +73,19 @@ test('a confirmed keyboard choice keeps its selection and never claims a rejecti
   update({ input_ack: request._netrun_action, selected: peer });
   await waitFor(() => expect(panel.getByText('Выбран: Сервер')).toBeTruthy());
   expect(panel.queryByText('Узел не выбран. Проверьте доступ и связь.')).toBeNull();
+});
+
+test('node information opens after an explicit selection is confirmed without moving the camera', async () => {
+  const onInspect = jest.fn();
+  const { panel, update, selection } = setup(onInspect);
+  await waitFor(() => expect(panel.getByLabelText('Карта сети').getAttribute('data-net-runtime')).toBe('ready'));
+  fireEvent.keyDown(panel.getByLabelText('Карта сети'), { key: 'd' });
+  expect(onInspect).not.toHaveBeenCalled();
+  const [request] = selection();
+  update({ input_ack: request._netrun_action, selected: peer });
+  await waitFor(() => expect(onInspect).toHaveBeenCalledTimes(1));
+  update({ selected: peer, trace: 20 });
+  expect(onInspect).toHaveBeenCalledTimes(1);
 });
 
 test('a dropped delta hides the map, requests resync, and acknowledges the recovered snapshot', async () => {

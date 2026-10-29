@@ -57,7 +57,9 @@ const TerminalConsoleView = (props: { active?: boolean } = {}) => {
     ? [...history].reverse().filter((command) => command.toLowerCase().includes(value.toLowerCase())).slice(0, 6)
     : matchingCompletions(value, pool, caret).slice(0, 6);
 
-  useEffect(() => { if (props.active) { input.current?.focus(); } }, [props.active]);
+  useEffect(() => {
+    if (props.active && !document.activeElement?.closest('[role="tablist"]')) { input.current?.focus(); }
+  }, [props.active]);
 
   const replaceInput = (text: string, position = text.length) => {
     setValue(text); setCaret(position);

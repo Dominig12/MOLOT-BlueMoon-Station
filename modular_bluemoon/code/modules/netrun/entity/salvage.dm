@@ -25,6 +25,9 @@
 	for(var/datum/netrun_file/file as anything in salvage.Copy())
 		if(QDELETED(file))
 			salvage -= file
+	// Earned fortress caches may fill newly freed slots before the shared index
+	// and presentation are published. Local listeners must not recursively publish.
+	SEND_SIGNAL(src, COMSIG_NETRUN_SALVAGE_CHANGED, src)
 	if(!QDELETED(src) && length(salvage))
 		SSnetrun.salvage_nodes[address] = src
 	else

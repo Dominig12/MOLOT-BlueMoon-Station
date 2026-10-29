@@ -5,7 +5,7 @@ import { AutoBreachButton } from './AutoBreachButton';
 import { Meter } from './CombatPanel';
 import { CommandList } from './CommandList';
 import { EntityContacts } from './EntityContacts';
-import { isTransferableFile, SESSION_FILE_REASON } from './filePermissions';
+import { fileSizeLabel, fileTransferState, isCopyableFile, isTransferableFile, SESSION_FILE_REASON } from './filePermissions';
 import { FortressPanel } from './FortressPanel';
 import { NodeInteractions } from './NodeInteractions';
 import { NodeMovement } from './NodeMovement';
@@ -279,7 +279,8 @@ const NodePanelView = () => {
           {selected.files.length === 0 && <Box color={THEME.muted}>Пусто.</Box>}
           <div data-net-files="remote" style={{ maxHeight: '40vh', minHeight: 0, overflowY: 'auto', paddingRight: '4px' }}>
           {selected.files.map((file) => (
-            <RemoteFile key={file.uid} file={file} root={selected.access >= 3} />
+            <RemoteFile key={file.uid} file={file} root={selected.access >= 3}
+              disabled={pending || !!data.locked} readOnly={selected.storage?.capacity === 0} />
           ))}
           </div>
         </Box>
@@ -296,9 +297,11 @@ const NodePanelView = () => {
   );
 };
 
-const RemoteFile = (props: { file: NetFile; root: boolean }) => {
-  const { act, data } = useBackend<NetrunData>(['shard']);
-  const { file, root } = props;
+const RemoteFile = (props: { file: NetFile; root: boolean; disabled: boolean; readOnly: boolean }) => {
+  const { act, data } = useBackend<NetrunData>(['shard', 'storage']);
+  const { file, root, disabled, readOnly } = props;
+  const memory = fileTransferState(file, data.storage), disk = fileTransferState(file, data.shard);
+  const blocked = disabled ? 'Ожидание актуальных данных узла.' : !isCopyableFile(file) ? 'Этот файл нельзя копировать.' : null;
   return (
     <Box mb={0.5} p={0.5} data-net-file-row="remote" style={{ display: 'flex', alignItems: 'center',
       minWidth: 0, gap: '6px', fontFamily: 'monospace', borderBottom: `1px solid ${THEME.line}` }}>
@@ -306,25 +309,30 @@ const RemoteFile = (props: { file: NetFile; root: boolean }) => {
         textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         <Icon name={fileIcon(file.kind)} mr={1} />
         {file.name}
-        <Box inline ml={1} color={THEME.muted}>[{file.size}]</Box>
+        <Box inline ml={1} color={THEME.muted}>[{fileSizeLabel(file)}]</Box>
       </Box>
       <Box className="netrun-file-actions" data-net-file-actions="remote" style={{ display: 'flex', flex: '0 0 auto', justifyContent: 'flex-end',
         flexWrap: 'nowrap', gap: '3px' }}>
         {file.kind === 'text' && (
-          <Button compact icon="eye" tooltip="Прочитать" onClick={() => act('read', { uid: file.uid })} />
+          <Button compact icon="eye" disabled={disabled} tooltip="Прочитать" onClick={() => act('read', { uid: file.uid })} />
         )}
         {!isTransferableFile(file) && <Box color={THEME.muted} fontSize="10px">{SESSION_FILE_REASON}</Box>}
-        {isTransferableFile(file) && <Button compact icon="download" tooltip="Скачать" onClick={() => act('download', { uid: file.uid })} />}
+        {isTransferableFile(file) && <Button compact icon="download" disabled={!!blocked || !memory.copy}
+          tooltip={blocked || memory.reason || (memory.merge ? 'Объединить ключ с доступами в памяти.' : 'Скачать')}
+          onClick={() => act('download', { uid: file.uid })} />}
         {!!data.shard && isTransferableFile(file) && (
           <Button
             compact
             icon="sd-card"
-            tooltip="Скачать на шард"
+            disabled={!!blocked || !disk.copy}
+            tooltip={blocked || disk.reason || 'Скачать на шард'}
             onClick={() => act('download', { uid: file.uid, to_shard: true })}
           />
         )}
         {!!root && (
-          <Button compact icon="trash" color="bad" tooltip="Удалить" onClick={() => act('delete_remote', { uid: file.uid })} />
+          <Button compact icon="trash" color="bad" disabled={disabled || readOnly || file.deletable === false}
+            tooltip={readOnly ? 'Хранилище доступно только для чтения.' : file.delete_reason || 'Удалить'}
+            onClick={() => act('delete_remote', { uid: file.uid })} />
         )}
       </Box>
     </Box>

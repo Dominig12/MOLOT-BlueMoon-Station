@@ -48,6 +48,24 @@
 /datum/netrun_file/proc/can_store(datum/netrun_file_store/destination)
 	return TRUE
 
+/datum/netrun_file/proc/can_delete(datum/netrun_file_store/source)
+	return source && source.capacity > 0
+
+/// Copies normally occupy the same space; free native manuals become paid text.
+/datum/netrun_file/proc/copy_storage_size()
+	return size
+
+/// Wire metadata contains no authorization result. Live native references stay uncached.
+/datum/netrun_file/proc/ui_metadata_stable()
+	return kind != NETRUN_FILE_TECHWEB_LINK
+
+/datum/netrun_file/manual/copy_storage_size()
+	refresh_text()
+	return netrun_text_size(content)
+
+/datum/netrun_file/manual/ui_metadata_stable()
+	return FALSE
+
 /datum/netrun_file/Destroy()
 	QDEL_NULL(picture)
 	techweb_ref = null
@@ -77,9 +95,11 @@
 		"name" = name,
 		"kind" = kind,
 		"size" = size,
+		"copy_size" = copy_storage_size(),
 		"preview" = preview,
 		"selected" = uid == selected_uid,
 		"transferable" = can_transfer(null),
+		"copyable" = can_copy(),
 		"session_bound" = FALSE,
 	)
 

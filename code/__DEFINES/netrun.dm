@@ -238,7 +238,7 @@
 #define NETRUN_BOT_MOVE_ARRIVED 1
 #define NETRUN_BOT_MOVE_BLOCKED 2
 /// Autonomous processes alive at once, including player agents.
-#define NETRUN_MAX_BOTS 20
+#define NETRUN_MAX_BOTS 28
 #define NETRUN_MAX_AGENTS_PER_CONSOLE 2
 #define NETRUN_POLICE_QUOTA 2
 #define NETRUN_ROGUE_QUOTA 2

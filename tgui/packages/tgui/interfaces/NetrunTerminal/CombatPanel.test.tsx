@@ -476,3 +476,61 @@ test('the decision clock runs locally only in the active workspace and never res
     jest.useRealTimers();
   }
 });
+
+test('combat actions carry their exact server decision identity', () => {
+  const { topic } = setup({ turn: { ...ownTurn, id: 'encounter-1:3' } });
+  const panel = render(<CombatPanel />);
+  fireEvent.click(panel.getByText('strike'));
+  expect(uses(topic)).toEqual([{ uid: 'file-strike', target: enemy.ref, turn_id: 'encounter-1:3' }]);
+  fireEvent.click(panel.getByText('Завершить ход'));
+  const pass = topic.mock.calls.find((call) => call[0]?.type === 'act/combat_pass');
+  expect(JSON.parse(pass![0].payload)).toEqual({ turn_id: 'encounter-1:3' });
+});
+
+test('spectators explicitly join the current decision instead of launching an off-turn attack', () => {
+  const { topic, store, combat } = setup({ turn: {
+    ...ownTurn, id: 'encounter-2:1', your_turn: false, can_pass: false,
+    participating: false, can_join: true,
+  } });
+  const panel = render(<CombatPanel />);
+  expect(panel.queryByText('Завершить ход')).toBeNull();
+  fireEvent.click(panel.getByText('strike'));
+  expect(uses(topic)).toHaveLength(0);
+  fireEvent.click(panel.getByText('Вступить в бой'));
+  const join = topic.mock.calls.find((call) => call[0]?.type === 'act/combat_join');
+  expect(JSON.parse(join![0].payload)).toEqual({ turn_id: 'encounter-2:1' });
+  act(() => store.dispatch(backendUpdate({ data: { combat: {
+    ...combat, turn: { ...combat.turn!, participating: true, can_join: false },
+  } } })));
+  expect(panel.queryByText('Вступить в бой')).toBeNull();
+  expect(panel.getByText('Завершить ход')).toBeTruthy();
+});
+
+test('local expiry locks actions and a recreated encounter resets the same actor and round clock', () => {
+  jest.useFakeTimers({ doNotFake: ['performance'] });
+  let now = 0;
+  const clock = jest.spyOn(performance, 'now').mockImplementation(() => now);
+  const { store, combat, topic } = setup({ turn: { ...ownTurn, id: 'encounter-3:1' } });
+  const panel = render(<CombatPanel />);
+  try {
+    act(() => { now = 12000; jest.advanceTimersByTime(12000); });
+    expect(panel.getByLabelText('Осталось 0 с')).toBeTruthy();
+    expect(panel.getAllByText('Время на решение истекло. Ожидается следующий ход.').length).toBeGreaterThan(0);
+    fireEvent.click(panel.getByText('strike'));
+    fireEvent.click(panel.getByText('Завершить ход'));
+    expect(topic).not.toHaveBeenCalled();
+    expect(jest.getTimerCount()).toBe(0);
+    act(() => store.dispatch(backendUpdate({ data: { combat: {
+      ...combat, turn: { ...ownTurn, id: 'encounter-4:1' },
+    } } })));
+    expect(panel.getByLabelText('Осталось 12 с')).toBeTruthy();
+    expect(panel.queryByText('Время на решение истекло. Ожидается следующий ход.')).toBeNull();
+    expect(jest.getTimerCount()).toBe(1);
+    fireEvent.click(panel.getByText('strike'));
+    expect(uses(topic)).toEqual([{ uid: 'file-strike', target: enemy.ref, turn_id: 'encounter-4:1' }]);
+  } finally {
+    panel.unmount();
+    clock.mockRestore();
+    jest.useRealTimers();
+  }
+});

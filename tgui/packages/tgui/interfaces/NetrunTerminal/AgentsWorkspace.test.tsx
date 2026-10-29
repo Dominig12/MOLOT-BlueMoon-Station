@@ -54,3 +54,23 @@ test('hidden builders preserve drafts, but an authoritative active deletion clea
   expect(panel.queryByText('Запустить агента')).toBeNull();
   expect(panel.queryByText('ХАК-1')).toBeNull();
 });
+
+test('collection keeps an explicit target and agent details explain turn recovery and full memory', () => {
+  const { panel, update, sent } = setup();
+  update({ agents: [{ ref: 'agent-1', name: 'ХАК-1', bot_kind: 'hacker', integrity: 90, max_integrity: 90, node: 'HOME', node_name: 'Терминал',
+    state: 'ожидание хода', goal: 'сбор ценных обломков', storage: { used: 64, capacity: 64 },
+    programs: [{ id: 'jam', uid: 'jam-file', name: 'jam.exe', role: 'stun', desc: 'Подавление процесса', power: 20, ap_cost: 1, ready_in: 0, ready_turns: 2 }],
+    files: [{ uid: 'session', name: 'ID сеанса', kind: 'access', size: 1, session_bound: true, transferable: false }], goals: [],
+    orders: [{ id: 'collect', name: 'Собрать трофеи на выбранном узле', needs_node: true }, { id: 'download', name: 'Забрать файл' }],
+  }] });
+  expect(panel.getByText('Восстановление через 2 ход.')).toBeTruthy();
+  expect(panel.getByText(/подавление · мощность 20 · 1 ОД/)).toBeTruthy();
+  expect(panel.getByText(/Память заполнена: заберите файлы/)).toBeTruthy();
+  fireEvent.click(panel.getByLabelText('Забрать ID сеанса у ХАК-1'));
+  expect(sent('agent_order')).toEqual([]);
+  fireEvent.click(panel.getByText('Собрать трофеи на выбранном узле'));
+  expect(sent('agent_order')).toEqual([{ ref: 'agent-1', order: 'collect', address: 'TARGET' }]);
+  update({ selected: null });
+  fireEvent.click(panel.getByText('Собрать трофеи на выбранном узле'));
+  expect(sent('agent_order')).toHaveLength(1);
+});

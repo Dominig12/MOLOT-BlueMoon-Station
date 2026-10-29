@@ -164,10 +164,15 @@
 /datum/netrun_bot_goal/salvage
 	name = "сбор обломков"
 	var/datum/weakref/node_ref
+	var/node_name
 
 /datum/netrun_bot_goal/salvage/New(datum/netrun_bot_brain/brain, datum/component/netrun_node/node)
 	..(brain, 90 SECONDS)
 	node_ref = WEAKREF(node)
+	node_name = node?.get_name()
+
+/datum/netrun_bot_goal/salvage/describe()
+	return "сбор ценных обломков в узле [node_name || "?"]"
 
 /datum/netrun_bot_goal/salvage/advance()
 	var/datum/component/netrun_node/node = node_ref?.resolve()
@@ -177,10 +182,10 @@
 		return approach(node) == NETRUN_BOT_MOVE_BLOCKED ? NETRUN_BOT_GOAL_FAILED : NETRUN_BOT_GOAL_CONTINUE
 	brain.state = "сбор обломков"
 	var/datum/netrun_console/console = brain.owner.console
-	for(var/datum/netrun_file/file as anything in node.salvage)
-		if(console.inventory.local_store.can_fit(file))
-			return console.recover_salvage(file.uid) ? NETRUN_BOT_GOAL_CONTINUE : NETRUN_BOT_GOAL_FAILED
-	brain.blacklist(node.address, 5 MINUTES)
+	var/datum/netrun_file/file = brain.best_salvage(node)
+	if(file)
+		return console.recover_salvage(file.uid) ? NETRUN_BOT_GOAL_CONTINUE : NETRUN_BOT_GOAL_FAILED
+	// Full memory is not a bad route: unloading may make this cache useful again.
 	return NETRUN_BOT_GOAL_DONE
 
 /// An agent returns to its owner's console as a file again.

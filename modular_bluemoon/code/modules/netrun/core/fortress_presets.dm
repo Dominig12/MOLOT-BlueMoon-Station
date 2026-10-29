@@ -13,6 +13,12 @@
 	var/max_instances = 0
 	/// Important cores/archives are seeded before abundant relay endpoints.
 	var/priority = 50
+	/// Each preset hides a finite owned reward, unlocked by an actual siege defeat.
+	var/list/loot_programs = list("strike", "barrier", "patch", "needle")
+	var/list/loot_daemons = list("buffer", "scrub", "extend")
+	var/loot_program_count = 1
+	var/loot_daemon_count = 1
+	var/loot_capacity = 24
 
 /datum/netrun_fortress_preset/proc/matches(datum/component/netrun_node/node)
 	var/atom/host = node.parent
@@ -41,6 +47,10 @@
 	id = "ai_citadel"
 	name = "Цитадель ядра ИИ"
 	priority = 10
+	loot_programs = list("aegis", "lance", "assault", "logic_bomb")
+	loot_daemons = list("ghostlink", "breachkit", "analyst")
+	loot_program_count = 2
+	loot_daemon_count = 2
 	modules = list(NETRUN_FORT_WALL = 3, NETRUN_FORT_GATE = 1, NETRUN_FORT_TURRET = 2, NETRUN_FORT_TRAP = 1, NETRUN_FORT_ALARM = 1, NETRUN_FORT_REGEN = 1)
 	target_types = list(/mob/living/silicon/ai)
 
@@ -48,6 +58,10 @@
 	id = "rnd_archive"
 	name = "Архив РнД"
 	priority = 20
+	loot_programs = list("renew", "lance", "emp", "fortify")
+	loot_daemons = list("analyst", "breachkit", "ghostlink")
+	loot_program_count = 2
+	loot_daemon_count = 2
 	modules = list(NETRUN_FORT_WALL = 2, NETRUN_FORT_TURRET = 1, NETRUN_FORT_ALARM = 1, NETRUN_FORT_VAULT = 1)
 	target_types = list(/obj/machinery/rnd/server)
 
@@ -55,6 +69,9 @@
 	id = "telecomms_hub"
 	name = "Узел связи"
 	priority = 30
+	loot_programs = list("jam", "blackout", "barrier")
+	loot_daemons = list("mapper", "overclock", "ghostlink")
+	loot_daemon_count = 2
 	modules = list(NETRUN_FORT_WALL = 2, NETRUN_FORT_GATE = 1, NETRUN_FORT_TURRET = 1, NETRUN_FORT_ALARM = 1)
 	target_types = list(/obj/machinery/telecomms/hub, /obj/machinery/telecomms/message_server)
 
@@ -62,6 +79,9 @@
 	id = "command_bastion"
 	name = "Командный бастион"
 	priority = 40
+	loot_programs = list("assault", "fortify", "logic_bomb")
+	loot_daemons = list("cloak", "breachkit", "ghostlink")
+	loot_program_count = 2
 	modules = list(NETRUN_FORT_WALL = 2, NETRUN_FORT_GATE = 1, NETRUN_FORT_TRAP = 1, NETRUN_FORT_ALARM = 1)
 	target_types = list(/obj/machinery/computer/communications)
 	max_instances = 1
@@ -78,6 +98,9 @@
 	id = "stash_cache"
 	name = "Тайник"
 	faction = NETRUN_FACTION_ROGUE
+	loot_programs = list("logic_bomb", "emp", "assault", "aegis")
+	loot_daemons = list("ghostlink", "breachkit", "analyst")
+	loot_daemon_count = 2
 	modules = list(NETRUN_FORT_WALL = 1, NETRUN_FORT_TRAP = 1, NETRUN_FORT_TURRET = 1)
 	target_types = list(/obj/machinery/netrun_server/stash)
 
@@ -149,6 +172,7 @@
 				qdel(fortress)
 				return null
 	fortress_presets_seeded[node.address] = preset.id
+	fortress.initialize_defeat_loot(preset)
 	fortress.refresh_vault()
 	node.add_log("Развёрнута крепость «[preset.name]».")
 	fortress.changed()

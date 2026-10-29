@@ -21,11 +21,27 @@
 /datum/netrun_console/proc/builtin_program_ids()
 	return combat_self() ? list("sting", "pulse", "surge", "shell", "mend") : list()
 
-/datum/netrun_console/proc/pass_combat_turn()
+/datum/netrun_console/proc/pass_combat_turn(turn_id)
 	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+	if(!isnull(turn_id) && !encounter?.accepts_input(turn_id))
+		return FALSE
 	if(!encounter?.pass(src))
 		log_line("Сейчас нельзя завершить ход: дождитесь своей очереди и окончания программы.", "bad")
 		return FALSE
+	return TRUE
+
+/// Spectators explicitly enter the queue through their current native contact.
+/// This grants neither a route nor machine access and never selects a target.
+/datum/netrun_console/proc/join_combat_turn(turn_id)
+	if(is_locked())
+		return FALSE
+	var/datum/netrun_path_tree/tree = connection.read_path_tree(TRUE)
+	var/datum/component/netrun_node/node = combat_node(tree)
+	var/datum/netrun_combat_encounter/encounter = node?.combat_encounter
+	release_path_tree(tree)
+	if(!encounter?.active || !encounter.accepts_input(turn_id) || encounter.expired_input() || encounter.contains(src) || !encounter.join(src))
+		return FALSE
+	encounter.changed()
 	return TRUE
 
 /datum/netrun_console/proc/combat_targets()
@@ -66,8 +82,8 @@
 /datum/netrun_console/proc/breach_combat_payload()
 	return combat_context.payload()
 
-/datum/netrun_console/proc/program_use(uid, target_ref)
-	return combat_context.use_program(uid, target_ref)
+/datum/netrun_console/proc/program_use(uid, target_ref, turn_id)
+	return combat_context.use_program(uid, target_ref, turn_id)
 
 /// Заметание следов разрывает бой: контакты сбрасываются, атакующий лёд снимает агро,
 /// отменяет подготовленную программу и не перезахватывает цель короткое время.
@@ -432,10 +448,12 @@
 		SSnetrun.combat_full_payload_peak_ms = max(SSnetrun.combat_full_payload_peak_ms, cost)
 	return result
 
-/datum/netrun_combat_context/proc/use_program(uid, target_ref)
+/datum/netrun_combat_context/proc/use_program(uid, target_ref, turn_id)
 	if(console.is_locked())
 		return FALSE
 	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter()
+	if(!isnull(turn_id) && !encounter?.accepts_input(turn_id))
+		return FALSE
 	if(!encounter?.active && world.time < next_program)
 		console.log_line("Предыдущая программа ещё выполняется: осталось [max(0, CEILING((next_program - world.time) / (1 SECONDS), 0.1))] с.", "bad")
 		return FALSE
@@ -468,13 +486,13 @@
 		console.log_line(program.needs_target ? "Цель недоступна." : "[executable_name]: нужна собственная сущность в сети.", "bad")
 		return FALSE
 	prune_contacts()
-	var/datum/netrun_path_tree/tree = console.make_path_tree()
+	var/datum/netrun_path_tree/tree = console.connection.read_path_tree(TRUE)
 	var/denial = program.needs_target ? target_denial(target, tree) : null
 	var/datum/component/netrun_combatant/combatant = target.get_netrun_combatant()
 	var/datum/component/netrun_node/node = combatant?.node()
 	if(!program.needs_target && (!node || node != console.combat_node(tree)))
 		denial = "Нет боевого контакта."
-	qdel(tree)
+	console.release_path_tree(tree)
 	if(denial)
 		console.log_line(denial, "bad")
 		return FALSE
@@ -520,6 +538,10 @@
 				if(was_ignored)
 					ice.next_attack = min(ice.next_attack, world.time)
 				ice.register_enemy(console)
+	// A lethal effect deletes its component and clears its native parent/profile.
+	// Preserve incident facts before delivery instead of consulting dead targets.
+	var/station_target = combatant.protected_by_station()
+	var/target_name = combatant.display_name()
 	console.apply_program_effect(program, target, node, executable_name)
 	if(!QDELETED(encounter))
 		encounter.apply_program_status(program, target)
@@ -527,8 +549,8 @@
 	if(program.trace)
 		console.add_trace(program.trace)
 	SSnetrun.post_event("intrusion", node.network?.id, node.address)
-	if((program.role == NETRUN_PROGRAM_ATTACK || program.role == NETRUN_PROGRAM_STUN) && combatant?.protected_by_station())
-		SSnetrun.report_incident("combat", node, self || console, NETRUN_INCIDENT_MEDIUM, "Атака на [combatant.display_name()].")
+	if((program.role == NETRUN_PROGRAM_ATTACK || program.role == NETRUN_PROGRAM_STUN) && station_target)
+		SSnetrun.report_incident("combat", node, self || console, NETRUN_INCIDENT_MEDIUM, "Атака на [target_name].")
 	if(program.consumable)
 		console.delete_local_file(file)
 		console.log_line("Карточка [executable_name] израсходована.", "average")

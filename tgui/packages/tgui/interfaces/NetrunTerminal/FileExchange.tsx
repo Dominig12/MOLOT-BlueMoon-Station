@@ -1,7 +1,7 @@
 import { memo, useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
-import { isTransferableFile } from './filePermissions';
+import { isCopyableFile } from './filePermissions';
 import { EntityContact, THEME } from './types';
 import { useNetrunBackend } from './useNetrunBackend';
 
@@ -44,7 +44,7 @@ export const FileOffer = ({ address, contact, pending }: { address: string; cont
 const FileOfferForm = ({ address, contact, allowed }: { address: string; contact: EntityContact; allowed: boolean }) => {
   const { act, data } = useNetrunBackend(['storage', 'shard']);
   const [uid, setUid] = useState('');
-  const files = [...new Map([...(data.storage?.files || []), ...(data.shard?.files || [])].filter(isTransferableFile).map((file) => [file.uid, file])).values()];
+  const files = [...new Map([...(data.storage?.files || []), ...(data.shard?.files || [])].filter(isCopyableFile).map((file) => [file.uid, file])).values()];
   const file = files.find((entry) => entry.uid === uid);
   const offer = () => {
     if (allowed && file) { act('entity_file_offer', { ref: contact.ref, address, uid: file.uid }); }
@@ -54,7 +54,7 @@ const FileOfferForm = ({ address, contact, allowed }: { address: string; contact
       <label className="netrun-field">Файл для {contact.name}<select value={file?.uid || ''} disabled={!allowed}
         onChange={(event) => setUid(event.target.value)}>
         <option value="">Выберите файл…</option>
-        {files.map((entry) => <option key={entry.uid} value={entry.uid}>{entry.name} · {entry.size}</option>)}
+        {files.map((entry) => <option key={entry.uid} value={entry.uid}>{entry.name} · память {entry.size} · {data.shard?.files.some((candidate) => candidate.uid === entry.uid) ? 'шард' : 'локально'}</option>)}
                                                              </select>
       </label>
       {!files.length && <Box color={THEME.muted} fontSize="11px">В памяти и на шарде нет файлов для предложения.</Box>}

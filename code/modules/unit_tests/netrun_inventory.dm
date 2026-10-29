@@ -134,6 +134,129 @@
 	TEST_ASSERT_EQUAL(length(scene.target_node.file_store.files), baseline_files, "The rejected upload must leave the zero-capacity receiver unchanged")
 	TEST_ASSERT(manual in scene.console.inventory.local_store.files, "The failed upload must retain the original sender-owned file")
 
+/datum/netrun_file/metadata_probe
+	var/metadata_builds = 0
+	var/policy_reads = 0
+
+/datum/netrun_file/metadata_probe/ui_entry(selected_uid)
+	metadata_builds++
+	return ..()
+
+/datum/netrun_file/metadata_probe/ui_metadata_stable()
+	policy_reads++
+	return TRUE
+
+/datum/netrun_file/transport_denied/can_transfer(datum/netrun_file_store/destination, move = FALSE)
+	return FALSE
+
+/// Quiet reads reuse metadata in O(1), while selection and real edits retain independent wire entries.
+/datum/unit_test/netrun_file_metadata_cache/Run()
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, allocate(/obj/item))
+	var/datum/netrun_file/metadata_probe/file = new("before.txt", NETRUN_FILE_TEXT, "body", 1)
+	TEST_ASSERT(console.store_file(file), "The source owns the cache fixture")
+	var/datum/netrun_file_store/store = console.inventory.local_store
+	var/list/baseline = store.ui_entries()
+	var/policy_reads = file.policy_reads
+	for(var/attempt in 1 to 10)
+		TEST_ASSERT(store.ui_entries() == baseline, "Quiet snapshots retain the immutable metadata list")
+	TEST_ASSERT_EQUAL(file.metadata_builds, 1, "Quiet reads must not rebuild file previews")
+	TEST_ASSERT_EQUAL(file.policy_reads, policy_reads, "Quiet reads must not even enumerate metadata policies")
+	var/list/selected = store.ui_entries(file.uid)
+	var/list/selected_entry = selected[1]
+	var/list/base_entry = baseline[1]
+	TEST_ASSERT(selected_entry["selected"] && !base_entry["selected"], "Selection decorates a shallow independent entry")
+	TEST_ASSERT(console.rename_local_file(file, "after.txt"), "A real rename publishes a storage change")
+	var/list/updated = store.ui_entries()
+	var/list/updated_entry = updated[1]
+	TEST_ASSERT_EQUAL(updated_entry["name"], "after.txt", "The next snapshot contains the renamed file")
+	TEST_ASSERT_EQUAL(base_entry["name"], "before.txt", "Already retained snapshots remain immutable")
+	TEST_ASSERT_EQUAL(file.metadata_builds, 2, "One real mutation causes one metadata rebuild")
+
+/// Copy permissions do not imply permission to transport the resulting capability.
+/datum/unit_test/netrun_file_transport_policy/Run()
+	var/datum/netrun_file_store/source = allocate(/datum/netrun_file_store, null, 10)
+	var/datum/netrun_file_store/destination = allocate(/datum/netrun_file_store, null, 10)
+	var/datum/netrun_file/file = new /datum/netrun_file/transport_denied("private.txt", NETRUN_FILE_TEXT, "body", 1)
+	source.insert(file)
+	TEST_ASSERT(file.can_copy() && source.transfer_denial(destination, file), "Transport policy is checked independently of copy support")
+	TEST_ASSERT_NULL(source.transfer_to(destination, file), "Generic transport refuses a copy-capable restricted file")
+	TEST_ASSERT((file in source.files) && !length(destination.files), "A refusal preserves both media")
+	var/mob/camera/netrun_entity/recipient = allocate(/mob/camera/netrun_entity)
+	var/datum/netrun_file/snapshot = new /datum/netrun_file/transport_denied("offered.txt", NETRUN_FILE_TEXT, "body", 1)
+	TEST_ASSERT(!recipient.console.file_exchange.receive(snapshot, "fixture"), "The inbox cannot bypass the same transport restriction")
+	TEST_ASSERT(QDELETED(snapshot), "The rejected inbox snapshot is released exactly at its ownership boundary")
+	var/datum/netrun_file/public = new("public.txt", NETRUN_FILE_TEXT, "body", 1)
+	source.insert(public)
+	source.capacity = 0
+	TEST_ASSERT_NULL(source.transfer_to(destination, public, TRUE), "An ordinary MOVE cannot mutate a read-only source")
+	TEST_ASSERT(!source.delete_file(public) && !QDELETED(public), "An ordinary delete cannot destroy a read-only source file")
+	TEST_ASSERT_NOTNULL(source.transfer_to(destination, public), "Reading a copy from the same read-only medium remains allowed")
+
+/// A request binds its physical disks; replacing a shard cannot redirect an in-flight download.
+/datum/unit_test/netrun_file_delivery_media_binding/Run()
+	var/datum/netrun_entity_contact_scene/scene = allocate(/datum/netrun_entity_contact_scene, run_loc_floor_bottom_left, 10)
+	scene.authorize()
+	scene.console.access_session.node_access[scene.target_node.address] = NETRUN_ACCESS_USER
+	var/datum/netrun_file/file = new("remote.txt", NETRUN_FILE_TEXT, "original", 1)
+	scene.target_node.file_store.insert(file)
+	var/baseline_files = length(scene.target_node.file_store.files)
+	var/obj/item/netrun_shard/first = allocate(/obj/item/netrun_shard)
+	first.forceMove(scene.console.host)
+	scene.console.inventory.set_shard(first)
+	TEST_ASSERT(scene.console.queue_file_request("download", scene.target_node, file.uid, TRUE), "The native download captures the original mounted destination")
+	var/datum/netrun_request/file/packet = netrun_operation_packet(scene.console, /datum/netrun_request/file)
+	var/obj/item/netrun_shard/second = allocate(/obj/item/netrun_shard)
+	second.forceMove(scene.console.host)
+	scene.console.inventory.set_shard(second)
+	TEST_ASSERT(!packet.deliver(), "Replacing the destination rejects the queued download")
+	TEST_ASSERT(!length(first.file_store.files) && !length(second.file_store.files), "Neither the detached nor replacement disk receives an unintended copy")
+	var/datum/netrun_file/local = new("upload.txt", NETRUN_FILE_TEXT, "original", 1)
+	second.file_store.insert(local)
+	scene.console.next_command = 0
+	TEST_ASSERT(scene.console.queue_file_request("upload", scene.target_node, local.uid), "The native upload captures its actual removable source")
+	packet = netrun_operation_packet(scene.console, /datum/netrun_request/file)
+	scene.console.inventory.set_shard(null)
+	TEST_ASSERT(!packet.deliver(), "Detaching the source cancels the upload before copying")
+	TEST_ASSERT(local in second.file_store.files, "The only original remains on its actual detached medium")
+	TEST_ASSERT_EQUAL(length(scene.target_node.file_store.files), baseline_files, "Rejected transport preserves the original remote disk contents")
+	scene.target_node.file_store.capacity = 0
+	scene.console.access_session.node_access[scene.target_node.address] = NETRUN_ACCESS_ROOT
+	scene.console.next_command = 0
+	TEST_ASSERT(!scene.console.queue_file_request("delete", scene.target_node, file.uid), "A read-only disk refuses destructive admission even with ROOT")
+	TEST_ASSERT(file in scene.target_node.file_store.files, "Read-only rejection preserves the actual file")
+
+/// Borrowers retarget selection through a merge fact, never through a UID authority alias.
+/datum/unit_test/netrun_file_merge_borrowed_selection/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/netrun_console/physical = allocate(/datum/netrun_console, host)
+	var/datum/netrun_console/borrower = allocate(/datum/netrun_console, allocate(/obj/item))
+	var/obj/item/netrun_shard/shard = allocate(/obj/item/netrun_shard)
+	shard.forceMove(host)
+	physical.inventory.set_shard(shard)
+	borrower.inventory.borrow_from(physical.inventory)
+	var/datum/netrun_file/acquired_key/local = new("local.grants")
+	var/datum/netrun_file/acquired_key/survivor = new("shard.grants")
+	physical.store_file(local)
+	physical.store_file(survivor, TRUE)
+	var/old_uid = local.uid
+	physical.inventory.selected_file_uid = old_uid
+	borrower.inventory.selected_file_uid = old_uid
+	TEST_ASSERT_EQUAL(physical.inventory.local_store.transfer_to(shard.file_store, local, TRUE), survivor, "The physical destination keeps its actual canonical key")
+	TEST_ASSERT_EQUAL(physical.inventory.selected_file_uid, survivor.uid, "The source viewer follows the surviving key")
+	TEST_ASSERT_EQUAL(borrower.inventory.selected_file_uid, survivor.uid, "A borrowed viewer follows the same atomic merge fact")
+	TEST_ASSERT_NULL(physical.find_local_file(old_uid), "The consumed UID never resolves as an authority alias")
+
+/// A delayed expiry task cannot keep an otherwise empty mailbox permanently full.
+/datum/unit_test/netrun_file_offer_expired_admission/Run()
+	var/mob/camera/netrun_entity/recipient = allocate(/mob/camera/netrun_entity)
+	for(var/index in 1 to 8)
+		TEST_ASSERT(recipient.console.file_exchange.receive(new /datum/netrun_file("offer.txt", NETRUN_FILE_TEXT, "body", 1), "fixture"), "The bounded mailbox accepts its declared capacity")
+	for(var/id in recipient.console.file_exchange.incoming)
+		var/datum/netrun_file_offer/offer = recipient.console.file_exchange.incoming[id]
+		offer.expires_at = world.time
+	TEST_ASSERT(recipient.console.file_exchange.receive(new /datum/netrun_file("new.txt", NETRUN_FILE_TEXT, "body", 1), "fixture"), "A fresh delivery prunes expired owned snapshots before checking the bound")
+	TEST_ASSERT_EQUAL(length(recipient.console.file_exchange.incoming), 1, "Only the still-live proposal remains owned")
+
 /datum/unit_test/netrun_file_store_transaction/Run()
 	var/datum/netrun_file_store/source = allocate(/datum/netrun_file_store, null, 2)
 	var/datum/netrun_file_store/destination = allocate(/datum/netrun_file_store, null, 1)

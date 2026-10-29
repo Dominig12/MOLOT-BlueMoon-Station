@@ -66,7 +66,6 @@
 	requires = list("navigation", "bot_lifecycle", "bot_goals")
 	/// UIDs acquired through actual recovery; installed runtime files are excluded.
 	var/list/cargo_uids = list()
-	var/salvage_cursor = 1
 	var/server_cursor = 1
 
 /datum/netrun_entity_module/recycling/on_install()
@@ -84,9 +83,12 @@
 	if(!owner.entity_module_current(src) || QDELETED(node) || !length(node.salvage) || node.network?.isolated)
 		return
 	var/datum/netrun_bot_brain/brain = owner?.module_brain()
-	if(istype(brain?.current_goal(), /datum/netrun_bot_goal/recycling_wait))
+	var/datum/netrun_bot_goal/goal = brain?.current_goal()
+	if(istype(goal, /datum/netrun_bot_goal/recycling_wait))
 		brain.clear_goals()
-	wake_behavior()
+		wake_behavior()
+	else if(!goal)
+		wake_behavior()
 
 /datum/netrun_entity_module/recycling/on_remove()
 	var/datum/netrun_bot_brain/brain = owner?.module_brain()
@@ -108,24 +110,7 @@
 /// The sparse index contains only nonempty debris nodes. Inspect at most24
 /// candidates per plan, with one shared route snapshot and a rotating cursor.
 /datum/netrun_entity_module/recycling/proc/find_debris(datum/netrun_bot_brain/brain)
-	var/datum/component/netrun_node/current = owner.host_node
-	if(current && brain.node_has_salvage(current))
-		return current
-	var/list/candidates = SSnetrun.salvage_nodes
-	if(!length(candidates))
-		return null
-	var/datum/netrun_console/console = owner.console
-	var/datum/netrun_path_tree/tree = console.connection.read_path_tree(TRUE)
-	for(var/i in 1 to min(24, length(candidates)))
-		if(salvage_cursor > length(candidates))
-			salvage_cursor = 1
-		var/datum/component/netrun_node/node = candidates[candidates[salvage_cursor++]]
-		if(QDELETED(node) || node.network?.isolated || brain.is_blacklisted(node.address) || !brain.node_has_salvage(node))
-			continue
-		if(console.can_route(node, tree) && console.node_level(node, tree) >= NETRUN_ACCESS_USER)
-			. = node
-			break
-	console.release_path_tree(tree)
+	return brain.find_salvage(null, TRUE)
 
 /// Servers are indexed at registration, not rediscovered by scanning machines.
 /datum/netrun_entity_module/recycling/proc/find_server(datum/netrun_bot_brain/brain)
@@ -186,10 +171,15 @@
 /datum/netrun_bot_goal/recycle_deposit
 	name = "доставка обломков на сервер"
 	var/datum/weakref/node_ref
+	var/node_name
 
 /datum/netrun_bot_goal/recycle_deposit/New(datum/netrun_bot_brain/brain, datum/component/netrun_node/node)
 	..(brain, 2 MINUTES)
 	node_ref = WEAKREF(node)
+	node_name = node?.get_name()
+
+/datum/netrun_bot_goal/recycle_deposit/describe()
+	return "доставка собранных файлов на сервер [node_name || "?"]"
 
 /datum/netrun_bot_goal/recycle_deposit/advance()
 	var/datum/netrun_entity_module/recycling/module = brain.owner.entity_modules["recycling"]

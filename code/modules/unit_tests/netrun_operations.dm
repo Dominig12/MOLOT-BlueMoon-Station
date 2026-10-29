@@ -175,15 +175,27 @@
 	scene.console.access_session.node_access[scene.target_node.address] = NETRUN_ACCESS_USER
 	var/datum/netrun_file/file = new("private.txt", NETRUN_FILE_TEXT, "SECRET_OPERATION_PAYLOAD", 1)
 	TEST_ASSERT(scene.console.store_file(file), "The sender must own a real source file")
-	scene.target_node.file_store.capacity = 0
+	scene.target_node.file_store.capacity = 8
 	var/baseline_files = length(scene.target_node.file_store.files)
-	TEST_ASSERT(scene.console.queue_file_request("upload", scene.target_node, file.uid, FALSE, "full-disk"), "A valid upload must be queued before the receiving disk is checked")
+	var/trace_before = scene.console.intrusion.trace
+	TEST_ASSERT(scene.console.queue_file_request("upload", scene.target_node, file.uid, FALSE, "full-disk"), "An initially writable destination must admit the valid upload")
 	var/datum/netrun_request/file/packet = netrun_operation_packet(scene.console, /datum/netrun_request/file)
 	var/id = packet.operation.id
-	TEST_ASSERT(!packet.deliver(), "A full destination disk must return an actual failed result")
+	scene.target_node.file_store.capacity = 0
+	TEST_ASSERT(!packet.deliver(), "A destination that becomes read-only after dispatch must reject the actual write")
 	var/list/rejected = netrun_operation_result(scene.console, id)
 	TEST_ASSERT_EQUAL(rejected?["phase"], "rejected", "A failed file mutation must never appear completed")
 	TEST_ASSERT_EQUAL(length(scene.target_node.file_store.files), baseline_files, "The rejected upload must not change the destination")
+	TEST_ASSERT(file in scene.console.inventory.local_store.files, "Rejected delivery retains the only sender-owned original")
+	TEST_ASSERT_EQUAL(scene.console.intrusion.trace, trace_before, "A rejected write adds no successful-execution trace")
+	scene.console.next_command = 0
+	TEST_ASSERT(!scene.console.queue_file_request("upload", scene.target_node, file.uid, FALSE, "preflight-full-disk"), "An already read-only destination rejects before network emission")
+	TEST_ASSERT_EQUAL(scene.console.next_command, 0, "Storage preflight rejection cannot charge the command channel")
+	var/list/results = scene.console.operations_payload()
+	var/list/preflight = results[length(results)]
+	TEST_ASSERT_EQUAL(preflight["nonce"], "preflight-full-disk", "Early disk rejection retains its own action receipt")
+	TEST_ASSERT_EQUAL(preflight["phase"], "rejected", "Early disk rejection is a terminal refusal")
+	TEST_ASSERT_EQUAL(netrun_packet_phase_count(scene.source_node, preflight["id"], "SEND"), 0, "An early disk refusal cannot invent a network emission")
 	scene.target_node.file_store.capacity = 8
 	scene.console.next_command = 0
 	TEST_ASSERT(scene.console.queue_file_request("upload", scene.target_node, file.uid, FALSE, "free-disk"), "A recovered disk must admit a new independent upload")

@@ -461,6 +461,7 @@
 #include "netrun_recycling_transfer.dm"
 #include "netrun_recycling.dm"
 #include "netrun_fortress.dm"
+#include "netrun_content_rewards.dm"
 #include "netrun_packets.dm"
 #include "northstar.dm"
 #include "ntnet_responses.dm"

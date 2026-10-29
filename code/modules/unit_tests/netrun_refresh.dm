@@ -158,8 +158,38 @@
 	second.ui_dirty = FALSE
 	channel.add_message("Reactive chat test.", "test-runner")
 	TEST_ASSERT(first.ui_dirty, "A quiet terminal must receive a new channel message")
-	TEST_ASSERT(second.ui_dirty, "A quiet file workspace must receive a new channel message")
+	TEST_ASSERT(!second.ui_dirty, "A hidden chat must not serialize the file workspace for every channel message")
 	TEST_ASSERT(!first.map_view.subscribed && !second.map_view.subscribed, "Chat delivery must not subscribe hidden map projections")
+	second.workspace_view = "terminal"
+	var/list/payload = second.ui_data(null)
+	var/list/chat = payload["chat"]
+	TEST_ASSERT(findtext(jointext(chat["messages"], "\n"), "Reactive chat test."), "Opening the terminal receives messages that arrived while chat was hidden")
+
+/// Turn-owned timers and invisible fortress panels do not create extra UI polls.
+/datum/unit_test/netrun_refresh_fortress_scope/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_fortress/fortress = new(scene.node_b, "Scoped refresh", NETRUN_FACTION_ROGUE)
+	scene.node_b.fortress = fortress
+	var/datum/netrun_fortress_module/turret = fortress.add_module(NETRUN_FORT_TURRET, TRUE)
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_b)
+	var/datum/netrun_combat_encounter/encounter = scene.node_b.get_combat_encounter()
+	TEST_ASSERT(encounter.admit(entity, 1, turret), "The native battery joins the process's actual encounter")
+	turret.jammed_until = INFINITY
+	TEST_ASSERT(!fortress.needs_live_refresh(), "Turn-owned jamming cannot start a permanent seconds-based UI poll")
+	var/datum/netrun_console/console = entity.console
+	console.map_view.selected_address = scene.node_b.address
+	console.workspace_view = "map"
+	TEST_ASSERT(!console.needs_live_refresh(), "A map with turn-owned battery state rests between real changes")
+	fortress.add_module(NETRUN_FORT_WALL, FALSE)
+	TEST_ASSERT(console.needs_live_refresh(), "A displayed construction countdown still refreshes")
+	console.workspace_view = "files"
+	TEST_ASSERT(console.needs_live_refresh(), "The visible file page keeps its fortress construction current")
+	console.workspace_view = "agents"
+	TEST_ASSERT(!console.needs_live_refresh(), "A hidden fortress countdown cannot wake the agent workspace")
+	console.workspace_view = "pinned"
+	console.map_view.selected_address = scene.node_a.address
+	console.remote_session.active_window = scene.node_b.address
+	TEST_ASSERT(console.needs_live_refresh(), "A pinned device uses its own displayed fortress instead of the map selection")
 
 /// Context listeners follow the current operator and every container carrying the console.
 /datum/unit_test/netrun_refresh_observer_lifecycle/Run()

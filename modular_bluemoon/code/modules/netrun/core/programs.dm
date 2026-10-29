@@ -62,6 +62,7 @@
 	var/list/datum/netrun_program/programs
 
 /datum/controller/subsystem/netrun/proc/get_program(id)
+	RETURN_TYPE(/datum/netrun_program)
 	if(!programs)
 		programs = list()
 		for(var/datum/netrun_program/path as anything in subtypesof(/datum/netrun_program))

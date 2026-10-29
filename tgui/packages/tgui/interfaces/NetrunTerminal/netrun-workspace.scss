@@ -1,5 +1,32 @@
 // NetRun's visual vocabulary is scoped to the workspace. Existing tgui widgets
 // retain their interaction, disabled and focus semantics; the map stays mounted.
+.netrun-session-combat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  height: 27px;
+  padding: 3px 8px;
+  color: var(--net-muted);
+  background: var(--net-bg);
+  border: 1px solid var(--net-border);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  > small { flex-shrink: 0; color: var(--net-accent); }
+  &[data-own-turn='true'] { color: var(--net-good); border-color: var(--net-good); }
+  &:focus-visible { outline: 2px solid var(--net-accent); outline-offset: -2px; }
+}
+
+@media (max-width: 640px) {
+  .netrun-session-status__label, .netrun-session-combat > small { display: none; }
+}
+
 .netrun-operations {
   display: flex;
   flex-direction: column;
@@ -444,6 +471,20 @@
   white-space: nowrap;
 }
 .netrun-inspector { scrollbar-width: thin; scrollbar-color: var(--net-border) transparent; }
+.netrun-inspector__toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  color: var(--net-muted);
+  background: var(--net-panel);
+  border-bottom: 1px solid var(--net-border);
+  font-size: 10px;
+}
 .netrun-inspector-toggle { min-height: 27px; }
 .netrun-inspector-toggle .Button {
   background: var(--net-elevated);
@@ -684,7 +725,12 @@
   border: 1px solid var(--net-border);
   border-radius: 9px;
 }
-.netrun-files-catalog [data-net-files="local"] { max-height: 56vh !important; }
+.netrun-files-catalog [data-net-files], .netrun-remote-files {
+  max-height: min(38vh, 380px);
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
 .netrun-files-preview textarea { min-height: 170px; padding: 9px; border-radius: 7px; }
 .netrun-files-preview .Input { min-height: 30px; }
 .netrun-combat-panel { padding: 14px !important; }
@@ -699,7 +745,7 @@
 .netrun-machine { padding: 8px 4px; }
 @media (max-width: 930px) {
   .netrun-files-layout { grid-template-columns: 1fr; }
-  .netrun-files-catalog [data-net-files="local"] { max-height: 200px !important; }
+  .netrun-files-catalog [data-net-files], .netrun-remote-files { max-height: 200px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .netrun-command-grid .Button, .netrun-breach-card td { transition: none !important; }

@@ -230,6 +230,9 @@
 	parent_type = /datum/netrun_request/delivery
 	var/action
 	var/to_shard = FALSE
+	var/datum/weakref/source_store_ref
+	var/datum/weakref/destination_store_ref
+	var/datum/weakref/source_file_ref
 	operation_kind = "file"
 	operation_label = "Файловый запрос"
 
@@ -237,10 +240,28 @@
 	..(console, node, sent_network, sender, file_uid, context)
 	src.action = action
 	src.to_shard = to_shard
+	var/datum/netrun_file/file = (action in list("upload", "deposit")) ? console.find_local_file(file_uid) : console.remote_file(node, file_uid)
+	var/datum/netrun_file_store/source = (action in list("upload", "deposit")) ? console.inventory.store_for(file) : node?.file_store
+	var/datum/netrun_file_store/destination
+	if(action == "download")
+		destination = to_shard ? console.inventory.shard?.file_store : console.inventory.local_store
+	else if(action in list("upload", "deposit"))
+		destination = node?.file_store
+	source_file_ref = file ? WEAKREF(file) : null
+	source_store_ref = source ? WEAKREF(source) : null
+	destination_store_ref = destination ? WEAKREF(destination) : null
+	for(var/datum/dependency as anything in list(file, source, destination))
+		if(QDELETED(dependency) || (dependency in dependencies))
+			continue
+		dependencies += dependency
+		RegisterSignal(dependency, COMSIG_PARENT_QDELETING, TYPE_PROC_REF(/datum/netrun_request/delivery, on_dependency_deleted))
 	operation.capture(list("action" = action, "file_uid" = file_uid, "to_shard" = to_shard))
 	console.track_file_packet(src)
 
 /datum/netrun_request/file/execute()
+	var/reason = storage_denial()
+	if(reason)
+		return reject(reason)
 	. = console.deliver_file_request(action, node, file_uid, to_shard, sent_network, sender, operation)
 	// File callbacks own validation and their existing trace prices. Report only
 	// accepted mutations/reads, never an invalid UID or a full destination disk.
@@ -252,3 +273,26 @@
 		var/list/labels = list("download" = "Скачивание файла", "upload" = "Загрузка файла", "deposit" = "Разгрузка файла", "delete" = "Удаление файла", "read" = "Чтение файла")
 		console.report_illegal_activity(node, labels[action] || "Файловая операция", required)
 	return .
+
+/// Bind physical media at dispatch, not the UI's later selection or replacement shard.
+/datum/netrun_request/file/proc/storage_denial()
+	if(!(action in list("upload", "download", "deposit", "read", "delete")))
+		return "Неизвестная файловая операция."
+	var/datum/netrun_file/file = source_file_ref?.resolve()
+	var/datum/netrun_file_store/source = source_store_ref?.resolve()
+	if(QDELETED(file) || QDELETED(source) || source.find_file(file_uid) != file)
+		return "Исходный файл или его носитель изменились."
+	if(action in list("upload", "deposit"))
+		if(console.inventory.store_for(file) != source)
+			return "Исходный носитель отсоединён или заменён."
+	else if(node?.file_store != source)
+		return "Хранилище узла изменилось."
+	if(action == "delete" && !file.can_delete(source))
+		return "Хранилище узла доступно только для чтения."
+	if(action in list("read", "delete"))
+		return null
+	var/datum/netrun_file_store/destination = destination_store_ref?.resolve()
+	var/datum/netrun_file_store/current_destination = action == "download" ? (to_shard ? console.inventory.shard?.file_store : console.inventory.local_store) : node?.file_store
+	if(QDELETED(destination) || destination != current_destination)
+		return "Носитель назначения отсоединён или заменён."
+	return source.transfer_denial(destination, file, action == "deposit")

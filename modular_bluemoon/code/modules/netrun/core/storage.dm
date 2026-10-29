@@ -22,6 +22,13 @@
 	var/list/payload = file.ui_entry(inventory.selected_file_uid)
 	payload["source"] = inventory.store_for(file) == inventory.session_store ? "session" : ((file in inventory.local_store.files) ? "local" : "shard")
 	payload["can_import"] = inventory.store_for(file) == inventory.shard?.file_store
+	var/datum/netrun_file_store/source = inventory.store_for(file)
+	payload["deletable"] = file.can_delete(source)
+	payload["delete_reason"] = payload["deletable"] ? null : "Носитель доступен только для чтения."
+	payload["transfer"] = list(
+		"local" = file_transfer_payload(source, inventory.local_store, file),
+		"shard" = file_transfer_payload(source, inventory.shard?.file_store, file),
+	)
 	if(file.kind == NETRUN_FILE_BOT)
 		payload["agent_builder"] = agent_builder_payload(file)
 	payload["content"] = file.kind == NETRUN_FILE_TEXT ? file.content : null
@@ -32,6 +39,13 @@
 		payload["width"] = file.picture.psize_x
 		payload["height"] = file.picture.psize_y
 	return payload
+
+/// Cheap UI admission uses the same actual disks and policy as the storage mutation.
+/datum/netrun_console/proc/file_transfer_payload(datum/netrun_file_store/source, datum/netrun_file_store/destination, datum/netrun_file/file)
+	var/copy_reason = source ? source.transfer_denial(destination, file) : "Исходный носитель недоступен."
+	var/move_reason = source ? source.transfer_denial(destination, file, TRUE) : "Исходный носитель недоступен."
+	return list("copy" = !copy_reason, "move" = !move_reason, "reason" = (copy_reason && move_reason) ? copy_reason : null,
+		"merge" = !QDELETED(destination) && istype(file, /datum/netrun_file/acquired_key) && !!destination.acquired_key_target(file))
 
 /// Все операции ограничены носителями этой консоли; UID удалённого узла сюда не проходит.
 /datum/netrun_console/proc/file_act(action, list/params, mob/user)
@@ -67,6 +81,9 @@
 /datum/netrun_console/proc/rename_local_file(datum/netrun_file/file, new_name)
 	var/datum/netrun_file_store/source = inventory.store_for(file)
 	if(!source || !istext(new_name) || !length(trim(new_name)))
+		return FALSE
+	if(source.capacity <= 0)
+		log_line("Носитель доступен только для чтения.", "bad")
 		return FALSE
 	file.name = netrun_file_name(new_name, file.name)
 	if(file.picture)
@@ -112,15 +129,11 @@
 /datum/netrun_console/proc/transfer_local_file(datum/netrun_file/file, to_shard, move = FALSE)
 	var/datum/netrun_file_store/source = inventory.store_for(file)
 	var/datum/netrun_file_store/destination = to_shard ? inventory.shard?.file_store : inventory.local_store
-	if(!source || !destination)
-		log_line("Носитель недоступен.", "bad")
+	var/reason = source ? source.transfer_denial(destination, file, move) : "Исходный носитель недоступен."
+	if(reason)
+		log_line(reason, "bad")
 		return FALSE
-	if(source == destination && move)
-		log_line("Файл уже на выбранном носителе.")
-		return FALSE
-	if(!destination.can_fit(file))
-		log_line("На выбранном носителе нет места.", "bad")
-		return FALSE
+	var/original_name = file.name
 	var/datum/netrun_file/copied = source.transfer_to(destination, file, move)
 	if(!copied)
 		return FALSE
@@ -131,5 +144,5 @@
 		inventory.selected_file_uid = copied.uid
 		destination.notify_changed()
 	inventory.selected_file_uid = copied.uid
-	log_line("[move ? "Перемещён" : "Скопирован"] файл [file.name].", "good")
+	log_line("[move ? "Перемещён" : "Скопирован"] файл [original_name].", "good")
 	return TRUE

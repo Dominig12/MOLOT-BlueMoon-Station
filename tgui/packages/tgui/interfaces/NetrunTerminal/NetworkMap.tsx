@@ -16,6 +16,7 @@ type Placed = NetNode & GraphPoint;
 type Act = (action: string, payload?: object) => void;
 export type MapFocusRequest = { address: string; sequence: number };
 type FocusProps = {
+  onInspect?: () => void;
   focusRequest?: MapFocusRequest | null;
   consumeFocusRequest?: (request: MapFocusRequest) => boolean;
 };
@@ -50,7 +51,7 @@ const useSemanticValue = <T, >(value: T, signature: string | undefined): T => {
   if (previous.current.signature !== signature) { previous.current = { value, signature }; }
   return previous.current.value;
 };
-export const StationMap = memo((props: { suspended?: boolean; focusRequest?: MapFocusRequest | null } = {}) => {
+export const StationMap = memo((props: { suspended?: boolean; focusRequest?: MapFocusRequest | null; onInspect?: () => void } = {}) => {
   const { act, data } = useBackend<NetrunData>(['map', 'selected', 'selected_network', 'jack', 'entity', 'ping_route', 'ping', 'events', 'waypoint', 'search']);
   const [stream] = useState(() => new NetrunMapStream());
   const [, refreshRecovery] = useState(0);
@@ -118,7 +119,7 @@ export const StationMap = memo((props: { suspended?: boolean; focusRequest?: Map
     act('map_sync_ack', { epoch: packet.epoch, revision: packet.state_revision });
   }, [props.suspended, data.map, stream, act]);
   return latest.current ? <MapSnapshot input={latest.current} act={act} suspended={props.suspended}
-    focusRequest={props.focusRequest} consumeFocusRequest={consumeFocusRequest} />
+    focusRequest={props.focusRequest} consumeFocusRequest={consumeFocusRequest} onInspect={props.onInspect} />
     : props.suspended ? null : <Box p={1} role="status" color={THEME.muted}>
       {stream.resyncToken ? 'Синхронизация карты после пропущенного обновления…' : 'Ожидание карты сети…'}
       <Button compact ml={1} icon="rotate" content="Обновить карту" onClick={() => {
@@ -130,7 +131,7 @@ export const StationMap = memo((props: { suspended?: boolean; focusRequest?: Map
                                </Box>;
 });
 
-const MapSnapshot = memo(({ input, act, suspended, focusRequest, consumeFocusRequest }: { input: MapInput; act: Act; suspended?: boolean } & FocusProps) => {
+const MapSnapshot = memo(({ input, act, suspended, focusRequest, consumeFocusRequest, onInspect }: { input: MapInput; act: Act; suspended?: boolean } & FocusProps) => {
   const rawNodes = input.map?.nodes ?? EMPTY_NODES;
   const rawEdges = input.map?.edges ?? EMPTY_EDGES;
   const streamed = input.map?.epoch !== undefined;
@@ -163,13 +164,13 @@ const MapSnapshot = memo(({ input, act, suspended, focusRequest, consumeFocusReq
   const waypoint = useSemanticValue(input.waypoint, JSON.stringify(input.waypoint));
   const search = useSemanticValue(input.search, JSON.stringify(input.search));
   return (<GraphMap {...input} map={map} topologyKey={topologyKey} suspended={suspended}
-    focusRequest={focusRequest} consumeFocusRequest={consumeFocusRequest}
+    focusRequest={focusRequest} consumeFocusRequest={consumeFocusRequest} onInspect={onInspect}
     pingRoute={pingRoute} events={events} waypoint={waypoint} search={search} act={act} />);
 });
 
 const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & FocusProps) => {
   const { act, selectedAddress, selectedNetwork, jackAddress, entityHost, hasEntity,
-    map, topologyKey, pingRoute, pingId, pingExpiresAt, events, waypoint, search, suspended, focusRequest, consumeFocusRequest } = props;
+    map, topologyKey, pingRoute, pingId, pingExpiresAt, events, waypoint, search, suspended, focusRequest, consumeFocusRequest, onInspect } = props;
   const viewport = useRef<NetworkViewportHandle>(null);
   const feedback = useNetrunFeedback();
   const latestFeedback = useRef(feedback); latestFeedback.current = feedback;
@@ -217,12 +218,14 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
   }, []);
   const onSelect = useCallback((address: string) => {
     setPendingCenter(null); previewSelection(address); act('select', { address });
-  }, [act, previewSelection]);
+    if (selectedAddress === address) { onInspect?.(); }
+  }, [act, previewSelection, onInspect, selectedAddress]);
   const locate = useCallback((address: string, own = false) => {
     setQuery(''); setSearchReset((value) => value + 1); setFocusNearby(false); setDisabledTypes({}); setPendingCenter(address);
     previewSelection(address, own ? 'focus_host' : 'select');
     if (own) { act('focus_host'); } else { act('select', { address }); }
-  }, [act, previewSelection]);
+    if (selectedAddress === address) { onInspect?.(); }
+  }, [act, previewSelection, onInspect, selectedAddress]);
   useEffect(() => {
     if (suspended || !focusRequest || !consumeFocusRequest?.(focusRequest)) { return; }
     locate(focusRequest.address);
@@ -230,7 +233,11 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
   useEffect(() => {
     const intent = selectionIntent.current;
     if (!intent) { return; }
-    if (selectedAddress === intent.address) { selectionIntent.current = null; return; }
+    if (selectedAddress === intent.address) {
+      selectionIntent.current = null;
+      if (!suspended) { onInspect?.(); }
+      return;
+    }
     if (!feedback || feedback.action !== intent.action
       || (feedback.action === 'select' && feedback.payload.address !== intent.address)) { return; }
     if (!intent.nonce && feedback.nonce !== intent.previousNonce) { intent.nonce = feedback.nonce; }
@@ -241,7 +248,7 @@ const GraphMap = memo((props: MapInput & { topologyKey: string; act: Act } & Foc
       viewport.current?.rejectSelection('Узел не выбран. Проверьте доступ и связь.');
       selectionIntent.current = null;
     }
-  }, [feedback, selectedAddress]);
+  }, [feedback, selectedAddress, suspended, onInspect]);
   useEffect(() => {
     // A cross-floor selection arrives after the click. Wait for its committed viewport scene.
     if (pendingCenter && selectedAddress === pendingCenter && visibleIds.has(pendingCenter) && viewport.current) {

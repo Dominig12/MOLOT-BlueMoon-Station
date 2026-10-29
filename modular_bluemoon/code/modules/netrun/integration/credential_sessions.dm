@@ -16,6 +16,10 @@
 /datum/netrun_file/access/session_snapshot/can_transfer(datum/netrun_file_store/destination, move = FALSE)
 	return FALSE
 
+/datum/netrun_file/access/session_snapshot/can_delete(datum/netrun_file_store/source)
+	var/datum/netrun_dive_link/dive = dive_ref?.resolve()
+	return source && !QDELETED(dive) && source == dive.owner?.console?.inventory.session_store && (src in source.files)
+
 /datum/netrun_file/access/session_snapshot/can_store(datum/netrun_file_store/destination)
 	var/datum/netrun_dive_link/dive = dive_ref?.resolve()
 	return destination && !QDELETED(dive) && dive.body && !dive.returning && dive.owner?.console?.inventory.session_store == destination

@@ -7,6 +7,10 @@
 	/// Per-medium aggregation: a local disk and removable shard remain separate.
 	var/canonical_grants_uid
 	var/merging_grants = FALSE
+	/// Immutable metadata until a real storage fact changes its revision.
+	var/list/ui_entry_cache
+	var/list/ui_entry_indices
+	var/list/dynamic_ui_indices
 
 /datum/netrun_file_store/New(datum/owner, capacity = 8 * NETRUN_STORAGE_SCALE)
 	owner_ref = owner ? WEAKREF(owner) : null
@@ -29,6 +33,9 @@
 	return 8 * NETRUN_STORAGE_SCALE
 
 /datum/netrun_file_store/Destroy()
+	ui_entry_cache = null
+	ui_entry_indices = null
+	dynamic_ui_indices = null
 	owner_ref = null
 	QDEL_LIST(files)
 	return ..()
@@ -36,7 +43,7 @@
 /datum/netrun_file_store/proc/used()
 	return netrun_storage_used(files)
 
-/datum/netrun_file_store/proc/can_fit(datum/netrun_file/file)
+/datum/netrun_file_store/proc/can_fit(datum/netrun_file/file, copying = FALSE)
 	if(QDELETED(file) || !file.can_store(src))
 		return FALSE
 	var/used_size = used()
@@ -44,7 +51,55 @@
 		return FALSE
 	if(istype(file, /datum/netrun_file/acquired_key) && ((file in files) || acquired_key_target(file)))
 		return TRUE
-	return used_size + file.size <= capacity
+	return used_size + (copying ? file.copy_storage_size() : file.size) <= capacity
+
+/// Admission and execution use one transport/capacity rule, without creating a copy.
+/datum/netrun_file_store/proc/transfer_denial(datum/netrun_file_store/destination, datum/netrun_file/file, move = FALSE)
+	if(QDELETED(file) || !(file in files))
+		return "Исходный файл больше недоступен."
+	if(QDELETED(destination))
+		return "Носитель назначения недоступен."
+	if(move && destination == src)
+		return "Файл уже на выбранном носителе."
+	if(move && capacity <= 0)
+		return "Исходный носитель доступен только для чтения."
+	if(!file.can_transfer(destination, move) || (!move && !file.can_copy()) || !file.can_store(destination))
+		return "Этот файл нельзя перенести на выбранный носитель."
+	if(destination.capacity <= 0)
+		return "Носитель назначения доступен только для чтения."
+	if(!destination.can_fit(file, !move))
+		return "На носителе назначения недостаточно свободной памяти."
+	return null
+
+/// Callers may retain entries but must never mutate them. Selection decorates one entry only.
+/datum/netrun_file_store/proc/ui_entries(selected_uid)
+	var/rebuilt = FALSE
+	if(!ui_entry_cache)
+		rebuilt = TRUE
+		ui_entry_cache = list()
+		ui_entry_indices = list()
+		dynamic_ui_indices = list()
+		for(var/datum/netrun_file/file as anything in files)
+			ui_entry_cache += list(file.ui_entry(null))
+			ui_entry_indices[file.uid] = length(ui_entry_cache)
+			if(!file.ui_metadata_stable())
+				dynamic_ui_indices += length(ui_entry_cache)
+	var/selected_index = ui_entry_indices[selected_uid]
+	if(!selected_index && (rebuilt || !length(dynamic_ui_indices)))
+		return ui_entry_cache
+	var/list/result = ui_entry_cache.Copy()
+	for(var/index in dynamic_ui_indices)
+		var/datum/netrun_file/file = files[index]
+		var/list/cached = ui_entry_cache[index]
+		var/list/entry = rebuilt ? cached.Copy() : file.ui_entry(null)
+		entry["selected"] = file.uid == selected_uid
+		result[index] = entry
+	if(selected_index && !(selected_index in dynamic_ui_indices))
+		var/list/entry = ui_entry_cache[selected_index]
+		entry = entry.Copy()
+		entry["selected"] = TRUE
+		result[selected_index] = entry
+	return result
 
 /// Map preloads may intentionally exceed the writable capacity of a disk.
 /datum/netrun_file_store/proc/insert(datum/netrun_file/file, preload = FALSE)
@@ -63,12 +118,14 @@
 		var/datum/netrun_file/acquired_key/canonical = acquired_key_target(incoming)
 		if(canonical)
 			canonical.merge_from(incoming)
+			var/list/replacements = list()
+			replacements[incoming.uid] = canonical.uid
 			var/datum/netrun_inventory/inventory = owner_ref?.resolve()
 			if(istype(inventory) && inventory.selected_file_uid == incoming.uid)
 				inventory.selected_file_uid = canonical.uid
 			qdel(incoming)
-			consolidate_acquired_keys(FALSE)
-			notify_changed()
+			consolidate_acquired_keys(FALSE, replacements)
+			notify_changed(replacements)
 			return canonical
 		canonical_grants_uid = incoming.uid
 	files += file
@@ -97,7 +154,7 @@
 
 /// Legacy duplicate media are consolidated on storage facts/mount, never on UI
 /// reads. Complete all ownership changes before notifying either shared viewer.
-/datum/netrun_file_store/proc/consolidate_acquired_keys(publish = TRUE)
+/datum/netrun_file_store/proc/consolidate_acquired_keys(publish = TRUE, list/replacements)
 	if(merging_grants)
 		return FALSE
 	var/datum/netrun_file/acquired_key/canonical = acquired_key_target()
@@ -105,12 +162,15 @@
 		canonical_grants_uid = null
 		return FALSE
 	merging_grants = TRUE
+	if(!replacements)
+		replacements = list()
 	var/changed = FALSE
 	var/datum/netrun_inventory/inventory = owner_ref?.resolve()
 	for(var/datum/netrun_file/acquired_key/key as anything in files.Copy())
 		if(!istype(key) || QDELETED(key) || key == canonical)
 			continue
 		canonical.merge_from(key)
+		replacements[key.uid] = canonical.uid
 		files -= key
 		if(istype(inventory) && inventory.selected_file_uid == key.uid)
 			inventory.selected_file_uid = canonical.uid
@@ -118,7 +178,7 @@
 		changed = TRUE
 	merging_grants = FALSE
 	if(changed && publish)
-		notify_changed()
+		notify_changed(replacements)
 	return changed
 
 /// Removing transfers ownership to the caller; deletion is an explicit operation.
@@ -130,6 +190,8 @@
 	return TRUE
 
 /datum/netrun_file_store/proc/delete_file(datum/netrun_file/file)
+	if(QDELETED(file) || !file.can_delete(src))
+		return FALSE
 	if(!remove(file))
 		return FALSE
 	qdel(file)
@@ -149,7 +211,7 @@
 
 /// Check both disks before moving so a failed write never loses the original file.
 /datum/netrun_file_store/proc/transfer_to(datum/netrun_file_store/destination, datum/netrun_file/file, move = FALSE)
-	if(QDELETED(file) || QDELETED(destination) || !(file in files) || (move && destination == src) || !file.can_transfer(destination, move) || (!move && !file.can_copy()) || !destination.can_fit(file))
+	if(transfer_denial(destination, file, move))
 		return null
 	var/datum/netrun_file/result = move ? file : file.copy()
 	// A free firmware source produces an ordinary charged text copy that can grow.
@@ -171,9 +233,12 @@
 		notify_changed()
 	return stored
 
-/datum/netrun_file_store/proc/notify_changed()
+/datum/netrun_file_store/proc/notify_changed(list/replacements)
+	ui_entry_cache = null
+	ui_entry_indices = null
+	dynamic_ui_indices = null
 	revision++
-	SEND_SIGNAL(src, COMSIG_NETRUN_STORAGE_CHANGED, revision)
+	SEND_SIGNAL(src, COMSIG_NETRUN_STORAGE_CHANGED, revision, replacements)
 
 /// One session combines its owned memory with a borrowed removable disk.
 /datum/netrun_inventory
@@ -239,13 +304,13 @@
 	SIGNAL_HANDLER
 	stop_borrowing()
 
-/datum/netrun_inventory/proc/on_borrowed_inventory_signal(datum/source)
+/datum/netrun_inventory/proc/on_borrowed_inventory_signal(datum/source, list/replacements)
 	SIGNAL_HANDLER
 	var/datum/netrun_inventory/inventory = source
 	if(shard != inventory.shard)
 		set_shard(inventory.shard)
 	else
-		notify_changed()
+		notify_changed(replacements)
 
 /datum/netrun_inventory/proc/all_files(fresh = FALSE)
 	if(!fresh && owner?.ui_files)
@@ -338,11 +403,11 @@
 	if(shard?.loc != owner?.host)
 		set_shard(null)
 
-/datum/netrun_inventory/proc/on_store_changed(datum/source, revision)
+/datum/netrun_inventory/proc/on_store_changed(datum/source, revision, list/replacements)
 	SIGNAL_HANDLER
-	notify_changed()
+	notify_changed(replacements)
 
-/datum/netrun_inventory/proc/notify_changed()
+/datum/netrun_inventory/proc/notify_changed(list/replacements)
 	acquired_keys = null
 	// A loadout change invalidates all derived authorization, including a UI
 	// serialization that yielded while a shard was removed or a file was revoked.
@@ -355,9 +420,12 @@
 		owner.ui_legit_levels?.Cut()
 		owner.network_level_cache?.Cut()
 		owner.ui_completion_cache?.Cut()
+	var/replacement = replacements?[selected_file_uid]
+	if(replacement && find_file(replacement))
+		selected_file_uid = replacement
 	if(selected_file_uid && !find_file(selected_file_uid))
 		selected_file_uid = null
-	SEND_SIGNAL(src, COMSIG_NETRUN_INVENTORY_CHANGED)
+	SEND_SIGNAL(src, COMSIG_NETRUN_INVENTORY_CHANGED, replacements)
 
 /datum/netrun_inventory/proc/has_key(datum/netrun_network/network, fresh = FALSE)
 	if(!network)

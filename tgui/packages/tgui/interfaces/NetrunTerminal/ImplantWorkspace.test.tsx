@@ -18,7 +18,7 @@ test('neural implant prepares a local entrance without showing network controls'
   const panel = render(<NetrunContent />);
   expect(panel.getByText(/Выберите узел в своей зоне/)).toBeTruthy();
   expect(panel.getByText('Узел погружения не выбран.')).toBeTruthy();
-  expect(panel.getByText('Локальные файлы')).toBeTruthy();
+  expect(panel.getByText(/^Локальные файлы/)).toBeTruthy();
   expect(panel.queryByRole('tab', { name: 'Карта' })).toBeNull();
   expect(panel.queryByText('#noosphere')).toBeNull();
   fireEvent.click(panel.getByText('Выбрать узел погружения'));

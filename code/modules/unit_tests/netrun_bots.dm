@@ -84,8 +84,13 @@
 	goal.advance()
 	TEST_ASSERT(brain.remembered_enemy(raider), "A rogue suspect is engaged without a warning")
 	var/before = raider.integrity
-	TEST_ASSERT(brain.combat_step(), "The police attacks the suspect")
-	TEST_ASSERT(raider.integrity < before, "The attack uses a real combat program")
+	TEST_ASSERT(brain.combat_step(), "The police prepares control against the healthy suspect")
+	TEST_ASSERT(raider.is_stunned(), "The first native combat action actually suppresses the suspect")
+	TEST_ASSERT_EQUAL(raider.integrity, before, "Control is not falsely treated as direct damage")
+	var/datum/netrun_combat_encounter/encounter = police.console.get_combat_encounter()
+	TEST_ASSERT(encounter?.has_turn(police.console) && encounter.remaining_ap(police.console) > 0, "The officer retains AP in the same native turn after control")
+	TEST_ASSERT(brain.combat_step(), "The officer spends remaining AP on a real attack")
+	TEST_ASSERT(raider.integrity < before, "The next native combat program damages the controlled suspect")
 	qdel(raider)
 	goal.arrived_at = world.time - 9 SECONDS
 	TEST_ASSERT_EQUAL(goal.advance(), NETRUN_BOT_GOAL_DONE, "A cleared scene ends the investigation")
@@ -347,12 +352,20 @@
 		TEST_ASSERT(istype(bot.host_node?.parent, /obj/machinery/ntnet_relay), "Visitors enter through a real functioning network relay")
 		TEST_ASSERT(bot.expires_at > world.time, "A police visit has a finite patrol lifetime")
 	for(var/index in 1 to 4)
+		var/before_wave = SSnetrun.count_network_visitors()
 		SSnetrun.rogue_wave_at = world.time - 1
 		census()
-	TEST_ASSERT_EQUAL(SSnetrun.count_network_visitors(), 8, "Timed waves populate the shared quota across all visitor factions")
+		var/arrived = SSnetrun.count_network_visitors() - before_wave
+		TEST_ASSERT(arrived <= SSnetrun.visitor_wave_max, "A due wave cannot create an unbounded burst")
+		if(before_wave + SSnetrun.visitor_wave_min <= SSnetrun.visitor_limit)
+			TEST_ASSERT(arrived >= SSnetrun.visitor_wave_min, "A functioning entry admits a dense wave rather than a single straggler")
+	for(var/id in SSnetrun.netrun_factions)
+		if(SSnetrun.get_netrun_faction(id)?.arrival_weight)
+			TEST_ASSERT(SSnetrun.count_bot_faction(id) <= SSnetrun.visitor_faction_limit, "Every visitor faction respects its own quota")
+	TEST_ASSERT_EQUAL(SSnetrun.count_network_visitors(), SSnetrun.visitor_limit, "Timed waves populate the shared quota across all visitor factions")
 	SSnetrun.rogue_wave_at = world.time - 1
 	census()
-	TEST_ASSERT_EQUAL(SSnetrun.count_network_visitors(), 8, "A new due wave cannot bypass the shared visitor quota")
+	TEST_ASSERT_EQUAL(SSnetrun.count_network_visitors(), SSnetrun.visitor_limit, "A new due wave cannot bypass the shared visitor quota")
 	var/index_builds = SSnetrun.bot_spawn_index_builds
 	var/candidate_checks = SSnetrun.bot_spawn_candidate_checks
 	for(var/index in 1 to 16)
@@ -369,7 +382,7 @@
 	TEST_ASSERT(QDELETED(departing), "A visitor actually leaves when its lifetime expires")
 	SSnetrun.rogue_wave_at = world.time - 1
 	census()
-	TEST_ASSERT_EQUAL(SSnetrun.count_network_visitors(), 8, "A later native wave replaces departed visitors during the round")
+	TEST_ASSERT_EQUAL(SSnetrun.count_network_visitors(), SSnetrun.visitor_limit, "A later native wave replaces departed visitors during the round")
 
 /datum/unit_test/netrun_bot_round_population/Destroy()
 	if(original_state)

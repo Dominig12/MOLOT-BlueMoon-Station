@@ -1,6 +1,6 @@
 import './netrun-workspace.scss';
 
-import { memo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { KeyboardEvent, memo, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
 import { Box, Button, Icon, Tabs } from '../../components';
 import { AgentsWorkspace } from './AgentsWorkspace';
@@ -29,6 +29,24 @@ const ORIGIN_NAMES: Record<string, string> = {
 const PAGE_NAMES: Record<WorkspaceView, string> = {
   terminal: 'Терминал', map: 'Карта', files: 'Файлы', agents: 'Агенты', pinned: 'Закреплённые узлы',
   combat: 'Бой', breach: 'Взлом', web: 'WEB',
+};
+
+const navigateByKey = (event: KeyboardEvent<HTMLElement>, current: WorkspaceView,
+  tabs: { id: WorkspaceView }[], navigate: (view: WorkspaceView) => void) => {
+  const index = tabs.findIndex((tab) => tab.id === current);
+  let next = index;
+  switch (event.key) {
+    case 'ArrowDown': case 'ArrowRight': next = (index + 1) % tabs.length; break;
+    case 'ArrowUp': case 'ArrowLeft': next = (index + tabs.length - 1) % tabs.length; break;
+    case 'Home': next = 0; break;
+    case 'End': next = tabs.length - 1; break;
+    case 'Enter': case ' ': break;
+    default: return;
+  }
+  event.preventDefault();
+  navigate(tabs[next].id);
+  event.currentTarget.closest('[role="tablist"]')
+    ?.querySelector<HTMLElement>(`[data-net-view="${tabs[next].id}"]`)?.focus();
 };
 
 /** Each workspace remains mounted so navigation preserves drafts, filters and map position. */
@@ -92,6 +110,7 @@ const NetrunWorkspace = () => {
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const currentTheme = useNetrunSelector((state) => state.ui_theme);
   const openAppearance = useCallback(() => setAppearanceOpen(true), []);
+  const openInspector = useCallback(() => setSidebarOpen(true), []);
   const previousPage = useRef<WorkspaceView>(page === 'breach' ? 'terminal' : page);
   const hadBreach = useRef(!!breach);
   const { incomingCount, webAvailable } = data;
@@ -155,10 +174,11 @@ const NetrunWorkspace = () => {
         <Tabs role="tablist" aria-label="Рабочие страницы" className="netrun-navigation__tabs">
           {tabs.map((tab) => (
             <Tabs.Tab key={tab.id} icon={tab.icon} selected={page === tab.id} role="tab"
-              aria-selected={page === tab.id} tabIndex={0}
+              aria-selected={page === tab.id} tabIndex={page === tab.id ? 0 : -1}
               aria-label={PAGE_NAMES[tab.id]}
+              title={PAGE_NAMES[tab.id]} aria-controls={`netrun-page-${tab.id}`} data-net-view={tab.id}
               rightSlot={tab.id === 'combat' && incomingCount ? <span aria-label={`Входящих атак: ${incomingCount}`}>! {incomingCount}</span> : undefined}
-              onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(tab.id); } }}
+              onKeyDown={(event) => navigateByKey(event, tab.id, tabs, navigate)}
               onClick={() => navigate(tab.id)} style={tab.id === 'combat' && incomingCount ? { color: THEME.bad } : undefined}>
               <span className="netrun-navigation__label">{PAGE_NAMES[tab.id]}{tab.count ? ` (${tab.count})` : ''}</span>
             </Tabs.Tab>
@@ -191,7 +211,7 @@ const NetrunWorkspace = () => {
                   content={sidebarOpen ? 'Скрыть информацию об узле' : 'Показать информацию об узле'}
                   onClick={() => setSidebarOpen(!sidebarOpen)} />
               </div>
-              <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}><StationMap suspended={page !== 'map'} focusRequest={mapFocusRequest} /></div>
+              <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}><StationMap suspended={page !== 'map'} focusRequest={mapFocusRequest} onInspect={openInspector} /></div>
             </div>
             <div className="netrun-inspector" data-net-layout="sidebar" style={{ display: sidebarOpen ? 'block' : 'none',
               flex: compact ? 'none' : '0 0 320px', width: compact ? 'min(88%, 350px)' : '320px',
@@ -199,6 +219,11 @@ const NetrunWorkspace = () => {
               zIndex: compact ? 7 : undefined, minWidth: 0, minHeight: 0, height: '100%', overflowY: 'auto',
               overflowX: 'hidden', background: THEME.panel, border: `1px solid ${THEME.line}`,
               borderRadius: '7px', boxSizing: 'border-box' }}>
+              <div className="netrun-inspector__toolbar">
+                <span>Выбранный узел</span>
+                <Button compact icon="xmark" aria-label="Закрыть информацию об узле" tooltip="Закрыть информацию об узле"
+                  onClick={() => setSidebarOpen(false)} />
+              </div>
               <NodeSidebar suspended={page !== 'map'} />
             </div>
           </div>
@@ -259,7 +284,7 @@ const PinnedWorkspace = memo(({ active }: { active: boolean }) => {
 });
 
 const WorkspacePage = (props: { id: WorkspaceView; active: WorkspaceView; scrollable?: boolean; children: ReactNode }) => (
-  <div role="tabpanel" aria-label={PAGE_NAMES[props.id]} aria-hidden={props.active !== props.id}
+  <div id={`netrun-page-${props.id}`} role="tabpanel" aria-label={PAGE_NAMES[props.id]} aria-hidden={props.active !== props.id}
     data-net-page={props.id} style={{ display: props.active === props.id ? 'flex' : 'none', flex: '1 1 0',
       flexDirection: 'column', width: '100%', minWidth: 0, minHeight: 0,
       overflowX: 'hidden', overflowY: props.scrollable ? 'auto' : 'hidden' }}>

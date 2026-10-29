@@ -94,6 +94,11 @@
 	var/list/netrun_factions
 	var/personal_faction_serial = 0
 	var/list/personal_factions_by_principal = list()
+	/// Separate visitor and per-faction limits leave room for station/player agents.
+	var/visitor_limit = 12
+	var/visitor_faction_limit = 4
+	var/visitor_wave_min = 3
+	var/visitor_wave_max = 4
 
 /datum/controller/subsystem/netrun/proc/netrun_faction_family(id)
 	var/datum/netrun_faction/faction = get_netrun_faction(id)
@@ -189,21 +194,36 @@
 		if(!QDELETED(bot) && !bot.launched_by_owner && get_netrun_faction(bot.net_faction)?.arrival_weight)
 			.++
 
-/// At most two arrivals per due wave, through the same real entry points.
+/// A dense but bounded wave. Count processes once, then update that census on
+/// successful spawns; personal factions never enter the visitor selection pool.
 /datum/controller/subsystem/netrun/proc/spawn_visitor_wave()
 	get_netrun_faction(null)
-	for(var/index in 1 to 2)
-		if(count_network_visitors() >= 8 || length(bots) >= NETRUN_MAX_BOTS)
+	var/visitors = 0
+	var/list/counts = list()
+	for(var/mob/camera/netrun_entity/bot/bot as anything in bots)
+		if(QDELETED(bot))
+			continue
+		counts[bot.net_faction] = (counts[bot.net_faction] || 0) + 1
+		if(!bot.launched_by_owner && get_netrun_faction(bot.net_faction)?.arrival_weight)
+			visitors++
+	var/wave_size = rand(visitor_wave_min, visitor_wave_max)
+	for(var/index in 1 to wave_size)
+		if(visitors >= visitor_limit || length(bots) >= NETRUN_MAX_BOTS)
 			break
 		var/list/pool = list()
 		for(var/id in netrun_factions)
 			var/datum/netrun_faction/faction = netrun_factions[id]
-			if(faction.arrival_weight && count_bot_faction(id) < 3)
-				pool[id] = faction.arrival_weight
+			var/free = visitor_faction_limit - (counts[id] || 0)
+			if(faction.arrival_weight && length(faction.visitors) && free > 0)
+				pool[id] = faction.arrival_weight * free
 		if(!length(pool))
 			break
 		var/datum/netrun_faction/faction = get_netrun_faction(pickweight(pool))
 		var/mob/camera/netrun_entity/bot/visitor = spawn_bot(pick(faction.visitors), bot_entry_node())
+		if(!visitor)
+			break
+		visitors++
+		counts[visitor.net_faction] = (counts[visitor.net_faction] || 0) + 1
 		if(visitor && faction.hostile_to(NETRUN_FACTION_STATION))
 			report_incident("rogue", visitor.host_node, visitor, NETRUN_INCIDENT_MEDIUM, "Вторжение: [faction.name], процесс [visitor.real_name].")
 
@@ -233,6 +253,15 @@
 	accent = "violet"
 	programs = list("strike", "barrier", "patch")
 	lifetime = 7 MINUTES
+
+/// Allied visitors defend against actual enemies rather than repeatedly walking
+/// toward friendly ICE that their combat policy will never attack.
+/datum/netrun_bot_program/raider/collective/plan(datum/netrun_bot_brain/brain)
+	var/datum/component/netrun_node/target = brain.find_nearby_node(TYPE_PROC_REF(/datum/netrun_bot_brain, node_has_enemy))
+	if(target)
+		brain.push_goal(new /datum/netrun_bot_goal/travel(brain, target))
+	else
+		brain.push_goal(new /datum/netrun_bot_goal/patrol(brain, patrol_networks(brain)))
 
 /datum/netrun_bot_program/scavenger/archivist
 	id = "archive_collector"

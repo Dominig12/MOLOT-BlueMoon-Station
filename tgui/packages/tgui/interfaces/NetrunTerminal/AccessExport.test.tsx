@@ -45,10 +45,11 @@ test('session ID snapshots are visible and revocable but never offered, uploaded
   const contact = { ref: 'recipient', name: 'Сосед', kind: 'entity' as const, integrity: 100, max_integrity: 100, state: 'резидент',
     self: false, can_signal: true, can_message: true, can_offer: true };
   const panel = render(<><StoragePanel /><EntityContacts address="NODE" contacts={[contact]} pending={false} localEntity /></>);
-  const rows = panel.container.querySelectorAll('[data-net-file-row="local"]');
-  expect(rows[0].querySelector('.fa-upload')).toBeNull();
-  expect(rows[1].querySelector('.fa-upload')).not.toBeNull();
-  fireEvent.click(rows[0].querySelector('.fa-ban').parentElement);
+  const snapshotRow = panel.getByRole('button', { name: `Выбрать файл ${snapshot.name}` });
+  const keyRow = panel.getByRole('button', { name: `Выбрать файл ${key.name}` });
+  expect(snapshotRow.querySelector('.fa-upload')).toBeNull();
+  expect(keyRow.querySelector('.fa-upload')).not.toBeNull();
+  fireEvent.click(snapshotRow.querySelector('.fa-ban').parentElement);
   expect(sent('delete_local')).toEqual([{ uid: 'session-id' }]);
   expect(panel.getByText('Только для текущего погружения')).toBeTruthy();
   const name = panel.getByLabelText('Имя снимка ID') as HTMLInputElement;

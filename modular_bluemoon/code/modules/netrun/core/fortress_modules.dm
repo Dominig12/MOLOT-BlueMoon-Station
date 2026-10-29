@@ -78,6 +78,8 @@
 	if(integrity <= 0)
 		destroyed()
 	fortress.note_attack(attacker, src)
+	if(status == NETRUN_FORT_MODULE_DESTROYED)
+		fortress.release_defeat_loot(attacker)
 	fortress.changed()
 
 /datum/netrun_fortress_module/proc/destroyed()

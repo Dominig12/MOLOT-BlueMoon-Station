@@ -6,10 +6,12 @@ import { useNetrunBackend } from './useNetrunBackend';
 
 /** Hacked rights collect in an ordinary file; this panel opens or copies it. */
 export const AccessExport = memo(() => {
-  const { act, data } = useNetrunBackend(['access_export', 'shard']);
+  const { act, data } = useNetrunBackend(['access_export', 'shard', 'storage']);
   const [name, setName] = useState('Копия.grants');
   const [toShard, setToShard] = useState(false);
   const access = data.access_export;
+  const destination = toShard && data.shard ? data.shard : data.storage;
+  const merging = destination?.files.some((file) => file.kind === 'grants');
   if (!access) { return null; }
   return (<details className="netrun-agent-details" data-net-access-export>
     <summary><Icon name="key" /> Ключ доступа</summary>
@@ -24,9 +26,10 @@ export const AccessExport = memo(() => {
       {!!data.shard && <option value="shard">{data.shard.name}</option>}
                                                   </select>
     </label>
-    <Button compact icon="copy" content="Скопировать ключ" disabled={!access.can_export || !name.trim()}
-      tooltip={access.reason || 'Создать независимую копию текущих добытых прав.'}
+    <Button compact icon="copy" content={merging ? 'Обновить ключ на носителе' : 'Скопировать ключ'} disabled={!access.can_export || !name.trim()}
+      tooltip={access.reason || (merging ? 'Объединить действующие права с существующим файлом; его имя сохранится.' : 'Создать независимую копию текущих добытых прав.')}
       onClick={() => act('access_export', { name: name.trim(), to_shard: !!data.shard && toShard })} />
     {!!access.reason && <Box color={THEME.muted} fontSize="11px" mt={0.5}>{access.reason}</Box>}
+    {!!merging && <Box color={THEME.muted} fontSize="11px" mt={0.5}>На каждом носителе хранится один общий ключ. Новые права дополнят существующий файл.</Box>}
           </details>);
 });

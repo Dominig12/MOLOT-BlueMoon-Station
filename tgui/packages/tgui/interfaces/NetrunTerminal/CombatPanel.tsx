@@ -192,15 +192,20 @@ const incomingSummary = (attack: IncomingProgram, turnBased = false) =>
   `${attack.source} готовит ${attack.name} · ${incomingEffect(attack, turnBased)} · через ${attack.remaining} с`;
 
 const blockedCombatActions = (combat: CombatState, locked: number) => [
-  combat.turn && !combat.turn.your_turn ? 'Сейчас ход другого участника.' : null,
+  combat.turn?.participating === false ? 'Вы наблюдаете бой. Вступите, чтобы занять место в очереди.'
+    : combat.turn && !combat.turn.your_turn ? 'Сейчас ход другого участника.' : null,
   combat.self?.stunned ? 'Вы оглушены: дождитесь окончания оглушения.' : null,
   locked > 0 ? `Терминал заблокирован: ещё ${locked} с.` : null,
   !combat.turn && (combat.action_ready_in ?? 0) > 0 ? `Общая пауза запуска: ещё ${combat.action_ready_in} с.` : null,
 ].filter((reason): reason is string => !!reason);
 
 /** One local display clock per active encounter. Expiry never polls or sends an action. */
-const TurnHud = ({ turn, active, pass }: { turn: CombatTurn; active: boolean; pass: () => void }) => {
-  const key = `${turn.round}:${turn.actor_ref}`;
+const turnKey = (turn: CombatTurn) => turn.id || `${turn.round}:${turn.actor_ref}`;
+
+const TurnHud = ({ turn, active, pass, join, onExpired }: {
+  turn: CombatTurn; active: boolean; pass: () => void; join: () => void; onExpired: (key: string) => void;
+}) => {
+  const key = turnKey(turn);
   const clock = useRef({ key: '', value: turn, deadline: 0, duration: 1 });
   const received = performance.now();
   if (clock.current.key !== key) {
@@ -222,6 +227,10 @@ const TurnHud = ({ turn, active, pass }: { turn: CombatTurn; active: boolean; pa
     return () => window.clearInterval(interval);
   }, [active, key, deadline]);
   const remaining = Math.max(0, (deadline - now) / 1000);
+  const expired = remaining <= 0;
+  useEffect(() => {
+    if (active && expired) { onExpired(key); }
+  }, [active, expired, key, onExpired]);
   return (
     <section className="netrun-turn-hud" aria-label="Порядок боя" data-net-turn={key}>
       <div className="netrun-turn-hud__actor">
@@ -236,7 +245,9 @@ const TurnHud = ({ turn, active, pass }: { turn: CombatTurn; active: boolean; pa
         <strong aria-label={`Осталось ${Math.ceil(remaining)} с`}>{Math.ceil(remaining)} с</strong>
         <Meter value={remaining} max={clock.current.duration} label="Время на решение" color={remaining <= 3 ? THEME.bad : THEME.accent} />
       </div>
-      <Button compact icon="forward-step" content="Завершить ход" disabled={!turn.your_turn || !turn.can_pass} onClick={pass} />
+      {turn.participating === false
+        ? <Button compact icon="user-plus" content="Вступить в бой" disabled={!turn.can_join || expired} onClick={join} />
+        : <Button compact icon="forward-step" content="Завершить ход" disabled={!turn.your_turn || !turn.can_pass || expired} onClick={pass} />}
       {!!turn.participants?.length && (
         <div className="netrun-turn-order" aria-label="Участники боя">
           {turn.participants.map((participant) => (
@@ -296,6 +307,7 @@ const CombatPanelView = () => {
   if (active) { confirmed.current = data.combat || null; }
   const combat = active ? data.combat : confirmed.current;
   const [target, setTarget] = useState<string | null>(null);
+  const [expiredDecision, setExpiredDecision] = useState<string | null>(null);
   const pursuit = combat?.pursuit;
 
   // Preserve a usable selection and replace removed or disconnected targets in one update.
@@ -328,10 +340,15 @@ const CombatPanelView = () => {
     && (selectedTarget.kind === 'entity' || selectedTarget.kind === 'bot');
   const turn = combat.turn;
   const actionBlockReasons = blockedCombatActions(combat, data.locked);
+  if (turn && expiredDecision === turnKey(turn)) {
+    actionBlockReasons.unshift('Время на решение истекло. Ожидается следующий ход.');
+  }
+  const turnParams = turn?.id ? { turn_id: turn.id } : {};
   return (
     <Box className="netrun-combat-panel" style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, height: '100%', width: '100%', overflowY: 'auto', boxSizing: 'border-box', fontFamily: 'monospace' }} p={1}>
       <div className="netrun-combat-content">
-      {!!turn && <TurnHud turn={turn} active={active} pass={() => act('combat_pass')} />}
+      {!!turn && <TurnHud turn={turn} active={active} pass={() => act('combat_pass', turnParams)}
+        join={() => act('combat_join', turnParams)} onExpired={setExpiredDecision} />}
       <Box color={THEME.muted} fontSize="12px" mb={1}>
         <Icon name="crosshairs" mr={1} />
         {combat.node ? <>Узел боя: {combat.node_name} {combat.node}</> : 'Ответный бой'}
@@ -396,7 +413,7 @@ const CombatPanelView = () => {
                     { label: 'Цель', value: p.needs_target ? 'Процесс в одном узле' : 'Собственная сущность' },
                   ]}
                   notices={blockReasons.map((text) => ({ text }))} />}
-                onClick={() => act('program_use', { uid: p.uid, target: p.needs_target ? selectedRef : null })}
+                onClick={() => act('program_use', { uid: p.uid, target: p.needs_target ? selectedRef : null, ...turnParams })}
               >
                 <Box style={{ minWidth: 0 }}>
                   <div className="netrun-program-title"><span>{p.name.replace(/\.(exe|card)$/, '')}</span>{!!turn && <small>{cost} ОД</small>}</div>

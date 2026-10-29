@@ -25,7 +25,7 @@ const LABELS: Record<string, string> = {
   read: 'Чтение файла', upload: 'Загрузка файла', download: 'Скачивание файла',
   window_open: 'Открытие устройства', window_close: 'Закрытие устройства', window_focus: 'Выбор устройства',
   set_waypoint: 'Построение маршрута', clear_waypoint: 'Сброс маршрута',
-  program_use: 'Запуск программы', combat_pass: 'Завершить ход', recover_salvage: 'Подбор данных', chat_send: 'Отправка сообщения',
+  program_use: 'Запуск программы', combat_pass: 'Завершить ход', combat_join: 'Вступить в бой', recover_salvage: 'Подбор данных', chat_send: 'Отправка сообщения',
   cli: 'Команда терминала', web_site: 'Открытие сайта', web_page: 'Открытие страницы', web_back: 'Навигация WEB',
   entity_signal: 'Сигнал сущности', entity_message: 'Личное сообщение сущности',
   entity_file_offer: 'Предложить копию файла', entity_file_accept: 'Принять файл в память', entity_file_reject: 'Отклонить файл',

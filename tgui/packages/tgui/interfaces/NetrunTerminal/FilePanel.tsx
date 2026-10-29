@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 
 import { Box, Button, Input } from '../../components';
 import { FileExchangePanel } from './FileExchange';
-import { isTransferableFile, SESSION_FILE_REASON } from './filePermissions';
+import { fileSourceLabel, fileTransferState, isTransferableFile, SESSION_FILE_REASON } from './filePermissions';
 import { NetrunData, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
@@ -36,19 +36,24 @@ const FileTransfer = ({ file }: { file: NonNullable<NetrunData['file']> }) => {
   if (!isTransferableFile(file)) { return <Box color={THEME.muted} fontSize="11px">{SESSION_FILE_REASON}</Box>; }
   if (file.source === 'shard') {
     if (!file.can_import) { return null; }
-    const full = file.size > (data.storage?.capacity ?? 0) - (data.storage?.used ?? 0);
+    const state = file.transfer?.local || fileTransferState(file, data.storage);
     return (<>
-      <Button compact icon="download" content="Копировать в память" disabled={full}
-        tooltip={full ? 'Недостаточно места в локальной памяти.' : 'Сохранить локальную копию; исходный файл остаётся на шарде.'}
+      <Button compact icon="download" content={state.merge ? 'Объединить с ключом в памяти' : 'Копировать в память'} disabled={!state.copy}
+        tooltip={state.reason || 'Сохранить локальную копию; исходный файл остаётся на шарде.'}
         onClick={() => act('file_import', { uid: file.uid, move: false })} />
-      <Button compact icon="arrow-right-arrow-left" content="Перенести в память" disabled={full}
-        tooltip={full ? 'Недостаточно места в локальной памяти.' : 'Переместить файл с шарда в локальную память.'}
+      <Button compact icon="arrow-right-arrow-left" content="Перенести в память" disabled={!state.move}
+        tooltip={state.reason || 'Переместить файл с шарда в локальную память.'}
         onClick={() => act('file_import', { uid: file.uid, move: true })} />
+      {!!state.reason && <Box color={THEME.warn} fontSize="11px">{state.reason}</Box>}
             </>);
   }
+  const state = file.transfer?.shard || fileTransferState(file, data.shard);
   return data.shard ? (<>
-    <Button compact icon="copy" tooltip="Скопировать на шард" onClick={() => act('file_copy', { uid: file.uid, to_shard: true })} />
-    <Button compact icon="arrow-right-arrow-left" tooltip="Переместить на шард" onClick={() => act('file_move', { uid: file.uid, to_shard: true })} />
+    <Button compact icon="copy" content={state.merge ? 'Объединить с ключом на шарде' : 'Копировать на шард'} disabled={!state.copy}
+      tooltip={state.reason || 'Исходный файл остаётся в локальной памяти.'} onClick={() => act('file_copy', { uid: file.uid, to_shard: true })} />
+    <Button compact icon="arrow-right-arrow-left" content="Перенести на шард" disabled={!state.move}
+      tooltip={state.reason || 'Исходный файл покинет локальную память.'} onClick={() => act('file_move', { uid: file.uid, to_shard: true })} />
+    {!!state.reason && <Box color={THEME.warn} fontSize="11px">{state.reason}</Box>}
                        </>) : null;
 };
 
@@ -91,7 +96,7 @@ const FileEditor = (props: { onCreated?: () => void }) => {
         : <Input fluid value={name} onInput={(_event, value) => setName(value)} />}
       {!!file && (
         <Box mt={0.5} color={THEME.muted} fontSize="11px">
-          {file.source === 'session' ? 'Текущее погружение' : file.source === 'shard' ? 'Шард' : 'Локальная память'} · {FILE_KIND_LABELS[file.kind] || file.kind} · {file.size}
+          {fileSourceLabel(file.source)} · {FILE_KIND_LABELS[file.kind] || file.kind} · память {file.size}
         </Box>
       )}
       {file?.kind === 'photo' && !!file.image && (

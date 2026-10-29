@@ -1,6 +1,6 @@
 import { memo } from 'react';
 
-import { Box, Button } from '../../components';
+import { Box, Button, Icon } from '../../components';
 import { IncomingAttacks } from './CombatPanel';
 import { OPERATION_PHASES, operationActive } from './OperationsPanel';
 import { NetrunData, THEME } from './types';
@@ -11,6 +11,7 @@ const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; 
   const { act, data } = useBackend<NetrunData>(['combat', 'entity', 'locked', 'breach', 'operations', 'security']);
   const feedback = useNetrunFeedback();
   const incoming = !!data.combat?.incoming?.length;
+  const turn = data.combat?.turn;
   const travel = data.entity?.travel;
   const latestOperation = data.operations?.[data.operations.length - 1];
   const operation = feedback
@@ -18,10 +19,19 @@ const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; 
     : latestOperation;
   const operationState = operation ? OPERATION_PHASES[operation.phase] : null;
   return (
-    <div data-net-layout="status" style={{ display: 'flex', alignItems: 'center', gap: '6px',
+    <div className="netrun-session-status" data-net-layout="status" style={{ display: 'flex', alignItems: 'center', gap: '6px',
       flex: '0 0 32px', height: '32px', minWidth: 0, overflow: 'hidden' }}>
       <div style={{ flex: '1 1 auto', minWidth: 0, height: '100%', display: 'flex', alignItems: 'center' }}>
-        {incoming ? <IncomingAttacks compact onCombat={props.onCombat} /> : (
+        {incoming ? <IncomingAttacks compact onCombat={props.onCombat} /> : turn ? (
+          <button type="button" className="netrun-session-combat" data-own-turn={turn.your_turn}
+            title="Открыть очередь боя и программы" onClick={props.onCombat}>
+            <Icon name={turn.your_turn ? 'bolt' : 'crosshairs'} />
+            <span>{turn.participating === false ? `Бой в узле · ход ${turn.actor_name}`
+              : turn.your_turn ? `Ваш ход · ${turn.ap}/${turn.max_ap} ОД` : `Ожидание хода · ${turn.actor_name}`}
+            </span>
+            <small>Открыть бой</small>
+          </button>
+        ) : (
           <>
             <Box role="status" aria-live="polite" data-net-feedback={feedback?.phase}
               color={data.locked > 0 ? THEME.bad : operationState?.color || (feedback?.phase === 'delayed' ? THEME.warn : THEME.muted)} fontSize="11px"
@@ -41,10 +51,12 @@ const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; 
       {!!travel && <Button compact icon="stop" content={incoming ? 'Стоп' : 'Остановить маршрут'}
         aria-label="Остановить автопроход" tooltip={`Остановить автопроход к ${travel.target}`}
         onClick={() => act('travel_cancel')} />}
-      {!!props.onOperations && <Button compact role="button" icon="list-check" content={`Операции${data.operations?.some(operationActive) ? ` (${data.operations.filter(operationActive).length})` : ''}`}
+      {!!props.onOperations && <Button compact role="button" icon="list-check" aria-label={`Операции${data.operations?.some(operationActive) ? ` (${data.operations.filter(operationActive).length})` : ''}`}
+        content={<span className="netrun-session-status__label">{`Операции${data.operations?.some(operationActive) ? ` (${data.operations.filter(operationActive).length})` : ''}`}</span>}
         onClick={props.onOperations} />}
       {!!props.onSecurity && !!data.security?.entries?.length && <Button compact role="button" icon="shield-halved"
-        content={`Угрозы (${data.security.entries.length})`} color="caution" onClick={props.onSecurity} />}
+        aria-label={`Угрозы (${data.security.entries.length})`}
+        content={<span className="netrun-session-status__label">{`Угрозы (${data.security.entries.length})`}</span>} color="caution" onClick={props.onSecurity} />}
     </div>
   );
 };

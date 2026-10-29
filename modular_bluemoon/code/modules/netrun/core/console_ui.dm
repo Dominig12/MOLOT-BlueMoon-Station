@@ -183,7 +183,8 @@
 
 /datum/netrun_console/proc/on_ui_chat_changed(datum/source)
 	SIGNAL_HANDLER
-	invalidate_ui()
+	if(workspace_view == "terminal")
+		invalidate_ui()
 
 /datum/netrun_console/ui_state(mob/user)
 	if(state_override)
@@ -379,10 +380,7 @@
 		var/atom/A = node.parent
 		selected["status"] = level >= NETRUN_ACCESS_USER ? A.netrun_status() : list()
 		if(node.file_store && level >= max(NETRUN_ACCESS_USER, node.fortress?.file_access_level(src) || 0))
-			var/list/files = list()
-			for(var/datum/netrun_file/file as anything in node.file_store.files)
-				files += list(file.ui_entry())
-			selected["files"] = files
+			selected["files"] = node.file_store.ui_entries()
 			selected["storage"] = list("used" = node.used_storage(), "capacity" = node.file_store?.capacity)
 		selected["fortress"] = node.fortress?.ui_payload(src, level)
 	data["selected"] = selected
@@ -613,7 +611,9 @@
 /// Dispatch follows the ordinary TGUI permission check; denied domain actions still get receipt.
 /datum/netrun_console/proc/handle_ui_action(action, list/params, datum/tgui/ui, input_nonce)
 	if(action == "combat_pass")
-		return pass_combat_turn()
+		return pass_combat_turn(params["turn_id"])
+	if(action == "combat_join")
+		return join_combat_turn(params["turn_id"])
 	if(action == "access_export")
 		return !!export_acquired_key(params["name"], !!params["to_shard"])
 	if(action == "entity_file_offer")
@@ -740,7 +740,7 @@
 			intrusion.breach?.finish()
 			return TRUE
 		if("program_use")
-			program_use(params["uid"], params["target"])
+			program_use(params["uid"], params["target"], params["turn_id"])
 			return TRUE
 		if("bot_launch")
 			launch_bot_file(params["uid"], params["address"])
@@ -844,11 +844,16 @@
 	var/datum/netrun_file/file = remote_file(node, uid)
 	if(!file)
 		return
-	var/datum/netrun_file/copy = file.copy()
-	if(!store_file(copy, to_shard))
-		qdel(copy)
-		log_line("Недостаточно места.", "bad")
-		return
+	var/datum/netrun_file_store/destination = to_shard ? inventory.shard?.file_store : inventory.local_store
+	var/reason = node.file_store.transfer_denial(destination, file)
+	if(reason)
+		log_line(reason, "bad")
+		return FALSE
+	var/datum/netrun_file/stored = node.file_store.transfer_to(destination, file)
+	if(!stored)
+		log_line("Файл или память назначения изменились.", "bad")
+		return FALSE
+	inventory.selected_file_uid = stored.uid
 	node.touch()
 	node.add_log("[log_source()]: скачан [file.name].")
 	log_line("Скачано: [file.name].", "good")
@@ -866,13 +871,13 @@
 	var/datum/netrun_file/file = find_local_file(uid)
 	if(!file)
 		return
-	if(node.used_storage() + file.size > node.file_store?.capacity)
-		log_line("На узле нет места.", "bad")
-		return
-	var/datum/netrun_file/copy = file.copy()
-	if(!node.file_store.insert(copy))
-		qdel(copy)
-		log_line("На узле нет места для копии файла.", "bad")
+	var/datum/netrun_file_store/source = inventory.store_for(file)
+	var/reason = source?.transfer_denial(node.file_store, file)
+	if(reason || !source)
+		log_line(reason || "Исходный носитель недоступен.", "bad")
+		return FALSE
+	if(!source.transfer_to(node.file_store, file))
+		log_line("Файл или память узла изменились.", "bad")
 		return FALSE
 	node.touch()
 	node.add_log("[log_source()]: загружен [file.name].")
@@ -891,7 +896,12 @@
 	var/datum/netrun_file/file = remote_file(node, uid)
 	if(!file)
 		return
-	node.file_store.remove(file)
+	if(!file.can_delete(node.file_store))
+		log_line("Хранилище узла доступно только для чтения.", "bad")
+		return FALSE
+	if(!node.file_store.remove(file))
+		log_line("Исходный файл или носитель изменились.", "bad")
+		return FALSE
 	log_line("Удалено с узла: [file.name].", "average")
 	node.add_log("[log_source()]: удалён [file.name].")
 	node.network?.add_log("[log_source()] удалил [file.name] с [node.address]")
@@ -919,10 +929,15 @@
 	var/lat = latency_to(node, tree)
 	var/list/poll_route = tree.addresses_to(node.address)
 	qdel(tree)
+	var/datum/netrun_request/file/packet = new(src, node, action, uid, to_shard, node.network, operator, operation)
+	var/storage_reason = packet.storage_denial()
+	if(storage_reason)
+		packet.reject(storage_reason)
+		qdel(packet)
+		return FALSE
 	next_command = world.time + max(lat, 0.5 SECONDS)
 	if(lat)
 		log_line("[node.address]: файловый запрос отправлен, ~[lat * 100] мс.")
-	var/datum/netrun_request/file/packet = new(src, node, action, uid, to_shard, node.network, operator, operation)
 	return packet.send(lat, poll_route)
 
 /datum/netrun_console/proc/deliver_file_request(action, datum/component/netrun_node/node, uid, to_shard, datum/netrun_network/sent_network, mob/sender, datum/netrun_packet_context/operation)

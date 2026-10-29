@@ -649,7 +649,8 @@
 		return TRUE
 	if(combat_context.needs_live_refresh())
 		return TRUE
-	if(selected_node()?.fortress?.needs_live_refresh())
+	var/datum/component/netrun_node/displayed = workspace_view == "pinned" ? SSnetrun.find_node(remote_session.active_window) : ((workspace_view in list("map", "files")) ? selected_node() : null)
+	if(displayed?.fortress?.needs_live_refresh())
 		return TRUE
 	// Web pages (NTnet) and pinned machine windows carry external/async content that arrives with
 	// no netrun change signal, so those tabs keep polling; the map and terminal stay event-driven.
@@ -857,7 +858,10 @@
 	return inventory.find_file(uid)
 
 /datum/netrun_console/proc/delete_local_file(datum/netrun_file/file)
-	return inventory.delete_file(file)
+	if(!inventory.delete_file(file))
+		log_line("Удаление отклонено: файл недоступен или носитель доступен только для чтения.", "bad")
+		return FALSE
+	return TRUE
 
 /// Бонус от установленных демонов (каждый тип считается один раз)
 /datum/netrun_console/proc/daemon_bonus(id)

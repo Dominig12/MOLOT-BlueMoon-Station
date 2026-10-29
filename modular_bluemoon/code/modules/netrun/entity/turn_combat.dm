@@ -247,6 +247,8 @@
 	return FALSE
 
 /datum/netrun_combat_encounter
+	var/static/next_serial = 0
+	var/serial
 	var/datum/weakref/node_ref
 	var/list/datum/netrun_turn_participant/participants = list()
 	var/current_index = 0
@@ -260,6 +262,7 @@
 	var/closing = FALSE
 
 /datum/netrun_combat_encounter/New(datum/component/netrun_node/node)
+	serial = ++next_serial
 	node_ref = WEAKREF(node)
 	RegisterSignal(node, COMSIG_PARENT_QDELETING, PROC_REF(on_host_deleted))
 
@@ -305,6 +308,14 @@
 
 /datum/netrun_combat_encounter/proc/has_turn(datum/actor)
 	return !closing && (!active || (world.time < deadline && current()?.actor() == netrun_turn_actor(actor)))
+
+/// A delayed browser action belongs to one decision, including across encounters.
+/// Native synchronous callers omit the token and retain the same arbitration.
+/datum/netrun_combat_encounter/proc/decision_id()
+	return "[serial]:[generation]"
+
+/datum/netrun_combat_encounter/proc/accepts_input(turn_id)
+	return isnull(turn_id) || (istext(turn_id) && active && !closing && turn_id == decision_id())
 
 /// Input cannot spend an expired turn while its queued timeout awaits the worker.
 /datum/netrun_combat_encounter/proc/expired_input()
@@ -643,9 +654,12 @@
 	for(var/datum/netrun_turn_participant/entry as anything in participants)
 		queue += list(list("ref" = entry.visible_ref(), "name" = entry.display_name(), "current" = entry == participant,
 			"ap" = entry.ap, "max_ap" = NETRUN_COMBAT_AP))
-	return list("round" = round, "actor_ref" = participant.visible_ref(), "actor_name" = participant.display_name(),
+	var/participating = contains(viewer)
+	return list("id" = decision_id(), "round" = round, "actor_ref" = participant.visible_ref(), "actor_name" = participant.display_name(),
 		"your_turn" = has_turn(viewer), "ap" = participant.ap, "max_ap" = NETRUN_COMBAT_AP,
-		"remaining" = max(0, (deadline - world.time) / (1 SECONDS)), "can_pass" = has_turn(viewer) && !deferred, "participants" = queue)
+		"remaining" = max(0, (deadline - world.time) / (1 SECONDS)), "decision_seconds" = NETRUN_COMBAT_DECISION_TIME / (1 SECONDS),
+		"can_pass" = has_turn(viewer) && !deferred, "participants" = queue, "participating" = participating,
+		"can_join" = !participating && world.time < deadline && !QDELETED(viewer) && !viewer.is_locked() && !viewer.get_combat_encounter())
 
 /datum/netrun_task/combat_turn
 	kind = "combat_turn"

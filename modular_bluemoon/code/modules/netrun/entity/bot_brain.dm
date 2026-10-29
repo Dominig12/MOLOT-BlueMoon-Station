@@ -37,6 +37,10 @@
 	/// A rotating itinerary includes distant nodes without re-scanning the station each think.
 	var/list/patrol_candidates
 	var/patrol_cursor = 1
+	var/salvage_cursor = 1
+	/// Retain a legal local combat target across AP actions, not just telegraphs.
+	var/datum/weakref/combat_target_ref
+	var/datum/weakref/controlled_target_ref
 
 /datum/netrun_bot_brain/New(mob/camera/netrun_entity/bot/owner)
 	src.owner = owner
@@ -46,6 +50,8 @@
 	SSnetrun.task_scheduler?.cancel("bot", src)
 	QDEL_LIST(goals)
 	pending_attack_ref = null
+	combat_target_ref = null
+	controlled_target_ref = null
 	order_node_ref = null
 	release_incident()
 	owner = null
@@ -322,21 +328,82 @@
 	console.release_path_tree(tree)
 
 /datum/netrun_bot_brain/proc/node_has_salvage(datum/component/netrun_node/node)
-	if(!node.is_online())
-		return FALSE
-	for(var/datum/netrun_file/file as anything in node.salvage)
-		if(owner.console.inventory.local_store.can_fit(file))
-			return TRUE
-	return FALSE
+	return !!best_salvage(node)
 
-/// Recovery is a local action too: the current node is absent from nearby BFS.
-/datum/netrun_bot_brain/proc/find_salvage(list/scope)
-	if(owner?.host_node && node_has_salvage(owner.host_node))
-		return owner.host_node
-	return find_nearby_node(PROC_REF(node_has_salvage), scope)
+/// Pure bounded ranking; it never reads a device disk or grants file authority.
+/proc/netrun_salvage_value(datum/netrun_file/file)
+	if(QDELETED(file))
+		return 0
+	. = 10
+	switch(file.kind)
+		if(NETRUN_FILE_PROGRAM)
+			. = 180
+		if(NETRUN_FILE_DAEMON)
+			. = 140
+		if(NETRUN_FILE_BOT)
+			. = 160
+		if(NETRUN_FILE_KEY)
+			. = 120
+		if(NETRUN_FILE_TECHWEB, NETRUN_FILE_TECHWEB_LINK)
+			. = 80
+	if(file.fortress_reward)
+		. += 70
+	. += min(20, max(0, file.size))
+
+/datum/netrun_bot_brain/proc/best_salvage(datum/component/netrun_node/node)
+	RETURN_TYPE(/datum/netrun_file)
+	if(QDELETED(node) || !node.is_online())
+		return null
+	var/best_value = -1
+	for(var/datum/netrun_file/file as anything in node.salvage)
+		if(QDELETED(file) || !file.can_transfer(null, TRUE) || !owner.console.inventory.local_store.can_fit(file))
+			continue
+		var/value = netrun_salvage_value(file)
+		if(value > best_value)
+			. = file
+			best_value = value
+
+/// Rank at most24 nonempty caches with one shared route table. Quality wins,
+/// with actual route cost breaking ties; arbitrary station nodes are never polled.
+/datum/netrun_bot_brain/proc/find_salvage(list/scope, station_only = FALSE)
+	var/datum/component/netrun_node/current = owner?.host_node
+	var/datum/netrun_file/local = (station_only && current?.network?.isolated) ? null : best_salvage(current)
+	var/datum/component/netrun_node/best = local ? current : null
+	var/best_value = local ? netrun_salvage_value(local) : -1
+	var/best_cost = local ? 0 : INFINITY
+	var/list/candidates = SSnetrun.salvage_nodes
+	if(!length(candidates))
+		return best
+	var/datum/netrun_console/console = owner.console
+	var/datum/netrun_path_tree/tree = console.connection.read_path_tree(TRUE)
+	for(var/index in 1 to min(24, length(candidates)))
+		if(salvage_cursor > length(candidates))
+			salvage_cursor = 1
+		var/datum/component/netrun_node/node = candidates[candidates[salvage_cursor++]]
+		if(QDELETED(node) || node == current || is_blacklisted(node.address) || (station_only && node.network?.isolated) || (scope && !(node.network?.id in scope)))
+			continue
+		var/datum/netrun_file/file = best_salvage(node)
+		if(!file || !console.can_traverse_node(node, tree) || !console.can_route(node, tree))
+			continue
+		var/value = netrun_salvage_value(file)
+		var/cost = tree.cost_to(node.address)
+		if(value > best_value || (value == best_value && cost < best_cost))
+			best = node
+			best_value = value
+			best_cost = cost
+	console.release_path_tree(tree)
+	return best
 
 /datum/netrun_bot_brain/proc/node_has_ice(datum/component/netrun_node/node)
 	return LAZYLEN(node.netrun_ice) > 0
+
+/datum/netrun_bot_brain/proc/node_has_enemy(datum/component/netrun_node/node)
+	if(!node.is_online())
+		return FALSE
+	for(var/mob/camera/netrun_entity/entity as anything in node.entities)
+		if(entity != owner && !QDELETED(entity) && owner.program.is_enemy(src, entity))
+			return TRUE
+	return FALSE
 
 /datum/netrun_bot_brain/proc/node_is_patrol_point(datum/component/netrun_node/node)
 	return node.is_online() && !node.is_dynamic() && world.time - (visited[node.address] || -INFINITY) > 2 MINUTES
@@ -395,7 +462,7 @@
 
 /datum/netrun_bot_brain/proc/combat_step()
 	var/datum/netrun_combat_encounter/encounter = owner.console.get_combat_encounter()
-	if(encounter?.active && encounter.is_waiting(owner.console))
+	if(encounter?.active && (!encounter.has_turn(owner.console) || encounter.deferred))
 		in_combat = TRUE
 		state = "ожидание хода"
 		return TRUE
@@ -406,6 +473,8 @@
 			return TRUE
 		in_combat = FALSE
 		pending_attack_ref = null
+		combat_target_ref = null
+		controlled_target_ref = null
 		return FALSE
 	in_combat = TRUE
 	state = "бой"
@@ -424,6 +493,14 @@
 	if(ratio < 0.4 && use_role(NETRUN_PROGRAM_REPAIR, owner))
 		return TRUE
 	var/datum/target = pick_target(foes)
+	var/list/target_hp = netrun_combatant_integrity(target)
+	var/ordinary_hit = SSnetrun.get_program("strike")?.power || 22
+	// Real-time interrupts cannot be cast in somebody else's active turn.
+	// Prepare one proactive control effect against a healthy opponent instead;
+	// native status/cooldown checks prevent stacking, and cheap finishes stay cheap.
+	if(encounter?.active && target_hp?["cur"] > ordinary_hit && !IS_WEAKREF_OF(target, controlled_target_ref) && use_role(NETRUN_PROGRAM_STUN, target))
+		controlled_target_ref = WEAKREF(target)
+		return TRUE
 	if(istype(target, /datum/netrun_ice))
 		var/datum/netrun_ice/ice = target
 		if(ice.pending_program && use_role(NETRUN_PROGRAM_STUN, ice))
@@ -445,38 +522,65 @@
 		encounter.pass(owner.console)
 
 /datum/netrun_bot_brain/proc/pick_target(list/foes)
+	var/datum/current_target = combat_target_ref?.resolve()
+	if(current_target && (current_target in foes))
+		return current_target
 	var/datum/pending = pending_attack_ref?.resolve()
 	if(pending && (pending in foes))
+		combat_target_ref = WEAKREF(pending)
 		return pending
 	var/best_hp = INFINITY
 	for(var/datum/foe as anything in foes)
 		var/list/hp = netrun_combatant_integrity(foe)
-		var/current = hp ? hp["cur"] : INFINITY
-		if(!. || current < best_hp)
+		var/current_hp = hp ? hp["cur"] : INFINITY
+		if(!. || current_hp < best_hp)
 			. = foe
-			best_hp = current
+			best_hp = current_hp
+	combat_target_ref = . ? WEAKREF(.) : null
 
-/// Uses the strongest ready program of a role through the ordinary combat pipeline.
+/// Prefer effective benefit per AP, conserving consumables for worthwhile hits.
+/// Legacy real-time behavior retains its strongest-program policy.
+/datum/netrun_bot_brain/proc/program_value(datum/netrun_program/program, effective_limit, turn_based)
+	if(!turn_based)
+		return program.power
+	var/effect = program.power
+	if(program.role == NETRUN_PROGRAM_ATTACK || program.role == NETRUN_PROGRAM_REPAIR)
+		effect = min(effect, effective_limit)
+	else if(program.role == NETRUN_PROGRAM_STUN)
+		effect = 20 * max(1, program.stun_turns)
+	else if(program.role == NETRUN_PROGRAM_SHIELD)
+		effect *= max(1, program.shield_turns)
+	return effect / max(1, program.ap_cost) * (program.consumable ? 0.8 : 1)
+
+/// Readiness, target status, AP and execution still use the native combat path.
 /datum/netrun_bot_brain/proc/use_role(role, datum/target)
 	var/datum/netrun_console/console = owner.console
 	var/datum/netrun_combat_context/combat = console.combat_context
 	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter()
-	if(QDELETED(target) || (encounter?.active ? encounter.is_waiting(console) : world.time < combat.next_program))
+	if(QDELETED(target) || (encounter?.active ? (!encounter.has_turn(console) || encounter.deferred) : world.time < combat.next_program))
 		return FALSE
 	var/best_uid
-	var/best_power = -1
+	var/best_value = -1
+	var/list/hp = netrun_combatant_integrity(target)
+	var/effective_limit = hp ? (role == NETRUN_PROGRAM_REPAIR ? hp["max"] - hp["cur"] : hp["cur"]) : INFINITY
 	for(var/id in console.builtin_program_ids())
 		var/datum/netrun_program/program = SSnetrun.get_program(id)
-		if(program?.role == role && (encounter?.active ? (!encounter.cooldown_remaining(console, program) && program.ap_cost <= encounter.remaining_ap(console) && encounter.can_apply_program_status(program, target)) : world.time >= (combat.program_cd[program.id] || 0)) && program.power > best_power)
+		if(program?.role != role || (encounter?.active ? (encounter.cooldown_remaining(console, program) || program.ap_cost > encounter.remaining_ap(console) || !encounter.can_apply_program_status(program, target)) : world.time < (combat.program_cd[program.id] || 0)))
+			continue
+		var/value = program_value(program, effective_limit, encounter?.active)
+		if(value > best_value)
 			best_uid = "builtin:[id]"
-			best_power = program.power
+			best_value = value
 	for(var/datum/netrun_file/file as anything in console.all_files())
 		if(file.kind != NETRUN_FILE_PROGRAM)
 			continue
 		var/datum/netrun_program/program = SSnetrun.get_program(file.content)
-		if(program?.role == role && (encounter?.active ? (!encounter.cooldown_remaining(console, program) && program.ap_cost <= encounter.remaining_ap(console) && encounter.can_apply_program_status(program, target)) : world.time >= (combat.program_cd[program.id] || 0)) && program.power > best_power)
+		if(program?.role != role || (encounter?.active ? (encounter.cooldown_remaining(console, program) || program.ap_cost > encounter.remaining_ap(console) || !encounter.can_apply_program_status(program, target)) : world.time < (combat.program_cd[program.id] || 0)))
+			continue
+		var/value = program_value(program, effective_limit, encounter?.active)
+		if(value > best_value)
 			best_uid = file.uid
-			best_power = program.power
+			best_value = value
 	if(!best_uid)
 		return FALSE
 	return console.program_use(best_uid, REF(target))

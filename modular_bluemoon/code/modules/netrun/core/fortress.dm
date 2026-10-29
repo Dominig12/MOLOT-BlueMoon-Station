@@ -48,6 +48,7 @@
 
 /datum/netrun_fortress/Destroy()
 	clear_timer()
+	clear_defeat_loot()
 	SSnetrun.task_scheduler?.cancel("fortress", src)
 	cancel_turret()
 	var/datum/component/netrun_node/old = node
@@ -357,10 +358,11 @@
 	return null
 
 /datum/netrun_fortress/proc/needs_live_refresh()
-	if(turret_fire_at > world.time)
+	var/in_combat = get_combat_encounter()?.active
+	if(!in_combat && turret_fire_at > world.time)
 		return TRUE
 	for(var/datum/netrun_fortress_module/module as anything in modules)
-		if(module.status == NETRUN_FORT_MODULE_BUILDING || module.is_jammed() || module.ready_at > world.time)
+		if(module.status == NETRUN_FORT_MODULE_BUILDING || (!in_combat && (module.is_jammed() || module.ready_at > world.time)))
 			return TRUE
 	return FALSE
 

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
-import { act, fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render, within } from '@testing-library/react';
 import { combineReducers, createStore, setGlobalStore } from 'common/redux';
 
 import { backendReducer, backendUpdate } from '../../backend';
@@ -36,6 +36,34 @@ const setup = () => {
   const update = (data) => act(() => store.dispatch(backendUpdate({ data })));
   return { ...panel, sent, update };
 };
+
+test('filtering and clearing a catalog preserve files without sending server searches or selecting another file', () => {
+  const { container, getByRole, sent } = setup();
+  const search = getByRole('textbox', { name: 'Поиск файлов по имени или типу' });
+  const rows = () => container.querySelectorAll('.netrun-files-catalog [data-net-file-row]');
+  const before = rows().length;
+  fireEvent.change(search, { target: { value: 'local-note' } });
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0].textContent).toContain('local-note.txt');
+  fireEvent.change(search, { target: { value: '' } });
+  expect(rows()).toHaveLength(before);
+  expect(sent('search')).toHaveLength(0);
+  expect(sent('file_select')).toHaveLength(0);
+});
+
+test('a free firmware original uses its real copied size before offering a download', () => {
+  const { container, update, sent } = setup();
+  update({ workspace_view: 'files', selected: {
+    address: 'SERVER', name: 'Сервер', online: true, access: 3, files: [
+      { uid: 'manual', name: 'Руководство.txt', kind: 'text', size: 0, copy_size: 20, preview: 'Встроенное руководство' },
+    ], storage: { used: 0, capacity: 0 },
+  } });
+  const catalog = within(container.querySelector<HTMLElement>('[data-net-remote-catalog]')!);
+  const download = catalog.getByText('В память').closest('.Button')!;
+  expect(download.classList.contains('Button--disabled')).toBe(true);
+  fireEvent.click(download);
+  expect(sent('download')).toHaveLength(0);
+});
 
 let stylesheet: HTMLStyleElement;
 beforeAll(() => {
@@ -89,6 +117,25 @@ test('a non-text local file retains its upload/delete columns and action clicks 
   expect(sent('file_select')).toEqual([]);
 });
 
+test('file search preserves the editor draft and native remote actions stay available in the files workspace', () => {
+  const { container, getByLabelText, sent, update } = setup();
+  update({ workspace_view: 'files', file: { ...file('local-note', 'text'), source: 'local', content: 'saved' } });
+  const editor = container.querySelector<HTMLTextAreaElement>('textarea');
+  fireEvent.change(editor, { target: { value: 'unsaved draft' } });
+  fireEvent.change(getByLabelText('Поиск файлов по имени или типу'), { target: { value: 'link' } });
+  expect(editor.value).toBe('unsaved draft');
+  expect(sent('file_select')).toHaveLength(0);
+  expect(container.querySelectorAll('[data-net-file-row="local"]')).toHaveLength(1);
+  const remote = within(container.querySelector<HTMLElement>('[data-net-remote-catalog]'));
+  expect(remote.getByText('Узел: Сервер')).toBeTruthy();
+  fireEvent.click(remote.getByText('В память'));
+  expect(sent('download')).toEqual([{ uid: 'remote-link', to_shard: false }]);
+  fireEvent.click(remote.getByText('На шард'));
+  expect(sent('download').at(-1)).toEqual({ uid: 'remote-link', to_shard: true });
+  fireEvent.click(container.querySelector<HTMLElement>('[data-net-remote-catalog] .fa-trash').parentElement);
+  expect(sent('delete_remote')).toEqual([{ uid: 'remote-link' }]);
+});
+
 test('shard and remote controls retain their file UIDs and unavailable upload leaves delete in the last column', () => {
   const { container, sent, update } = setup();
   const shard = container.querySelector<HTMLElement>('[data-net-file-actions="shard"]');
@@ -104,6 +151,8 @@ test('shard and remote controls retain their file UIDs and unavailable upload le
   expect(sent('delete_remote')).toEqual([{ uid: 'remote-link' }]);
   update({ selected: null });
   const local = container.querySelector<HTMLElement>('[data-net-file-actions="local"]');
-  expect(local.querySelector('.fa-upload')).toBeNull();
+  const uploadCount = sent('upload').length;
+  fireEvent.click(local.querySelector('.fa-upload').parentElement);
+  expect(sent('upload')).toHaveLength(uploadCount); // The visible disabled control explains the missing destination.
   expect(local.querySelector<HTMLElement>('.fa-trash').parentElement.style.gridColumn).toBe('3');
 });

@@ -234,6 +234,7 @@
 /mob/camera/netrun_entity/bot/proc/agent_orders()
 	var/list/orders = list(list("id" = "recall", "name" = "Отозвать"), list("id" = "guard", "name" = "Перевести на выбранный узел", "needs_node" = TRUE), list("id" = "terminate", "name" = "Завершить"))
 	orders += list(list("id" = "patrol", "name" = "Патрулировать доступную сеть"), list("id" = "command", "name" = "Команда выбранного узла", "needs_node" = TRUE))
+	orders += list(list("id" = "collect", "name" = "Собрать трофеи на выбранном узле", "needs_node" = TRUE))
 	orders += list(list("id" = "persona", "name" = "Личность"), list("id" = "upload", "name" = "Передать файл"), list("id" = "download", "name" = "Забрать файл"))
 	SEND_SIGNAL(src, COMSIG_NETRUN_AGENT_ORDER_LIST, orders)
 	return orders
@@ -528,12 +529,30 @@
 				log_line("Новый пост агента должен быть узлом с вашим доступом ПОЛЬЗОВАТЕЛЯ.", "bad")
 				return FALSE
 			// The owner delegates residency on the new post.
-			agent.console.access_session.node_access[node.address] = max(agent.console.access_session.node_access[node.address] || 0, NETRUN_ACCESS_USER)
+			agent.console.access_session.grant_node(node, NETRUN_ACCESS_USER)
 			agent.brain.order = "guard"
 			agent.brain.order_node_ref = WEAKREF(node)
 			agent.brain.clear_goals()
 			agent.brain.wake_now()
 			log_line("Агент [agent.real_name] переводится на узел [node.get_name()] [node.address].")
+			return TRUE
+		if("collect")
+			var/datum/component/netrun_node/node = SSnetrun.find_node(options["address"])
+			if(QDELETED(node) || !can_route(node) || node_level(node) < NETRUN_ACCESS_USER)
+				log_line("Для сбора трофеев нужен узел с вашим доступом ПОЛЬЗОВАТЕЛЯ.", "bad")
+				return FALSE
+			if(!agent.brain.best_salvage(node))
+				log_line("В выбранном узле нет обломков, которые помещаются в память агента.", "average")
+				return FALSE
+			// This delegates residency only. No private device disk is read, and
+			// every physical hop still observes gates and the agent's own authority.
+			agent.console.access_session.grant_node(node, NETRUN_ACCESS_USER)
+			agent.brain.clear_goals()
+			agent.brain.order = "guard"
+			agent.brain.order_node_ref = WEAKREF(node)
+			agent.brain.push_goal(new /datum/netrun_bot_goal/salvage(agent.brain, node))
+			agent.brain.wake_now()
+			log_line("[agent.real_name]: собрать ценные обломки в узле [node.get_name()] и остаться на посту.", "good")
 			return TRUE
 		if("patrol")
 			agent.brain.clear_goals()
@@ -821,7 +840,9 @@
 	var/list/entries = list()
 	for(var/address in graph.registered_relays)
 		var/datum/component/netrun_node/node = graph.registered_relays[address]
-		if(!QDELETED(node) && !node.network?.isolated && !node.fortress && node.is_online())
+		// Walls/turrets do not erase the physical external entry. A real closed
+		// gate remains a barrier; creating a visitor must not bypass it.
+		if(!QDELETED(node) && !node.network?.isolated && node.is_online() && !(node.fortress?.slots_max() > 0 && node.fortress.intact_count(NETRUN_FORT_GATE)))
 			entries += node
 	if(length(entries))
 		return pick(entries)
@@ -837,7 +858,7 @@
 		if(QDELETED(bot))
 			bots -= bot
 	if(!rogue_wave_at)
-		rogue_wave_at = world.time + rand(60 SECONDS, 120 SECONDS)
+		rogue_wave_at = world.time + rand(30 SECONDS, 60 SECONDS)
 	if(count_bots(NETRUN_BOT_POLICE) < NETRUN_POLICE_QUOTA && world.time >= police_respawn_at)
 		var/datum/component/netrun_node/node = bot_entry_node()
 		var/mob/camera/netrun_entity/bot/police = spawn_bot(NETRUN_BOT_POLICE, node)
@@ -849,7 +870,7 @@
 	if(world.time >= recycler_respawn_at && count_bots(NETRUN_BOT_RECYCLER) < NETRUN_RECYCLER_QUOTA)
 		spawn_bot(NETRUN_BOT_RECYCLER, bot_spawn_node())
 	if(world.time >= rogue_wave_at)
-		rogue_wave_at = world.time + rand(90 SECONDS, 180 SECONDS)
+		rogue_wave_at = world.time + rand(45 SECONDS, 90 SECONDS)
 		spawn_visitor_wave()
 
 /// One custodian per department without one, among departments that keep patrols.

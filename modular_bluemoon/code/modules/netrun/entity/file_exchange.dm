@@ -28,7 +28,8 @@
 	return ..()
 
 /datum/netrun_file_exchange/proc/receive(datum/netrun_file/file, sender_name)
-	if(QDELETED(file) || length(incoming) >= 8 || file.size > owner.inventory.local_store.capacity)
+	prune_expired()
+	if(QDELETED(file) || QDELETED(owner) || !file.can_transfer(owner.inventory.local_store) || !file.can_store(owner.inventory.local_store) || length(incoming) >= 8 || file.size > owner.inventory.local_store.capacity)
 		qdel(file)
 		return FALSE
 	var/datum/netrun_file_offer/offer = new
@@ -55,14 +56,21 @@
 
 /datum/netrun_file_exchange/proc/expire()
 	expiry_timer = null
+	prune_expired()
+	arm_expiry()
+
+/// Expired offers release their owned snapshots before admitting new mail, even if a timer is queued.
+/datum/netrun_file_exchange/proc/prune_expired()
+	var/changed = FALSE
 	for(var/id in incoming)
 		var/datum/netrun_file_offer/offer = incoming[id]
 		if(world.time < offer.expires_at)
 			continue
 		incoming -= id
 		qdel(offer)
-	arm_expiry()
-	owner?.invalidate_ui()
+		changed = TRUE
+	if(changed)
+		owner?.invalidate_ui()
 
 /datum/netrun_file_exchange/proc/payload()
 	var/list/entries = list()
@@ -106,15 +114,15 @@
 	var/mob/camera/netrun_entity/recipient = locate(recipient_ref)
 	var/datum/component/netrun_node/node = SSnetrun.find_node(address)
 	var/datum/netrun_file/file = find_local_file(uid)
-	var/datum/netrun_path_tree/tree = make_path_tree()
+	var/datum/netrun_path_tree/tree = connection.read_path_tree(TRUE)
 	var/reason = entity_contact_denial(node, recipient, tree)
-	if(reason || QDELETED(file) || !inventory.store_for(file) || !file.can_copy())
-		qdel(tree)
+	if(reason || QDELETED(file) || !inventory.store_for(file) || !file.can_copy() || !file.can_transfer(recipient?.console?.inventory.local_store))
+		release_path_tree(tree)
 		log_line("Нельзя предложить файл: [reason || "файл не принадлежит отправителю"].", "bad")
 		return FALSE
 	var/eta = latency_to(node, tree)
 	var/list/route = tree.addresses_to(node.address)
-	qdel(tree)
+	release_path_tree(tree)
 	file_exchange.next_offer = world.time + 2 SECONDS
 	var/datum/netrun_request/entity_file_offer/packet = new(src, node, recipient, file)
 	return packet.send(eta, route)
@@ -140,13 +148,13 @@
 /datum/netrun_request/entity_file_offer/execute()
 	var/mob/camera/netrun_entity/recipient = recipient_ref?.resolve()
 	var/datum/netrun_file/file = console.find_local_file(file_uid)
-	var/datum/netrun_path_tree/tree = console.make_path_tree()
+	var/datum/netrun_path_tree/tree = console.connection.read_path_tree(TRUE)
 	var/reason = console.entity_contact_denial(node, recipient, tree)
-	if(reason || QDELETED(file) || !console.inventory.store_for(file) || !file.can_copy() || sender != console.operator || node.network != sent_network || !console.combat_self())
-		qdel(tree)
+	if(reason || QDELETED(file) || !console.inventory.store_for(file) || !file.can_copy() || !file.can_transfer(recipient?.console?.inventory.local_store) || sender != console.operator || node.network != sent_network || !console.combat_self())
+		console.release_path_tree(tree)
 		return reject("Получатель, файл, маршрут или отправитель изменились.")
 	operation.receive(tree.addresses_to(node.address))
-	qdel(tree)
+	console.release_path_tree(tree)
 	if(!recipient.console.file_exchange.receive(file.copy(), sender_name))
 		return reject("Очередь предложений получателя заполнена или файл больше его памяти.")
 	operation.set_result("Копия предложена [recipient.real_name]; ожидается согласие получателя.")

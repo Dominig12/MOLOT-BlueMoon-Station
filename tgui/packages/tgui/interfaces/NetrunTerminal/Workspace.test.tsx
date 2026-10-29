@@ -390,6 +390,24 @@ test('a tab switch retains the last confirmed route and node panel until map dat
   await act(async () => {});
 });
 
+test('keyboard navigation moves focus and selection together without changing workspace instances', () => {
+  const { panel, page } = setup();
+  const filesPage = page('files');
+  const terminal = panel.getByRole('tab', { name: 'Терминал' });
+  terminal.focus();
+  fireEvent.keyDown(terminal, { key: 'ArrowDown' });
+  const map = panel.getByRole('tab', { name: 'Карта' });
+  expect(document.activeElement).toBe(map);
+  expect(map.getAttribute('aria-selected')).toBe('true');
+  expect(terminal.tabIndex).toBe(-1);
+  fireEvent.keyDown(map, { key: 'ArrowRight' });
+  expect(document.activeElement).toBe(panel.getByRole('tab', { name: 'Файлы' }));
+  expect(page('files')).toBe(filesPage);
+  fireEvent.keyDown(document.activeElement, { key: 'Home' });
+  expect(document.activeElement).toBe(terminal);
+  expect(panel.getByRole('tabpanel', { name: 'Терминал' })).toBeTruthy();
+});
+
 test('a pinned window reappears immediately from the cache then respects authoritative closure', () => {
   const { panel, page, update } = setup({
     workspace_view: 'pinned', window: machine,

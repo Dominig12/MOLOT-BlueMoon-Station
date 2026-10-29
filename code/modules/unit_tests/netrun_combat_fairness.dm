@@ -25,6 +25,31 @@
 	TEST_ASSERT_EQUAL(entry["ready_turns"], 0, "A new own turn releases the program cooldown")
 	TEST_ASSERT_EQUAL(encounter.remaining_ap(console), NETRUN_COMBAT_AP, "Exactly the next own turn replenishes the budget")
 
+/// Lethal delivery records native protection before the target component is destroyed.
+/datum/unit_test/netrun_combat_lethal_incident_snapshot/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
+	var/datum/netrun_ice/guard = allocate(/datum/netrun_ice, scene.node_a, NETRUN_ICE_SENTRY)
+	guard.integrity = 1
+	guard.drops_loot = FALSE
+	TEST_ASSERT(entity.console.program_use("builtin:sting", REF(guard)), "The actual player program delivers a lethal guard hit")
+	TEST_ASSERT(QDELETED(guard), "The native target and its combat component are destroyed during delivery")
+	var/datum/netrun_incident/report
+	for(var/datum/netrun_incident/incident as anything in SSnetrun.incidents)
+		if(incident.kind == "combat" && incident.address == scene.node_a.address && incident.suspect() == entity)
+			report = incident
+	TEST_ASSERT_NOTNULL(report, "Killing lawful protection still creates its authoritative combat incident")
+	TEST_ASSERT(findtext(report.text, "ICE-SENTRY"), "The incident preserves the real pre-deletion target name")
+	var/reports = report.reports
+	var/datum/netrun_ice/black = allocate(/datum/netrun_ice, scene.node_a, NETRUN_ICE_BLACK)
+	black.integrity = 1
+	black.drops_loot = FALSE
+	entity.console.combat_context.next_program = 0
+	entity.console.combat_context.program_cd.Cut()
+	TEST_ASSERT(entity.console.program_use("builtin:sting", REF(black)), "The next native lethal hit can destroy illegal protection")
+	TEST_ASSERT(QDELETED(black), "Illegal ICE is also deleted before post-delivery reporting")
+	TEST_ASSERT_EQUAL(report.reports, reports, "Deleting BLACK's profile cannot reclassify it as station protection")
+
 /// Disengagement is lost only after an actual offensive action, including non-damaging stun.
 /datum/unit_test/netrun_combat_offense_reveals_process/Run()
 	var/obj/item/host = allocate(/obj/item)

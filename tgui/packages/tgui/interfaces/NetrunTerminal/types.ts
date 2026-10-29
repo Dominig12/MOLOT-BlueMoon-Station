@@ -106,12 +106,17 @@ export type NetFile = {
   name: string;
   kind: string;
   size: number;
+  copy_size?: number;
   preview: string | null;
   selected?: boolean;
   agent_profile?: string | null;
   packed_files?: number;
   session_bound?: boolean;
   transferable?: boolean;
+  copyable?: boolean;
+  transfer_reason?: string | null;
+  deletable?: boolean;
+  delete_reason?: string | null;
 };
 
 export type Storage = {
@@ -334,6 +339,8 @@ export type CombatProgram = {
 };
 
 export type CombatTurn = {
+  /** An exact decision identity; delayed input cannot act on another turn. */
+  id?: string;
   round: number;
   actor_ref: string;
   actor_name: string;
@@ -343,6 +350,8 @@ export type CombatTurn = {
   remaining: number;
   decision_seconds?: number;
   can_pass: boolean;
+  participating?: boolean;
+  can_join?: boolean;
   participants?: { ref: string; name: string; current: boolean; ap: number; max_ap: number }[];
 };
 
@@ -503,6 +512,7 @@ export type NetrunData = {
     height?: number;
     source: 'local' | 'shard' | 'session';
     can_import?: boolean;
+    transfer?: Record<'local' | 'shard', { copy: boolean; move: boolean; reason: string | null; merge: boolean }>;
     agent_builder?: AgentBuilder | null;
   }) | null;
 };

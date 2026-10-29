@@ -6,13 +6,16 @@ import { EntityAvatar, PERSONA_ACCENTS, PERSONA_AVATAR_OPTIONS } from './EntityA
 import { BotAvatar, botKindLabel } from './EntityContacts';
 import { isTransferableFile } from './filePermissions';
 import { NETRUN_THEMES } from './themes';
-import { AgentState, NetFile, NetrunData, SelectedNode, THEME } from './types';
+import { AgentState, CombatProgram, NetFile, NetrunData, SelectedNode, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 type Order = (order: string, options?: object) => void;
 const DETAIL_ORDERS = new Set(['command', 'persona', 'upload', 'download']);
 const ACCENT_NAMES: Record<string, string> = { cyan: 'Лёд', mint: 'Мята', amber: 'Янтарь', rose: 'Роза', violet: 'Ирис', silver: 'Серебро' };
 const PROGRAM_ROLES: Record<string, string> = { attack: 'атака', stun: 'подавление', shield: 'щит', repair: 'ремонт', purge: 'очистка' };
+const programReadiness = (program: CombatProgram) => program.unavailable_reason
+  || ((program.ready_turns ?? 0) > 0 ? `Восстановление через ${program.ready_turns} ход.`
+    : program.ready_in > 0 ? `Восстановление ${Math.ceil(program.ready_in)} с` : 'Готова');
 
 const AgentPersona = ({ agent, order }: { agent: AgentState; order: Order }) => {
   const [name, setName] = useState(agent.name);
@@ -73,6 +76,9 @@ const AgentCard = (props: { agent: AgentState; selected: SelectedNode | null; fi
       <Box fontSize="10px" color={THEME.muted}>
         Целостность {agent.integrity}/{agent.max_integrity} · память {agent.storage.used}/{agent.storage.capacity}
       </Box>
+      {agent.storage.capacity > 0 && agent.storage.used >= agent.storage.capacity && (
+        <Box color={THEME.warn} fontSize="11px">Память заполнена: заберите файлы или отзовите агента с добычей.</Box>
+      )}
       <Box mt={0.5} style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
         {agent.orders.filter((entry) => !DETAIL_ORDERS.has(entry.id)).map((entry) => {
           const blocked = entry.enabled === false || (entry.needs_node && !selected);
@@ -95,10 +101,14 @@ const AgentCard = (props: { agent: AgentState; selected: SelectedNode | null; fi
                                 </details>}
       {agent.programs && <details className="netrun-agent-details"><summary><Icon name="microchip" /> Программы · {agent.programs.length}</summary>
         {agent.programs.length ? agent.programs.map((program) => (<Box key={program.uid || program.id} className="netrun-agent-program">
-          <Box bold>{program.name}<Box inline ml={1} color={THEME.muted} fontSize="10px">{PROGRAM_ROLES[program.role] || program.role} · мощность {program.power}</Box></Box>
+          <Box bold>{program.name}<Box inline ml={1} color={THEME.muted} fontSize="10px">
+            {PROGRAM_ROLES[program.role] || program.role} · мощность {program.power}{program.ap_cost !== undefined ? ` · ${program.ap_cost} ОД` : ''}
+                                  </Box>
+          </Box>
           <Box color={THEME.muted} fontSize="11px">{program.desc}</Box>
-          <Box color={program.unavailable_reason ? THEME.warn : THEME.good} fontSize="10px">
-            {program.unavailable_reason || (program.ready_in > 0 ? `Восстановление ${Math.ceil(program.ready_in)} с` : 'Готова')}
+          <Box color={program.unavailable_reason || program.ready_in > 0 || (program.ready_turns ?? 0) > 0 ? THEME.warn : THEME.good} fontSize="10px"
+            title={programReadiness(program)} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {programReadiness(program)}
           </Box>
                                                                   </Box>)) : <Box color={THEME.muted} fontSize="11px">Боевых программ нет. Загрузите файл из локальной памяти.</Box>}
                          </details>}
@@ -106,7 +116,9 @@ const AgentCard = (props: { agent: AgentState; selected: SelectedNode | null; fi
         {(agent.files || []).map((file) => (<div key={file.uid} className="netrun-agent-file">
           <span title={file.preview || undefined}>{file.name}<small>{file.kind} · {file.size}</small></span>
           {hasOrder('download') && <Button compact icon="download" aria-label={`Забрать ${file.name} у ${agent.name}`}
-            tooltip="Скопировать из памяти агента в локальное хранилище" onClick={() => order('download', { uid: file.uid })} />}
+            disabled={!isTransferableFile(file)}
+            tooltip={isTransferableFile(file) ? 'Переместить исходный файл из памяти агента в вашу память.' : 'Этот файл нельзя перенести из текущего сеанса.'}
+            onClick={() => order('download', { uid: file.uid })} />}
                                             </div>))}
         {!agent.files?.length && <Box color={THEME.muted} fontSize="11px">Память агента пуста.</Box>}
         {hasOrder('upload') && <div className="netrun-agent-form__row">
@@ -116,7 +128,7 @@ const AgentCard = (props: { agent: AgentState; selected: SelectedNode | null; fi
                                                         </select>
           </label>
           <Button compact icon="upload" content="Загрузить" disabled={!selectedFile || selectedFile.size > agent.storage.capacity - agent.storage.used}
-            tooltip={selectedFile && selectedFile.size > agent.storage.capacity - agent.storage.used ? 'В памяти агента недостаточно места.' : 'Передать копию по сети.'}
+            tooltip={selectedFile && selectedFile.size > agent.storage.capacity - agent.storage.used ? 'В памяти агента недостаточно места.' : 'Переместить исходный файл по сети в память агента.'}
             onClick={() => selectedFile && order('upload', { uid: selectedFile.uid })} />
                                </div>}
                                               </details>}

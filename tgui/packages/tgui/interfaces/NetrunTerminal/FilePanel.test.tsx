@@ -77,3 +77,21 @@ test('a shard file can be copied or moved explicitly into local memory', () => {
   expect(topic.mock.calls.filter(([message]) => message.type === 'act/file_import').map(([message]) => JSON.parse(message.payload)))
     .toEqual([{ uid: original.uid, move: false }, { uid: original.uid, move: true }]);
 });
+
+test('a full destination key can merge while server transfer denials remain visible', () => {
+  const { panel, topic, store } = setup();
+  const key = { ...original, uid: 'key-shard', name: 'key.grants', kind: 'grants', source: 'shard', can_import: true };
+  act(() => store.dispatch(backendUpdate({ data: { file: key,
+    storage: { used: 1, capacity: 1, files: [{ ...key, uid: 'key-local' }] },
+    shard: { name: 'Шард', used: 1, capacity: 1, files: [key] },
+  } })));
+  fireEvent.click(panel.getByText('Объединить с ключом в памяти'));
+  expect(topic.mock.calls.some(([message]) => message.type === 'act/file_import')).toBe(true);
+  const previous = topic.mock.calls.length;
+  act(() => store.dispatch(backendUpdate({ data: { file: { ...key, transfer: {
+    local: { copy: false, move: false, reason: 'Носитель назначения доступен только для чтения.', merge: true },
+  } } } })));
+  expect(panel.getByText('Носитель назначения доступен только для чтения.')).toBeTruthy();
+  fireEvent.click(panel.getByText('Объединить с ключом в памяти'));
+  expect(topic.mock.calls).toHaveLength(previous);
+});
