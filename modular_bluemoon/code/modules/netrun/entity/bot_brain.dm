@@ -461,14 +461,27 @@
 	var/datum/component/netrun_node/node = owner.host_node
 	if(!node)
 		return
+	var/list/candidates = list()
 	for(var/datum/netrun_ice/ice as anything in node.netrun_ice)
 		if(!QDELETED(ice) && (ice.enemy_ref?.resolve() == owner || ice.is_intruder(owner, node)))
-			. += ice
+			candidates += ice
 	for(var/mob/camera/netrun_entity/entity as anything in node.entities)
 		if(entity == owner || QDELETED(entity) || world.time < entity.combat_ignore_until)
 			continue
 		if(remembered_enemy(entity) || owner.program.is_enemy(src, entity))
-			. += entity
+			candidates += entity
+	var/list/fortified_nodes = list(node) + netrun_adjacent_fortress_nodes(node)
+	for(var/datum/component/netrun_node/fortified as anything in fortified_nodes)
+		var/datum/netrun_fortress/fortress = fortified.fortress
+		if(QDELETED(fortress) || !fortified.is_online() || fortress.is_friendly(owner.console))
+			continue
+		if(fortress.hostile_to(owner) || netrun_bot_factions_hostile(owner.net_faction, fortress.faction))
+			candidates += fortified == node ? fortress.combat_targets() : fortress.siege_targets()
+	// A remote siege binds the bot to the defended node. Targets at its source
+	// and inner works behind walls must obey the same native contact checks.
+	for(var/datum/target as anything in candidates)
+		if(!owner.console.combat_context.target_denial(target, null, node, TRUE))
+			. += target
 
 /datum/netrun_bot_brain/proc/combat_step()
 	var/datum/netrun_combat_encounter/encounter = owner.console.get_combat_encounter()
@@ -488,9 +501,12 @@
 		return FALSE
 	in_combat = TRUE
 	state = "бой"
-	if(!encounter)
+	var/datum/target = pick_target(foes)
+	// Structure attacks authorize their native siege lease and select the
+	// defended node inside program_use(); passive works need no controller.
+	if(!encounter && !istype(target, /datum/netrun_fortress_module))
 		encounter = owner.host_node.get_combat_encounter()
-		if(!encounter.admit(owner.console, 1, foes[1]))
+		if(!encounter.admit(owner.console, 1, target))
 			return TRUE
 	// Navigation must not carry a fighting process away between two brain tasks.
 	if(owner.navigation.is_active())
@@ -502,7 +518,6 @@
 		return TRUE
 	if(ratio < 0.4 && use_role(NETRUN_PROGRAM_REPAIR, owner))
 		return TRUE
-	var/datum/target = pick_target(foes)
 	var/list/target_hp = netrun_combatant_integrity(target)
 	var/ordinary_hit = SSnetrun.get_program("strike")?.power || 22
 	// Real-time interrupts cannot be cast in somebody else's active turn.
@@ -518,7 +533,7 @@
 		if(!use_role(NETRUN_PROGRAM_ATTACK, ice))
 			pass_if_idle()
 		return TRUE
-	if(!encounter?.active && !istype(target, /mob/camera/netrun_entity/bot))
+	if(!encounter?.active && istype(target, /mob/camera/netrun_entity) && !istype(target, /mob/camera/netrun_entity/bot))
 		telegraphed_attack(target)
 		return TRUE
 	if(!use_role(NETRUN_PROGRAM_ATTACK, target))
@@ -560,6 +575,10 @@
 	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter()
 	if(QDELETED(target) || (encounter?.active ? (!encounter.has_turn(console) || encounter.deferred) : world.time < combat.next_program))
 		return FALSE
+	if(role == NETRUN_PROGRAM_STUN && istype(target, /datum/netrun_fortress_module))
+		var/datum/netrun_fortress_module/module = target
+		if(module.kind != NETRUN_FORT_TURRET || module.status != NETRUN_FORT_MODULE_ONLINE)
+			return FALSE
 	var/best_uid
 	var/best_value = -1
 	var/list/hp = netrun_combatant_integrity(target)
