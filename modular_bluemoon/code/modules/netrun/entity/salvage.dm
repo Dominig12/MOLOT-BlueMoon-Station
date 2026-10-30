@@ -3,6 +3,10 @@
 	var/list/salvage_nodes = list()
 	var/list/recycling_servers = list()
 
+/datum/netrun_file
+	/// Collection policy only: players can recover fresh debris immediately.
+	var/salvage_recycle_after = 0
+
 /// Ownership passes from the caller to this bounded cache only on success.
 /// Identity, rather than executable kind, distinguishes independently owned files.
 /datum/component/netrun_node/proc/leave_salvage(datum/netrun_file/file, source_name, notify = TRUE)
@@ -14,6 +18,7 @@
 		var/datum/netrun_file/expired = salvage[1]
 		salvage.Cut(1, 2)
 		qdel(expired)
+	file.salvage_recycle_after = world.time + NETRUN_SALVAGE_RECYCLE_GRACE
 	salvage += file
 	add_log("В обломках процесса[source_name ? " [source_name]" : ""] остался файл: [file.name].")
 	if(notify)

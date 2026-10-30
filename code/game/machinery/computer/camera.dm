@@ -127,6 +127,8 @@
 	update_active_camera_screen()
 	var/datum/netrun_machine_service/camera_viewer/service = get_netrun_machine_service("camera.viewer")
 	var/list/data = list()
+	var/datum/netrun_machine_service/security_monitor/monitor = get_netrun_machine_service("security.monitor")
+	data["network_alerts"] = monitor?.alerts.Copy() || list()
 	data["network"] = network
 	data["show_departments"] = show_departments
 	// Не пересобираем одинаковые данные для каждого зрителя в одном цикле TGUI.

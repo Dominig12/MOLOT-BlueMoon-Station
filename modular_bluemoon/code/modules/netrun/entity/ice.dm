@@ -396,6 +396,7 @@
 	if(QDELETED(prey))
 		return
 	var/datum/netrun_combat_encounter/encounter = node.get_combat_encounter()
+	var/opening_attack = !encounter.active
 	if(!encounter.admit(src, 1, prey))
 		return
 	if(!encounter.active && world.time < next_attack)
@@ -404,7 +405,7 @@
 	if(integrity <= max_integrity * 0.75 && world.time >= combat_shield_until)
 		for(var/id in program_ids)
 			var/datum/netrun_program/program = SSnetrun.get_program(id)
-			if(program?.role == NETRUN_PROGRAM_SHIELD && begin_program(program, src))
+			if(program?.role == NETRUN_PROGRAM_SHIELD && begin_program(program, src, opening_attack))
 				return
 	for(var/id in program_ids)
 		var/datum/netrun_program/program = SSnetrun.get_program(id)
@@ -414,7 +415,7 @@
 			continue
 		if(program.role == NETRUN_PROGRAM_SHIELD && (integrity > max_integrity * 0.75 || world.time < combat_shield_until))
 			continue
-		if(begin_program(program, program.needs_target ? prey : src))
+		if(begin_program(program, program.needs_target ? prey : src, opening_attack))
 			return
 
 /datum/netrun_ice/proc/pending_target()
@@ -454,7 +455,7 @@
 	. = is_intruder(entity, node, tree)
 	entity.console?.release_path_tree(tree)
 
-/datum/netrun_ice/proc/begin_program(datum/netrun_program/program, datum/target)
+/datum/netrun_ice/proc/begin_program(datum/netrun_program/program, datum/target, opening_attack = FALSE)
 	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
 	if(!program || pending_program || is_stunned() || !node?.is_online() || !(program.id in program_ids))
 		return FALSE
@@ -464,11 +465,14 @@
 		return FALSE
 	if(!encounter && netrun_turn_actor(target) != src)
 		encounter = node.get_combat_encounter()
+	// try_attack admits before choosing a program. Preserve the pre-admission
+	// state from that caller as well as from direct casts and remote traces.
+	var/already_in_combat = encounter?.active && !opening_attack
 	if(encounter && (!encounter.admit(src, program.ap_cost, target) || !encounter.can_apply_program_status(program, target) || !encounter.commit_program(src, program, TRUE)))
 		return FALSE
 	pending_program = program
 	pending_target_ref = WEAKREF(target)
-	var/telegraph = max(NETRUN_ICE_MIN_TELEGRAPH, program.windup)
+	var/telegraph = already_in_combat ? NETRUN_ICE_COMBAT_TELEGRAPH : max(NETRUN_ICE_MIN_TELEGRAPH, program.windup)
 	attack_at = world.time + telegraph
 	program_cd[program.id] = attack_at + program.cooldown
 	var/datum/netrun_console/victim

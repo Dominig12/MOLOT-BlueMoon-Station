@@ -379,6 +379,8 @@
 		selected["packets"] = level >= NETRUN_ACCESS_USER ? node.packet_headers_payload() : list()
 		var/atom/A = node.parent
 		selected["status"] = level >= NETRUN_ACCESS_USER ? A.netrun_status() : list()
+		if(level >= NETRUN_ACCESS_GUEST)
+			selected["manual_uid"] = public_node_manual(node)?.uid
 		if(node.file_store && level >= max(NETRUN_ACCESS_USER, node.fortress?.file_access_level(src) || 0))
 			selected["files"] = node.file_store.ui_entries()
 			selected["storage"] = list("used" = node.used_storage(), "capacity" = node.file_store?.capacity)
@@ -836,6 +838,18 @@
 		if(file.uid == uid)
 			return file
 
+/// Only live firmware bound to this node is public; an uploaded readme is ordinary data.
+/datum/netrun_console/proc/public_node_manual(datum/component/netrun_node/node, uid)
+	for(var/datum/netrun_file/manual/manual in node?.file_store?.files)
+		if((isnull(uid) || manual.uid == uid) && manual.node_ref?.resolve() == node)
+			return manual
+
+/// Public documentation can be read at GUEST; copies and other files retain disk protection.
+/datum/netrun_console/proc/remote_file_access(action, datum/component/netrun_node/node, uid)
+	if(action == "read" && public_node_manual(node, uid))
+		return NETRUN_ACCESS_GUEST
+	return max(action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER, node?.fortress?.file_access_level(src) || 0)
+
 /datum/netrun_console/proc/transfer_from_node(uid, to_shard, datum/component/netrun_node/node, delivered = FALSE, input_nonce)
 	if(!delivered)
 		return queue_file_request("download", selected_node(), uid, to_shard, input_nonce)
@@ -919,9 +933,7 @@
 		var/reason = deposit_denial(uid, node)
 		if(reason)
 			return reject_operation(operation, reason)
-	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
-	// A fortress vault keeps the node's disk behind ROOT for everybody except its owner.
-	required = max(required, node?.fortress?.file_access_level(src) || 0)
+	var/required = remote_file_access(action, node, uid)
 	var/datum/netrun_path_tree/tree = make_path_tree()
 	if(!node?.file_store?.files || !can_route(node, tree) || node_level(node, tree) < required || !node.is_online(node != connection.jack) || is_locked() || world.time < next_command)
 		qdel(tree)
@@ -946,8 +958,7 @@
 		return FALSE
 	node.join_network()
 	var/datum/netrun_path_tree/tree = make_path_tree()
-	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
-	required = max(required, node.fortress?.file_access_level(src) || 0)
+	var/required = remote_file_access(action, node, uid)
 	var/reachable = can_route(node, tree)
 	if(reachable)
 		operation?.receive(tree.addresses_to(node.address))
@@ -967,7 +978,7 @@
 		if("delete")
 			. = delete_from_node(uid, node, TRUE)
 		if("read")
-			if(node_level(node) < max(NETRUN_ACCESS_USER, node.fortress?.file_access_level(src) || 0))
+			if(node_level(node) < remote_file_access(action, node, uid))
 				operation?.finish("rejected", "Недостаточно прав для чтения файла.")
 				return FALSE
 			var/datum/netrun_file/file = remote_file(node, uid)
@@ -976,7 +987,7 @@
 				return FALSE
 			file.show(operator)
 			node.add_log("[log_source()]: прочитан [file.name].")
-			if(legit_node_level(node) < NETRUN_ACCESS_USER)
+			if(!public_node_manual(node, uid) && legit_node_level(node) < NETRUN_ACCESS_USER)
 				add_trace(2 * node.get_security())
 			. = TRUE
 	if(!.)

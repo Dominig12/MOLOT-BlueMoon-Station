@@ -80,9 +80,11 @@
 	TEST_ASSERT_NULL(bot.brain.find_salvage(null, TRUE), "A valuable intact disk is never a debris target")
 	var/datum/netrun_file/note = new("note.txt", NETRUN_FILE_TEXT, "ordinary debris", 1)
 	scene.node_a.leave_salvage(note)
+	note.salvage_recycle_after = world.time
 	var/datum/netrun_file/reward = netrun_program_file("lance")
 	reward.fortress_reward = TRUE
 	scene.node_b.leave_salvage(reward)
+	reward.salvage_recycle_after = world.time
 	TEST_ASSERT_EQUAL(bot.brain.find_salvage(null, TRUE), scene.node_b, "A reachable earned program outranks an adjacent ordinary note")
 	bot.enter_node(scene.node_b)
 	var/datum/netrun_bot_goal/salvage/goal = allocate(/datum/netrun_bot_goal/salvage, bot.brain, scene.node_b)

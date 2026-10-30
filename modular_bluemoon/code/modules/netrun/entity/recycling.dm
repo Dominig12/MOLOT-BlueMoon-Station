@@ -166,7 +166,7 @@
 
 /datum/netrun_bot_goal/recycling_wait/New(datum/netrun_bot_brain/brain, datum/component/netrun_node/post)
 	..(brain, post)
-	expires_at = world.time + 60 SECONDS
+	expires_at = min(world.time + 60 SECONDS, brain.salvage_wait_until || INFINITY)
 
 /datum/netrun_bot_goal/recycle_deposit
 	name = "доставка обломков на сервер"

@@ -188,6 +188,7 @@ export type SelectedNode = NetNode & {
   contacts?: EntityContact[];
   logs?: string[];
   packets?: NetPacketHeader[];
+  manual_uid?: string;
   files?: NetFile[];
   storage?: { used: number; capacity: number };
   fortress?: FortressDetails | null;

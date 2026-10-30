@@ -5,7 +5,7 @@
 
 /obj/machinery/rnd/server/LateInitialize()
 	. = ..()
-	AddComponent(/datum/component/netrun_node, NETRUN_NODE_SERVER, list("rnd_report", "rnd_nodes", "rnd_siphon", "rnd_grab", "rnd_push", "rnd_choke"), 3, list(ACCESS_RD))
+	AddComponent(/datum/component/netrun_node, NETRUN_NODE_SERVER, list("rnd_report", "rnd_nodes", "rnd_siphon", "rnd_restore", "rnd_grab", "rnd_push", "rnd_choke"), 3, list(ACCESS_RD))
 
 /obj/machinery/rnd/server/netrun_online(remote = TRUE)
 	return working && !(machine_stat & (NOPOWER | BROKEN))
@@ -57,7 +57,7 @@
 /datum/netrun_command/rnd_siphon
 	id = "rnd_siphon"
 	name = "Слить данные"
-	desc = "Скопировать себе часть очков исследований, вычтя их из банка сети."
+	desc = "Изъять часть очков исследований в файл для одноразовой загрузки командой rnd_restore."
 	access = NETRUN_ACCESS_ROOT
 	icon = "download"
 	trace = 10
@@ -80,13 +80,66 @@
 	var/list/report = list()
 	for(var/point_type in stolen)
 		report += "[point_type]: [stolen[point_type]]"
-	var/datum/netrun_file/file = new("rnd_[server.server_id].dat", NETRUN_FILE_TEXT, "Выгрузка исследований с сервера [server.netrun_research_network_label()]:\n[jointext(report, "\n")]", 2)
+	var/datum/netrun_file/research_points/file = new("rnd_[server.server_id].dat", NETRUN_FILE_TEXT, "Выгрузка исследований с сервера [server.netrun_research_network_label()]:\n[jointext(report, "\n")]\nВыберите этот файл и выполните rnd_restore на сервере-получателе. Все копии используют один запас очков.", 2)
+	file.payload = new(stolen)
 	if(!console.store_file(file))
 		qdel(file)
 		return "Нет места в хранилище. Очки не списаны."
 	server.stored_research.remove_point_list(stolen)
 	console.inventory.selected_file_uid = file.uid
 	return "Слито очков: [total]. Данные записаны в хранилище."
+
+/// Copies share one authoritative balance. Duplicating or editing a report cannot mint points.
+/datum/netrun_research_payload
+	var/list/points
+
+/datum/netrun_research_payload/New(list/stolen)
+	points = stolen.Copy()
+
+/datum/netrun_research_payload/proc/consume()
+	. = points
+	points = null
+
+/datum/netrun_file/research_points
+	var/datum/netrun_research_payload/payload
+
+/datum/netrun_file/research_points/copy()
+	var/datum/netrun_file/research_points/result = new(name, kind, content, size, network_id)
+	result.payload = payload
+	return result
+
+/datum/netrun_file/research_points/ui_metadata_stable()
+	return FALSE
+
+/datum/netrun_file/research_points/ui_entry(selected_uid)
+	. = ..()
+	.["preview"] = length(payload?.points) ? "Очки исследований: выберите файл и выполните rnd_restore на сервере." : "Очки исследований уже загружены; все копии выгрузки погашены."
+
+/datum/netrun_command/rnd_restore
+	id = "rnd_restore"
+	name = "Загрузить очки"
+	desc = "Перенести изъятые очки из выбранного файла .dat в техвеб этого сервера."
+	help = "Выберите выгрузку rnd_siphon в памяти или на шарде. Запас очков общий для всех копий и расходуется один раз; повторная загрузка ничего не добавляет."
+	access = NETRUN_ACCESS_ROOT
+	icon = "upload"
+	trace = 10
+	danger = TRUE
+
+/datum/netrun_command/rnd_restore/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
+	var/obj/machinery/rnd/server/server = node.parent
+	if(!server.stored_research)
+		return "Техвеб не подключён. Очки сохранены в файле."
+	var/datum/netrun_file/research_points/source = console.selected_local_file(NETRUN_FILE_TEXT, request)
+	if(!istype(source))
+		return "Выберите выгрузку очков rnd_siphon в памяти или на шарде."
+	var/list/points = source.payload?.consume()
+	if(!length(points))
+		return "Очки из этой выгрузки уже загружены. Все копии используют один запас."
+	server.stored_research.add_point_list(points, income = FALSE)
+	var/total = 0
+	for(var/point_type in points)
+		total += points[point_type]
+	return "В техвеб сервера загружено очков: [total]. Выгрузка и все её копии погашены."
 
 /datum/netrun_command/rnd_choke
 	id = "rnd_choke"

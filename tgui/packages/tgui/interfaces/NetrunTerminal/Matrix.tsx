@@ -71,6 +71,11 @@ const ProtocolView = (props: { state: MatrixState; act: (action: string, payload
       <Shell>
         <Header target={state.target} security={state.security} timeLeft={state.time_left}
           subtitle={`выбор в ${state.pick_row ? 'строке' : 'столбце'}`} />
+        <Box mb={1} color={THEME.muted} fontSize="11px">
+          Первый код выбирайте в верхней строке. Затем чередуйте столбец и строку последней выбранной клетки.
+          Клетки нельзя использовать повторно. Соберите коды цели подряд в буфере; число мест в нём ограничено.
+          Завершение сохраняет уже собранные цели.
+        </Box>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px' }}>
           <table aria-label="Матрица протокола" style={{ borderCollapse: 'separate', borderSpacing: '3px', width: 'auto', flex: '0 0 auto' }}>
             <tbody>
@@ -139,7 +144,8 @@ const SequenceView = (props: { state: MatrixState; act: (action: string, payload
           </tbody>
         </table>
         <Box mt={1} color={THEME.muted} fontSize="11px">
-          Нажимайте подсвеченные узлы строго по порядку. Ошибка стоит времени.
+          Нажимайте пронумерованные клетки по порядку: 1, 2, 3 и далее. Следующая клетка подсвечена.
+          Частичная цепочка открывает первую цель, полная — ROOT. Завершение сохраняет уже собранные цели; ошибка отнимает 3 секунды.
         </Box>
         <Button mt={1} icon="stop" color="bad" content="Завершить" onClick={() => act('breach_abort')} />
       </Shell>

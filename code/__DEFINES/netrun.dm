@@ -53,6 +53,10 @@
 #define NETRUN_DEFAULT_INTERACTIVE_FLUSH TRUE
 #define NETRUN_INPUT_ACK_MAX_LENGTH 64
 #define NETRUN_ICE_MIN_TELEGRAPH (2 SECONDS)
+/// In turn combat the victim cannot react during the opponent's preparation.
+#define NETRUN_ICE_COMBAT_TELEGRAPH (0.5 SECONDS)
+/// Give players time to recover earned loot before station maintenance collects it.
+#define NETRUN_SALVAGE_RECYCLE_GRACE (30 SECONDS)
 #define NETRUN_DEFAULT_TASK_COST_FLOOR_MS 0.05
 #define NETRUN_DEFAULT_TASK_INITIAL_COST_MS 0.1
 #define NETRUN_DEFAULT_TASK_COST_SMOOTHING 0.15

@@ -196,6 +196,11 @@ const NodePanelView = () => {
           )}
         </LabeledList.Item>
       </LabeledList>
+      {!!selected.manual_uid && (
+        <Button mt={1} icon="book" content="Справка узла"
+          disabled={pending || !!data.locked || !selected.online}
+          onClick={() => act('read', { uid: selected.manual_uid })} />
+      )}
       <NodeInteractions actions={selected.interactions} pending={pending} />
       {selected.access < 1 && (
         <Box mt={1} color={THEME.warn}>

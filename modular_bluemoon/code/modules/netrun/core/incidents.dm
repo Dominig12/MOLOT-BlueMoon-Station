@@ -103,6 +103,14 @@
 		return null
 	var/address = node?.address
 	var/atom/security_host = node?.parent
+	if(node && (kind in list("breach", "intrusion", "trace")))
+		var/datum/netrun_console/attacker
+		if(istype(suspect, /datum/netrun_console))
+			attacker = suspect
+		else if(istype(suspect, /mob/camera/netrun_entity))
+			var/mob/camera/netrun_entity/entity = suspect
+			attacker = entity.console
+		node.record_interference(attacker, text || kind)
 	if(node && (kind in list("breach", "intrusion")))
 		var/datum/netrun_console/attacker = suspect
 		if(istype(attacker))

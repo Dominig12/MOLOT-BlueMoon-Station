@@ -38,6 +38,8 @@
 	var/list/patrol_candidates
 	var/patrol_cursor = 1
 	var/salvage_cursor = 1
+	/// Earliest fresh debris deadline seen during the current bounded search.
+	var/salvage_wait_until = 0
 	/// Retain a legal local combat target across AP actions, not just telegraphs.
 	var/datum/weakref/combat_target_ref
 	var/datum/weakref/controlled_target_ref
@@ -358,6 +360,9 @@
 	for(var/datum/netrun_file/file as anything in node.salvage)
 		if(QDELETED(file) || !file.can_transfer(null, TRUE) || !owner.console.inventory.local_store.can_fit(file))
 			continue
+		if(owner.bot_kind == NETRUN_BOT_RECYCLER && world.time < file.salvage_recycle_after)
+			salvage_wait_until = min(salvage_wait_until || INFINITY, file.salvage_recycle_after)
+			continue
 		var/value = netrun_salvage_value(file)
 		if(value > best_value)
 			. = file
@@ -366,6 +371,7 @@
 /// Rank at most24 nonempty caches with one shared route table. Quality wins,
 /// with actual route cost breaking ties; arbitrary station nodes are never polled.
 /datum/netrun_bot_brain/proc/find_salvage(list/scope, station_only = FALSE)
+	salvage_wait_until = 0
 	var/datum/component/netrun_node/current = owner?.host_node
 	var/datum/netrun_file/local = (station_only && current?.network?.isolated) ? null : best_salvage(current)
 	var/datum/component/netrun_node/best = local ? current : null
@@ -382,8 +388,10 @@
 		var/datum/component/netrun_node/node = candidates[candidates[salvage_cursor++]]
 		if(QDELETED(node) || node == current || is_blacklisted(node.address) || (station_only && node.network?.isolated) || (scope && !(node.network?.id in scope)))
 			continue
+		if(!console.can_traverse_node(node, tree) || !console.can_route(node, tree))
+			continue
 		var/datum/netrun_file/file = best_salvage(node)
-		if(!file || !console.can_traverse_node(node, tree) || !console.can_route(node, tree))
+		if(!file)
 			continue
 		var/value = netrun_salvage_value(file)
 		var/cost = tree.cost_to(node.address)

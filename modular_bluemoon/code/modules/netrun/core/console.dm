@@ -96,7 +96,7 @@
 	SSnetrun.consoles += src
 	if(origin == NETRUN_ORIGIN_ENTITY)
 		activate()
-	log_line("Сеанс открыт.", "good")
+	log_line("Сеанс открыт. help — команды и обучение; ls — файлы памяти и шарда; Tab — дополнение команды. Выберите узел на карте и откройте «Справку узла».", "good")
 
 /datum/netrun_console/Destroy()
 	QDEL_NULL(security_session)

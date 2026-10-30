@@ -76,7 +76,7 @@
 	var/datum/netrun_task/ice/run = allocate(/datum/netrun_task/ice, "ice", key, NETRUN_TASK_CRITICAL, ice)
 	run.execute(SSnetrun)
 	TEST_ASSERT_NOTNULL(ice.pending_program, "The first reactive pass must announce the hostile program")
-	TEST_ASSERT(ice.attack_at >= world.time + NETRUN_ICE_MIN_TELEGRAPH, "Responsive reactions must preserve the full combat telegraph")
+	TEST_ASSERT(ice.attack_at >= world.time + NETRUN_ICE_MIN_TELEGRAPH, "The first reactive attack retains its full escape window")
 	var/deadline = ice.attack_at
 	var/cooldown = ice.program_cd[ice.pending_program.id]
 	run.execute(SSnetrun)

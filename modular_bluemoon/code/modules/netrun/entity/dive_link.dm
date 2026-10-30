@@ -16,6 +16,9 @@
 	var/initial_residency_only = FALSE
 	var/datum/netrun_file/access/session_snapshot/identity_snapshot
 	var/datum/weakref/personal_principal_ref
+	var/next_body_notice = 0
+	var/body_tox_baseline = 0
+	var/body_oxy_baseline = 0
 
 /datum/netrun_dive_link/New(mob/camera/netrun_entity/owner)
 	src.owner = owner
@@ -46,6 +49,12 @@
 	RegisterSignal(body, COMSIG_LIVING_DEATH, PROC_REF(on_body_death))
 	RegisterSignal(body, COMSIG_PARENT_QDELETING, PROC_REF(on_body_deleted))
 	RegisterSignal(body, COMSIG_MOVABLE_MOVED, PROC_REF(on_body_moved))
+	RegisterSignal(body, COMSIG_PARENT_EXAMINE, PROC_REF(on_body_examine))
+	RegisterSignal(body, COMSIG_CARBON_PRE_MISC_HELP, PROC_REF(on_body_help))
+	body_tox_baseline = body.getToxLoss()
+	body_oxy_baseline = body.getOxyLoss()
+	next_body_notice = world.time + 15 SECONDS
+	body.visible_message(span_notice("У [body] подёргиваются пальцы: нейролинк начинает погружение в сеть."))
 	watch_nodes(list(entry))
 	return TRUE
 
@@ -97,7 +106,7 @@
 	if(body)
 		if(body.netrun_personal_dive_ref?.resolve() == src)
 			body.netrun_personal_dive_ref = null
-		UnregisterSignal(body, list(COMSIG_MOB_APPLY_DAMAGE, COMSIG_LIVING_DEATH, COMSIG_PARENT_QDELETING, COMSIG_MOVABLE_MOVED))
+		UnregisterSignal(body, list(COMSIG_MOB_APPLY_DAMAGE, COMSIG_LIVING_DEATH, COMSIG_PARENT_QDELETING, COMSIG_MOVABLE_MOVED, COMSIG_PARENT_EXAMINE, COMSIG_CARBON_PRE_MISC_HELP))
 	var/datum/netrun_console/implant/client = entry_client_ref?.resolve()
 	if(client)
 		UnregisterSignal(client, COMSIG_PARENT_QDELETING)
@@ -136,15 +145,34 @@
 
 /datum/netrun_dive_link/proc/on_body_damage(datum/source, damage, damagetype)
 	SIGNAL_HANDLER
-	if(damage < 5 || !(damagetype in list(BRUTE, BURN)))
+	if(damage < 5 || !(damagetype in list(BRUTE, BURN, TOX, OXY)))
 		return
-	to_chat(owner, span_userdanger("Ваше тело ранено! Аварийный выход из сети!"))
-	INVOKE_ASYNC(owner, TYPE_PROC_REF(/mob/camera/netrun_entity, return_to_body))
+	INVOKE_ASYNC(src, PROC_REF(emergency_return), "Ваше тело ранено! Аварийный выход из сети!")
+
+/// A bystander can recognize a dive and use the ordinary help interaction to end it safely.
+/datum/netrun_dive_link/proc/on_body_examine(datum/source, mob/user, list/examine_list)
+	SIGNAL_HANDLER
+	if(!body || returning)
+		return
+	examine_list += span_notice("Нейролинк активен: сознание находится в сети. Потрясите тело с намерением «Помощь», чтобы безопасно прервать погружение.")
+	var/datum/netrun_combat_encounter/encounter = owner?.console?.get_combat_encounter()
+	if(encounter?.active)
+		examine_list += span_warning("Тело напряжено и подёргивается: в сети идёт бой.")
+
+/datum/netrun_dive_link/proc/on_body_help(datum/source, mob/living/carbon/helper)
+	SIGNAL_HANDLER
+	if(!body || returning || body.stat == DEAD || !istype(helper) || helper == body || helper.incapacitated() || !helper.Adjacent(body))
+		return
+	helper.visible_message(span_notice("[helper] осторожно трясёт [body], прерывая погружение в сеть."), span_notice("Вы осторожно выводите [body] из сетевого погружения."))
+	INVOKE_ASYNC(src, PROC_REF(return_to_body))
+	return COMPONENT_BLOCK_MISC_HELP
 
 /datum/netrun_dive_link/proc/on_body_death(datum/source)
 	SIGNAL_HANDLER
 	expire_identity_snapshot()
-	INVOKE_ASYNC(owner, TYPE_PROC_REF(/mob/camera/netrun_entity, return_to_body))
+	// The native death signal precedes set_stat(DEAD); return after it finishes,
+	// so the dying body is not briefly treated as an awakened living operator.
+	addtimer(CALLBACK(src, PROC_REF(emergency_return), "Ваше тело погибло! Аварийный разрыв нейролинка!"), 0)
 
 /datum/netrun_dive_link/proc/on_body_deleted(datum/source)
 	SIGNAL_HANDLER
@@ -219,9 +247,23 @@
 	kind = "dive_link"
 
 /datum/netrun_dive_link/proc/process_tick(delta)
-	if(!body)
+	if(!body || returning)
+		return
+	// Gradual suffocation and poisoning usually bypass apply_damage(). Count actual
+	// deterioration since attachment (or a healthier reading), not existing injuries.
+	body_tox_baseline = min(body_tox_baseline, body.getToxLoss())
+	body_oxy_baseline = min(body_oxy_baseline, body.getOxyLoss())
+	if(body.getToxLoss() >= body_tox_baseline + 5 || body.getOxyLoss() >= body_oxy_baseline + 5 || body.IsStun() || body.IsParalyzed())
+		emergency_return("Тело в опасности! Аварийный выход из сети!")
 		return
 	body.SetUnconscious(5 SECONDS)
+	if(world.time >= next_body_notice)
+		next_body_notice = world.time + 15 SECONDS
+		var/datum/netrun_combat_encounter/encounter = owner.console?.get_combat_encounter()
+		if(encounter?.active)
+			body.visible_message(span_warning("[body] судорожно подёргивается: нейролинк выдаёт признаки сетевого боя."))
+		else
+			body.visible_message(span_notice("У [body] подёргиваются пальцы и веки: нейролинк продолжает сетевое погружение."))
 	check_link(delta)
 
 /// Borrow one cached physical tree instead of walking the entire station for each diver.
@@ -295,6 +337,7 @@
 	release_body()
 	if(emergency)
 		to_chat(owner, span_userdanger(reason || "Аварийный разрыв соединения!"))
+		linked_body.visible_message(span_warning("[linked_body] резко вздрагивает: нейролинк аварийно разрывает погружение в сеть!"))
 		// Native organ damage is capped below lethal brain failure, including repeated dives.
 		linked_body.adjustOrganLoss(ORGAN_SLOT_BRAIN, 20, 150)
 	if(owner.mind)
@@ -303,6 +346,8 @@
 		linked_body.key = owner.key
 	linked_body.SetUnconscious(0)
 	if(linked_body.stat != DEAD)
+		if(!emergency)
+			linked_body.visible_message(span_notice("[linked_body] открывает глаза, возвращаясь из сетевого погружения."))
 		to_chat(linked_body, span_notice("Вы выныриваете из сети. Голова гудит."))
 	qdel(owner)
 	return TRUE

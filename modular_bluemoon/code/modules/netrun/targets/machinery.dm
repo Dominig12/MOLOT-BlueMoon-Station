@@ -1,11 +1,25 @@
 // MARK: APC
 
+/obj/machinery/power/apc
+	/// Physical sector isolation is independent of the power channels and battery.
+	var/netrun_isolated = FALSE
+
+/obj/machinery/power/apc/proc/set_netrun_isolated(value)
+	if(netrun_isolated == !!value)
+		return FALSE
+	netrun_isolated = !!value
+	var/datum/component/netrun_node/node = GetComponent(/datum/component/netrun_node)
+	node?.notify_changed(NETRUN_CHANGED_STATE)
+	SEND_SIGNAL(src, COMSIG_NETRUN_SERVICE_STATE_CHANGED)
+	SStgui.update_uis(src)
+	return TRUE
+
 /obj/machinery/power/apc/Initialize(mapload, ndir, building = FALSE)
 	. = ..()
 	AddComponent(/datum/component/netrun_node, NETRUN_NODE_APC, list("apc_breaker", "apc_lighting", "apc_equipment", "apc_environ", "apc_overload"), 2, list(ACCESS_ENGINE_EQUIP))
 
 /obj/machinery/power/apc/netrun_online(remote = TRUE)
-	return !(machine_stat & (BROKEN | EMPED)) && !failure_timer
+	return !netrun_isolated && !(machine_stat & (BROKEN | EMPED)) && !failure_timer
 
 /obj/machinery/power/apc/netrun_status()
 	. = list()

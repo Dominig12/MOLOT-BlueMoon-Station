@@ -321,8 +321,12 @@
 /datum/unit_test/netrun_bot_round_population
 	var/list/original_state
 	var/datum/netrun_task_scheduler/census_scheduler
+	var/datum/netrun_console/presence_console
 
 /datum/unit_test/netrun_bot_round_population/proc/census()
+	if(!presence_console)
+		presence_console = allocate(/datum/netrun_console, allocate(/obj/item))
+	presence_console.last_ui_at = world.time
 	SSnetrun.next_bot_census = world.time
 	SSnetrun.ensure_topology()
 	census_scheduler.enqueue("housekeeping", null, NETRUN_TASK_BACKGROUND)
@@ -391,3 +395,25 @@
 		for(var/field in original_state)
 			SSnetrun.vars[field] = original_state[field]
 	return ..()
+
+/// Quiet stations do not accumulate ambient visitors or maintenance replacements.
+/datum/unit_test/netrun_bot_round_population/quiet/Run()
+	original_state = list()
+	for(var/field in list("bots", "bots_enabled", "next_bot_census", "rogue_wave_at", "consoles"))
+		original_state[field] = SSnetrun.vars[field]
+	SSnetrun.bots = list()
+	SSnetrun.consoles = list()
+	SSnetrun.bots_enabled = TRUE
+	SSnetrun.next_bot_census = world.time
+	SSnetrun.rogue_wave_at = world.time - 1
+	TEST_ASSERT(!SSnetrun.has_active_netrunners(), "An empty station has no active session")
+	SSnetrun.maintain_bots()
+	TEST_ASSERT_EQUAL(length(SSnetrun.bots), 0, "Quiet housekeeping cannot create ambient processes")
+	TEST_ASSERT_EQUAL(SSnetrun.rogue_wave_at, 0, "Quiet time cannot queue an overdue wave")
+	var/datum/netrun_console/circuit = allocate(/datum/netrun_console, allocate(/obj/item), NETRUN_ORIGIN_CIRCUIT)
+	circuit.last_ui_at = world.time
+	TEST_ASSERT(!SSnetrun.has_active_netrunners(), "An autonomous circuit does not count as a player")
+	var/datum/netrun_console/player = allocate(/datum/netrun_console, allocate(/obj/item))
+	TEST_ASSERT(!SSnetrun.has_active_netrunners(), "An unused player device does not populate the station")
+	player.last_ui_at = world.time
+	TEST_ASSERT(SSnetrun.has_active_netrunners(), "A displayed player session enables ambient activity")

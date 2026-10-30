@@ -18,6 +18,43 @@
 	TEST_ASSERT(copy.size > 0, "A downloaded manual must consume ordinary destination capacity")
 	qdel(copy)
 
+/// Firmware is public documentation, never a filename-based exemption for payload data.
+/datum/unit_test/netrun_manual_guest_delivery/Run()
+	var/datum/netrun_entity_contact_scene/scene = allocate(/datum/netrun_entity_contact_scene, run_loc_floor_bottom_left, 10)
+	scene.authorize()
+	var/datum/netrun_file/manual/manual = scene.console.public_node_manual(scene.target_node)
+	TEST_ASSERT_NOTNULL(manual, "The endpoint must expose its actual bound firmware")
+	TEST_ASSERT_EQUAL(scene.console.node_level(scene.target_node), NETRUN_ACCESS_GUEST, "The fixture has only guest machine rights")
+	var/trace_before = scene.console.intrusion.trace
+	var/incidents_before = length(SSnetrun.incidents)
+	TEST_ASSERT(scene.console.queue_file_request("read", scene.target_node, manual.uid), "A guest may queue a firmware read through normal delivery")
+	var/datum/netrun_request/file/packet = netrun_operation_packet(scene.console, /datum/netrun_request/file)
+	TEST_ASSERT(packet && packet.deliver(), "Bound firmware must remain readable at the delivery boundary")
+	TEST_ASSERT_EQUAL(scene.console.intrusion.trace, trace_before, "Public documentation must not raise trace")
+	TEST_ASSERT_EQUAL(length(SSnetrun.incidents), incidents_before, "Public documentation must not report illegal activity")
+	scene.console.next_command = 0
+	TEST_ASSERT(!scene.console.queue_file_request("download", scene.target_node, manual.uid), "Public reading must not grant permission to copy the node's disk")
+	var/datum/netrun_file/user_readme = new("readme.txt", NETRUN_FILE_TEXT, "Private payload", 1)
+	scene.target_node.file_store.insert(user_readme)
+	TEST_ASSERT(!scene.console.queue_file_request("read", scene.target_node, user_readme.uid), "A user-authored readme must retain normal file authorization")
+	TEST_ASSERT(!scene.console.queue_file_request("read", scene.source_node, manual.uid), "A firmware UID must not authorize reading from another node")
+
+/// Admission does not preserve public status or guest rights after they have been revoked.
+/datum/unit_test/netrun_manual_guest_revalidation/Run()
+	var/datum/netrun_entity_contact_scene/scene = allocate(/datum/netrun_entity_contact_scene, run_loc_floor_bottom_left, 10)
+	scene.authorize()
+	var/datum/netrun_file/manual/manual = scene.console.public_node_manual(scene.target_node)
+	TEST_ASSERT(scene.console.queue_file_request("read", scene.target_node, manual.uid), "The initial firmware read is admitted")
+	var/datum/netrun_request/file/packet = netrun_operation_packet(scene.console, /datum/netrun_request/file)
+	manual.node_ref = WEAKREF(scene.source_node)
+	TEST_ASSERT(packet && !packet.deliver(), "Delivery must reject firmware no longer bound to the requested node")
+	manual.node_ref = WEAKREF(scene.target_node)
+	scene.console.next_command = 0
+	TEST_ASSERT(scene.console.queue_file_request("read", scene.target_node, manual.uid), "Restored firmware can admit an independent request")
+	packet = netrun_operation_packet(scene.console, /datum/netrun_request/file)
+	scene.console.access_session.network_access.Cut()
+	TEST_ASSERT(packet && !packet.deliver(), "Delivery must still enforce live GUEST access to the node")
+
 /datum/unit_test/netrun_zero_capacity_manual/Run()
 	var/obj/item/endpoint = allocate(/obj/item)
 	var/datum/component/netrun_node/node = endpoint.AddComponent(/datum/component/netrun_node, NETRUN_NODE_ATMOS, list(), 1, list(), 0)

@@ -23,6 +23,10 @@
 	/// Recoverable process debris does not grant access to the machine's own files.
 	var/list/datum/netrun_file/salvage = list()
 	var/last_activity = -INFINITY
+	/// Physical evidence expires without enrolling otherwise idle nodes in processing.
+	var/interference_until = 0
+	var/suspicious_traffic_until = 0
+	var/next_interference_feedback = 0
 	/// Сущности, живущие в этом узле
 	var/list/mob/camera/netrun_entity/entities
 	/// Враждебные процессы (ICE), стоящие в этом узле
@@ -95,6 +99,7 @@
 
 /datum/component/netrun_node/RegisterWithParent()
 	RegisterSignal(parent, COMSIG_ATOM_EMP_ACT, PROC_REF(on_emp))
+	RegisterSignal(parent, COMSIG_PARENT_EXAMINE, PROC_REF(on_interference_examine))
 	subscribed_state_signals = list(COMSIG_ATOM_UPDATE_NAME, COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED, COMSIG_OBJ_SETANCHORED, COMSIG_NETRUN_SERVICE_STATE_CHANGED) | SSnetrun.get_provider_state_signals(parent)
 	var/list/availability_signals = list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_BROKEN, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_AIRLOCK_NETWORK_CHANGED)
 	RegisterSignal(parent, availability_signals, PROC_REF(on_availability_changed))
@@ -110,9 +115,43 @@
 
 /datum/component/netrun_node/UnregisterFromParent()
 	clear_physical_carrier()
-	UnregisterSignal(parent, list(COMSIG_ATOM_EMP_ACT, COMSIG_MOVABLE_MOVED, COMSIG_MOVABLE_ENTERED_NULLSPACE))
+	UnregisterSignal(parent, list(COMSIG_ATOM_EMP_ACT, COMSIG_PARENT_EXAMINE, COMSIG_MOVABLE_MOVED, COMSIG_MOVABLE_ENTERED_NULLSPACE))
 	UnregisterSignal(parent, subscribed_state_signals)
 	subscribed_state_signals = null
+
+/// Local clues identify equipment and sectors, never the attacker's physical identity.
+/datum/component/netrun_node/proc/on_interference_examine(datum/source, mob/user, list/examine_list)
+	SIGNAL_HANDLER
+	if(world.time < interference_until)
+		examine_list += span_warning("Диагностика показывает следы недавнего неавторизованного сетевого вмешательства.")
+	var/traffic_until = suspicious_traffic_until
+	if(istype(parent, /obj/machinery/airalarm))
+		traffic_until = max(traffic_until, bound_apc?.suspicious_traffic_until || 0)
+	if(world.time < traffic_until && (node_type == NETRUN_NODE_APC || node_type == NETRUN_NODE_GATEWAY || istype(parent, /obj/machinery/airalarm)))
+		examine_list += span_warning("Через сетевой узел этого сектора недавно проходил неавторизованный трафик. Изолируйте сетевой интерфейс на панели APC сектора или отключите NTnet-реле, чтобы прервать удалённое соединение.")
+	if(istype(parent, /obj/machinery/power/apc))
+		var/obj/machinery/power/apc/apc = parent
+		if(apc.netrun_isolated)
+			examine_list += span_warning("Сетевой интерфейс сектора изолирован. Для восстановления связи включите его на разблокированной панели APC.")
+
+/// Called for an admitted breach or successful unauthorized delivery, never a rejected request.
+/datum/component/netrun_node/proc/record_interference(datum/netrun_console/attacker, text)
+	interference_until = world.time + 2 MINUTES
+	var/atom/host = parent
+	host.investigate_log("NETRUN [address]: [html_encode(text)]. Источник: [html_encode(attacker?.log_source() || "неизвестен")].", INVESTIGATE_WIRES)
+	if(ismachinery(host) && world.time >= next_interference_feedback)
+		next_interference_feedback = world.time + 8 SECONDS
+		host.visible_message(span_warning("Индикаторы [host] беспорядочно мигают: обнаружено удалённое сетевое вмешательство!"))
+		playsound(host, 'sound/machines/triple_beep.ogg', 30, FALSE)
+	// Reuse the known physical attachment; incident reporting never builds a station route.
+	var/datum/component/netrun_node/source = attacker?.physical_route_source()
+	if(source)
+		source.suspicious_traffic_until = world.time + 2 MINUTES
+		if(source.bound_apc)
+			source.bound_apc.suspicious_traffic_until = world.time + 2 MINUTES
+	suspicious_traffic_until = world.time + 2 MINUTES
+	if(bound_apc)
+		bound_apc.suspicious_traffic_until = world.time + 2 MINUTES
 
 /datum/component/netrun_node/Destroy()
 	SSnetrun.salvage_nodes -= address

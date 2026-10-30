@@ -849,7 +849,20 @@
 	var/datum/component/netrun_node/fallback = bot_spawn_node(list("general", "cargo"))
 	return fallback?.network?.security <= 2 ? fallback : null
 
-/// Housekeeping: keep the police and maintenance processes alive, let rogue raiders appear.
+/// A displayed player session or a connected resident keeps ambient arrivals relevant.
+/// Circuits and unattended agents cannot populate a station by themselves.
+/datum/controller/subsystem/netrun/proc/has_active_netrunners()
+	for(var/datum/netrun_console/console as anything in consoles)
+		if(QDELETED(console))
+			continue
+		var/mob/camera/netrun_entity/entity = console.combat_self()
+		if(entity?.client || entity?.dive_link?.body?.client)
+			return TRUE
+		if(!console.autonomous() && console.is_ui_active())
+			return TRUE
+	return FALSE
+
+/// Housekeeping: ambient arrivals pause without players; existing agents retain their lifetimes.
 /datum/controller/subsystem/netrun/proc/maintain_bots()
 	if(!bots_enabled || world.time < next_bot_census)
 		return
@@ -857,6 +870,10 @@
 	for(var/mob/camera/netrun_entity/bot/bot as anything in bots.Copy())
 		if(QDELETED(bot))
 			bots -= bot
+	if(!has_active_netrunners())
+		// Pausing a quiet network must not accumulate overdue waves for the next visitor.
+		rogue_wave_at = 0
+		return
 	if(!rogue_wave_at)
 		rogue_wave_at = world.time + rand(30 SECONDS, 60 SECONDS)
 	if(count_bots(NETRUN_BOT_POLICE) < NETRUN_POLICE_QUOTA && world.time >= police_respawn_at)

@@ -269,7 +269,7 @@
 		return .
 	var/required = action == "delete" ? NETRUN_ACCESS_ROOT : NETRUN_ACCESS_USER
 	required = max(required, node.fortress?.file_access_level(console) || 0)
-	if(console.compute_legit_node_level(node, TRUE) < required)
+	if(!(action == "read" && console.public_node_manual(node, file_uid)) && console.compute_legit_node_level(node, TRUE) < required)
 		var/list/labels = list("download" = "Скачивание файла", "upload" = "Загрузка файла", "deposit" = "Разгрузка файла", "delete" = "Удаление файла", "read" = "Чтение файла")
 		console.report_illegal_activity(node, labels[action] || "Файловая операция", required)
 	return .

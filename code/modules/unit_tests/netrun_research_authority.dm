@@ -910,3 +910,50 @@
 	while(!server.stored_research.researched_nodes["datatheory"] && world.time < deadline)
 		sleep(world.tick_lag)
 	TEST_ASSERT(server.stored_research.researched_nodes["datatheory"], "Research must complete after direct discovery")
+
+/// A stolen balance can be transferred once, even after copying the data file.
+/datum/unit_test/netrun_research_siphon_redeem_once/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/source = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	var/obj/machinery/rnd/server/destination = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	source.stored_research = allocate(/datum/techweb)
+	destination.stored_research = allocate(/datum/techweb)
+	source.stored_research.research_points = list(TECHWEB_POINT_TYPE_GENERIC = 10000)
+	destination.stored_research.research_points = list(TECHWEB_POINT_TYPE_GENERIC = 100)
+	var/datum/netrun_console/console = allocate(/datum/netrun_console, allocate(/obj/item))
+	var/datum/netrun_command/siphon = SSnetrun.get_command("rnd_siphon")
+	var/datum/netrun_command/restore = SSnetrun.get_command("rnd_restore")
+	var/datum/component/netrun_node/source_node = netrun_find_node(source)
+	var/datum/component/netrun_node/destination_node = netrun_find_node(destination)
+	console.inventory.local_store.capacity = 0
+	siphon.execute(source_node, console)
+	TEST_ASSERT_EQUAL(source.stored_research.research_points[TECHWEB_POINT_TYPE_GENERIC], 10000, "A full disk cannot debit the research authority")
+	console.inventory.local_store.capacity = 16
+	siphon.execute(source_node, console)
+	TEST_ASSERT_EQUAL(source.stored_research.research_points[TECHWEB_POINT_TYPE_GENERIC], 7500, "The actual stolen balance is removed once")
+	var/datum/netrun_file/research_points/original = console.selected_local_file()
+	TEST_ASSERT(istype(original), "Siphon produces a transferable redeemable report")
+	var/datum/netrun_file/research_points/copy = original.copy()
+	TEST_ASSERT_EQUAL(copy.payload, original.payload, "Copies share their authoritative consumable balance")
+	TEST_ASSERT(console.store_file(copy), "The copied report uses ordinary storage")
+	console.inventory.selected_file_uid = copy.uid
+	var/datum/techweb/authority = destination.stored_research
+	destination.stored_research = null
+	restore.execute(destination_node, console)
+	TEST_ASSERT(length(original.payload.points), "A missing destination does not consume the portable balance")
+	destination.stored_research = authority
+	restore.execute(destination_node, console)
+	TEST_ASSERT_EQUAL(authority.research_points[TECHWEB_POINT_TYPE_GENERIC], 2600, "The destination receives the stolen points exactly once")
+	console.inventory.selected_file_uid = original.uid
+	restore.execute(destination_node, console)
+	TEST_ASSERT_EQUAL(authority.research_points[TECHWEB_POINT_TYPE_GENERIC], 2600, "The original cannot redeem a balance already used by a copy")
+	var/datum/netrun_file/research_points/later_copy = original.copy()
+	TEST_ASSERT(console.store_file(later_copy), "A spent report remains an ordinary copyable file")
+	console.inventory.selected_file_uid = later_copy.uid
+	restore.execute(destination_node, console)
+	TEST_ASSERT_EQUAL(authority.research_points[TECHWEB_POINT_TYPE_GENERIC], 2600, "Copying after redemption cannot revive the balance")
+	var/datum/netrun_file/forged = new("rnd_fake.dat", NETRUN_FILE_TEXT, original.content, 2)
+	TEST_ASSERT(console.store_file(forged), "A forged text report can exist as ordinary data")
+	console.inventory.selected_file_uid = forged.uid
+	restore.execute(destination_node, console)
+	TEST_ASSERT_EQUAL(authority.research_points[TECHWEB_POINT_TYPE_GENERIC], 2600, "Text content and a .dat name cannot mint research points")

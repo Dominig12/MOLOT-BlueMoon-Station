@@ -103,18 +103,30 @@
 	var/datum/netrun_ice/ice = allocate(/datum/netrun_ice, node, NETRUN_ICE_HUNTER)
 	var/datum/netrun_program/strike = allocate(/datum/netrun_program/strike)
 	strike.windup = 0.5 SECONDS
-	TEST_ASSERT(ice.begin_program(strike, entity), "A short program must still receive the minimum reaction window")
+	TEST_ASSERT(ice.begin_program(strike, entity), "The first attack must enter the shared turn encounter")
 	var/list/casting = ice.casting_payload()
-	TEST_ASSERT_EQUAL(casting["remaining"], NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS), "The countdown must use the actual enforced telegraph")
+	TEST_ASSERT_EQUAL(casting["remaining"], NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS), "The opening attack must retain a full escape window")
 	TEST_ASSERT_EQUAL(casting["power"], round(strike.power * ice.damage_factor), "The warning must show the ICE's damage before the victim's shield")
 	var/list/last_log = entity.console.log[length(entity.console.log)]
-	TEST_ASSERT(findtext(last_log["text"], "через [NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS)] с"), "The console warning must not claim the unenforced short windup")
+	TEST_ASSERT(findtext(last_log["text"], "через [NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS)] с"), "The console warning must describe the opening escape window")
 	ice.cancel_program()
 	var/datum/netrun_program/blackout = SSnetrun.get_program("blackout")
 	TEST_ASSERT(netrun_test_yield_to(ice, TRUE), "Changing programs cannot reuse the AP spent on the cancelled preparation")
 	TEST_ASSERT(ice.begin_program(blackout, entity), "A hunter must be able to prepare its stun")
 	casting = ice.casting_payload()
+	TEST_ASSERT_EQUAL(casting["remaining"], NETRUN_ICE_COMBAT_TELEGRAPH / (1 SECONDS), "A later cast within the active encounter uses the short noninteractive preparation")
 	TEST_ASSERT_EQUAL(casting["power"], blackout.power, "Damage scaling must never shorten a displayed stun duration")
+
+/// Outside an encounter a real-time preparation retains the full reaction window.
+/datum/unit_test/netrun_ice_realtime_telegraph/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/netrun_ice/ice = allocate(/datum/netrun_ice, node)
+	var/datum/netrun_program/barrier/program = allocate(/datum/netrun_program/barrier)
+	program.windup = 0.1 SECONDS
+	TEST_ASSERT(ice.begin_program(program, ice), "An idle guard can prepare its self defense outside turn combat")
+	TEST_ASSERT_NULL(ice.get_combat_encounter(), "Self defense alone does not invent a combat encounter")
+	TEST_ASSERT_EQUAL(ice.attack_at, world.time + NETRUN_ICE_MIN_TELEGRAPH, "Real-time counterplay retains its full minimum window")
 
 /// A damaged sentry spends a real preparation and cooldown on defense before attacking.
 /datum/unit_test/netrun_ice_sentry_barrier_priority/Run()

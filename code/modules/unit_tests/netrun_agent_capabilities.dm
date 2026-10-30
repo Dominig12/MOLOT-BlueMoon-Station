@@ -27,7 +27,7 @@
 		behavior.enabled = TRUE
 	black.process_ai(1)
 	TEST_ASSERT_NOTNULL(black.pending_program, "The same agent attacks once its combat capability is enabled")
-	TEST_ASSERT(black.attack_at >= world.time + NETRUN_ICE_MIN_TELEGRAPH, "Illegal protection retains a counterplay telegraph")
+	TEST_ASSERT(black.attack_at >= world.time + NETRUN_ICE_MIN_TELEGRAPH, "The first hostile contact retains a full escape window")
 	black.cancel_program()
 	TEST_ASSERT(black.bind_deployer(entity.console), "The native deployer binding captures the actual principal")
 	TEST_ASSERT(!black.is_intruder(entity), "The deploying principal is not attacked by its own ICE")

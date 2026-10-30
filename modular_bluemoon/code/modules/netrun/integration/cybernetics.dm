@@ -6,9 +6,6 @@
 /atom/proc/netrun_reactive_defense_allowed()
 	return TRUE
 
-/atom/proc/publish_netrun_security_event(datum/netrun_incident/incident)
-	return
-
 /// Robotic tissue alone has no radio. The installed uplink connects the wearer's internal bus.
 /obj/item/organ/proc/netrun_has_uplink()
 	return FALSE
@@ -182,6 +179,28 @@
 		guard.drops_loot = FALSE
 
 /// Machine publishers use native discovery and a bounded subscription set.
+/obj/machinery/power/apc/netrun_machine_service_types()
+	return ..() + list(/datum/netrun_machine_service/security_events)
+
+/obj/machinery/ntnet_relay/netrun_machine_service_types()
+	return ..() + list(/datum/netrun_machine_service/security_events)
+
+/// Aggregate station equipment at its physical APC instead of registering a publisher per leaf.
+/atom/proc/publish_netrun_security_event(datum/netrun_incident/incident)
+	if(!incident || !(incident.severity >= NETRUN_INCIDENT_HIGH || (incident.severity >= NETRUN_INCIDENT_MEDIUM && incident.reports >= 2)))
+		return
+	var/datum/component/netrun_node/node = GetComponent(/datum/component/netrun_node)
+	if(!node)
+		return
+	var/atom/publisher = (node?.bound_apc?.parent) || src
+	var/datum/netrun_machine_service/security_events/service = publisher.get_netrun_machine_service("security.events")
+	if(!service)
+		return
+	var/list/event = incident.ui_entry()
+	event["suspect"] = null
+	event["area"] = get_area_name(node.physical_turf(), TRUE)
+	service.queue_event(event)
+
 /mob/living/carbon/netrun_machine_service_types()
 	. = ..()
 	if(netrun_has_cyber_uplink())
@@ -197,7 +216,9 @@
 		SEND_SOUND(src, sound('sound/machines/triple_beep.ogg', volume = 50))
 	node?.wake_defenses()
 	var/datum/netrun_machine_service/security_events/service = get_netrun_machine_service("security.events")
-	service?.queue_event(incident.ui_entry())
+	var/list/event = incident.ui_entry()
+	event["area"] = get_area_name(src, TRUE)
+	service?.queue_event(event)
 
 /datum/netrun_machine_service/security_events
 	service_id = "security.events"
@@ -211,7 +232,23 @@
 /datum/netrun_machine_service/security_events/network_ready()
 	send("security.monitor", new /datum/netrun_machine_message(list("operation" = "advertise")))
 
+/datum/netrun_machine_service/security_events/host_initialized()
+	. = ..()
+	on_station_network_restored()
+
+/datum/netrun_machine_service/security_events/New(datum/component/netrun_node/node, atom/host_override)
+	. = ..()
+	if(ismachinery(host))
+		RegisterSignal(host, list(COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED), PROC_REF(on_station_network_restored))
+
+/datum/netrun_machine_service/security_events/proc/on_station_network_restored()
+	SIGNAL_HANDLER
+	if(resolve_node()?.is_online())
+		SSnetrun.get_task_scheduler().enqueue("service_initialize", src, NETRUN_TASK_BACKGROUND)
+
 /datum/netrun_machine_service/security_events/Destroy()
+	if(ismachinery(host))
+		UnregisterSignal(host, list(COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED))
 	SSnetrun.task_scheduler?.cancel("security.publish", src)
 	subscribers.Cut()
 	pending_events.Cut()
@@ -298,15 +335,25 @@
 	start_when_ready = TRUE
 	var/list/alerts = list()
 	var/enabled = TRUE
+	var/next_station_alarm = 0
 
 /datum/netrun_machine_service/security_monitor/New(datum/component/netrun_node/node, atom/host_override)
 	. = ..()
 	if(istype(host, /mob/camera/netrun_entity/bot))
 		RegisterSignal(host, COMSIG_NETRUN_ENTITY_NODE_CHANGED, PROC_REF(position_changed))
+	if(istype(host, /obj/machinery/computer/security))
+		RegisterSignal(host, list(COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED), PROC_REF(on_station_network_restored))
+
+/datum/netrun_machine_service/security_monitor/proc/on_station_network_restored()
+	SIGNAL_HANDLER
+	if(enabled && authorized())
+		SSnetrun.get_task_scheduler().enqueue("service_initialize", src, NETRUN_TASK_BACKGROUND)
 
 /datum/netrun_machine_service/security_monitor/Destroy()
 	if(host)
 		UnregisterSignal(host, COMSIG_NETRUN_ENTITY_NODE_CHANGED)
+		if(istype(host, /obj/machinery/computer/security))
+			UnregisterSignal(host, list(COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED))
 	return ..()
 
 /datum/netrun_machine_service/security_monitor/proc/position_changed()
@@ -321,6 +368,9 @@
 	return ..()
 
 /datum/netrun_machine_service/security_monitor/proc/authorized()
+	if(istype(host, /obj/machinery/computer/security))
+		var/obj/machinery/computer/security/console = host
+		return console.netrun_online()
 	if(istype(host, /mob/living/silicon/ai))
 		var/mob/living/silicon/ai/ai = host
 		return ai.netrun_control_available()
@@ -345,12 +395,28 @@
 	var/list/event = message.payload["event"]
 	if(message.payload["operation"] != "event" || !islist(event))
 		return FALSE
+	if(istype(host, /obj/machinery/computer/security))
+		if(!(event["severity"] >= NETRUN_INCIDENT_HIGH || (event["severity"] >= NETRUN_INCIDENT_MEDIUM && event["reports"] >= 2)))
+			return FALSE
+		// Keep one current row per incident, with no actor identity in the public journal.
+		event = event.Copy()
+		event["suspect"] = null
+		for(var/list/previous as anything in alerts.Copy())
+			if(previous["id"] == event["id"])
+				alerts -= list(previous)
 	alerts += list(event.Copy())
 	if(length(alerts) > 32)
 		alerts.Cut(1, length(alerts) - 31)
 	var/text = "Сетевая тревога [event["id"]]: [event["text"] || event["kind"]] @ [event["address"]]."
 	if(istype(host, /mob/living/silicon/ai))
 		to_chat(host, span_warning(text))
+	else if(istype(host, /obj/machinery/computer/security))
+		var/obj/machinery/computer/security/console = host
+		if(world.time >= next_station_alarm)
+			next_station_alarm = world.time + 8 SECONDS
+			console.say("Сетевая тревога: [event["area"] || "район не определён"], узел [event["address"]]. Проверьте журнал сетевых тревог и оборудование сектора.")
+			playsound(console, 'sound/machines/triple_beep.ogg', 40, FALSE)
+		SStgui.update_uis(console)
 	else
 		var/mob/camera/netrun_entity/bot/bot = host
 		bot.console.log_line(text, "bad")

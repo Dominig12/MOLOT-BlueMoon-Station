@@ -130,7 +130,7 @@
 	return ..() + list(/datum/netrun_machine_service/camera)
 
 /obj/machinery/computer/security/netrun_machine_service_types()
-	return ..() + list(/datum/netrun_machine_service/camera_viewer/security)
+	return ..() + list(/datum/netrun_machine_service/camera_viewer/security, /datum/netrun_machine_service/security_monitor)
 
 /obj/machinery/computer/camera_advanced/netrun_machine_service_types()
 	return ..() + list(/datum/netrun_machine_service/camera_viewer/advanced)

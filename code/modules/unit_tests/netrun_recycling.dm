@@ -14,6 +14,7 @@
 	TEST_ASSERT(istype(bot.brain.current_goal(), /datum/netrun_bot_goal/recycling_wait), "An idle collector waits without scanning the station")
 	var/datum/netrun_file/cargo = new("visitor-debris.txt", NETRUN_FILE_TEXT, "recovered visitor data", 3)
 	TEST_ASSERT(scene.node_a.leave_salvage(cargo, "visitor"), "A real death cache owns the original file")
+	cargo.salvage_recycle_after = world.time
 	TEST_ASSERT_NULL(bot.brain.current_goal(), "A new debris fact interrupts idle waiting")
 	bot.brain.think()
 	TEST_ASSERT_EQUAL(bot.console.inventory.local_store.find_file(cargo.uid), cargo, "The collector notices debris under itself")
@@ -68,6 +69,32 @@
 	TEST_ASSERT(QDELETED(packet), "Removing the module cancels its in-flight file operation")
 	TEST_ASSERT_EQUAL(bot.console.inventory.local_store.find_file(cargo.uid), cargo, "Cancellation retains recovered cargo")
 	TEST_ASSERT_NULL(scene.node_b.file_store.find_file(cargo.uid), "Cancelled work never leaves a server copy")
+
+/// Fresh loot belongs to the winner's opportunity window before maintenance plans recovery.
+/datum/unit_test/netrun_recycling_loot_grace/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/mob/camera/netrun_entity/bot/bot = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_a, NETRUN_BOT_RECYCLER)
+	var/datum/netrun_file/cargo = new("fresh-debris.txt", NETRUN_FILE_TEXT, "earned loot", 2)
+	TEST_ASSERT(scene.node_a.leave_salvage(cargo, "defeated process"), "Defeat leaves a real file")
+	TEST_ASSERT_EQUAL(cargo.salvage_recycle_after, world.time + NETRUN_SALVAGE_RECYCLE_GRACE, "Each fresh drop gets its own grace deadline")
+	// Other tests may leave indexed caches. This assertion concerns the deadline
+	// of the only debris cache visible to this fixture's bounded search.
+	var/list/previous_caches = SSnetrun.salvage_nodes
+	SSnetrun.salvage_nodes = list()
+	SSnetrun.salvage_nodes[scene.node_a.address] = scene.node_a
+	bot.program.plan(bot.brain)
+	SSnetrun.salvage_nodes = previous_caches
+	var/datum/netrun_bot_goal/recycling_wait/wait = bot.brain.current_goal()
+	TEST_ASSERT(istype(wait), "A recycler waits rather than taking fresh loot")
+	TEST_ASSERT_EQUAL(wait.expires_at, cargo.salvage_recycle_after, "Waiting wakes at the grace deadline without polling")
+	TEST_ASSERT_NULL(bot.brain.best_salvage(scene.node_a), "Autonomous recovery still respects the opportunity window")
+	var/mob/camera/netrun_entity/player = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
+	TEST_ASSERT(player.console.recover_salvage(cargo.uid), "The player can recover the original during the grace window")
+	TEST_ASSERT_EQUAL(player.console.inventory.local_store.find_file(cargo.uid), cargo, "Recovery gives the player the original file")
+	var/datum/netrun_file/older = new("older-debris.txt", NETRUN_FILE_TEXT, "unclaimed loot", 2)
+	scene.node_a.leave_salvage(older)
+	older.salvage_recycle_after = world.time
+	TEST_ASSERT_EQUAL(bot.brain.best_salvage(scene.node_a), older, "Unclaimed loot becomes available after its grace deadline")
 
 /// Shared legacy collectors also recognize salvage at their current location.
 /datum/unit_test/netrun_recycling_local_visitors/Run()
