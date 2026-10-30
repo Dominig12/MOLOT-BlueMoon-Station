@@ -127,6 +127,9 @@
 #define NETRUN_FILE_TECHWEB "techweb"
 #define NETRUN_FILE_TECHWEB_LINK "techweb_link"
 #define NETRUN_FILE_PHOTO "photo"
+
+/// Maximum broker payout per mind and round, shared by settlement and help text.
+#define NETRUN_CONTRACT_TC_CAP 6
 /// Активная боевая программа ("карточка"): её запускают против цели в узле
 #define NETRUN_FILE_PROGRAM "program"
 

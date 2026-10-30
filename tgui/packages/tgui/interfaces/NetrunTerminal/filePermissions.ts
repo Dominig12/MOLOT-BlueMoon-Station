@@ -1,3 +1,4 @@
+import { fileSearchLabel } from './filePresentation';
 import type { NetFile, Storage } from './types';
 
 export const SESSION_FILE_REASON = 'Только для текущего погружения';
@@ -6,11 +7,9 @@ export const isCopyableFile = (file: NetFile) => isTransferableFile(file) && fil
 export const fileSizeLabel = (file: NetFile) => file.copy_size !== undefined && file.copy_size !== file.size
   ? `${file.size} · копия ${file.copy_size}` : `${file.size}`;
 export const fileSourceLabel = (source?: string) => ({ local: 'Локальная память', shard: 'Шард', session: 'Текущее погружение' })[source ?? ''] || 'Локальная память';
-const FILE_SEARCH_LABELS: Record<string, string> = { bot: 'агент', grants: 'ключ доступ', key: 'ключ сеть', access: 'ID снимок доступ',
-  daemon: 'демон программа', program: 'программа бой', text: 'текст заметка', photo: 'фото снимок', techweb: 'исследования', techweb_link: 'ссылка исследования' };
 export const visibleFiles = (files: NetFile[], query: string) => {
   const term = query.trim().toLocaleLowerCase('ru');
-  return files.filter((file) => !term || `${file.name} ${file.kind} ${FILE_SEARCH_LABELS[file.kind] || ''}`.toLocaleLowerCase('ru').includes(term))
+  return files.filter((file) => !term || `${file.name} ${file.kind} ${fileSearchLabel(file.kind)}`.toLocaleLowerCase('ru').includes(term))
     .sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true, sensitivity: 'base' }) || a.uid.localeCompare(b.uid));
 };
 

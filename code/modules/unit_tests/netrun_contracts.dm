@@ -233,3 +233,119 @@
 	TEST_ASSERT_NULL(file.data_receipt, "The owner's removed, upgraded and renamed ID cannot issue a paid theft receipt")
 	scene.client.broker_sell()
 	TEST_ASSERT_EQUAL(scene.role.uplink.telecrystals, 0, "Laundering an owned ID earns no TC")
+
+/// Fixtures do not publish a production category during subtype discovery.
+/datum/netrun_contract_category/distinct/extension_fixture
+	id = null
+	units_per_tc = 2
+	objective_label = "fixture records"
+	reward_label = "new fixture records"
+	status_label = "fixture records"
+
+/datum/component/netrun_broker_account
+	var/list/contract_fixture_values = list()
+
+/datum/netrun_contract_category/distinct/extension_fixture/recorded_values(datum/component/netrun_broker_account/account)
+	return account?.contract_fixture_values
+
+/datum/netrun_contract_category/distinct/extension_fixture/objective_available(datum/netrun_console/console, datum/component/netrun_node/node)
+	var/obj/machinery/rnd/server/server = node.parent
+	return eligible_research_source(node) && length(server.stored_research?.researched_nodes) >= units_per_tc
+
+/datum/netrun_contract_category/invalid_threshold_fixture
+	id = "unit-test-invalid-threshold"
+	units_per_tc = 0
+
+/// Restore the shared registry even when an assertion exits Run early.
+/datum/unit_test/netrun_contract_categories
+	var/list/previous_categories
+	var/registry_replaced = FALSE
+
+/datum/unit_test/netrun_contract_categories/proc/use_categories(list/categories)
+	previous_categories = SSnetrun.contract_categories
+	registry_replaced = TRUE
+	SSnetrun.contract_categories = categories
+
+/datum/unit_test/netrun_contract_categories/Destroy()
+	if(registry_replaced)
+		SSnetrun.contract_categories = previous_categories
+	return ..()
+
+/// A new category participates in export, settlement and objectives without central dispatch edits.
+/datum/unit_test/netrun_contract_categories/extension/Run()
+	TEST_ASSERT_NULL(SSnetrun.get_contract_category("unit-test-invalid-threshold"), "An invalid reward divisor cannot enter the shared registry")
+	var/datum/netrun_contract_category/distinct/extension_fixture/category = allocate(/datum/netrun_contract_category/distinct/extension_fixture)
+	category.id = "unit-test-extension"
+	var/list/categories = list()
+	categories[category.id] = category
+	use_categories(categories)
+	TEST_ASSERT(category.id in SSnetrun.contract_category_ids(), "A registered extension is visible to the category picker")
+	var/datum/netrun_contract_scene/scene = allocate(/datum/netrun_contract_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_file/file = new("extension.txt", NETRUN_FILE_TEXT, "fixture data", 1)
+	TEST_ASSERT(scene.client.store_file(file), "The extension uses an ordinary local file")
+	scene.client.inventory.selected_file_uid = file.uid
+	scene.client.stamp_data_export(file, scene.research_node, category.id, list("first", "second"))
+	TEST_ASSERT_NOTNULL(file.data_receipt, "The extension controls its ordinary authenticated export")
+	scene.client.broker_sell()
+	var/datum/component/netrun_broker_account/account = scene.user.mind.GetComponent(/datum/component/netrun_broker_account)
+	TEST_ASSERT_EQUAL(account.units(category.id), 2, "The extension records its own ledger rather than a built-in category")
+	TEST_ASSERT_EQUAL(length(account.technologies) + length(account.accesses) + account.research_points, 0, "Extension settlement does not change unrelated ledgers")
+	TEST_ASSERT_EQUAL(scene.role.uplink.telecrystals, 1, "The common broker pays the extension's reward")
+	scene.client.broker_sell()
+	TEST_ASSERT_EQUAL(scene.role.uplink.telecrystals, 1, "The common receipt guard still prevents extension replay")
+	TEST_ASSERT(category.objective_available(scene.client, scene.research_node), "The extension publishes its own source eligibility")
+	var/datum/objective/netrun_exfiltrate/objective = allocate(/datum/objective/netrun_exfiltrate)
+	objective.owner = scene.user.mind
+	TEST_ASSERT(objective.configure(category.id), "A registered extension configures the existing objective")
+	TEST_ASSERT(objective.check_completion(), "The existing objective reads the extension's settled ledger")
+
+/// One changed threshold drives the actual payout, source eligibility, objective and broker help.
+/datum/unit_test/netrun_contract_categories/shared_threshold/Run()
+	var/datum/netrun_contract_category/distinct/technology/category = allocate(/datum/netrun_contract_category/distinct/technology)
+	category.units_per_tc = 2
+	use_categories(list("technology" = category))
+	var/datum/netrun_contract_scene/scene = allocate(/datum/netrun_contract_scene, run_loc_floor_bottom_left)
+	scene.server.stored_research.researched_nodes = list("base" = TRUE)
+	TEST_ASSERT(!category.objective_available(scene.client, scene.research_node), "A source below the configured threshold cannot offer the objective")
+	scene.server.stored_research.researched_nodes["datatheory"] = TRUE
+	TEST_ASSERT(category.objective_available(scene.client, scene.research_node), "A source meeting the changed threshold can offer the objective")
+	var/datum/objective/netrun_exfiltrate/objective = allocate(/datum/objective/netrun_exfiltrate)
+	objective.owner = scene.user.mind
+	TEST_ASSERT(objective.configure(category.id), "The configured category remains selectable")
+	TEST_ASSERT_EQUAL(objective.target_amount, category.units_per_tc, "The objective uses the configured threshold")
+	TEST_ASSERT(!objective.check_completion(), "Available source data alone does not complete an unsettled objective")
+	TEST_ASSERT(findtext(SSnetrun.contract_reward_terms(), "[category.units_per_tc] [category.reward_label]"), "Broker help describes the configured reward threshold")
+	var/datum/netrun_command/export = SSnetrun.get_command("rnd_grab")
+	export.execute(scene.research_node, scene.client)
+	var/datum/netrun_file/file = scene.client.selected_local_file()
+	TEST_ASSERT_NOTNULL(file.data_receipt, "The changed threshold still uses a genuine station export")
+	scene.client.broker_sell()
+	TEST_ASSERT_EQUAL(scene.role.uplink.telecrystals, 1, "Two exported technologies pay according to the changed threshold")
+	TEST_ASSERT(objective.check_completion(), "Settlement completes the objective using the same threshold")
+
+/// Unknown categories fail before consuming data, crediting accounts or reconfiguring an objective.
+/datum/unit_test/netrun_contract_categories/unknown/Run()
+	var/datum/netrun_contract_scene/scene = allocate(/datum/netrun_contract_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_file/unstamped = allocate(/datum/netrun_file, "unknown.txt", NETRUN_FILE_TEXT, "fixture data", 1)
+	scene.client.stamp_data_export(unstamped, scene.research_node, "unit-test-unknown", list("value"))
+	TEST_ASSERT_NULL(unstamped.data_receipt, "An unknown category cannot issue an authenticated receipt")
+	var/datum/netrun_command/siphon = SSnetrun.get_command("rnd_siphon")
+	siphon.execute(scene.research_node, scene.client)
+	var/datum/netrun_file/research_points/file = scene.client.selected_local_file()
+	TEST_ASSERT_NOTNULL(file.data_receipt, "The fixture first obtains a genuine research balance")
+	file.data_receipt.category = "unit-test-unknown"
+	var/points = file.payload.points[TECHWEB_POINT_TYPE_GENERIC]
+	var/datum/component/netrun_broker_account/account = scene.user.mind.LoadComponent(/datum/component/netrun_broker_account)
+	scene.client.broker_sell()
+	TEST_ASSERT(!file.data_receipt.redeemed, "A rejected category leaves its receipt unspent")
+	TEST_ASSERT_EQUAL(file.payload.points[TECHWEB_POINT_TYPE_GENERIC], points, "A rejected category preserves the restorable point balance")
+	TEST_ASSERT_EQUAL(length(account.technologies) + length(account.accesses) + account.research_points + account.paid_tc, 0, "A rejected category cannot mutate any account ledger")
+	TEST_ASSERT_EQUAL(scene.role.uplink.telecrystals, 0, "A rejected category cannot credit the uplink")
+	TEST_ASSERT_EQUAL(account.units("unit-test-unknown"), 0, "An unknown category has no credited units")
+	var/datum/objective/netrun_exfiltrate/objective = allocate(/datum/objective/netrun_exfiltrate)
+	objective.configure("technology", 7)
+	var/previous_explanation = objective.explanation_text
+	TEST_ASSERT(!objective.configure("unit-test-unknown"), "An unknown objective category is rejected")
+	TEST_ASSERT_EQUAL(objective.category, "technology", "Failed configuration preserves the existing objective category")
+	TEST_ASSERT_EQUAL(objective.target_amount, 7, "Failed configuration preserves the existing objective amount")
+	TEST_ASSERT_EQUAL(objective.explanation_text, previous_explanation, "Failed configuration preserves the existing objective text")

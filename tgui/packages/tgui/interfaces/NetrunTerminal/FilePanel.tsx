@@ -3,15 +3,9 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { Box, Button, Input } from '../../components';
 import { FileExchangePanel } from './FileExchange';
 import { fileSourceLabel, fileTransferState, isTransferableFile, SESSION_FILE_REASON } from './filePermissions';
+import { fileKindLabel } from './filePresentation';
 import { NetrunData, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
-
-/** Human labels for file kinds that are not self-explanatory in the editor header. */
-const FILE_KIND_LABELS: Record<string, string> = {
-  bot: 'агент',
-  grants: 'ключ доступа',
-  access: 'снимок ID',
-};
 
 const FilePanelView = () => {
   const { data } = useBackend<NetrunData>(['file']);
@@ -96,7 +90,7 @@ const FileEditor = (props: { onCreated?: () => void }) => {
         : <Input fluid value={name} onInput={(_event, value) => setName(value)} />}
       {!!file && (
         <Box mt={0.5} color={THEME.muted} fontSize="11px">
-          {fileSourceLabel(file.source)} · {FILE_KIND_LABELS[file.kind] || file.kind} · память {file.size}
+          {fileSourceLabel(file.source)} · {fileKindLabel(file.kind)} · память {file.size}
         </Box>
       )}
       {file?.kind === 'photo' && !!file.image && (
