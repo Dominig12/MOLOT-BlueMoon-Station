@@ -267,7 +267,7 @@
 	// The old sync() return value only confirms request admission. Real startup
 	// waits for the shared readiness barrier, discovery, and the server's reply.
 	var/deadline = world.time + 60 SECONDS
-	while(length(pending) && world.time < deadline)
+	while(length(pending))
 		// Исследования отдаёт только работающий сервер: перегретый или обесточенный
 		// сервер станции (как Computer Core CogStation без охлаждения) синхронизировать нечем.
 		if(!robotics_station_server_online())
@@ -278,6 +278,8 @@
 			if(authority && client.snapshot_binding == REF(authority) && client.snapshot_revision >= 0)
 				pending -= fabricator
 		if(length(pending))
+			if(world.time >= deadline)
+				break
 			sleep(1 SECONDS)
 	var/list/unsynced = list()
 	for(var/obj/machinery/mecha_part_fabricator/fabricator as anything in pending)

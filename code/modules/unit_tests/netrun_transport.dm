@@ -18,12 +18,47 @@
 	while(!service.ready_calls && world.time < deadline)
 		sleep(world.tick_lag)
 	TEST_ASSERT_EQUAL(service.ready_calls, 1, "A service registered after bootstrap must receive asynchronous readiness once")
+	SSnetrun.get_task_scheduler().enqueue("service_initialize", service, NETRUN_TASK_BACKGROUND)
+	deadline = world.time + 5 SECONDS
+	while(service.ready_calls < 2 && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(service.ready_calls, 2, "A later recovery must be able to initialize the same service again")
 	var/key = service.service_key()
 	var/task_key = "service_initialize:[REF(service)]"
 	SSnetrun.get_task_scheduler().enqueue("service_initialize", service, NETRUN_TASK_BACKGROUND)
 	qdel(service)
 	TEST_ASSERT_NULL(SSnetrun.get_task_scheduler().by_key[task_key], "Service deletion must cancel its pending readiness task")
 	TEST_ASSERT_NULL(transport.ready_services[key], "Service deletion must release the readiness index entry")
+
+/// Power signals must not create self-requeuing startup work before the barrier.
+/datum/unit_test/netrun_transport_security_startup_signals/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/computer/security/console = scene.machine(/obj/machinery/computer/security, scene.target_spot)
+	var/datum/netrun_machine_service/security_events/publisher = scene.apc.get_netrun_machine_service("security.events")
+	var/datum/netrun_machine_service/security_monitor/monitor = console.get_netrun_machine_service("security.monitor")
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/datum/netrun_task_scheduler/scheduler = SSnetrun.get_task_scheduler()
+	var/publisher_key = "service_initialize:[REF(publisher)]"
+	var/monitor_key = "service_initialize:[REF(monitor)]"
+	scheduler.cancel("service_initialize", publisher)
+	scheduler.cancel("service_initialize", monitor)
+	var/was_bootstrapped = transport.bootstrap_complete
+	transport.bootstrap_complete = FALSE
+	publisher.on_station_network_restored()
+	monitor.on_station_network_restored()
+	var/queued_before_ready = !!(scheduler.by_key[publisher_key] || scheduler.by_key[monitor_key])
+	transport.bootstrap_complete = TRUE
+	publisher.on_station_network_restored()
+	monitor.on_station_network_restored()
+	var/queued_after_ready = !!(scheduler.by_key[publisher_key] && scheduler.by_key[monitor_key])
+	scheduler.cancel("service_initialize", publisher)
+	scheduler.cancel("service_initialize", monitor)
+	// Restore the shared barrier before any assertion can return from the test.
+	transport.bootstrap_complete = was_bootstrapped
+	publisher.on_station_network_restored()
+	monitor.on_station_network_restored()
+	TEST_ASSERT(!queued_before_ready, "Startup power signals must leave readiness work to the shared bootstrap wave")
+	TEST_ASSERT(queued_after_ready, "Power restoration after bootstrap must still re-advertise both services")
 
 /datum/unit_test/netrun_transport_scrubber_filter_shape/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
@@ -401,13 +436,15 @@
 	TEST_ASSERT(length(research_devices), "The real mapped R&D compartment must contain native vents or scrubbers")
 	var/deadline = world.time + 20 SECONDS
 	var/missing = length(research_devices)
-	while(missing && world.time < deadline)
+	while(missing)
 		missing = 0
 		for(var/datum/netrun_machine_service/atmos/device/device as anything in research_devices)
 			var/list/received = istype(device.host, /obj/machinery/atmospherics/components/unary/vent_pump) ? research_alarm.netrun_vent_info : research_alarm.netrun_scrub_info
 			if(!received[device.service_tag()])
 				missing++
 		if(missing)
+			if(world.time >= deadline)
+				break
 			sleep(1 SECONDS)
 	log_world("NETRUN MAP startup: map=[SSmapping.config.map_name] apcs_online=[online_apcs] ready=[transport.is_ready()] bootstrap=[transport.bootstrap_complete] controllers=[length(transport.by_id["atmos.controller"])] devices=[length(transport.by_id["atmos.device"])] rnd_devices=[length(research_devices)] rnd_missing=[missing] packets=[length(transport.packets)] queued=[transport.queued_messages]")
 	var/demanding_clients = 0
@@ -451,7 +488,7 @@
 				station_pairs += list(list("device" = device, "controller" = controller))
 	deadline = world.time + 20 SECONDS
 	var/station_missing = length(station_pairs)
-	while(station_missing && world.time < deadline)
+	while(station_missing)
 		station_missing = 0
 		for(var/list/pair as anything in station_pairs)
 			var/datum/netrun_machine_service/atmos/device/device = pair["device"]
@@ -461,6 +498,8 @@
 			if(!received[device.service_tag()])
 				station_missing++
 		if(station_missing)
+			if(world.time >= deadline)
+				break
 			sleep(1 SECONDS)
 	log_world("NETRUN MAP station registration: eligible_pairs=[length(station_pairs)] missing=[station_missing] discovery_waiters=[length(transport.waiting_resolutions)] queued_messages=[transport.queued_messages] packets=[length(transport.packets)]")
 	TEST_ASSERT(length(station_pairs) > 100, "The production regression must cover a large real station's atmosphere population")
@@ -554,7 +593,7 @@
 	// A device past its fast retry budget probes every 30 seconds; cover one full cycle.
 	deadline = world.time + 60 SECONDS
 	var/missing = length(pairs)
-	while(missing && world.time < deadline)
+	while(missing)
 		missing = 0
 		for(var/list/pair as anything in pairs)
 			var/datum/netrun_machine_service/atmos/device/device = pair["device"]
@@ -564,6 +603,8 @@
 			if(!received[device.service_tag()])
 				missing++
 		if(missing)
+			if(world.time >= deadline)
+				break
 			sleep(1 SECONDS)
 	TEST_ASSERT_EQUAL(missing, 0, "Every reachable mapped atmosphere device must register with its compatible alarm ([length(pairs)] eligible pairs)")
 

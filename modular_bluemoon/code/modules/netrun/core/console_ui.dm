@@ -840,6 +840,7 @@
 
 /// Only live firmware bound to this node is public; an uploaded readme is ordinary data.
 /datum/netrun_console/proc/public_node_manual(datum/component/netrun_node/node, uid)
+	RETURN_TYPE(/datum/netrun_file/manual)
 	for(var/datum/netrun_file/manual/manual in node?.file_store?.files)
 		if((isnull(uid) || manual.uid == uid) && manual.node_ref?.resolve() == node)
 			return manual

@@ -89,7 +89,8 @@
 	var/datum/air_alarm_mode/flood_mode = /datum/air_alarm_mode/flood
 	var/flood_id = initial(flood_mode.id)
 
-	var/obj/machinery/atmospherics/components/unary/vent_pump/vent = allocate(/obj/machinery/atmospherics/components/unary/vent_pump, floor)
+	// Test command delivery independently of SSair, which turns off unpiped vents.
+	var/obj/machinery/atmospherics/components/unary/vent_pump/vent = allocate(/obj/machinery/atmospherics/components/unary/vent_pump, floor, FALSE)
 	vent.set_machine_stat(0)
 	// Регистрация в области и подписка на частоту живут в atmosinit(), которую в
 	// обычной жизни зовёт SSair на старте раунда.

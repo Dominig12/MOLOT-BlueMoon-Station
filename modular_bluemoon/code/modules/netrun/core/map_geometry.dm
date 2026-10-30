@@ -53,7 +53,7 @@
 	var/list/areas = list(room)
 	areas |= room.sub_areas || list()
 	for(var/area/member as anything in areas)
-		for(var/turf/tile as anything in member)
+		for(var/turf/tile in member)
 			if(tile.z != z)
 				continue
 			var/row_key = "[tile.y]"
