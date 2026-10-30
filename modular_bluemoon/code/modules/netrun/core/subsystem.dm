@@ -83,7 +83,7 @@ SUBSYSTEM_DEF(netrun)
 	msg = "N:[length(nodes_by_address)] P:[length(poll_nodes)] Q:[length(dirty_nodes)] C:[length(active_consoles)]/[length(consoles)] E:[length(entities)] Last N:[last_processed_nodes] C:[last_processed_consoles] T:[topology_rebuilds] F:[camera_feed_scans]/[camera_feed_cache_hits] R:[camera_route_borrows] W:[wire_session_sweeps] I:[topology?.indexed_infrastructure_visits || 0]"
 	if(task_scheduler)
 		var/datum/netrun_task_scheduler/scheduler = task_scheduler
-		msg += " Tasks:[scheduler.pending()] Q:[scheduler.counts[1]]/[scheduler.counts[2]]/[scheduler.counts[3]] Qpeak:[scheduler.peak_pending] Done:[scheduler.completed] Merge:[scheduler.merged] Pr:[scheduler.promoted] Budget:[round(scheduler.last_execution_ms, 0.1)]/[round(scheduler.last_budget_ms, 0.1)]ms"
+		msg += " Tasks:[scheduler.pending()] Run:[length(scheduler.running_by_key)] Q:[scheduler.counts[1]]/[scheduler.counts[2]]/[scheduler.counts[3]] Qpeak:[scheduler.peak_pending] Done:[scheduler.completed] Merge:[scheduler.merged] Pr:[scheduler.promoted] Budget:[round(scheduler.last_execution_ms, 0.1)]/[round(scheduler.last_budget_ms, 0.1)]ms"
 		msg += " APWork:[apc_prebuild_steps] APCmp:[topology?.apc_prebuild?.comparisons || 0] Combat UI:[combat_full_payloads]/[combat_summary_payloads] Paths:[combat_ui_tree_builds]"
 		if(profile_armed)
 			msg += " Combat ms total/max:[round(combat_full_payload_ms, 0.1)]/[round(combat_full_payload_peak_ms, 0.1)]"
@@ -442,13 +442,16 @@ SUBSYSTEM_DEF(netrun)
 		var/task_started_at = world.time
 		var/datum/target = task.target()
 		execute_task(task)
+		if(QDELETED(scheduler))
+			qdel(task)
+			return
 		var/cost_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - task_started))
-		scheduler.note_execution(task, cost_ms, task_started_at)
+		scheduler.note_execution(task, cost_ms, task_started_at, budget_ms)
 		if(cost_ms > budget_ms)
 			scheduler.task_overruns++
 		if(profile_armed)
 			profile_note("netrun/task/[task.kind]", cost_ms, QDELETED(target) ? null : target)
-		qdel(task)
+		scheduler.finish(task)
 		executed++
 		if(MC_TICK_CHECK)
 			flush_node_publications()

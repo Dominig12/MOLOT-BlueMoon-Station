@@ -623,7 +623,9 @@
 	return TRUE
 
 /datum/netrun_entity_module/bot_stun/proc/arm_recovery()
-	if(owner.console?.get_combat_encounter()?.active)
+	// Only turn-owned stuns lack a real-time deadline. A native trap can still
+	// expire during our turn, and its recovery must wake the waiting brain.
+	if(owner.combat_stun_until == INFINITY)
 		if(stun_timer)
 			deltimer(stun_timer)
 		stun_timer = null

@@ -94,3 +94,170 @@
 	TEST_ASSERT(!fortress.combat_encounter_ref && !entity.console.combat_encounter_ref, "Teardown clears exact weak bindings without resolving the dying controller")
 	fortress.process_tick()
 	TEST_ASSERT_EQUAL(entity.integrity, health_before, "A later native fortress tick cannot deliver the cancelled volley")
+
+/// Damage during a battery turn must not strand a bot in an expiring native trap stun.
+/datum/unit_test/netrun_turn_fortress_bot_trap_recovery/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_fortress/fortress = new(scene.node_b, "Trap battery", NETRUN_FACTION_ROGUE)
+	scene.node_b.fortress = fortress
+	fortress.add_module(NETRUN_FORT_TRAP, TRUE)
+	var/datum/netrun_fortress_module/turret = fortress.add_module(NETRUN_FORT_TURRET, TRUE)
+	var/mob/camera/netrun_entity/bot/bot = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_a, NETRUN_BOT_CUSTODIAN)
+	bot.enter_node(scene.node_b)
+	var/datum/netrun_entity_module/bot_stun/stun = bot.entity_modules["bot_stun"]
+	var/recovery_timer = stun.stun_timer
+	TEST_ASSERT(bot.is_stunned() && recovery_timer, "The actual arrival trap owns a finite recovery timer")
+	fortress.process_tick()
+	var/datum/netrun_combat_encounter/encounter = fortress.get_combat_encounter()
+	TEST_ASSERT(encounter?.has_turn(fortress) && fortress.turret_fire_at, "The native battery starts its opening volley")
+	fortress.turret_fire_at = world.time
+	fortress.process_tick()
+	TEST_ASSERT(bot.is_stunned(), "The volley resolves before the native trap stun expires")
+	TEST_ASSERT_EQUAL(stun.stun_timer, recovery_timer, "Combat damage preserves the exact finite recovery deadline")
+	TEST_ASSERT(timeleft(stun.stun_timer) <= 3 SECONDS, "Recovery does not wait for the twelve-second decision deadline")
+	fortress.process_tick()
+	TEST_ASSERT(encounter.has_turn(bot), "The battery yields its unused final AP to the trapped bot")
+	bot.brain.think()
+	TEST_ASSERT_EQUAL(encounter.remaining_ap(bot), NETRUN_COMBAT_AP, "A still-stunned bot cannot spend AP")
+	deltimer(stun.stun_timer)
+	bot.combat_stun_until = world.time
+	SSnetrun.get_task_scheduler().cancel("bot", bot.brain)
+	bot.brain.clear_timer()
+	stun.on_recovered()
+	TEST_ASSERT(SSnetrun.get_task_scheduler().by_key["bot:[REF(bot.brain)]"], "Native recovery queues the bot without polling or a combat timeout")
+	var/before = turret.integrity
+	bot.brain.think()
+	TEST_ASSERT(turret.integrity < before, "The recovered bot spends its current turn attacking the battery")
+	encounter.apply_program_status(SSnetrun.get_program("blackout"), bot)
+	bot.combat_changed()
+	TEST_ASSERT_EQUAL(bot.combat_stun_until, INFINITY, "A turn-owned stun still uses its native sentinel")
+	TEST_ASSERT_NULL(stun.stun_timer, "A turn-owned stun does not acquire a real-time recovery timer")
+
+/// A hostile battery is an ordinary AI damage target, including after it attacks first.
+/datum/unit_test/netrun_turn_fortress_bot_retaliation/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_fortress/fortress = new(scene.node_b, "Hostile battery", NETRUN_FACTION_ROGUE)
+	scene.node_b.fortress = fortress
+	var/datum/netrun_fortress_module/turret = fortress.add_module(NETRUN_FORT_TURRET, TRUE)
+	var/mob/camera/netrun_entity/bot/bot = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_b, NETRUN_BOT_CUSTODIAN)
+	fortress.process_tick()
+	var/datum/netrun_combat_encounter/encounter = fortress.get_combat_encounter()
+	TEST_ASSERT(encounter?.has_turn(fortress), "The hostile battery initiates the actual encounter")
+	fortress.turret_fire_at = world.time
+	fortress.process_tick()
+	fortress.process_tick()
+	TEST_ASSERT(encounter.has_turn(bot), "The bot gets its normal reply turn")
+	TEST_ASSERT(turret in bot.brain.hostiles(), "The bot recognizes the hostile turret")
+	var/before = turret.integrity
+	bot.brain.think()
+	TEST_ASSERT(turret.integrity < before, "The bot delivers a real native attack instead of passing")
+
+/// Passive works can be attacked without creating a singleton encounter or a mob telegraph.
+/datum/unit_test/netrun_turn_fortress_bot_passive_attack/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_fortress/fortress = new(scene.node_b, "Passive hostile wall", NETRUN_FACTION_ROGUE)
+	scene.node_b.fortress = fortress
+	var/datum/netrun_fortress_module/wall = fortress.add_module(NETRUN_FORT_WALL, TRUE)
+	var/mob/camera/netrun_entity/bot/bot = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_b, NETRUN_BOT_CUSTODIAN)
+	bot.brain.think()
+	TEST_ASSERT(wall.integrity < wall.max_integrity, "A passive hostile structure receives the bot's real attack")
+	TEST_ASSERT_NULL(bot.console.get_combat_encounter(), "Passive structures grant no artificial AI turns")
+	TEST_ASSERT_NULL(scene.node_b.combat_encounter, "A passive attack leaves no singleton controller")
+	TEST_ASSERT_NULL(bot.brain.pending_attack_ref, "A structure does not enter the player-only telegraph path")
+
+/// Closed gates can be besieged through a real direct edge without moving or bypassing walls.
+/datum/unit_test/netrun_turn_fortress_bot_adjacent_siege/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_fortress/fortress = new(scene.node_b, "Defended gate", NETRUN_FACTION_STATION)
+	scene.node_b.fortress = fortress
+	var/datum/netrun_fortress_module/wall = fortress.add_module(NETRUN_FORT_WALL, TRUE)
+	var/datum/netrun_fortress_module/gate = fortress.add_module(NETRUN_FORT_GATE, TRUE)
+	var/datum/netrun_fortress_module/turret = fortress.add_module(NETRUN_FORT_TURRET, TRUE)
+	var/mob/camera/netrun_entity/bot/bot = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.apc_node, NETRUN_BOT_RAIDER)
+	TEST_ASSERT(bot.console.store_file(scene.key_file()), "A real LAN key grants the route independently of the gate")
+	TEST_ASSERT(fortress.gate_blocks(bot.console), "The closed fortress gate blocks this otherwise keyed bot")
+	TEST_ASSERT(!bot.can_enter(scene.node_b), "The native fortress gate prevents entry")
+	var/list/foes = bot.brain.hostiles()
+	TEST_ASSERT((wall in foes) && (gate in foes) && !(turret in foes), "The AI sees only the exposed outer works")
+	bot.brain.think()
+	TEST_ASSERT(wall.integrity < wall.max_integrity || gate.integrity < gate.max_integrity, "An ordinary bot program damages the exposed works")
+	TEST_ASSERT_EQUAL(turret.integrity, turret.max_integrity, "Standing walls keep the inner turret protected")
+	var/datum/netrun_combat_encounter/encounter = bot.console.get_combat_encounter()
+	TEST_ASSERT(encounter?.node_ref.resolve() == scene.node_b && encounter.contains(fortress), "Native admission anchors the siege to the defended node")
+	TEST_ASSERT(fortress.valid_turn_siege(bot), "The bot acquires only the real adjacent siege lease")
+	TEST_ASSERT_EQUAL(bot.host_node, scene.apc_node, "Attacking a gate never moves the bot through it")
+	TEST_ASSERT_NULL(scene.apc_node.combat_encounter, "The source node does not retain a competing singleton encounter")
+	var/mob/camera/netrun_entity/bot/local_enemy = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.apc_node, NETRUN_BOT_CUSTODIAN)
+	local_enemy.integrity = 1
+	TEST_ASSERT(!(local_enemy in bot.brain.hostiles()), "An active remote siege excludes targets in the source node")
+	TEST_ASSERT_EQUAL(length(bot.brain.hostiles()), 2, "Only native reachable outer works remain legal siege targets")
+
+/// Suppression is useful against a working turret, not passive fortress modules.
+/datum/unit_test/netrun_turn_fortress_bot_control_targets/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_fortress/fortress = new(scene.node_b, "Control targets", NETRUN_FACTION_ROGUE)
+	scene.node_b.fortress = fortress
+	var/datum/netrun_fortress_module/wall = fortress.add_module(NETRUN_FORT_WALL, TRUE)
+	var/datum/netrun_fortress_module/turret = fortress.add_module(NETRUN_FORT_TURRET, TRUE)
+	var/mob/camera/netrun_entity/bot/bot = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_b, NETRUN_BOT_SENTINEL)
+	var/datum/netrun_combat_encounter/encounter = scene.node_b.get_combat_encounter()
+	TEST_ASSERT(encounter.admit(bot, 1, wall), "The bot starts an ordinary local fortress encounter")
+	bot.brain.combat_target_ref = WEAKREF(wall)
+	bot.brain.think()
+	TEST_ASSERT(wall.integrity < wall.max_integrity, "A wall receives damage instead of an ineffective control program")
+	TEST_ASSERT_NULL(bot.brain.controlled_target_ref, "The bot does not claim to have suppressed a passive wall")
+	TEST_ASSERT_EQUAL(encounter.cooldown_remaining(bot, SSnetrun.get_program("blackout")), 0, "Wall attacks conserve the real suppression program")
+	TEST_ASSERT(encounter.pass(bot) && encounter.pass(fortress), "Both actors complete their first decisions")
+	bot.brain.combat_target_ref = WEAKREF(turret)
+	bot.brain.think()
+	TEST_ASSERT(turret.is_jammed() && bot.brain.controlled_target_ref?.resolve() == turret, "A working turret remains a useful native control target")
+
+/// Friendly structures and fortresses beyond siege range must never become autonomous targets.
+/datum/unit_test/netrun_turn_fortress_bot_target_permissions/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_fortress/fortress = new(scene.node_b, "Friendly wall", NETRUN_FACTION_ROGUE)
+	scene.node_b.fortress = fortress
+	var/datum/netrun_fortress_module/wall = fortress.add_module(NETRUN_FORT_WALL, TRUE)
+	var/mob/camera/netrun_entity/bot/bot = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_b, NETRUN_BOT_RAIDER)
+	TEST_ASSERT(!(wall in bot.brain.hostiles()), "Rogue processes do not attack their own faction's fortress")
+	bot.enter_node(scene.node_a)
+	fortress.faction = NETRUN_FACTION_STATION
+	TEST_ASSERT(!(wall in bot.brain.hostiles()), "An enemy fortress two hops away is outside native siege range")
+	bot.enter_node(scene.apc_node)
+	TEST_ASSERT(wall in bot.brain.hostiles(), "The same fortress becomes a legal target across one direct edge")
+	scene.node_b.offline_until = world.time + 1 MINUTES
+	TEST_ASSERT(!(wall in bot.brain.hostiles()), "An offline neighbouring node is not a valid siege target")
+	scene.node_b.offline_until = 0
+	var/mob/camera/netrun_entity/bot/custodian = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_b, NETRUN_BOT_CUSTODIAN)
+	TEST_ASSERT(!(wall in custodian.brain.hostiles()), "Sanctioned maintenance respects a friendly station fortress")
+
+/// A disabled battery yields immediately instead of retaining an empty twelve-second turn.
+/datum/unit_test/netrun_turn_fortress_offline_yields/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_fortress/fortress = new(scene.node_b, "Offline battery", NETRUN_FACTION_ROGUE)
+	scene.node_b.fortress = fortress
+	var/datum/netrun_fortress_module/turret = fortress.add_module(NETRUN_FORT_TURRET, TRUE)
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_b)
+	var/datum/netrun_combat_encounter/encounter = scene.node_b.get_combat_encounter()
+	TEST_ASSERT(encounter.admit(entity, 1, turret) && encounter.pass(entity), "The native queue reaches the battery's turn")
+	scene.node_b.offline_until = world.time + 1 MINUTES
+	fortress.process_tick()
+	TEST_ASSERT(encounter.has_turn(entity), "An offline battery passes without waiting for its decision timeout")
+	TEST_ASSERT(!fortress.turret_fire_at && !encounter.deferred, "Yielding an offline battery leaves no pending volley")
+
+/// Opening warnings preserve counterplay; later volleys use the same short turn windup as ICE.
+/datum/unit_test/netrun_turn_fortress_volley_tempo/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_fortress/fortress = new(scene.node_b, "Paced battery", NETRUN_FACTION_ROGUE)
+	scene.node_b.fortress = fortress
+	fortress.add_module(NETRUN_FORT_TURRET, TRUE)
+	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_b)
+	fortress.process_tick()
+	var/datum/netrun_combat_encounter/encounter = fortress.get_combat_encounter()
+	TEST_ASSERT_EQUAL(fortress.turret_fire_at - world.time, NETRUN_ICE_MIN_TELEGRAPH, "The opening volley retains its full native reaction window")
+	fortress.turret_fire_at = world.time
+	fortress.process_tick()
+	fortress.process_tick()
+	TEST_ASSERT(encounter.has_turn(entity) && encounter.pass(entity), "The next battery turn follows a real opposing decision")
+	fortress.process_tick()
+	TEST_ASSERT_EQUAL(fortress.turret_fire_at - world.time, NETRUN_ICE_COMBAT_TELEGRAPH, "Subsequent volleys do not repeat the out-of-combat warning delay")
