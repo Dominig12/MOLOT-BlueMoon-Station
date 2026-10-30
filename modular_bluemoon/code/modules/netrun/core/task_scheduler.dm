@@ -5,6 +5,15 @@
 	var/priority
 	var/datum/weakref/target_ref
 	var/enqueued_at
+	var/started_at
+	/// Refresh demand without resetting the oldest request's wait clock or FIFO position.
+	var/last_requested_at
+	var/datum/netrun_task_scheduler/scheduler
+	/// Events arriving during execution retain one next pass on this same object.
+	var/rerun_requested = FALSE
+	var/rerun_enqueued_at
+	var/rerun_priority
+	var/rerun_interactive = FALSE
 	var/interactive = FALSE
 	/// Ready delivery affects worker cadence, independently of scheduling priority.
 	var/delivery = FALSE
@@ -19,14 +28,18 @@
 	key = new_key
 	priority = new_priority
 	enqueued_at = world.time
+	last_requested_at = enqueued_at
 	if(target)
 		target_ref = WEAKREF(target)
 
 /datum/netrun_task/proc/target()
+	RETURN_TYPE(/datum)
 	return target_ref?.resolve()
 
 /datum/netrun_task/Destroy()
+	scheduler?.release_task(src)
 	queue?.remove(src)
+	rerun_requested = FALSE
 	target_ref = null
 	return ..()
 
@@ -206,6 +219,12 @@
 
 /// Aggregate statistics without keeping references to processed objects.
 /datum/netrun_task_profile
+	var/requests = 0
+	var/created = 0
+	var/merged = 0
+	var/renewed = 0
+	var/cancelled = 0
+	var/task_overruns = 0
 	var/calls = 0
 	var/total_ms = 0
 	var/peak_ms = 0
@@ -221,6 +240,8 @@
 	var/datum/netrun_execution_limits/configured_limits
 	var/configured_revision = -1
 	var/list/by_key = list()
+	/// Dispatched work stays indexed until finish(), including while execute() yields.
+	var/list/running_by_key = list()
 	var/list/queues
 	var/datum/netrun_task_queue/interactive_queue
 	var/interactive_streak = 0
@@ -250,10 +271,12 @@
 	var/budget_overruns = 0
 	var/task_overruns = 0
 	var/peak_pass_ms = 0
+	var/statistics_started_at
 
 /datum/netrun_task_scheduler/New(datum/netrun_execution_limits/limits, datum/controller/subsystem/netrun/worker)
 	. = ..()
 	src.worker = worker
+	statistics_started_at = world.time
 	queues = list(new /datum/netrun_task_queue, new /datum/netrun_task_queue, new /datum/netrun_task_queue)
 	interactive_queue = new
 	if(limits)
@@ -279,6 +302,40 @@
 	var/datum/netrun_task_queue/queue = task.interactive ? interactive_queue : queues[task.priority]
 	queue.append(task)
 
+/// New admission and renewed execution use the same queue accounting.
+/datum/netrun_task_scheduler/proc/queue_task(datum/netrun_task/task)
+	by_key[task.key] = task
+	if(task.delivery)
+		ready_deliveries++
+	counts[task.priority]++
+	peak_queued_by_priority[task.priority] = max(peak_queued_by_priority[task.priority], counts[task.priority])
+	peak_pending = max(peak_pending, length(by_key))
+	append_task(task)
+	if(worker && length(by_key) == 1)
+		worker.wake_ready_delivery()
+
+/// Ownership cleanup also covers direct task deletion, without leaving stale keys.
+/datum/netrun_task_scheduler/proc/release_task(datum/netrun_task/task)
+	if(by_key[task.key] == task)
+		by_key -= task.key
+	if(task.queue?.remove(task))
+		counts[task.priority]--
+		if(task.delivery)
+			ready_deliveries--
+	if(running_by_key[task.key] == task)
+		running_by_key -= task.key
+	task.scheduler = null
+
+/// Dequeue only once, retaining the task's identity throughout execution.
+/datum/netrun_task_scheduler/proc/start_task(datum/netrun_task/task)
+	by_key -= task.key
+	counts[task.priority]--
+	if(task.delivery)
+		ready_deliveries--
+	task.started_at = world.time
+	running_by_key[task.key] = task
+	return task
+
 /// Registry metadata is read once; new work kinds only add a task subtype.
 /datum/netrun_task_scheduler/proc/task_type(kind)
 	var/static/list/types_by_kind
@@ -290,13 +347,17 @@
 	return types_by_kind[kind] ? types_by_kind[kind] : /datum/netrun_task
 
 /datum/netrun_task_scheduler/proc/enqueue(kind, datum/target, priority = NETRUN_TASK_NORMAL, interactive = FALSE)
-	if(!kind || (target && QDELETED(target)))
+	if(QDELETED(src) || !kind || (target && QDELETED(target)))
 		return FALSE
 	priority = IS_FINITE(priority) ? clamp(round(priority), NETRUN_TASK_CRITICAL, NETRUN_TASK_BACKGROUND) : NETRUN_TASK_NORMAL
+	var/datum/netrun_task_profile/profile = get_profile(kind)
+	profile.requests++
 	var/key = "[kind]:[target ? REF(target) : "global"]"
 	var/datum/netrun_task/existing = by_key[key]
 	if(existing && !QDELETED(existing))
 		merged++
+		profile.merged++
+		existing.last_requested_at = world.time
 		if(priority < existing.priority || (interactive && !existing.interactive))
 			existing.queue.remove(existing)
 			counts[existing.priority]--
@@ -309,34 +370,69 @@
 			if(interactive)
 				worker?.wake_ready_delivery()
 		return FALSE
+	existing = running_by_key[key]
+	if(existing && !QDELETED(existing))
+		merged++
+		profile.merged++
+		existing.last_requested_at = world.time
+		if(!existing.rerun_requested)
+			existing.rerun_enqueued_at = world.time
+			existing.rerun_priority = priority
+		else
+			existing.rerun_priority = min(existing.rerun_priority, priority)
+		existing.rerun_requested = TRUE
+		existing.rerun_interactive ||= interactive
+		return FALSE
 	var/path = task_type(kind)
 	var/datum/netrun_task/task = new path(kind, key, priority, target)
 	task.interactive = interactive
-	by_key[key] = task
-	if(task.delivery)
-		ready_deliveries++
-	counts[priority]++
-	peak_queued_by_priority[priority] = max(peak_queued_by_priority[priority], counts[priority])
-	peak_pending = max(peak_pending, length(by_key))
-	append_task(task)
+	task.scheduler = src
+	profile.created++
 	// A readiness event must not wait for the slow maintenance cadence, including
 	// discovery/prebuild continuations without a delivery timer of their own.
-	if(worker && length(by_key) == 1)
-		worker.wake_ready_delivery()
+	queue_task(task)
 	return TRUE
 
 /datum/netrun_task_scheduler/proc/cancel(kind, datum/target)
 	var/key = "[kind]:[target ? REF(target) : "global"]"
 	var/datum/netrun_task/task = by_key[key]
 	if(!task)
-		return FALSE
-	counts[task.priority]--
-	by_key -= key
-	if(task.delivery)
-		ready_deliveries--
+		task = running_by_key[key]
+		if(!task?.rerun_requested)
+			return FALSE
+		// Execution owns its stack. Cancel the requested follow-up, not its live object.
+		task.rerun_requested = FALSE
+		task.rerun_interactive = FALSE
+		cancelled++
+		get_profile(kind).cancelled++
+		return TRUE
 	cancelled++
+	get_profile(kind).cancelled++
 	qdel(task)
 	return TRUE
+
+/// A repeated request extends the existing task's work instead of allocating a copy.
+/// Waiting work has no TTL: it remains owned until dispatch or explicit cancellation.
+/datum/netrun_task_scheduler/proc/finish(datum/netrun_task/task)
+	if(QDELETED(task))
+		return FALSE
+	if(!task.scheduler)
+		qdel(task)
+		return FALSE
+	if(task.scheduler != src || running_by_key[task.key] != task)
+		return FALSE
+	running_by_key -= task.key
+	if(task.rerun_requested && (!task.target_ref || !QDELETED(task.target())))
+		task.enqueued_at = task.rerun_enqueued_at
+		task.priority = task.rerun_priority
+		task.interactive = task.rerun_interactive
+		task.rerun_requested = FALSE
+		task.rerun_interactive = FALSE
+		get_profile(task.kind).renewed++
+		queue_task(task)
+		return TRUE
+	qdel(task)
+	return FALSE
 
 /datum/netrun_task_scheduler/proc/take_priority(priority)
 	if(priority < NETRUN_TASK_CRITICAL || priority > NETRUN_TASK_BACKGROUND)
@@ -345,11 +441,7 @@
 	var/datum/netrun_task/task = queue.take()
 	if(!task)
 		return null
-	by_key -= task.key
-	if(task.delivery)
-		ready_deliveries--
-	counts[priority]--
-	return task
+	return start_task(task)
 
 /datum/netrun_task_scheduler/proc/take()
 	if(interactive_queue.first && interactive_streak < interactive_burst)
@@ -370,14 +462,10 @@
 	if(!task)
 		return null
 	interactive_streak++
-	by_key -= task.key
-	if(task.delivery)
-		ready_deliveries--
-	counts[task.priority]--
-	return task
+	return start_task(task)
 
 /// Time is measured on the worker side; enqueue-to-start delay is also recorded.
-/datum/netrun_task_scheduler/proc/note_execution(datum/netrun_task/task, cost_ms, started_at = world.time)
+/datum/netrun_task_scheduler/proc/note_execution(datum/netrun_task/task, cost_ms, started_at = world.time, budget_ms)
 	if(!task)
 		return
 	completed++
@@ -388,19 +476,26 @@
 	max_wait_by_priority[priority] = max(max_wait_by_priority[priority], wait_ds)
 	max_task_ms = max(max_task_ms, cost_ms)
 	average_ms = average_ms * (1 - cost_smoothing) + cost_ms * cost_smoothing
-	var/datum/netrun_task_profile/profile = profiles[task.kind]
-	if(!profile)
-		profile = new
-		profiles[task.kind] = profile
+	var/datum/netrun_task_profile/profile = get_profile(task.kind)
 	profile.calls++
 	profile.total_ms += cost_ms
 	profile.peak_ms = max(profile.peak_ms, cost_ms)
 	profile.average_ms = profile.total_ms / profile.calls
 	profile.total_wait_ds += wait_ds
 	profile.peak_wait_ds = max(profile.peak_wait_ds, wait_ds)
+	if(!isnull(budget_ms) && cost_ms > budget_ms)
+		profile.task_overruns++
 	if(wait_ds > deadline_ds)
 		profile.overdue++
 		overdue_by_priority[priority]++
+
+/datum/netrun_task_scheduler/proc/get_profile(kind)
+	RETURN_TYPE(/datum/netrun_task_profile)
+	var/datum/netrun_task_profile/profile = profiles[kind]
+	if(!profile)
+		profile = new
+		profiles[kind] = profile
+	return profile
 
 /// Compact per-kind snapshot, safe for administrator diagnostics.
 /datum/netrun_task_scheduler/proc/profile_summary()
@@ -413,9 +508,16 @@
 /datum/netrun_task_scheduler/Destroy()
 	worker = null
 	configured_limits = null
-	for(var/key in by_key)
+	for(var/key in by_key.Copy())
 		qdel(by_key[key])
 	by_key.Cut()
+	// The dispatcher owns in-flight stacks until they return. Do not delete a
+	// task underneath execute(), but prevent it from retaining this scheduler.
+	for(var/key in running_by_key)
+		var/datum/netrun_task/task = running_by_key[key]
+		task.scheduler = null
+		task.rerun_requested = FALSE
+	running_by_key.Cut()
 	for(var/kind in profiles)
 		qdel(profiles[kind])
 	profiles.Cut()

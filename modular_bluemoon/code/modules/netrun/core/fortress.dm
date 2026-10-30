@@ -491,6 +491,9 @@
 			updated = TRUE
 	if(slots_max() <= 0 || !node.is_online())
 		cancel_turret()
+		var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+		if(encounter?.active && encounter.has_turn(src) && !encounter.deferred)
+			encounter.pass(src)
 	else
 		if(get_combat_encounter()?.active)
 			process_turn_battery()
@@ -560,6 +563,7 @@
 		cancel_turret()
 		return
 	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
+	var/already_in_combat = encounter?.active
 	if(!encounter)
 		var/mob/camera/netrun_entity/hostile = pick_turret_target()
 		if(hostile)
@@ -601,9 +605,10 @@
 		if(encounter.cooldown_remaining(src, volley) || !encounter.admit(src, volley.ap_cost, target) || !encounter.commit_program(src, volley, TRUE))
 			return
 	turret_target_ref = WEAKREF(target)
-	turret_fire_at = world.time + NETRUN_ICE_MIN_TELEGRAPH
-	to_chat(target, span_userdanger("Турели крепости [name] наводятся на ваш процесс: [NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS)] с до выстрела. Уйдите из зоны поражения или оглушите турель."))
-	target.console?.combat_log("Турели крепости [name] наводятся на вас: [NETRUN_ICE_MIN_TELEGRAPH / (1 SECONDS)] с до выстрела.", "bad")
+	var/telegraph = already_in_combat ? NETRUN_ICE_COMBAT_TELEGRAPH : NETRUN_ICE_MIN_TELEGRAPH
+	turret_fire_at = world.time + telegraph
+	to_chat(target, span_userdanger("Турели крепости [name] наводятся на ваш процесс: [telegraph / (1 SECONDS)] с до выстрела. Уйдите из зоны поражения или оглушите турель."))
+	target.console?.combat_log("Турели крепости [name] наводятся на вас: [telegraph / (1 SECONDS)] с до выстрела.", "bad")
 
 // MARK: Ловушки, сигнализация, ремонт
 
