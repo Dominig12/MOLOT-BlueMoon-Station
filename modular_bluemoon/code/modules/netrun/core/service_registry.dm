@@ -494,15 +494,21 @@
 
 /datum/netrun_machine_transport/proc/discovery_candidates(destination_id, recipient_tag)
 	var/list/bucket = isnull(recipient_tag) ? by_id[destination_id] : by_tag["[destination_id]|[recipient_tag]"]
-	// A few native tag setters still write fields directly. Repair a stale/missing
-	// index once on cache miss; ordinary exact-address traffic stays indexed.
+	// Legacy tag setters can bypass the index. Return their candidate bucket
+	// without scanning it here: asynchronous discovery must budget that work too.
 	if(!isnull(recipient_tag) && !length(bucket))
-		bucket = list()
-		for(var/datum/netrun_machine_service/candidate as anything in by_id[destination_id])
-			if(!QDELETED(candidate) && candidate.service_tag() == recipient_tag)
-				index_service(candidate)
-				bucket |= candidate
+		return by_id[destination_id]
 	return bucket
+
+/// Synchronous readers and worker continuations use the same live discovery policy.
+/datum/netrun_machine_transport/proc/discoverable(datum/netrun_machine_service/source, datum/netrun_machine_service/target, recipient_tag, communications)
+	if(QDELETED(source) || QDELETED(target) || !target.matches(source, recipient_tag))
+		return FALSE
+	if(QDELETED(source) || QDELETED(target))
+		return FALSE
+	if(!isnull(recipient_tag) && target.indexed_tag != recipient_tag)
+		index_service(target)
+	return reachable(source, target, communications)
 
 /datum/netrun_machine_transport/proc/lookup(datum/netrun_machine_service/source, destination_id, recipient_tag, communications)
 	. = list()
@@ -510,6 +516,6 @@
 		return
 	var/list/bucket = source.discovery_candidates(destination_id, recipient_tag)
 	for(var/datum/netrun_machine_service/target as anything in bucket)
-		if(!QDELETED(target) && target.matches(source, recipient_tag) && reachable(source, target, communications))
+		if(discoverable(source, target, recipient_tag, communications))
 			. += target
 

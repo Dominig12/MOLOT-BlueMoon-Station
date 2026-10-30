@@ -842,12 +842,12 @@
 	service.publish()
 	TEST_ASSERT(service.publish_addresses && !service.publish_data, "The timer must enqueue publication without building or broadcasting the database")
 	TEST_ASSERT(!service.publish_batch(SSnetrun), "One worker slice cannot finish a 64-reader publication")
-	TEST_ASSERT_EQUAL(service.publish_cursor, 5, "One publication slice must visit at most four readers")
+	TEST_ASSERT_EQUAL(service.publish_cursor, 2, "One publication slice must visit at most one reader")
 	var/pending = 0
 	for(var/datum/netrun_machine_packet/packet as anything in SSnetrun.get_machine_transport().packets)
 		if(packet.source == service)
 			pending++
-	TEST_ASSERT(pending <= 4, "The first slice must admit at most four research packets")
+	TEST_ASSERT(pending <= 1, "The first slice must admit at most one research packet")
 	deadline = world.time + 10 SECONDS
 	while(world.time < deadline)
 		ready = 0
@@ -865,7 +865,138 @@
 	TEST_ASSERT_EQUAL(pending, 0, "The research publication's actual transport queue must drain after producers stop")
 	TEST_ASSERT(!service.publish_addresses && !service.publish_data, "Completed publication must release its subscriber list and snapshot")
 	TEST_ASSERT(!SSnetrun.get_task_scheduler().by_key["research.publish:[REF(service)]"], "Completed publication must release its common scheduler continuation")
-	log_world("PERF: research fanout peers=64 batch=4 latest=[ready] pending=[pending] elapsed=[(REALTIMEOFDAY - started) * 100]ms")
+	log_world("PERF: research fanout peers=64 batch=1 latest=[ready] pending=[pending] elapsed=[(REALTIMEOFDAY - started) * 100]ms")
+
+/// Ordinary income changes balances without retransmitting or rebuilding recipes.
+/datum/unit_test/netrun_research_compact_publication/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/server = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	server.base_mining_income = list()
+	server.stored_research.next_income = list()
+	var/obj/machinery/rnd/production/protolathe/lathe = scene.machine(/obj/machinery/rnd/production/protolathe, scene.source_spot)
+	var/obj/machinery/mecha_part_fabricator/fabricator = scene.machine(/obj/machinery/mecha_part_fabricator, scene.source_spot)
+	var/obj/machinery/computer/rdconsole/console = scene.machine(/obj/machinery/computer/rdconsole, scene.source_spot)
+	var/list/clients = list()
+	for(var/atom/host as anything in list(lathe, fabricator, console))
+		SEND_SIGNAL(host, COMSIG_ATOM_SET_TECHWEB, server.stored_research)
+		var/datum/netrun_machine_service/research_client/client = host.get_netrun_machine_service("research.client")
+		client.request()
+		clients += client
+	var/deadline = world.time + 5 SECONDS
+	var/ready = 0
+	while(world.time < deadline)
+		ready = 0
+		for(var/datum/netrun_machine_service/research_client/client as anything in clients)
+			ready += client.snapshot_revision >= 0
+		if(ready == length(clients))
+			break
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(ready, 3, "Every native consumer must receive a real initial catalogue")
+	var/list/lathe_designs = lathe.stored_research.researched_designs
+	var/list/fabricator_designs = fabricator.stored_research.researched_designs
+	var/list/console_designs = console.netrun_research_cache.researched_designs
+	var/list/lathe_categories = lathe._ui_cached_designs.Copy()
+	var/catalog_revision = server.stored_research.netrun_research_catalog_revision
+	server.stored_research.add_point_type(TECHWEB_POINT_TYPE_GENERIC, 17, FALSE)
+	TEST_ASSERT_EQUAL(server.stored_research.netrun_research_catalog_revision, catalog_revision, "Income must not invalidate the catalogue")
+	var/datum/netrun_machine_service/research_server/service = server.get_netrun_machine_service("research.server")
+	if(service.publish_timer)
+		deltimer(service.publish_timer)
+		service.publish_timer = null
+	service.publish()
+	while(service.publish_addresses)
+		service.publish_batch(SSnetrun)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/delivered = 0
+	for(var/datum/netrun_machine_packet/data/packet as anything in transport.packets.Copy())
+		if(packet.source != service || !(packet.recipient in clients))
+			continue
+		TEST_ASSERT_EQUAL(packet.message.payload["operation"], "state", "Income fanout must use compact balance packets")
+		TEST_ASSERT(!("researched_designs" in packet.message.payload) && !("researched_nodes" in packet.message.payload), "Balance packets must carry no recipe or node sets")
+		packet.deliver()
+		delivered++
+	TEST_ASSERT_EQUAL(delivered, 3, "Every subscription must receive the new balance")
+	for(var/datum/netrun_machine_service/research_client/client as anything in clients)
+		TEST_ASSERT_EQUAL(client.snapshot_revision, server.stored_research.netrun_research_revision, "Compact delivery must advance the accepted revision")
+	TEST_ASSERT_EQUAL(lathe.stored_research.researched_designs, lathe_designs, "Income must retain the lathe's recipe list")
+	TEST_ASSERT_EQUAL(fabricator.stored_research.researched_designs, fabricator_designs, "Income must retain the mechfab's filtered recipe list")
+	TEST_ASSERT_EQUAL(console.netrun_research_cache.researched_designs, console_designs, "Income must retain the console's catalogue")
+	TEST_ASSERT(length(lathe_categories), "The lathe must have an initial static recipe presentation")
+	TEST_ASSERT_EQUAL(lathe._ui_cached_designs[1], lathe_categories[1], "Income must retain the lathe's static presentation records")
+	TEST_ASSERT_EQUAL(console.netrun_research_cache.research_points[TECHWEB_POINT_TYPE_GENERIC], server.stored_research.research_points[TECHWEB_POINT_TYPE_GENERIC], "The visible balance must still update")
+	TEST_ASSERT_NOTEQUAL(console.netrun_research_cache.research_points, server.stored_research.research_points, "A compact packet must not alias authoritative balances")
+	var/list/full_data = service.snapshot()
+	log_world("PERF: research balance full_chars=[length(json_encode(full_data))] state_chars=[length(json_encode(service.snapshot_state(full_data)))] peers=[delivered]")
+	server.stored_research.add_design_by_id("mmi", TRUE)
+	TEST_ASSERT(server.stored_research.netrun_research_catalog_revision > catalog_revision, "A new recipe must invalidate the catalogue")
+	if(service.publish_timer)
+		deltimer(service.publish_timer)
+		service.publish_timer = null
+	service.publish()
+	while(service.publish_addresses)
+		service.publish_batch(SSnetrun)
+	delivered = 0
+	for(var/datum/netrun_machine_packet/data/packet as anything in transport.packets.Copy())
+		if(packet.source != service || !(packet.recipient in clients))
+			continue
+		TEST_ASSERT_EQUAL(packet.message.payload["operation"], "snapshot", "Structural changes must still carry the full catalogue")
+		packet.deliver()
+		delivered++
+	TEST_ASSERT_EQUAL(delivered, 3, "Every subscriber must receive changed recipes")
+	TEST_ASSERT(console.netrun_research_cache.researched_designs["mmi"], "Full delivery must apply the new design")
+	TEST_ASSERT_NOTEQUAL(console.netrun_research_cache.researched_designs, console_designs, "A changed catalogue must replace the old recipe snapshot")
+
+/// A partial update must not supersede a missing full catalogue or roll state back.
+/datum/unit_test/netrun_research_compact_catalogue_recovery/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/server = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	server.base_mining_income = list()
+	server.stored_research.next_income = list()
+	var/obj/machinery/computer/rdconsole/console = scene.machine(/obj/machinery/computer/rdconsole, scene.source_spot)
+	SEND_SIGNAL(console, COMSIG_ATOM_SET_TECHWEB, server.stored_research)
+	var/datum/netrun_machine_service/research_client/client = console.get_netrun_machine_service("research.client")
+	client.request()
+	var/deadline = world.time + 5 SECONDS
+	while(client.snapshot_revision < 0 && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT(client.snapshot_revision >= 0, "Recovery needs a delivered initial catalogue")
+	var/accepted_revision = client.snapshot_revision
+	var/datum/netrun_machine_service/research_server/service = server.get_netrun_machine_service("research.server")
+	server.stored_research.add_design_by_id("mmi", TRUE)
+	var/list/full = service.snapshot()
+	full["generation"] = client.binding_generation
+	TEST_ASSERT(service.send_to(client, new /datum/netrun_machine_message/research(full)), "Admit an undelivered catalogue update")
+	server.stored_research.add_point_type(TECHWEB_POINT_TYPE_GENERIC, 23, FALSE)
+	var/list/state = service.snapshot_state(service.snapshot())
+	state["generation"] = client.binding_generation
+	TEST_ASSERT(service.send_to(client, new /datum/netrun_machine_message/research(state)), "Admit the following balance update")
+	var/datum/netrun_machine_packet/data/catalogue_packet
+	var/datum/netrun_machine_packet/data/state_packet
+	for(var/datum/netrun_machine_packet/data/packet as anything in SSnetrun.get_machine_transport().packets)
+		if(packet.source != service || packet.recipient != client)
+			continue
+		if(packet.message.payload["operation"] == "snapshot")
+			catalogue_packet = packet
+		else if(packet.message.payload["operation"] == "state")
+			state_packet = packet
+	TEST_ASSERT(catalogue_packet && state_packet, "Compact coalescing must retain a full catalogue still in flight")
+	state_packet.deliver()
+	TEST_ASSERT_EQUAL(client.snapshot_revision, accepted_revision, "An unknown catalogue revision cannot advance accepted state")
+	TEST_ASSERT(length(client.resolutions), "The rejected partial update must request an ordinary full repair")
+	// Simulate loss of the full packet; the newly requested copy must repair it.
+	qdel(catalogue_packet)
+	deadline = world.time + 5 SECONDS
+	while(client.snapshot_revision < server.stored_research.netrun_research_revision && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(client.snapshot_revision, server.stored_research.netrun_research_revision, "A lost catalogue must recover through actual discovery and delivery")
+	TEST_ASSERT(console.netrun_research_cache.researched_designs["mmi"], "Repair must supply the missing recipe")
+	var/list/designs = console.netrun_research_cache.researched_designs
+	state["revision"] = accepted_revision
+	var/datum/netrun_machine_message/research/stale = allocate(/datum/netrun_machine_message/research, state)
+	stale.source = service
+	TEST_ASSERT(client.receive(stale), "Stale state may be acknowledged without applying it")
+	TEST_ASSERT_EQUAL(client.snapshot_revision, server.stored_research.netrun_research_revision, "Stale state must not roll back the revision")
+	TEST_ASSERT_EQUAL(console.netrun_research_cache.researched_designs, designs, "Stale state must not touch the repaired catalogue")
 
 /// Archaeology sends a real tool request; the artifact is consumed only by the receiving authority.
 /datum/unit_test/netrun_research_artifact_request/Run()

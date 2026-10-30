@@ -143,11 +143,15 @@
 	return "replaceable-status"
 
 /datum/netrun_machine_service/transport_fixture
-	var/resolve_calls = 0
+	var/candidate_lookups = 0
+	var/tag_override
 
-/datum/netrun_machine_service/transport_fixture/resolve(destination_id, recipient_tag)
-	resolve_calls++
+/datum/netrun_machine_service/transport_fixture/discovery_candidates(destination_id, recipient_tag)
+	candidate_lookups++
 	return ..()
+
+/datum/netrun_machine_service/transport_fixture/service_tag()
+	return tag_override || ..()
 
 /// Command bursts share one lookup and yield admission before consuming the batch.
 /datum/unit_test/netrun_delivery_discovery_burst_slices/Run()
@@ -156,18 +160,108 @@
 	for(var/i in 1 to 17)
 		TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list("value" = i), outcomes), scene.target.service_tag()), "A finite command burst must be admitted")
 	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|[scene.target.service_tag()]"]
-	TEST_ASSERT_EQUAL(scene.source.resolve_calls, 0, "Sending a burst must not resolve synchronously")
+	TEST_ASSERT_EQUAL(scene.source.candidate_lookups, 0, "Sending a burst must not resolve synchronously")
 	query.deliver()
 	TEST_ASSERT(!QDELETED(query) && length(query.queued), "The first slice must retain the undispatched burst")
-	TEST_ASSERT(scene.pending_packets() > 0 && scene.pending_packets() <= 8, "One discovery slice must bound packet admission")
-	TEST_ASSERT_EQUAL(scene.source.resolve_calls, 1, "One burst must use one recipient lookup")
+	TEST_ASSERT(scene.pending_packets() <= 1, "One discovery slice may admit at most one routed packet")
+	TEST_ASSERT_EQUAL(scene.source.candidate_lookups, 1, "One burst must use one recipient lookup")
 	var/deadline = world.time + 5 SECONDS
 	while(outcomes["delivered"] != 17 && world.time < deadline)
 		sleep(world.tick_lag)
 	TEST_ASSERT_EQUAL(outcomes["delivered"], 17, "Every original command must execute exactly once after later slices")
 	TEST_ASSERT(!outcomes["failed"], "Yielding a valid burst must not lose commands")
-	TEST_ASSERT_EQUAL(scene.source.resolve_calls, 1, "Continuation slices must reuse the original recipient lookup")
+	TEST_ASSERT_EQUAL(scene.source.candidate_lookups, 1, "Continuation slices must reuse the original recipient lookup")
 	TEST_ASSERT(QDELETED(query), "A drained burst must release its lookup and scheduler task")
+
+/// Both enumeration and fanout yield; deleting a registry member cannot skip its neighbor.
+/datum/unit_test/netrun_delivery_discovery_registry_slices/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	for(var/i in 1 to 32)
+		scene.machine(/obj/machinery/netrun_server/transport_fixture, scene.target_spot)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/list/outcomes = list()
+	TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list("value" = "broadcast"), outcomes)), "A broadcast must enter the common discovery queue")
+	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|"]
+	query.deliver()
+	TEST_ASSERT(query.candidates && query.candidate_cursor <= 9, "One slice must examine at most eight candidates from a large registry")
+	TEST_ASSERT_EQUAL(length(query.queued), 1, "Enumeration must retain ownership of the original message")
+	TEST_ASSERT_EQUAL(scene.pending_packets(), 0, "Partial enumeration must not bypass final target selection")
+	var/paused_cursor = query.candidate_cursor
+	SSatoms.map_loader_begin()
+	query.deliver()
+	var/paused = query.candidate_cursor == paused_cursor && (query in transport.waiting_resolutions) && !query.delivery_queued
+	SSatoms.map_loader_stop()
+	TEST_ASSERT(paused, "Map loading must pause even an already-started registry enumeration")
+	// The common readiness wave resumes waiters through begin(), including
+	// generations already retired from their source's coalescing map.
+	query.begin()
+	TEST_ASSERT(query.delivery_queued && !(query in transport.waiting_resolutions), "Reopening readiness must resume the retained generation without restarting lookup")
+	var/expected = length(query.candidates) - 1
+	var/datum/netrun_machine_service/doomed = query.candidates[query.candidate_cursor]
+	qdel(doomed.host)
+	for(var/pass in 1 to 128)
+		if(QDELETED(query))
+			break
+		var/before = length(transport.packets)
+		query.deliver()
+		TEST_ASSERT(length(transport.packets) - before <= 1, "Every continuation must return to the worker between routed admissions")
+	TEST_ASSERT(QDELETED(query), "A finite broadcast must finish enumeration and fanout")
+	TEST_ASSERT_EQUAL(scene.source.candidate_lookups, 1, "Registry mutations must not restart the retained enumeration")
+	var/deadline = world.time + 5 SECONDS
+	while((outcomes["delivered"] || 0) < expected && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(outcomes["delivered"], expected, "Every surviving member of the original registry snapshot must receive exactly one copy")
+	TEST_ASSERT(!outcomes["failed"], "Removing an unselected candidate must not fail surviving broadcast branches")
+
+/// A legacy tag miss must budget fallback enumeration and repair future indexed lookups.
+/datum/unit_test/netrun_delivery_discovery_tag_fallback_slices/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/list/extras = list()
+	for(var/i in 1 to 32)
+		var/obj/machinery/netrun_server/transport_fixture/extra = scene.machine(/obj/machinery/netrun_server/transport_fixture, scene.target_spot)
+		extras += extra.get_netrun_machine_service("transport.fixture")
+	scene.target.tag_override = "legacy-[REF(scene)]"
+	var/list/outcomes = list()
+	TEST_ASSERT(scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list(), outcomes), scene.target.service_tag()), "An unindexed native tag must still admit asynchronous discovery")
+	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|[scene.target.service_tag()]"]
+	query.deliver()
+	TEST_ASSERT(query.candidates && query.candidate_cursor <= 9, "An exact-tag cache miss must not synchronously scan the service registry")
+	for(var/pass in 1 to 64)
+		if(QDELETED(query))
+			break
+		query.deliver()
+	TEST_ASSERT(QDELETED(query), "Fallback discovery must finish without a registry rescan")
+	TEST_ASSERT(netrun_wait_delivery(outcomes), "The legacy-renamed recipient must receive the original command")
+	TEST_ASSERT_EQUAL(scene.target.received, 1, "Fallback discovery must deliver once to the matching tag")
+	for(var/datum/netrun_machine_service/transport_fixture/extra as anything in extras)
+		extra.match_checks = 0
+	var/list/resolved = scene.source.resolve("transport.fixture", scene.target.service_tag())
+	TEST_ASSERT_EQUAL(length(resolved), 1, "Synchronous discovery must share the repaired tag index")
+	TEST_ASSERT_EQUAL(resolved[1], scene.target, "Tag repair must retain the matching service identity")
+	for(var/datum/netrun_machine_service/transport_fixture/extra as anything in extras)
+		TEST_ASSERT_EQUAL(extra.match_checks, 0, "A repaired exact tag must not recheck unrelated services")
+
+/// Source deletion must cancel even a generation retired from the source's coalescing map.
+/datum/unit_test/netrun_delivery_discovery_lookup_source_deleted/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	for(var/i in 1 to 32)
+		scene.machine(/obj/machinery/netrun_server/transport_fixture, scene.target_spot)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/queued_before = transport.queued_messages
+	var/list/outcomes = list()
+	for(var/i in 1 to 2)
+		scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list(), outcomes))
+	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|"]
+	query.deliver()
+	TEST_ASSERT(query.candidates, "The source must be deleted during unfinished candidate enumeration")
+	var/key = "service_discovery:[REF(query)]"
+	TEST_ASSERT(SSnetrun.task_scheduler.by_key[key], "An unfinished lookup must own a worker continuation")
+	qdel(scene.source)
+	TEST_ASSERT(QDELETED(query), "Source teardown must dispose a partial registry snapshot immediately")
+	TEST_ASSERT_NULL(SSnetrun.task_scheduler.by_key[key], "Source teardown must remove the continuation task")
+	TEST_ASSERT_EQUAL(transport.queued_messages, queued_before, "Cancelling enumeration must release every original message slot")
+	TEST_ASSERT_EQUAL(outcomes["failed"], 2, "Every original command must fail exactly once during enumeration cancellation")
+	TEST_ASSERT_EQUAL(scene.target.received, 0, "No command may execute after its enumerating producer is deleted")
 
 /// Source teardown must cancel later slices as well as already admitted packets.
 /datum/unit_test/netrun_delivery_discovery_burst_source_deleted/Run()

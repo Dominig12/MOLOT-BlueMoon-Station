@@ -200,7 +200,7 @@
 				research_points[i] += pointlist[i]
 				changed = TRUE
 	if(changed && !income)
-		netrun_research_changed()
+		netrun_research_changed(FALSE)
 
 /datum/techweb/proc/add_points_all(amount)
 	var/list/l = SSresearch.point_types.Copy()
@@ -218,7 +218,7 @@
 	for(var/i in pointlist)
 		if(SSresearch.point_types[i] && pointlist[i] > 0)
 			research_points[i] = max(0, research_points[i] - pointlist[i])
-	netrun_research_changed()
+	netrun_research_changed(FALSE)
 
 /datum/techweb/proc/remove_points_all(amount)
 	var/list/l = SSresearch.point_types.Copy()
@@ -230,7 +230,7 @@
 	for(var/i in pointlist)
 		if(SSresearch.point_types[i] && pointlist[i] != 0)
 			research_points[i] = max(0, research_points[i] + pointlist[i])
-	netrun_research_changed()
+	netrun_research_changed(FALSE)
 
 /datum/techweb/proc/modify_points_all(amount)
 	var/list/l = SSresearch.point_types.Copy()
@@ -285,7 +285,7 @@
 	else
 		research_points[type] += amount
 	if(!income)
-		netrun_research_changed()
+		netrun_research_changed(FALSE)
 	return TRUE
 
 /// Засчитывает первый за раунд синтез газа и разово начисляет за него очки.
@@ -340,14 +340,14 @@
 		next_income[type] += amount
 	else
 		research_points[type] = max(0, research_points[type] + amount)
-		netrun_research_changed()
+		netrun_research_changed(FALSE)
 	return TRUE
 
 /datum/techweb/proc/remove_point_type(type, amount)
 	if(!SSresearch.point_types[type] || (amount <= 0))
 		return FALSE
 	research_points[type] = max(0, research_points[type] - amount)
-	netrun_research_changed()
+	netrun_research_changed(FALSE)
 	return TRUE
 
 /datum/techweb/proc/add_design_by_id(id, custom = FALSE)

@@ -755,6 +755,8 @@
 	query.completed = TRUE
 	query.resolved_targets = list(scene.target, extra_target)
 	query.deliver()
+	TEST_ASSERT(!QDELETED(query), "Fanout must yield to the worker between separately routed admissions")
+	query.deliver()
 	TEST_ASSERT_EQUAL(outcomes["copies"], 1, "Two recipients need one independent copy and the transferred original")
 	var/datum/netrun_machine_packet/data/first
 	var/datum/netrun_machine_packet/data/last

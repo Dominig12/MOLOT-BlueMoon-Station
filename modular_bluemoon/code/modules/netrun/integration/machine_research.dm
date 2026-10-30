@@ -166,7 +166,8 @@
 	var/requested = payload["requested_operation"]
 	if(requested && !(requested in list("snapshot", "watch")))
 		return null
-	if(payload["operation"] in list("snapshot", "watch"))
+	// Compact balances cannot replace a full catalogue still in flight.
+	if(payload["operation"] in list("snapshot", "state", "watch"))
 		return "research.[payload["operation"]]|[payload["binding"]]|[payload["generation"]]"
 	return null
 
@@ -177,6 +178,7 @@
 	var/publish_timer
 	var/list/publish_addresses
 	var/list/publish_data
+	var/list/publish_state
 	var/publish_cursor = 1
 	var/publish_again = FALSE
 	/// Startup joins are resumable and coalesced on the service, never on a task.
@@ -298,6 +300,7 @@
 	SSnetrun.get_task_scheduler().cancel("research.publish", src)
 	publish_addresses = null
 	publish_data = null
+	publish_state = null
 	web = null
 	subscribers.Cut()
 	return ..()
@@ -320,6 +323,7 @@
 	subscribers.Cut()
 	publish_addresses = null
 	publish_data = null
+	publish_state = null
 	publish_again = FALSE
 	if(web)
 		RegisterSignal(web, COMSIG_NETRUN_RESEARCH_CHANGED, PROC_REF(on_research_changed))
@@ -332,7 +336,7 @@
 		publish_timer = addtimer(CALLBACK(src, PROC_REF(publish)), 1.5 SECONDS, TIMER_STOPPABLE | TIMER_DELETE_ME)
 
 /datum/netrun_machine_service/research_server/proc/snapshot()
-	return list("operation" = "snapshot", "binding" = REF(web), "revision" = web.netrun_research_revision, "organization" = web.organization,
+	return list("operation" = "snapshot", "binding" = REF(web), "revision" = web.netrun_research_revision, "catalog_revision" = web.netrun_research_catalog_revision, "organization" = web.organization,
 		"researched_nodes" = web.researched_nodes.Copy(), "researched_designs" = web.researched_designs.Copy(),
 		"available_nodes" = web.available_nodes.Copy(), "tiers" = web.tiers.Copy(),
 		"custom_designs" = web.custom_designs.Copy(), "hidden_nodes" = web.hidden_nodes.Copy(),
@@ -340,6 +344,13 @@
 		"research_points" = web.research_points.Copy(), "last_bitcoins" = web.last_bitcoins.Copy(),
 		"discovered_mutations" = web.discovered_mutations.Copy(), "deconstructed_items" = web.deconstructed_items.Copy(),
 		"problem_computer_charges" = web.get_problem_computer_charges(), "problem_computer_max_charges" = web.problem_computer_max_charges)
+
+/// A balance update carries values from the same immutable publication snapshot.
+/// It never recopies recipe sets or forces native consumers to rebuild them.
+/datum/netrun_machine_service/research_server/proc/snapshot_state(list/data)
+	return list("operation" = "state", "binding" = data["binding"], "revision" = data["revision"], "catalog_revision" = data["catalog_revision"],
+		"organization" = data["organization"], "research_points" = data["research_points"], "last_bitcoins" = data["last_bitcoins"],
+		"problem_computer_charges" = data["problem_computer_charges"], "problem_computer_max_charges" = data["problem_computer_max_charges"])
 
 /datum/netrun_machine_service/research_server/proc/publish()
 	publish_timer = null
@@ -353,13 +364,14 @@
 	publish_cursor = 1
 	SSnetrun.get_task_scheduler().enqueue("research.publish", src, NETRUN_TASK_BACKGROUND)
 
-/// All fanout runs under the common worker budget, with at most four peers per task.
+/// One peer per continuation keeps full catalogue copies behind the worker budget.
 /datum/netrun_machine_service/research_server/proc/publish_batch(datum/controller/subsystem/netrun/worker)
 	if(QDELETED(web) || !publish_addresses)
 		return TRUE
 	if(!publish_data)
 		publish_data = snapshot()
-	var/stop = min(length(publish_addresses), publish_cursor + 3)
+		publish_state = snapshot_state(publish_data)
+	var/stop = min(length(publish_addresses), publish_cursor)
 	while(publish_cursor <= stop)
 		var/address = publish_addresses[publish_cursor++]
 		var/list/subscription = subscribers[address]
@@ -376,15 +388,18 @@
 			continue
 		if(subscription["revision"] == publish_data["revision"])
 			continue
-		publish_data["generation"] = subscription["generation"]
+		var/list/data = subscription["catalog_revision"] == publish_data["catalog_revision"] ? publish_state : publish_data
+		data["generation"] = subscription["generation"]
 		// Message construction already owns a deep copy of its payload.
-		if(send_to(client, new /datum/netrun_machine_message/research(publish_data)))
+		if(send_to(client, new /datum/netrun_machine_message/research(data)))
 			subscription["revision"] = publish_data["revision"]
+			subscription["catalog_revision"] = publish_data["catalog_revision"]
 	if(publish_cursor <= length(publish_addresses))
 		return FALSE
 	else
 		publish_addresses = null
 		publish_data = null
+		publish_state = null
 		if(publish_again)
 			publish_again = FALSE
 			publish()
@@ -411,7 +426,7 @@
 		return FALSE
 	var/operation = message.payload["operation"]
 	if(operation in list("snapshot", "watch"))
-		subscribers[message.source.node.address] = list("client" = WEAKREF(message.source), "generation" = message.payload["generation"], "revision" = web.netrun_research_revision)
+		subscribers[message.source.node.address] = list("client" = WEAKREF(message.source), "generation" = message.payload["generation"], "revision" = web.netrun_research_revision, "catalog_revision" = web.netrun_research_catalog_revision)
 	var/success = TRUE
 	if(operation == "watch")
 		if(message.payload["revision"] == web.netrun_research_revision)
@@ -538,6 +553,7 @@
 	var/design_serial = 0
 	var/snapshot_binding
 	var/snapshot_revision = -1
+	var/snapshot_catalog_revision = -1
 	var/datum/weakref/subscription_ref
 	var/resync_timer
 
@@ -570,6 +586,7 @@
 	QDEL_NULL(snapshot_cache)
 	snapshot_binding = null
 	snapshot_revision = -1
+	snapshot_catalog_revision = -1
 	subscription_ref = null
 	if(wants_snapshots)
 		INVOKE_ASYNC(src, PROC_REF(request))
@@ -677,11 +694,12 @@
 		else
 			subscription_ref = WEAKREF(message.source)
 		return TRUE
-	if(data["operation"] != "snapshot")
+	var/compact = data["operation"] == "state"
+	if(!compact && data["operation"] != "snapshot")
 		return FALSE
 	if(snapshot_binding == data["binding"] && snapshot_revision > data["revision"])
 		var/obj/machinery/computer/rdconsole/console = host
-		if(istype(console))
+		if(!compact && istype(console))
 			console.receive_research_disk_snapshot(data)
 		return TRUE
 	// A restored cluster member can still have a queued copy of the last push.
@@ -689,9 +707,37 @@
 	// Explicit action/disk outcomes retain their processing even at the same revision.
 	if(snapshot_binding == data["binding"] && snapshot_revision == data["revision"] && !data["requested_operation"])
 		return TRUE
+	// A lost full packet, rebind or failover cannot make a partial balance update
+	// authoritative for recipes we have never received. Repair over ordinary I/O.
+	if(compact && (snapshot_binding != data["binding"] || snapshot_catalog_revision != data["catalog_revision"]))
+		request()
+		return FALSE
 	snapshot_binding = data["binding"]
 	snapshot_revision = data["revision"]
 	subscription_ref = WEAKREF(message.source)
+	if(compact)
+		var/datum/techweb/cache
+		if(istype(host, /obj/machinery/rnd/production))
+			var/obj/machinery/rnd/production/production = host
+			cache = production.stored_research
+		else if(istype(host, /obj/machinery/mecha_part_fabricator))
+			var/obj/machinery/mecha_part_fabricator/fabricator = host
+			cache = fabricator.stored_research
+		else if(istype(host, /obj/machinery/computer/rdconsole))
+			var/obj/machinery/computer/rdconsole/console = host
+			cache = console.netrun_research_cache
+		else
+			cache = snapshot_cache
+		if(QDELETED(cache))
+			snapshot_revision = -1
+			snapshot_catalog_revision = -1
+			request()
+			return FALSE
+		netrun_apply_research_state(cache, data)
+		SStgui.update_uis(host)
+		SEND_SIGNAL(host, COMSIG_NETRUN_SERVICE_STATE_CHANGED)
+		return TRUE
+	snapshot_catalog_revision = data["catalog_revision"]
 	var/obj/machinery/rnd/production/production = host
 	if(istype(production))
 		production.receive_research_snapshot(data)
@@ -736,15 +782,19 @@
 	cache.hidden_nodes = list_data["hidden_nodes"].Copy()
 	cache.visible_nodes = list_data["visible_nodes"].Copy()
 	cache.boosted_nodes = deepCopyList(data["boosted_nodes"])
+	cache.discovered_mutations = list_data["discovered_mutations"].Copy()
+	cache.deconstructed_items = list_data["deconstructed_items"].Copy()
+	netrun_apply_research_state(cache, data)
+	// Derived server state is already consistent. Replaying node recalculation here
+	// used to yield with half-applied data and mutate cached designs while deleting hosts.
+
+/proc/netrun_apply_research_state(datum/techweb/cache, list/data)
+	var/list/list/list_data = data
 	cache.research_points = list_data["research_points"].Copy()
 	cache.last_bitcoins = list_data["last_bitcoins"].Copy()
 	cache.organization = data["organization"]
-	cache.discovered_mutations = list_data["discovered_mutations"].Copy()
-	cache.deconstructed_items = list_data["deconstructed_items"].Copy()
 	cache.problem_computer_charges = data["problem_computer_charges"]
 	cache.problem_computer_max_charges = data["problem_computer_max_charges"]
-	// Derived server state is already consistent. Replaying node recalculation here
-	// used to yield with half-applied data and mutate cached designs while deleting hosts.
 
 /obj/machinery/computer/rdconsole
 	var/datum/techweb/netrun_research_cache
@@ -783,9 +833,13 @@
 /// Authoritative web mutations publish once per batch; received caches never emit this signal.
 /datum/techweb
 	var/netrun_research_revision = 0
+	/// Balance-only changes do not invalidate the delivered recipe catalogue.
+	var/netrun_research_catalog_revision = 0
 
-/datum/techweb/proc/netrun_research_changed()
+/datum/techweb/proc/netrun_research_changed(catalog_changed = TRUE)
 	netrun_research_revision++
+	if(catalog_changed)
+		netrun_research_catalog_revision++
 	SEND_SIGNAL(src, COMSIG_NETRUN_RESEARCH_CHANGED)
 
 /// Local recipes may exist before the first packet without paying research bounties.
