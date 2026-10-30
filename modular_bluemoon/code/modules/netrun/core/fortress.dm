@@ -298,7 +298,7 @@
 		return "Узел отключён; управление крепостью недоступно."
 	if(level < NETRUN_ACCESS_ROOT)
 		return "Управление крепостью требует доступа ROOT к узлу."
-	if(!viewer.daemon_bonus("forge"))
+	if(!viewer.daemon_capability("forge"))
 		return "Нужен демон forge.exe в памяти или на подключённом шарде."
 	if(!can_build(viewer))
 		return "Крепость принадлежит [owner_name || "станции"]: сначала разрушьте все её модули."

@@ -229,6 +229,9 @@
 	var/area/room = scene.room(/area/netrun_route_test)
 	scene.take(origin, room)
 	scene.take(locate(origin.x + 2, origin.y, origin.z), room)
+	// Area contents also enumerate occupants; only turfs define the room shape.
+	allocate(/obj/item, origin)
+	allocate(/mob, locate(origin.x + 2, origin.y, origin.z))
 	var/datum/netrun_map_geometry/netrun_performance_test/first = allocate(/datum/netrun_map_geometry/netrun_performance_test)
 	var/datum/netrun_map_geometry/netrun_performance_test/second = allocate(/datum/netrun_map_geometry/netrun_performance_test)
 	var/key = "[REF(room)]:[origin.z]"

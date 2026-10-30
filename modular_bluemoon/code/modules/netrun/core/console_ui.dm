@@ -284,7 +284,7 @@
 	data["trace"] = round(intrusion.trace, 0.1)
 	data["locked"] = is_locked() ? round((intrusion.lockout_until - world.time) / (1 SECONDS)) : 0
 	data["can_breach"] = intrusion.can_breach
-	data["can_autobreach"] = intrusion.can_breach && !!daemon_bonus("autobreach")
+	data["can_autobreach"] = intrusion.can_breach && !!daemon_capability("autobreach")
 	data["log"] = log
 	data["notices"] = notices
 	data["security"] = workspace_view == "breach" ? list("defended" = null, "entries" = list()) : security_session.payload()
@@ -380,7 +380,8 @@
 		var/atom/A = node.parent
 		selected["status"] = level >= NETRUN_ACCESS_USER ? A.netrun_status() : list()
 		if(level >= NETRUN_ACCESS_GUEST)
-			selected["manual_uid"] = public_node_manual(node)?.uid
+			var/datum/netrun_file/manual/public_manual = public_node_manual(node)
+			selected["manual_uid"] = public_manual?.uid
 		if(node.file_store && level >= max(NETRUN_ACCESS_USER, node.fortress?.file_access_level(src) || 0))
 			selected["files"] = node.file_store.ui_entries()
 			selected["storage"] = list("used" = node.used_storage(), "capacity" = node.file_store?.capacity)
@@ -840,6 +841,7 @@
 
 /// Only live firmware bound to this node is public; an uploaded readme is ordinary data.
 /datum/netrun_console/proc/public_node_manual(datum/component/netrun_node/node, uid)
+	RETURN_TYPE(/datum/netrun_file/manual)
 	for(var/datum/netrun_file/manual/manual in node?.file_store?.files)
 		if((isnull(uid) || manual.uid == uid) && manual.node_ref?.resolve() == node)
 			return manual

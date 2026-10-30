@@ -82,6 +82,7 @@
 		report += "[point_type]: [stolen[point_type]]"
 	var/datum/netrun_file/research_points/file = new("rnd_[server.server_id].dat", NETRUN_FILE_TEXT, "Выгрузка исследований с сервера [server.netrun_research_network_label()]:\n[jointext(report, "\n")]\nВыберите этот файл и выполните rnd_restore на сервере-получателе. Все копии используют один запас очков.", 2)
 	file.payload = new(stolen)
+	console.stamp_data_export(file, node, "research", stolen)
 	if(!console.store_file(file))
 		qdel(file)
 		return "Нет места в хранилище. Очки не списаны."
@@ -106,6 +107,7 @@
 /datum/netrun_file/research_points/copy()
 	var/datum/netrun_file/research_points/result = new(name, kind, content, size, network_id)
 	result.payload = payload
+	result.data_receipt = data_receipt
 	return result
 
 /datum/netrun_file/research_points/ui_metadata_stable()
@@ -202,6 +204,7 @@
 	for(var/node_id in server.stored_research.researched_nodes)
 		ids += node_id
 	var/datum/netrun_file/file = new("techweb_[server.server_id].web", NETRUN_FILE_TECHWEB, jointext(ids, ";"), max(1, round(length(ids) / 20)))
+	console.stamp_data_export(file, node, "technology", ids)
 	if(!console.store_file(file))
 		qdel(file)
 		return "Нет места в хранилище."

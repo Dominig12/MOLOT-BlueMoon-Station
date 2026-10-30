@@ -441,7 +441,7 @@
 /datum/netrun_access_session/proc/node_visible(datum/component/netrun_node/node)
 	if(!node?.network || !owner.can_route(node))
 		return FALSE
-	return owner.node_level(node) >= NETRUN_ACCESS_GUEST || (node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)) || owner.daemon_bonus("mapper")
+	return owner.node_level(node) >= NETRUN_ACCESS_GUEST || (node.node_type in list(NETRUN_NODE_APC, NETRUN_NODE_GATEWAY)) || owner.daemon_capability("reveal_nodes")
 
 /datum/netrun_console/proc/run_command(datum/component/netrun_node/node, command_id, input_nonce, packet_id)
 	var/datum/netrun_packet_context/operation = new("command", "Команда устройства",
@@ -704,7 +704,11 @@
 		else
 			owner.add_trace(0.6 * breach.security * delta * (breach.target_kind == "network" ? 1.25 : 1))
 	else if(trace > 0 && world.time - last_illegal > 10 SECONDS)
-		trace = max(0, trace - NETRUN_TRACE_DECAY * delta * (1 + owner.daemon_bonus("scrub")))
+		var/datum/netrun_daemon_context/context = new
+		context.trace_decay = NETRUN_TRACE_DECAY * delta
+		owner.apply_daemon_effects(context)
+		trace = max(0, trace - context.trace_decay)
+		qdel(context)
 
 /datum/netrun_remote_session/proc/process_tick()
 	if(!watch_node)
@@ -729,7 +733,7 @@
 /datum/netrun_intrusion_session/proc/start_breach(kind, id, automatic = FALSE)
 	if(!can_breach || breach || owner.is_locked())
 		return FALSE
-	if(automatic && (kind == "firmware" || !owner.daemon_bonus("autobreach")))
+	if(automatic && (kind == "firmware" || !owner.daemon_capability("autobreach")))
 		return FALSE
 	var/security
 	var/target_name
@@ -751,7 +755,7 @@
 		target_name = "[node.get_name()] [node.address]"
 		if(kind == "firmware")
 			var/datum/netrun_provider/api = SSnetrun.get_provider(node.parent)
-			if(!api?.allow_emag || owner.node_level(node) < NETRUN_ACCESS_ROOT || !owner.daemon_bonus("icepick"))
+			if(!api?.allow_emag || owner.node_level(node) < NETRUN_ACCESS_ROOT || !owner.daemon_capability("firmware"))
 				return FALSE
 			security = 5
 			target_name = "прошивка [target_name]"
@@ -819,7 +823,7 @@
 	breach = null
 	if(finished.target_kind == "firmware")
 		var/datum/component/netrun_node/node = SSnetrun.find_node(finished.target_id)
-		if(reward >= NETRUN_ACCESS_ROOT && node && owner.can_route(node) && node.is_online(node != owner.connection.jack) && owner.node_level(node) >= NETRUN_ACCESS_ROOT && owner.daemon_bonus("icepick"))
+		if(reward >= NETRUN_ACCESS_ROOT && node && owner.can_route(node) && node.is_online(node != owner.connection.jack) && owner.node_level(node) >= NETRUN_ACCESS_ROOT && owner.daemon_capability("firmware"))
 			owner.apply_firmware_bypass(node)
 		else
 			owner.log_line("Взлом прошивки не завершён или соединение потеряно.", "bad")
@@ -872,11 +876,26 @@
 	if(ui_bonuses)
 		ui_bonuses[id] = .
 
+/// Modifiers execute against the current mounted files, never a presentation cache.
+/datum/netrun_console/proc/apply_daemon_effects(datum/netrun_daemon_context/context)
+	return inventory.apply_daemon_effects(context)
+
+/datum/netrun_console/proc/daemon_capability(capability)
+	var/datum/netrun_daemon_context/context = new
+	context.capability = capability
+	apply_daemon_effects(context)
+	. = context.capability_granted
+	qdel(context)
+
 /datum/netrun_console/proc/effective_trace_mult()
 	return intrusion.effective_trace_mult()
 
 /datum/netrun_intrusion_session/proc/effective_trace_mult()
-	return trace_mult * max(0.1, 1 - owner.daemon_bonus("cloak"))
+	var/datum/netrun_daemon_context/context = new
+	context.trace_factor = trace_mult
+	owner.apply_daemon_effects(context)
+	. = context.trace_factor
+	qdel(context)
 
 // MARK: Провод
 

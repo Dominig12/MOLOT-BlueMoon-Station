@@ -579,7 +579,7 @@
 		// target_ref doubles as an optional node address for the agent's launch site.
 		return launch_bot_file(file.uid, target_ref)
 	if(file.kind == NETRUN_FILE_DAEMON)
-		var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(file.content)
+		var/datum/netrun_program/daemon/daemon = SSnetrun.get_daemon(file.content)
 		if(!daemon)
 			log_line("Исполняемый файл [file.name] повреждён.", "bad")
 			return FALSE

@@ -13,7 +13,9 @@
 	..(netrun_file_name(file_name, "credentials.access"), NETRUN_FILE_ACCESS, jointext(lines, "\n"), max(1, CEILING(length(accesses) / 10, 1)))
 
 /datum/netrun_file/access/copy()
-	return new /datum/netrun_file/access(name, accesses)
+	var/datum/netrun_file/access/result = new(name, accesses)
+	result.data_receipt = data_receipt
+	return result
 
 /datum/netrun_file/access/proc/access_for(datum/netrun_console/console)
 	return accesses
@@ -36,6 +38,27 @@
 /// A new source explicitly publishes actual credentials; default machines publish none.
 /atom/proc/netrun_credential_access()
 	return null
+
+/// Exact native ID objects, used to distinguish an operator's own removed card from loot.
+/atom/proc/netrun_credential_cards()
+	return list()
+
+/mob/living/carbon/netrun_credential_cards()
+	var/obj/item/card/id/card = get_idcard(FALSE)
+	return card ? list(card) : list()
+
+/obj/effect/netrun_endpoint/neural/netrun_credential_cards()
+	return interface?.host_mob?.netrun_credential_cards() || list()
+
+/obj/item/modular_computer/netrun_credential_cards()
+	. = list()
+	for(var/slot_id in list(MC_CARD, MC_CARD2))
+		var/obj/item/computer_hardware/card_slot/slot = all_components[slot_id]
+		if(istype(slot) && slot.holder == src && !QDELETED(slot.stored_card) && slot.stored_card.loc == slot)
+			. |= slot.stored_card
+
+/obj/machinery/modular_computer/netrun_credential_cards()
+	return !QDELETED(cpu) && cpu.loc == src ? cpu.netrun_credential_cards() : list()
 
 /atom/proc/netrun_credential_commands()
 	return length(netrun_credential_access()) ? list("extract_credentials") : list()
@@ -116,6 +139,7 @@
 	if(!length(accesses))
 		return "В источнике больше нет ID-доступов для копирования."
 	var/datum/netrun_file/access/file = new("[node.address].access", accesses)
+	console.stamp_data_export(file, node, "access", accesses)
 	if(!length(file.accesses) || !console.store_file(file))
 		qdel(file)
 		return "Недостаточно памяти для сохранения учётных данных."

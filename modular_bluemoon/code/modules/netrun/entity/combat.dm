@@ -89,7 +89,11 @@
 /// отменяет подготовленную программу и не перезахватывает цель короткое время.
 /datum/netrun_console/proc/disengage_combat()
 	combat_context.clear_contacts()
-	var/grace = NETRUN_DISENGAGE_GRACE * (1 + daemon_bonus("phantom"))
+	var/datum/netrun_daemon_context/effects = new
+	effects.disengage_grace = NETRUN_DISENGAGE_GRACE
+	apply_daemon_effects(effects)
+	var/grace = effects.disengage_grace
+	qdel(effects)
 	var/datum/self = combat_self()
 	var/mob/camera/netrun_entity/entity = self
 	if(istype(entity))
@@ -197,7 +201,7 @@
 		return
 	observe(ice)
 	var/mob/camera/netrun_entity/entity = console.combat_self()
-	if(ice.pending_program?.role == NETRUN_PROGRAM_TRACE && (!entity || entity.host_node != ice.node))
+	if(ice.pending_program?.targets_breach && (!entity || entity.host_node != ice.node))
 		register_attacker(ice, console.intrusion.breach)
 	changed()
 
@@ -351,7 +355,7 @@
 		if(file.kind != NETRUN_FILE_PROGRAM)
 			continue
 		var/datum/netrun_program/program = SSnetrun.get_program(file.content)
-		if(program && program.role != NETRUN_PROGRAM_TRACE)
+		if(program?.console_usable)
 			. += list(program_entry(program, file.uid, FALSE, file.name))
 
 /datum/netrun_combat_context/proc/incoming()
@@ -470,7 +474,7 @@
 		if(!file || file.kind != NETRUN_FILE_PROGRAM)
 			return FALSE
 		program = SSnetrun.get_program(file.content)
-	if(!program || program.role == NETRUN_PROGRAM_TRACE)
+	if(!program?.console_usable)
 		return FALSE
 	var/executable_name = file?.name || program.name
 	if(!encounter?.active && world.time < (program_cd[program.id] || 0))
@@ -518,7 +522,7 @@
 			console.combat_log("Дождитесь своего хода; для программы нужно [program.ap_cost] очк(а) действий.", "bad")
 			return FALSE
 		if(!encounter.can_apply_program_status(program, target))
-			console.combat_log(program.role == NETRUN_PROGRAM_STUN ? "Цель адаптировалась к оглушению: она должна получить полноценный ход перед повторным подавлением." : "Более сильный защитный контур уже действует.", "bad")
+			console.combat_log(program.status_denial(), "bad")
 			return FALSE
 		if(!encounter.commit_program(console, program, TRUE))
 			return FALSE
@@ -526,7 +530,7 @@
 	program_cd[program.id] = world.time + program.cooldown
 	// Attacking reveals the process again, including an otherwise authorized user.
 	// Rejected requests above must never spend the disengagement grace period.
-	if(program.role == NETRUN_PROGRAM_ATTACK || program.role == NETRUN_PROGRAM_STUN)
+	if(program.hostile)
 		var/mob/camera/netrun_entity/entity = self
 		if(istype(entity))
 			var/was_ignored = world.time < entity.combat_ignore_until
@@ -549,7 +553,7 @@
 	if(program.trace)
 		console.add_trace(program.trace)
 	SSnetrun.post_event("intrusion", node.network?.id, node.address)
-	if((program.role == NETRUN_PROGRAM_ATTACK || program.role == NETRUN_PROGRAM_STUN) && station_target)
+	if(program.hostile && station_target)
 		SSnetrun.report_incident("combat", node, self || console, NETRUN_INCIDENT_MEDIUM, "Атака на [target_name].")
 	if(program.consumable)
 		console.delete_local_file(file)
@@ -589,15 +593,9 @@
 /datum/netrun_console/proc/apply_program_effect(datum/netrun_program/program, target, datum/component/netrun_node/node, executable_name)
 	executable_name = executable_name || program.name
 	var/target_name = netrun_combatant_name(target)
-	netrun_apply_program(program, target, src)
-	switch(program.role)
-		if(NETRUN_PROGRAM_ATTACK)
-			combat_log("[executable_name] -> [target_name]: урон [program.power].", "good")
-		if(NETRUN_PROGRAM_STUN)
-			combat_log("[executable_name] -> [target_name]: цель оглушена.", "good")
-		if(NETRUN_PROGRAM_SHIELD)
-			combat_log("[executable_name]: защитный контур поднят.", "good")
-		if(NETRUN_PROGRAM_REPAIR)
-			combat_log("[executable_name]: целостность восстановлена.", "good")
+	program.apply(target, src)
+	var/message = program.combat_message(target_name, executable_name)
+	if(message)
+		combat_log(message, "good")
 	node.touch()
 	node.add_log("[log_source()]: запущена программа [executable_name].")

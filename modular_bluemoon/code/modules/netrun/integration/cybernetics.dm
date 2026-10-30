@@ -243,7 +243,12 @@
 
 /datum/netrun_machine_service/security_events/proc/on_station_network_restored()
 	SIGNAL_HANDLER
-	if(resolve_node()?.is_online())
+	// Only re-advertise after the initial bootstrap wave has finished. During startup the
+	// shared service_ready barrier already runs network_ready for every start_when_ready
+	// service; enqueuing per-APC service_initialize here (host_initialized plus every power/
+	// stat signal as APCs settle) floods the scheduler and starves the network_bootstrap
+	// continuation, delaying the readiness barrier past the test budget on large maps.
+	if(SSnetrun.get_machine_transport().bootstrap_complete && resolve_node()?.is_online())
 		SSnetrun.get_task_scheduler().enqueue("service_initialize", src, NETRUN_TASK_BACKGROUND)
 
 /datum/netrun_machine_service/security_events/Destroy()
@@ -346,7 +351,9 @@
 
 /datum/netrun_machine_service/security_monitor/proc/on_station_network_restored()
 	SIGNAL_HANDLER
-	if(enabled && authorized())
+	// Post-bootstrap only: see the matching note on security_events. The startup wave
+	// already covers readiness; signal-driven re-initialization is a live-round concern.
+	if(SSnetrun.get_machine_transport().bootstrap_complete && enabled && authorized())
 		SSnetrun.get_task_scheduler().enqueue("service_initialize", src, NETRUN_TASK_BACKGROUND)
 
 /datum/netrun_machine_service/security_monitor/Destroy()

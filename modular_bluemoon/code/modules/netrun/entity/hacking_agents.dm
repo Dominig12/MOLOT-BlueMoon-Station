@@ -143,7 +143,7 @@
 	return TRUE
 
 /datum/netrun_entity_module/hacking/proc/can_hack()
-	return installed && enabled && !QDELETED(owner?.console) && owner.console.intrusion.can_breach && owner.console.daemon_bonus("autobreach")
+	return installed && enabled && !QDELETED(owner?.console) && owner.console.intrusion.can_breach && owner.console.daemon_capability("autobreach")
 
 /datum/netrun_entity_module/hacking/proc/on_order_list(datum/source, list/orders)
 	SIGNAL_HANDLER

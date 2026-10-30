@@ -62,6 +62,10 @@
 	if(QDELETED(src) || QDELETED(console))
 		return
 	console.operator = src
+	if(is_network_visitor())
+		console.access_session.node_access.Cut()
+		console.access_session.network_access.Cut()
+		console.access_session.residency_address = null
 	console.inventory.local_store.capacity = program.storage
 	serial++
 	set_net_name("[program.name_prefix]-[serial < 10 ? "0" : ""][serial]", program.name)
@@ -75,8 +79,12 @@
 		expires_at = world.time + program.lifetime + rand(0, 2 MINUTES)
 	brain = new(src)
 	program.equip(src)
+	if(is_network_visitor() && !console.daemon_capability("autobreach"))
+		console.store_file(netrun_daemon_file("autobreach"))
 	SSnetrun.bots |= src
 	program.on_spawn(src)
+	if(is_network_visitor() && host_node)
+		brain.push_goal(new /datum/netrun_bot_goal/hack(brain, host_node))
 	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_MODULE_READY, null)
 	host_node?.network?.add_log("Запущен автономный процесс [real_name] ([program.name]).")
 	brain.schedule(1 SECONDS)

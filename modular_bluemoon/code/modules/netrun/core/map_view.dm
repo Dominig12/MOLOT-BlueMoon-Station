@@ -445,7 +445,7 @@
 				dirty = TRUE
 	if(inventory_changed)
 		inventory_changed = FALSE
-		if(snapshot && owner.daemon_bonus("mapper") != projected_mapper)
+		if(snapshot && owner.daemon_capability("reveal_nodes") != projected_mapper)
 			dirty = TRUE
 		else if(snapshot)
 			for(var/id in projected_network_levels)
@@ -636,7 +636,7 @@
 		return null
 	reconcile_route_reveals()
 	var/list/changed = list()
-	var/reveal_all = owner.daemon_bonus("mapper")
+	var/reveal_all = owner.daemon_capability("reveal_nodes")
 	for(var/id in projected_network_levels)
 		var/datum/netrun_network/network = SSnetrun.networks[id]
 		if(!network)
@@ -725,7 +725,7 @@
 	shown_network_counts = list()
 	projected_network_levels = list()
 	projected_network_keys = list()
-	var/reveal_all = owner.daemon_bonus("mapper")
+	var/reveal_all = owner.daemon_capability("reveal_nodes")
 	projected_mapper = reveal_all
 	for(var/address in graph.nodes)
 		var/datum/component/netrun_node/node = graph.nodes[address]
@@ -873,7 +873,7 @@
 		if(previous && !index && (previous["sector"] != node.last_known_sector || previous["z"] != position?.z || previous["network"] != node.last_known_network))
 			rebuild(graph)
 			return
-		var/now_shown = node.last_known_sector == active_sector && position?.z == active_z && owner.can_route(node) && (owner.daemon_bonus("mapper") || (address in revealed_addresses) || owner.node_visible(node))
+		var/now_shown = node.last_known_sector == active_sector && position?.z == active_z && owner.can_route(node) && (owner.daemon_capability("reveal_nodes") || (address in revealed_addresses) || owner.node_visible(node))
 		// Floor changes and a personal endpoint changing owner can change visibility
 		// without changing its APC attachment. Ordinary same-floor motion stays local.
 		if(!!index != !!now_shown)
@@ -998,7 +998,7 @@
 	var/list/added = list()
 	var/list/removed = list()
 	var/list/network_changes = list()
-	var/reveal_all = owner.daemon_bonus("mapper")
+	var/reveal_all = owner.daemon_capability("reveal_nodes")
 	for(var/address in dirty_nodes)
 		var/datum/component/netrun_node/node = graph.nodes[address]
 		if(QDELETED(node))

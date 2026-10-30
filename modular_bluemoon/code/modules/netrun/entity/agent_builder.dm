@@ -17,7 +17,7 @@
 		if(executable)
 			defaults += list(list("id" = id, "name" = executable.name, "size" = executable.size))
 	for(var/id in program.daemons)
-		var/datum/netrun_daemon/executable = SSnetrun.get_daemon(id)
+		var/datum/netrun_program/daemon/executable = SSnetrun.get_daemon(id)
 		if(executable)
 			defaults += list(list("id" = id, "name" = executable.name, "size" = executable.size))
 	var/list/program_files = list()
@@ -27,7 +27,7 @@
 			program_files += list(list("uid" = file.uid, "name" = file.name, "program_id" = file.content, "size" = file.size))
 		var/datum/netrun_agent_extension/extension = netrun_agent_extension_for(file)
 		if(extension)
-			var/datum/netrun_daemon/definition = SSnetrun.get_daemon(file.content)
+			var/datum/netrun_program/daemon/definition = SSnetrun.get_daemon(file.content)
 			module_files += list(list("uid" = file.uid, "id" = extension.id, "name" = extension.name, "desc" = extension.desc, "size" = file.size, "effects" = definition.effect_values(), "requirements" = list(), "allowed" = TRUE, "reason" = null))
 	return list(
 		"template_uid" = template.uid,
@@ -89,7 +89,7 @@
 				return null
 			required += executable.size
 		for(var/id in program.daemons)
-			var/datum/netrun_daemon/executable = SSnetrun.get_daemon(id)
+			var/datum/netrun_program/daemon/executable = SSnetrun.get_daemon(id)
 			if(!executable)
 				return null
 			required += executable.size

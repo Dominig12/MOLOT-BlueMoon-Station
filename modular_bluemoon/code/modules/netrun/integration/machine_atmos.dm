@@ -189,7 +189,7 @@
 	refresh_registration()
 	RegisterSignal(host, list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_MOVABLE_MOVED), PROC_REF(registration_changed))
 	if(registration_required())
-		arm_registration(5 SECONDS + rand(0, 2 SECONDS))
+		arm_registration(world.tick_lag)
 
 /datum/netrun_machine_service/atmos/device/Destroy()
 	SSnetrun.task_scheduler?.cancel("atmos_registration", src)
@@ -211,7 +211,7 @@
 /// still preparing APC routes. Each device gets one bounded readiness callback.
 /datum/netrun_machine_service/atmos/device/network_ready()
 	if(registration_required())
-		arm_registration(world.tick_lag + rand(0, 2 SECONDS))
+		arm_registration(world.tick_lag)
 
 /datum/netrun_machine_service/atmos/device/proc/registration_required()
 	return istype(host, /obj/machinery/atmospherics/components/unary/vent_pump) || istype(host, /obj/machinery/atmospherics/components/unary/vent_scrubber)
@@ -294,16 +294,21 @@
 		if(!QDELETED(controller) && controller.matches(src, null) && ack?.resolve() != controller && controller.resolve_node()?.is_online())
 			online_missing = TRUE
 			break
-	if(!online_missing)
-		// No reachable controller to register with. A controller appearing, powering on,
-		// moving or changing frequency re-arms us through rearm_local_devices(), and our own
-		// power/move/stat signals re-arm us too. Polling an empty area forever only churns the
-		// scheduler, so stop and let one of those events grant a fresh retry budget.
-		registration_attempts = 0
-		return
 	if(!(resolve_node()?.is_online() && control_frequency()))
 		// We cannot emit right now (offline or unconfigured). Our own power/config signals
-		// will re-arm us once we can, so there is no point spinning in the meantime.
+		// reliably re-arm us once we can, so there is no point spinning in the meantime.
+		return
+	if(!online_missing)
+		// No reachable compatible alarm is indexed for our area yet. This is routinely transient:
+		// during a late reactor/shuttle load the alarm (or its own area index) can settle after our
+		// first probe, and the rearm/power signals that would otherwise wake us can race that
+		// indexing. Rather than permanently stranding a live, configured vent -- the cause of the
+		// flaky missing-registration failures on large maps -- keep a backing-off probe that
+		// re-indexes us (refresh_registration) each pass and relinks deterministically once a
+		// compatible alarm is online and co-indexed. The 5s->30s backoff keeps a genuinely
+		// alarm-less area from churning the scheduler.
+		registration_attempts = min(registration_attempts + 1, NETRUN_ATMOS_REGISTRATION_MAX_ATTEMPTS)
+		arm_registration()
 		return
 	// Controller registration uses the live APC service registry.
 	// Do not resend statuses to an absent or entirely powered-down area.

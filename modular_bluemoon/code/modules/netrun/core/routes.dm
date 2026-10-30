@@ -631,8 +631,11 @@
 	else
 		route.name = tree.remote[node.address] ? "через реле NTnet" : "цепочка APC"
 		route.latency = tree.cost_to(node.address) + (wireless && owner.origin != NETRUN_ORIGIN_ENTITY && !owner.jack_valid() ? 1 : 0)
-		if(owner.daemon_bonus("overclock"))
-			route.latency = max(1, round(route.latency / 3))
+		var/datum/netrun_daemon_context/context = new
+		context.latency = route.latency
+		owner.apply_daemon_effects(context)
+		route.latency = context.latency
+		qdel(context)
 	if(owns_tree)
 		owner.release_path_tree(tree)
 	return route

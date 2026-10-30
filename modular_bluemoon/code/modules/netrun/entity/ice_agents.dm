@@ -183,7 +183,7 @@
 
 /datum/netrun_ice_behavior/biofeedback/proc/on_resolved(datum/source, datum/netrun_program/program, datum/target)
 	SIGNAL_HANDLER
-	if(!enabled || !(program.role in list(NETRUN_PROGRAM_ATTACK, NETRUN_PROGRAM_TRACE)))
+	if(!enabled || !program.biofeedback)
 		return
 	var/mob/living/carbon/body
 	if(istype(target, /mob/camera/netrun_entity))
@@ -207,7 +207,7 @@
 
 /// Contraband deployment is explicit, noisy and capped. It cannot appear as
 /// ordinary station protection or in the public research loot pool.
-/datum/netrun_daemon/black_ice
+/datum/netrun_program/daemon/black_ice
 	id = "black_ice"
 	name = "black_ice.exe"
 	desc = "Нелегальный защитный агент с опасной нейронной обратной связью. Развёртывание требует ROOT и вызывает тревогу."
@@ -242,7 +242,7 @@
 	var/next_black_ice = 0
 
 /datum/netrun_command/black_ice/execute(datum/component/netrun_node/node, datum/netrun_console/console)
-	if(!console.daemon_bonus("black_ice"))
+	if(!console.daemon_capability("black_ice"))
 		return "Нужен контрабандный black_ice.exe."
 	if(world.time < console.next_black_ice)
 		return "Развёртывание чёрного ICE ещё восстанавливается."

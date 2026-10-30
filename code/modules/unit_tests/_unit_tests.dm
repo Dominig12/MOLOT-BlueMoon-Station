@@ -463,6 +463,8 @@
 #include "netrun_fortress.dm"
 #include "netrun_content_rewards.dm"
 #include "netrun_packets.dm"
+#include "netrun_contracts.dm"
+#include "netrun_invasions.dm"
 #include "northstar.dm"
 #include "ntnet_responses.dm"
 // #include "ntnetwork_tests.dm"

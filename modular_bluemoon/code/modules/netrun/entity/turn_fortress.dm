@@ -49,12 +49,13 @@
 
 /datum/netrun_fortress/proc/apply_turn_stun(datum/netrun_program/program, datum/target, datum/netrun_turn_participant/participant)
 	var/datum/netrun_fortress_module/module = target
-	if(!istype(module) || module.fortress != src || module.kind != NETRUN_FORT_TURRET || program.role != NETRUN_PROGRAM_STUN || program.stun_turns <= 0)
-		return
+	if(!istype(module) || module.fortress != src || module.kind != NETRUN_FORT_TURRET || program.stun_turns <= 0)
+		return FALSE
 	participant.stun_turns = max(participant.stun_turns, program.stun_turns)
 	turn_jammed_modules[WEAKREF(module)] = TRUE
 	module.jammed_until = INFINITY
 	changed()
+	return TRUE
 
 /datum/netrun_fortress/proc/clear_turn_stuns()
 	if(!length(turn_jammed_modules))

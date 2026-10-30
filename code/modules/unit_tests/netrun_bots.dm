@@ -41,7 +41,7 @@
 	TEST_ASSERT(!sentry.is_intruder(police, scene.node_b), "ICE ignores the lawful police process")
 	var/mob/camera/netrun_entity/bot/raider = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_a, NETRUN_BOT_RAIDER)
 	TEST_ASSERT(raider.defense_threat(), "Rogue processes are threats")
-	TEST_ASSERT(raider.console.has_key(scene.node_b.network, TRUE), "A raider roams its LAN with a key")
+	TEST_ASSERT(!raider.console.has_key(scene.node_b.network, TRUE), "An ambient raider starts without its LAN's key")
 	raider.enter_node(scene.apc_node)
 	raider.enter_node(scene.node_b)
 	TEST_ASSERT(sentry.is_intruder(raider, scene.node_b), "ICE treats a keyed raider without USER as an intruder")

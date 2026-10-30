@@ -3,11 +3,11 @@
  * Add a subtype to publish a new program; consoles resolve files through this registry.
  * Programs sharing a bonus_kind use their strongest bonus, without stacking copies.
  */
-/datum/netrun_daemon
-	var/id
-	var/name = "daemon.exe"
-	var/desc = "Программа сетевого клиента."
-	var/size = 1
+/datum/netrun_program/daemon
+	name = "daemon.exe"
+	desc = "Программа сетевого клиента."
+	size = 1
+	file_kind = NETRUN_FILE_DAEMON
 	var/bonus_kind
 	var/bonus = 0
 	/// Optional independent effects. Each kind competes with legacy bonus_kind;
@@ -16,13 +16,10 @@
 	/// Zero excludes a definition from ICE salvage (e.g. test-only definitions).
 	var/loot_weight = 1
 
-/datum/netrun_daemon/proc/create_file()
-	return new /datum/netrun_file(name, NETRUN_FILE_DAEMON, id, size)
-
-/datum/netrun_daemon/proc/ui_entry()
+/datum/netrun_program/daemon/ui_entry()
 	return list("id" = id, "name" = name, "desc" = desc, "size" = size, "bonus_kind" = bonus_kind, "bonus" = bonus, "effects" = effect_values())
 
-/datum/netrun_daemon/proc/effect_bonus(kind)
+/datum/netrun_program/daemon/proc/effect_bonus(kind)
 	. = 0
 	if(bonus_kind == kind && IS_FINITE(bonus))
 		. = max(., bonus)
@@ -31,7 +28,7 @@
 		. = max(., value)
 
 /// Metadata is a fresh list; callers cannot modify the shared registry definition.
-/datum/netrun_daemon/proc/effect_values()
+/datum/netrun_program/daemon/proc/effect_values()
 	var/list/result = list()
 	if(istext(bonus_kind) && effect_bonus(bonus_kind) > 0)
 		result[bonus_kind] = effect_bonus(bonus_kind)
@@ -40,7 +37,164 @@
 			result[kind] = effect_bonus(kind)
 	return result
 
-/datum/netrun_daemon/buffer
+/// Compose the strongest handlers without retaining authority from a UI snapshot.
+/datum/netrun_program/daemon/proc/collect_effects(list/strongest, list/sources)
+	collect_effect(bonus_kind, effect_bonus(bonus_kind), strongest, sources)
+	for(var/kind in effects)
+		collect_effect(kind, effect_bonus(kind), strongest, sources)
+
+/datum/netrun_program/daemon/proc/collect_effect(kind, strength, list/strongest, list/sources)
+	if(!istext(kind) || !IS_FINITE(strength) || strength <= (strongest[kind] || 0))
+		return
+	strongest[kind] = strength
+	if(sources)
+		sources[kind] = src
+
+/// Optional source-specific automatic tool timing; ordinary composites use the effect's timing.
+/datum/netrun_program/daemon/proc/breach_duration(security, kind)
+	return null
+
+/**
+ * One operation's inputs and results. Nullable fields select which values are
+ * being calculated; no console, file or authority is retained by a shared effect.
+ */
+/datum/netrun_daemon_context
+	var/breach_security
+	var/breach_buffer
+	var/breach_time
+	var/trace_factor
+	var/trace_decay
+	var/latency
+	var/disengage_grace
+	var/target_kind
+	var/target_security
+	var/access_reward
+	var/access_name
+	var/automatic_duration
+	var/capability
+	var/capability_granted = FALSE
+
+/// Effect objects own the behavior; executable definitions compose them by strength.
+/datum/netrun_daemon_effect
+	var/id
+	var/list/capabilities
+
+/datum/netrun_daemon_effect/proc/apply(datum/netrun_daemon_context/context, strength, datum/netrun_program/daemon/source)
+	if(strength > 0 && context.capability && (context.capability in capabilities))
+		context.capability_granted = TRUE
+
+/datum/netrun_daemon_effect/buffer
+	id = "buffer"
+
+/datum/netrun_daemon_effect/buffer/apply(datum/netrun_daemon_context/context, strength, datum/netrun_program/daemon/source)
+	..()
+	if(!isnull(context.breach_buffer))
+		context.breach_buffer += strength
+
+/datum/netrun_daemon_effect/icepick
+	id = "icepick"
+	capabilities = list("firmware")
+
+/datum/netrun_daemon_effect/icepick/apply(datum/netrun_daemon_context/context, strength, datum/netrun_program/daemon/source)
+	..()
+	if(!isnull(context.breach_security))
+		context.breach_security = clamp(context.breach_security - strength, 1, 5)
+
+/datum/netrun_daemon_effect/cloak
+	id = "cloak"
+
+/datum/netrun_daemon_effect/cloak/apply(datum/netrun_daemon_context/context, strength, datum/netrun_program/daemon/source)
+	..()
+	if(!isnull(context.trace_factor))
+		context.trace_factor *= max(0.1, 1 - strength)
+
+/datum/netrun_daemon_effect/extend
+	id = "extend"
+
+/datum/netrun_daemon_effect/extend/apply(datum/netrun_daemon_context/context, strength, datum/netrun_program/daemon/source)
+	..()
+	if(!isnull(context.breach_time))
+		context.breach_time += strength * (10 SECONDS)
+
+/datum/netrun_daemon_effect/overclock
+	id = "overclock"
+
+/datum/netrun_daemon_effect/overclock/apply(datum/netrun_daemon_context/context, strength, datum/netrun_program/daemon/source)
+	..()
+	if(!isnull(context.latency))
+		context.latency = max(1, round(context.latency / 3))
+
+/datum/netrun_daemon_effect/scrub
+	id = "scrub"
+
+/datum/netrun_daemon_effect/scrub/apply(datum/netrun_daemon_context/context, strength, datum/netrun_program/daemon/source)
+	..()
+	if(!isnull(context.trace_decay))
+		context.trace_decay *= 1 + strength
+
+/datum/netrun_daemon_effect/mapper
+	id = "mapper"
+	capabilities = list("reveal_nodes")
+
+/datum/netrun_daemon_effect/skeleton
+	id = "skeleton"
+
+/datum/netrun_daemon_effect/skeleton/apply(datum/netrun_daemon_context/context, strength, datum/netrun_program/daemon/source)
+	..()
+	if(context.target_kind == "node" && !isnull(context.access_reward))
+		context.access_reward = max(context.access_reward, NETRUN_ACCESS_ROOT)
+		context.access_name = "ОТМЫЧКА"
+
+/datum/netrun_daemon_effect/phantom
+	id = "phantom"
+
+/datum/netrun_daemon_effect/phantom/apply(datum/netrun_daemon_context/context, strength, datum/netrun_program/daemon/source)
+	..()
+	if(!isnull(context.disengage_grace))
+		context.disengage_grace *= 1 + strength
+
+/datum/netrun_daemon_effect/siphon
+	id = "siphon"
+	capabilities = list("siphon")
+
+/datum/netrun_daemon_effect/forge
+	id = "forge"
+	capabilities = list("forge")
+
+/datum/netrun_daemon_effect/black_ice
+	id = "black_ice"
+	capabilities = list("black_ice")
+
+/datum/netrun_daemon_effect/autobreach
+	id = "autobreach"
+	capabilities = list("autobreach")
+	var/base_duration = 10 SECONDS
+	var/security_duration = 4 SECONDS
+	var/network_duration = 8 SECONDS
+
+/datum/netrun_daemon_effect/autobreach/proc/breach_duration(security, kind)
+	return base_duration + clamp(security, 1, 5) * security_duration + (kind == "network" ? network_duration : 0)
+
+/datum/netrun_daemon_effect/autobreach/apply(datum/netrun_daemon_context/context, strength, datum/netrun_program/daemon/source)
+	..()
+	if(!isnull(context.automatic_duration))
+		var/source_duration = source?.breach_duration(context.target_security, context.target_kind)
+		context.automatic_duration = isnull(source_duration) ? breach_duration(context.target_security, context.target_kind) : source_duration
+
+/datum/controller/subsystem/netrun
+	var/list/datum/netrun_daemon_effect/daemon_effects
+
+/datum/controller/subsystem/netrun/proc/get_daemon_effect(id)
+	RETURN_TYPE(/datum/netrun_daemon_effect)
+	if(!daemon_effects)
+		daemon_effects = list()
+		for(var/datum/netrun_daemon_effect/path as anything in subtypesof(/datum/netrun_daemon_effect))
+			var/effect_id = initial(path.id)
+			if(effect_id)
+				daemon_effects[effect_id] = new path
+	return istext(id) ? daemon_effects[lowertext(trim(id))] : null
+
+/datum/netrun_program/daemon/buffer
 	id = "buffer"
 	name = "buffer.exe"
 	desc = "Увеличивает буфер протокола взлома на одну ячейку. Копии не усиливают эффект."
@@ -48,7 +202,7 @@
 	bonus_kind = "buffer"
 	bonus = 1
 
-/datum/netrun_daemon/icepick
+/datum/netrun_program/daemon/icepick
 	id = "icepick"
 	name = "icepick.exe"
 	desc = "Снижает защиту цели при подборе на один уровень и позволяет атаковать поддерживаемую прошивку."
@@ -56,7 +210,7 @@
 	bonus_kind = "icepick"
 	bonus = 1
 
-/datum/netrun_daemon/cloak
+/datum/netrun_program/daemon/cloak
 	id = "cloak"
 	name = "cloak.exe"
 	desc = "Снижает прирост трассировки на 30%. Копии не усиливают эффект."
@@ -65,16 +219,16 @@
 	bonus = 0.3
 
 /datum/controller/subsystem/netrun
-	var/list/datum/netrun_daemon/daemons
+	var/list/datum/netrun_program/daemon/daemons
 
 /// Lazy construction also supports preloaded shards created during map initialization.
 /datum/controller/subsystem/netrun/proc/get_daemon(id)
-	RETURN_TYPE(/datum/netrun_daemon)
+	RETURN_TYPE(/datum/netrun_program/daemon)
 	if(!daemons)
 		daemons = list()
-		for(var/datum/netrun_daemon/path as anything in subtypesof(/datum/netrun_daemon))
+		for(var/datum/netrun_program/daemon/path as anything in subtypesof(/datum/netrun_program/daemon))
 			var/daemon_id = initial(path.id)
-			if(!daemon_id)
+			if(!daemon_id || initial(path.file_kind) != NETRUN_FILE_DAEMON)
 				continue
 			daemons[daemon_id] = new path
 	return istext(id) ? daemons[lowertext(trim(id))] : null
@@ -84,7 +238,7 @@
 	get_daemon(null)
 	. = list()
 	for(var/id in daemons)
-		var/datum/netrun_daemon/daemon = daemons[id]
+		var/datum/netrun_program/daemon/daemon = daemons[id]
 		. += list(daemon.ui_entry())
 
 // Individually printable programs, with the same file format as the existing breach suite.
@@ -108,7 +262,7 @@
 
 // MARK: Расширенный пул программ
 
-/datum/netrun_daemon/extend
+/datum/netrun_program/daemon/extend
 	id = "extend"
 	name = "extend.exe"
 	desc = "Продлевает окно протокола взлома: +10 секунд на демона. Копии не усиливают эффект."
@@ -116,7 +270,7 @@
 	bonus_kind = "extend"
 	bonus = 1
 
-/datum/netrun_daemon/overclock
+/datum/netrun_program/daemon/overclock
 	id = "overclock"
 	name = "overclock.exe"
 	desc = "Разгоняет сетевой стек: удалённые операции идут почти без задержки маршрута."
@@ -124,7 +278,7 @@
 	bonus_kind = "overclock"
 	bonus = 1
 
-/datum/netrun_daemon/scrub
+/datum/netrun_program/daemon/scrub
 	id = "scrub"
 	name = "scrub.exe"
 	desc = "Ускоряет спад трассировки в простое вдвое. Копии не усиливают эффект."
@@ -132,7 +286,7 @@
 	bonus_kind = "scrub"
 	bonus = 1
 
-/datum/netrun_daemon/mapper
+/datum/netrun_program/daemon/mapper
 	id = "mapper"
 	name = "mapper.exe"
 	desc = "Разведка топологии: на карте видны машины и за закрытыми шлюзами подсетей."
@@ -140,7 +294,7 @@
 	bonus_kind = "mapper"
 	bonus = 1
 
-/datum/netrun_daemon/skeleton
+/datum/netrun_program/daemon/skeleton
 	id = "skeleton"
 	name = "skeleton.exe"
 	desc = "Дорогой армейский ключ: один взлом узла сразу выдаёт ROOT вместо пользователя. Расходуется редко — держите на крайний случай."
@@ -149,7 +303,7 @@
 	bonus = 1
 	loot_weight = 0.2
 
-/datum/netrun_daemon/phantom
+/datum/netrun_program/daemon/phantom
 	id = "phantom"
 	name = "phantom.exe"
 	desc = "Удлиняет окно «след потерян» после заметания следов: лёд дольше не перезахватывает процесс. Копии не усиливают эффект."
@@ -157,7 +311,7 @@
 	bonus_kind = "phantom"
 	bonus = 1
 
-/datum/netrun_daemon/siphon
+/datum/netrun_program/daemon/siphon
 	id = "siphon"
 	name = "siphon.exe"
 	desc = "Открывает команду массового слива: за один запрос копирует все читаемые файлы узла в память."
@@ -166,7 +320,7 @@
 	bonus = 1
 
 /// Guaranteed progress replaces the puzzle, not route/access validation or ICE.
-/datum/netrun_daemon/autobreach
+/datum/netrun_program/daemon/autobreach
 	id = "autobreach"
 	name = "autobreach.exe"
 	desc = "Автовзлом без случайного провала: 14–30 секунд для узла, 22–38 для ЛВС. Даёт USER узла или гостевой вход в ЛВС; связь и программа должны сохраняться. Прошивка требует ручного взлома."
@@ -177,7 +331,7 @@
 	var/security_duration = 4 SECONDS
 	var/network_duration = 8 SECONDS
 
-/datum/netrun_daemon/autobreach/proc/breach_duration(security, kind)
+/datum/netrun_program/daemon/autobreach/breach_duration(security, kind)
 	return base_duration + clamp(security, 1, 5) * security_duration + (kind == "network" ? network_duration : 0)
 
 /obj/item/netrun_shard/autobreach
@@ -231,7 +385,7 @@
 
 // Composite loadouts use the same native effect consumers. Their storage and
 // competing effects are explicit; no extra timer or effect-specific dispatcher.
-/datum/netrun_daemon/ghostlink
+/datum/netrun_program/daemon/ghostlink
 	id = "ghostlink"
 	name = "ghostlink.exe"
 	desc = "Снижает рост трассировки на 20% и вдвое ускоряет её штатное затухание в простое. Компактнее двух программ, но маскировка слабее отдельного cloak.exe."
@@ -239,7 +393,7 @@
 	effects = list("cloak" = 0.2, "scrub" = 1)
 	loot_weight = 0.6
 
-/datum/netrun_daemon/breachkit
+/datum/netrun_program/daemon/breachkit
 	id = "breachkit"
 	name = "breachkit.exe"
 	desc = "Объединяет icepick и расширение буфера: защита подбора ниже на один уровень, буфер ручного протокола больше на один. Занимает пять ячеек; ROOT и автоматический взлом прошивки не выдаёт."
@@ -247,7 +401,7 @@
 	effects = list("icepick" = 1, "buffer" = 1)
 	loot_weight = 0.35
 
-/datum/netrun_daemon/analyst
+/datum/netrun_program/daemon/analyst
 	id = "analyst"
 	name = "analyst.exe"
 	desc = "Разведка закрытых сегментов и массовый слив читаемых файлов в одном пакете. Команды сохраняют обычные требования доступа и вместимости."
