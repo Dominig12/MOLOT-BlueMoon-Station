@@ -5509,6 +5509,7 @@
 #include "modular_bluemoon\code\modules\netrun\integration\circuits.dm"
 #include "modular_bluemoon\code\modules\netrun\integration\client_interactions.dm"
 #include "modular_bluemoon\code\modules\netrun\integration\comms.dm"
+#include "modular_bluemoon\code\modules\netrun\integration\contract_categories.dm"
 #include "modular_bluemoon\code\modules\netrun\integration\contracts.dm"
 #include "modular_bluemoon\code\modules\netrun\integration\credential_sessions.dm"
 #include "modular_bluemoon\code\modules\netrun\integration\credentials.dm"

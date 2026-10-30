@@ -4,13 +4,14 @@ import { Box, Button, Icon, Input, Section } from '../../components';
 import { AccessExport } from './AccessExport';
 import { FilePanel } from './FilePanel';
 import { fileSizeLabel, fileTransferState, isCopyableFile, SESSION_FILE_REASON, visibleFiles } from './filePermissions';
-import { fileFormat, fileIcon } from './NodePanel';
+import { fileFormat, fileIcon } from './filePresentation';
+import { RemoteFileActions } from './RemoteFileActions';
 import { NetFile, NetrunData, SelectedNode, Storage, THEME } from './types';
 import { useFollowOutput } from './useFollowOutput';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 const StoragePanelView = () => {
-  const { data } = useBackend<NetrunData>(['storage', 'shard', 'selected', 'workspace_view']);
+  const { data } = useBackend<NetrunData>(['storage', 'shard', 'selected', 'workspace_view', 'locked']);
   const { storage, shard, selected } = data;
   const [query, setQuery] = useState('');
   const localFiles = useMemo(() => visibleFiles(storage.files, query), [storage.files, query]);
@@ -39,7 +40,7 @@ const StoragePanelView = () => {
             </Box>
           )}
           <AccessExport />
-          {data.workspace_view === 'files' && <RemoteFileCatalog node={selected} query={query} local={storage} shard={shard} />}
+          {data.workspace_view === 'files' && <RemoteFileCatalog node={selected} query={query} local={storage} shard={shard} locked={!!data.locked} />}
         </div>
         <div className="netrun-files-preview">
           <Box bold mb={1} color={THEME.text}>Просмотр и редактирование</Box>
@@ -51,11 +52,13 @@ const StoragePanelView = () => {
 };
 
 /** Current target stays usable from the files workspace; all mutations use native queued actions. */
-const RemoteFileCatalog = ({ node, query, local, shard }: { node?: SelectedNode | null; query: string; local: Storage; shard?: Storage | null }) => {
-  const { act } = useBackend([]);
+const RemoteFileCatalog = ({ node, query, local, shard, locked }: {
+  node?: SelectedNode | null; query: string; local: Storage; shard?: Storage | null; locked: boolean;
+}) => {
   const files = useMemo(() => visibleFiles(node?.files || [], query), [node?.files, query]);
   if (!node) { return null; }
-  const reason = !node.online ? 'Узел не отвечает.' : !node.files ? 'Недостаточно доступа к хранилищу узла.' : null;
+  const reason = locked ? 'Сетевой доступ временно заблокирован.'
+    : !node.online ? 'Узел не отвечает.' : !node.files ? 'Недостаточно доступа к хранилищу узла.' : null;
   return (<Box mt={2} data-net-remote-catalog>
     <Box bold>Узел: {node.name}</Box>
     <Box color={THEME.muted} fontSize="11px">{node.address} · файлов {files.length}/{node.files?.length || 0}
@@ -63,21 +66,13 @@ const RemoteFileCatalog = ({ node, query, local, shard }: { node?: SelectedNode 
     </Box>
     {!!reason && <Box color={THEME.warn} fontSize="11px">{reason}</Box>}
     <div className="netrun-remote-files">
-    {files.map((file) => {
-      const memory = fileTransferState(file, local), disk = fileTransferState(file, shard);
-      return (<Box key={file.uid} mt={0.5} p={0.5} style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, overflowWrap: 'anywhere' }}>
+    {files.map((file) => (<Box key={file.uid} mt={0.5} p={0.5} style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, overflowWrap: 'anywhere' }}>
         <Box><Icon name={fileIcon(file.kind)} mr={0.5} />{file.name} <Box inline color={THEME.muted} fontSize="10px">· {fileSizeLabel(file)}</Box></Box>
         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
-          {['text', 'photo', 'key', 'techweb', 'techweb_link'].includes(file.kind) && <Button compact icon="eye" tooltip={`Открыть ${file.name}`} disabled={!!reason} onClick={() => act('read', { uid: file.uid })} />}
-          <Button compact icon="download" content={memory.merge ? 'Объединить ключ' : 'В память'} disabled={!!reason || !memory.copy}
-            tooltip={reason || memory.reason || 'Скачать копию в локальную память.'} onClick={() => act('download', { uid: file.uid, to_shard: false })} />
-          {!!shard && <Button compact icon="sd-card" content="На шард" disabled={!!reason || !disk.copy}
-            tooltip={reason || disk.reason || 'Скачать копию на подключённый шард.'} onClick={() => act('download', { uid: file.uid, to_shard: true })} />}
-          <Button compact icon="trash" tooltip={node.storage?.capacity === 0 ? 'Хранилище доступно только для чтения.' : 'Удалить исходный файл с узла: нужен ROOT.'}
-            disabled={!!reason || node.access < 3 || node.storage?.capacity === 0} onClick={() => act('delete_remote', { uid: file.uid })} />
+          <RemoteFileActions file={file} local={local} shard={shard} root={node.access >= 3}
+            readOnly={node.storage?.capacity === 0} reason={reason} />
         </div>
-              </Box>);
-    })}
+                          </Box>))}
     {!files.length && !reason && <Box color={THEME.muted} fontSize="11px">Файлы не найдены.</Box>}
     </div>
           </Box>);

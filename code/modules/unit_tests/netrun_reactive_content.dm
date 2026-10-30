@@ -137,3 +137,85 @@
 	var/task_key = "server.content:[REF(pending)]"
 	qdel(server)
 	TEST_ASSERT(QDELETED(pending) && !SSnetrun.get_task_scheduler().by_key[task_key], "Carrier deletion releases the archive and cancels its queued work")
+
+/// An independently registered profile needs no changes to seeding or machine dispatch.
+/datum/netrun_server_content_profile/unit_test_archive
+	id = "unit-test-archive"
+	programs = list("patch" = 1)
+	daemons = list("buffer" = 1)
+	advanced_daemons = list("ghostlink" = 1)
+	advanced_security = 4
+
+/obj/machinery/netrun_server/netrun_archive_profile_test/netrun_server_content_profile()
+	return "unit-test-archive"
+
+/obj/machinery/netrun_server/netrun_archive_profile_test/preloaded
+	preload_daemons = list("buffer")
+
+/obj/machinery/netrun_server/netrun_archive_profile_test/hardened
+	server_security = 4
+
+/datum/unit_test/netrun_server_archive_profile_extension
+	var/previous_content_enabled = NETRUN_AUTONOMOUS_CONTENT
+
+/datum/unit_test/netrun_server_archive_profile_extension/Destroy()
+	SSnetrun.server_content_enabled = previous_content_enabled
+	return ..()
+
+/datum/unit_test/netrun_server_archive_profile_extension/Run()
+	previous_content_enabled = SSnetrun.server_content_enabled
+	SSnetrun.server_content_enabled = TRUE
+	var/datum/netrun_server_content_profile/definition = SSnetrun.get_server_content_profile(" UNIT-TEST-ARCHIVE ")
+	TEST_ASSERT_NOTNULL(definition, "An independent profile subtype is discovered and its ID normalized")
+	TEST_ASSERT_NULL(SSnetrun.get_server_content_profile("missing-archive"), "An unknown profile cannot silently generate an ordinary archive")
+	var/list/programs = definition.programs.Copy()
+	var/list/daemons = definition.daemons.Copy()
+	var/list/advanced = definition.advanced_daemons.Copy()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/netrun_server/first = scene.machine(/obj/machinery/netrun_server/netrun_archive_profile_test/preloaded, get_step(run_loc_floor_bottom_left, EAST))
+	var/obj/machinery/netrun_server/second = scene.machine(/obj/machinery/netrun_server/netrun_archive_profile_test/hardened, run_loc_floor_bottom_left)
+	var/datum/component/netrun_server_archive/first_archive = first.GetComponent(/datum/component/netrun_server_archive)
+	var/datum/component/netrun_server_archive/second_archive = second.GetComponent(/datum/component/netrun_server_archive)
+	TEST_ASSERT(first_archive && second_archive && first_archive != second_archive, "The inherited carrier hook registers a separate seed record on each physical server")
+	SSnetrun.get_task_scheduler().cancel("server.content", first_archive)
+	SSnetrun.get_task_scheduler().cancel("server.content", second_archive)
+	TEST_ASSERT(first_archive.seed() && second_archive.seed(), "Both carriers seed through the ordinary archive pipeline")
+	TEST_ASSERT_EQUAL(first_archive.inserted, 1, "An authored daemon is preserved without duplication and a weak server gets no advanced daemon")
+	TEST_ASSERT_EQUAL(second_archive.inserted, 3, "The next server receives all independent pools including its eligible advanced daemon")
+	TEST_ASSERT(netrun_snapshot_equal(programs, definition.programs) && netrun_snapshot_equal(daemons, definition.daemons) && netrun_snapshot_equal(advanced, definition.advanced_daemons), "Filtering authored IDs and choosing loot never mutates shared weighted pools")
+	var/datum/component/netrun_node/first_node = first.GetComponent(/datum/component/netrun_node)
+	var/datum/component/netrun_node/second_node = second.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_file/first_program
+	var/datum/netrun_file/second_program
+	var/list/second_executables = list()
+	for(var/datum/netrun_file/file as anything in first_node.file_store.files)
+		if(file.kind == NETRUN_FILE_PROGRAM)
+			first_program = file
+	for(var/datum/netrun_file/file as anything in second_node.file_store.files)
+		if(file.kind in list(NETRUN_FILE_PROGRAM, NETRUN_FILE_DAEMON))
+			second_executables |= file.content
+		if(file.kind == NETRUN_FILE_PROGRAM)
+			second_program = file
+	TEST_ASSERT(first_program && second_program && first_program != second_program, "Servers own distinct actual files rather than files retained by the profile")
+	TEST_ASSERT(("patch" in second_executables) && ("buffer" in second_executables) && ("ghostlink" in second_executables), "The custom profile controls actual executable selection")
+	first_node.file_store.clear()
+	TEST_ASSERT(!first_archive.seed() && !length(first_node.file_store.files), "An extension cannot refill its already seeded disk")
+
+/// Advanced stock retains the authored stash threshold and intact vault alternative.
+/datum/unit_test/netrun_server_archive_advanced_policy/Run()
+	var/datum/component/netrun_node/node = netrun_fortress_node()
+	var/datum/netrun_server_content_profile/data = SSnetrun.get_server_content_profile("data")
+	var/datum/netrun_server_content_profile/stash = SSnetrun.get_server_content_profile("stash")
+	node.base_security = 5
+	TEST_ASSERT(!data.allows_advanced(node), "A high-security ordinary server alone does not reveal advanced stock")
+	node.base_security = 3
+	TEST_ASSERT(!stash.allows_advanced(node), "A stash below the authored security threshold has no advanced stock")
+	node.base_security = 4
+	TEST_ASSERT(stash.allows_advanced(node), "An authored hardened stash still unlocks advanced stock")
+	node.base_security = 1
+	var/datum/netrun_fortress/fortress = new(node, "Archive policy test", NETRUN_FACTION_STATION)
+	node.fortress = fortress
+	var/datum/netrun_fortress_module/vault = fortress.add_module(NETRUN_FORT_VAULT, TRUE)
+	TEST_ASSERT(data.allows_advanced(node) && stash.allows_advanced(node), "An intact vault admits advanced stock independently of server profile and base security")
+	vault.take_damage(10000, "test", null)
+	TEST_ASSERT(!data.allows_advanced(node) && !stash.allows_advanced(node), "A destroyed vault does not unlock advanced stock")

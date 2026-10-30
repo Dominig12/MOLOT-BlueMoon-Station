@@ -5,11 +5,13 @@ import { AutoBreachButton } from './AutoBreachButton';
 import { Meter } from './CombatPanel';
 import { CommandList } from './CommandList';
 import { EntityContacts } from './EntityContacts';
-import { fileSizeLabel, fileTransferState, isCopyableFile, isTransferableFile, SESSION_FILE_REASON } from './filePermissions';
+import { fileSizeLabel } from './filePermissions';
+import { fileIcon } from './filePresentation';
 import { FortressPanel } from './FortressPanel';
 import { NodeInteractions } from './NodeInteractions';
 import { NodeMovement } from './NodeMovement';
 import { PacketJournal } from './PacketJournal';
+import { RemoteFileActions } from './RemoteFileActions';
 import {
   ACCESS_COLORS,
   ACCESS_NAMES,
@@ -22,7 +24,7 @@ import {
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 const NodePanelView = () => {
-  const { act, data } = useBackend<NetrunData>(['workspace_view', 'map', 'selected', 'selected_network', 'networks', 'can_breach', 'breach', 'entity', 'waypoint']);
+  const { act, data } = useBackend<NetrunData>(['workspace_view', 'map', 'selected', 'selected_network', 'networks', 'can_breach', 'breach', 'entity', 'waypoint', 'locked']);
   // A hidden workspace is serialized without selected-node details. Do not turn
   // the brief omission into a blank sidebar when the player returns to the map.
   const confirmed = useRef<Pick<NetrunData,
@@ -303,10 +305,8 @@ const NodePanelView = () => {
 };
 
 const RemoteFile = (props: { file: NetFile; root: boolean; disabled: boolean; readOnly: boolean }) => {
-  const { act, data } = useBackend<NetrunData>(['shard', 'storage']);
+  const { data } = useBackend<NetrunData>(['shard', 'storage']);
   const { file, root, disabled, readOnly } = props;
-  const memory = fileTransferState(file, data.storage), disk = fileTransferState(file, data.shard);
-  const blocked = disabled ? 'Ожидание актуальных данных узла.' : !isCopyableFile(file) ? 'Этот файл нельзя копировать.' : null;
   return (
     <Box mb={0.5} p={0.5} data-net-file-row="remote" style={{ display: 'flex', alignItems: 'center',
       minWidth: 0, gap: '6px', fontFamily: 'monospace', borderBottom: `1px solid ${THEME.line}` }}>
@@ -318,27 +318,8 @@ const RemoteFile = (props: { file: NetFile; root: boolean; disabled: boolean; re
       </Box>
       <Box className="netrun-file-actions" data-net-file-actions="remote" style={{ display: 'flex', flex: '0 0 auto', justifyContent: 'flex-end',
         flexWrap: 'nowrap', gap: '3px' }}>
-        {file.kind === 'text' && (
-          <Button compact icon="eye" disabled={disabled} tooltip="Прочитать" onClick={() => act('read', { uid: file.uid })} />
-        )}
-        {!isTransferableFile(file) && <Box color={THEME.muted} fontSize="10px">{SESSION_FILE_REASON}</Box>}
-        {isTransferableFile(file) && <Button compact icon="download" disabled={!!blocked || !memory.copy}
-          tooltip={blocked || memory.reason || (memory.merge ? 'Объединить ключ с доступами в памяти.' : 'Скачать')}
-          onClick={() => act('download', { uid: file.uid })} />}
-        {!!data.shard && isTransferableFile(file) && (
-          <Button
-            compact
-            icon="sd-card"
-            disabled={!!blocked || !disk.copy}
-            tooltip={blocked || disk.reason || 'Скачать на шард'}
-            onClick={() => act('download', { uid: file.uid, to_shard: true })}
-          />
-        )}
-        {!!root && (
-          <Button compact icon="trash" color="bad" disabled={disabled || readOnly || file.deletable === false}
-            tooltip={readOnly ? 'Хранилище доступно только для чтения.' : file.delete_reason || 'Удалить'}
-            onClick={() => act('delete_remote', { uid: file.uid })} />
-        )}
+        <RemoteFileActions file={file} local={data.storage} shard={data.shard} root={root} readOnly={readOnly} iconsOnly
+          reason={disabled ? 'Ожидание актуальных данных узла.' : null} />
       </Box>
     </Box>
   );
@@ -358,50 +339,5 @@ const StorageMeter = (props: { storage?: { used: number; capacity: number } }) =
     label="Заполнение хранилища узла" height={4}
     style={{ display: 'inline-block', verticalAlign: 'middle', width: '80px', marginLeft: '8px' }} />
 );
-
-export const fileIcon = (kind: string) => {
-  switch (kind) {
-    case 'key':
-    case 'grants':
-      return 'key';
-    case 'access':
-      return 'id-card';
-    case 'daemon':
-      return 'gear';
-    case 'seed':
-      return 'seedling';
-    case 'photo':
-      return 'image';
-    case 'techweb_link':
-      return 'link';
-    case 'techweb':
-      return 'flask';
-    case 'bot':
-      return 'robot';
-    default:
-      return 'file-lines';
-  }
-};
-
-/** Формат файла: расширение из имени, иначе метка по типу. */
-export const fileFormat = (name: string, kind: string) => {
-  const dot = name.lastIndexOf('.');
-  if (dot > 0 && dot < name.length - 1) {
-    return name.slice(dot + 1).toUpperCase();
-  }
-  const labels: Record<string, string> = {
-    key: 'KEY',
-    grants: 'KEY',
-    access: 'ID',
-    daemon: 'EXE',
-    seed: 'SEED',
-    photo: 'IMG',
-    techweb: 'WEB',
-    techweb_link: 'LINK',
-    text: 'TXT',
-    bot: 'BOT',
-  };
-  return labels[kind] || 'DAT';
-};
 
 export const NodePanel = memo(NodePanelView);

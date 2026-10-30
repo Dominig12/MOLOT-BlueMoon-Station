@@ -156,3 +156,52 @@ test('shard and remote controls retain their file UIDs and unavailable upload le
   expect(sent('upload')).toHaveLength(uploadCount); // The visible disabled control explains the missing destination.
   expect(local.querySelector<HTMLElement>('.fa-trash').parentElement.style.gridColumn).toBe('3');
 });
+
+test.each(['map', 'files'])('%s remote catalog honors a live file deletion prohibition', (workspace) => {
+  const { container, sent, update } = setup();
+  const protectedFile = { ...file('protected', 'text'), deletable: false, delete_reason: 'Файл защищён устройством.' };
+  const node = { address: 'SERVER', name: 'Сервер', network: 'RND', type: 'server', access: 3, legit: 3,
+    online: true, security: 2, commands: [], status: [], files: [protectedFile], storage: { used: 1, capacity: 10 } };
+  update({ workspace_view: workspace, selected: node });
+  const catalog = () => container.querySelector<HTMLElement>(workspace === 'map'
+    ? '[data-net-file-row="remote"]' : '[data-net-remote-catalog]');
+  const remove = () => catalog()!.querySelector<HTMLElement>('.fa-trash')!.parentElement!;
+  expect(remove().classList.contains('Button--disabled')).toBe(true);
+  fireEvent.click(remove());
+  expect(sent('delete_remote')).toEqual([]);
+  update({ selected: { ...node, files: [{ ...protectedFile, deletable: true, delete_reason: null }] } });
+  expect(remove().classList.contains('Button--disabled')).toBe(false);
+  fireEvent.click(remove());
+  expect(sent('delete_remote')).toEqual([{ uid: 'protected' }]);
+});
+
+test.each(['map', 'files'])('%s remote catalog offers the shared viewer formats', (workspace) => {
+  const { container, sent, update } = setup();
+  const readable = ['text', 'photo', 'key', 'techweb', 'techweb_link'];
+  const files = [...readable, 'grants', 'access', 'bot', 'daemon', 'program', 'unknown'].map((kind) => file(kind, kind));
+  update({ workspace_view: workspace, selected: {
+    address: 'SERVER', name: 'Сервер', network: 'RND', type: 'server', access: 3, legit: 3,
+    online: true, security: 2, commands: [], status: [], files,
+  } });
+  const catalog = workspace === 'map' ? container.querySelector('.netrun-node-detail')!
+    : container.querySelector('[data-net-remote-catalog]')!;
+  const viewers = catalog.querySelectorAll<HTMLElement>('.fa-eye');
+  expect(viewers).toHaveLength(readable.length);
+  for (const viewer of viewers) { fireEvent.click(viewer.parentElement!); }
+  expect(sent('read').map((request) => request.uid).sort()).toEqual([...readable].sort());
+});
+
+test.each(['map', 'files'])('%s workspace disables remote operations as soon as the session is locked', (workspace) => {
+  const { container, sent, update } = setup();
+  update({ workspace_view: workspace, locked: 10 });
+  const buttons = container.querySelectorAll<HTMLElement>(workspace === 'map'
+    ? '[data-net-file-row="remote"] .Button' : '[data-net-remote-catalog] .Button');
+  expect(buttons.length).toBeGreaterThan(0);
+  for (const button of buttons) {
+    expect(button.classList.contains('Button--disabled')).toBe(true);
+    fireEvent.click(button);
+  }
+  expect(sent('read')).toEqual([]);
+  expect(sent('download')).toEqual([]);
+  expect(sent('delete_remote')).toEqual([]);
+});
