@@ -101,7 +101,7 @@
 	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity)
 	entity.enter_node(node)
 	var/datum/netrun_ice/ice = allocate(/datum/netrun_ice, node, NETRUN_ICE_HUNTER)
-	var/datum/netrun_program/strike = allocate(/datum/netrun_program/strike)
+	var/datum/netrun_program/strike = allocate(/datum/netrun_program/attack/strike)
 	strike.windup = 0.5 SECONDS
 	TEST_ASSERT(ice.begin_program(strike, entity), "The first attack must enter the shared turn encounter")
 	var/list/casting = ice.casting_payload()
@@ -122,7 +122,7 @@
 	var/obj/item/host = allocate(/obj/item)
 	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
 	var/datum/netrun_ice/ice = allocate(/datum/netrun_ice, node)
-	var/datum/netrun_program/barrier/program = allocate(/datum/netrun_program/barrier)
+	var/datum/netrun_program/shield/barrier/program = allocate(/datum/netrun_program/shield/barrier)
 	program.windup = 0.1 SECONDS
 	TEST_ASSERT(ice.begin_program(program, ice), "An idle guard can prepare its self defense outside turn combat")
 	TEST_ASSERT_NULL(ice.get_combat_encounter(), "Self defense alone does not invent a combat encounter")

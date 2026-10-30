@@ -594,57 +594,13 @@
 			console.invalidate_ui()
 
 /datum/netrun_combat_encounter/proc/apply_program_status(datum/netrun_program/program, datum/target)
-	var/datum/netrun_turn_participant/participant = member(target)
-	if(participant && istype(participant.actor(), /datum/netrun_fortress))
-		if(can_apply_program_status(program, target))
-			var/datum/netrun_fortress/fortress = participant.actor()
-			fortress.apply_turn_stun(program, target, participant)
-		return
-	var/datum/body = participant?.body_ref?.resolve()
-	if(!participant || !body)
-		return
 	if(!can_apply_program_status(program, target))
 		return
-	if(program.role == NETRUN_PROGRAM_SHIELD && program.shield_turns > 0)
-		var/new_factor = clamp(1 - program.power / 100, 0.1, 1)
-		if(participant.shield_until_turn && participant.shield_factor < new_factor)
-			return
-		participant.shield_until_turn = participant.own_turn + program.shield_turns
-		participant.shield_factor = new_factor
-		if(istype(body, /datum/netrun_ice))
-			var/datum/netrun_ice/ice = body
-			ice.combat_shield_until = INFINITY
-		else
-			var/mob/camera/netrun_entity/entity = body
-			entity.combat_shield_until = INFINITY
-	else if(program.role == NETRUN_PROGRAM_STUN && program.stun_turns > 0)
-		participant.stun_turns = max(participant.stun_turns, program.stun_turns)
-		if(istype(body, /datum/netrun_ice))
-			var/datum/netrun_ice/ice = body
-			ice.combat_stun_until = INFINITY
-		else
-			var/mob/camera/netrun_entity/entity = body
-			entity.combat_stun_until = INFINITY
-	else
-		return
-	changed()
+	if(program.apply_status(src, target))
+		changed()
 
 /datum/netrun_combat_encounter/proc/can_apply_program_status(datum/netrun_program/program, datum/target)
-	var/datum/netrun_turn_participant/participant = member(target)
-	if(program?.role == NETRUN_PROGRAM_STUN)
-		return !participant?.stun_immune
-	if(program?.role == NETRUN_PROGRAM_SHIELD)
-		var/new_factor = clamp(1 - program.power / 100, 0.1, 1)
-		var/datum/body = participant?.body_ref?.resolve()
-		if(istype(body, /mob/camera/netrun_entity))
-			var/mob/camera/netrun_entity/entity = body
-			if(world.time < entity.combat_shield_until && entity.combat_shield_factor < new_factor)
-				return FALSE
-		else if(istype(body, /datum/netrun_ice))
-			var/datum/netrun_ice/ice = body
-			if(world.time < ice.combat_shield_until && ice.combat_shield_factor < new_factor)
-				return FALSE
-	return TRUE
+	return !program || program.can_apply_status(src, target)
 
 /datum/netrun_combat_encounter/proc/payload(datum/netrun_console/viewer)
 	if(!active || closing || !current())

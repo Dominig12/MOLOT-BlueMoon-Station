@@ -26,7 +26,7 @@
 	var/required_daemon
 
 /datum/netrun_command/proc/visible_to(datum/netrun_console/console)
-	return !required_daemon || !!console.daemon_bonus(required_daemon)
+	return !required_daemon || !!console.daemon_capability(required_daemon)
 
 /// Выполнить команду. Возвращает текст результата или null при неудаче (причину пишет в консоль сам)
 /datum/netrun_command/proc/execute(datum/component/netrun_node/node, datum/netrun_console/console, arg, datum/netrun_request/request)
@@ -52,7 +52,7 @@
 	var/reason
 	if(console.is_locked())
 		reason = "Сетевой клиент заблокирован."
-	else if(required_daemon && !console.daemon_bonus(required_daemon))
+	else if(required_daemon && !console.daemon_capability(required_daemon))
 		reason = "Нужна программа [required_daemon].exe."
 	else if(!reachable)
 		reason = "Нет действующего маршрута к узлу."
@@ -150,7 +150,7 @@
 	danger = TRUE
 
 /datum/netrun_command/firmware/execute(datum/component/netrun_node/node, datum/netrun_console/console)
-	if(!console.daemon_bonus("icepick"))
+	if(!console.daemon_capability("firmware"))
 		return "Для атаки прошивки нужен icepick.exe в памяти."
 	if(!console.start_breach("firmware", node.address))
 		return "Нельзя начать взлом прошивки: проверьте соединение и активный взлом."
@@ -248,7 +248,7 @@
 	if(console.node_level(node) < max(NETRUN_ACCESS_USER, node.fortress?.file_access_level(console) || 0))
 		console.log_line("Хранилище крепости требует доступа ROOT.", "bad")
 		return null
-	if(!console.daemon_bonus("siphon"))
+	if(!console.daemon_capability("siphon"))
 		return "Для массового слива нужен siphon.exe в памяти."
 	if(!node.file_store || !length(node.file_store.files))
 		return "На узле нет доступных файлов."

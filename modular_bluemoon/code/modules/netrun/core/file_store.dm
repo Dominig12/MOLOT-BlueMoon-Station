@@ -448,6 +448,26 @@
 	for(var/datum/netrun_file/file as anything in store?.files)
 		if(file.kind != NETRUN_FILE_DAEMON)
 			continue
-		var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(file.content)
+		var/datum/netrun_program/daemon/daemon = SSnetrun.get_daemon(file.content)
 		if(daemon)
 			. = max(., daemon.effect_bonus(id))
+
+/// Resolve live source membership on every operation, including raw file edits.
+/// Only strengths compete; each winning effect runs its own implementation.
+/datum/netrun_inventory/proc/apply_daemon_effects(datum/netrun_daemon_context/context)
+	var/list/strongest = list()
+	var/list/sources = list()
+	collect_daemon_effects(local_store, strongest, sources)
+	if(!QDELETED(shard))
+		collect_daemon_effects(shard.file_store, strongest, sources)
+	for(var/kind in strongest)
+		var/datum/netrun_daemon_effect/effect = SSnetrun.get_daemon_effect(kind)
+		effect?.apply(context, strongest[kind], sources[kind])
+	return context
+
+/datum/netrun_inventory/proc/collect_daemon_effects(datum/netrun_file_store/store, list/strongest, list/sources)
+	for(var/datum/netrun_file/file as anything in store?.files)
+		if(file.kind != NETRUN_FILE_DAEMON)
+			continue
+		var/datum/netrun_program/daemon/daemon = SSnetrun.get_daemon(file.content)
+		daemon?.collect_effects(strongest, sources)

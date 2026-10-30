@@ -98,7 +98,7 @@
 	var/datum/netrun_command/deploy = SSnetrun.get_command("black_ice")
 	TEST_ASSERT(!deploy.visible_to(console), "Contraband actions are hidden without their executable")
 	TEST_ASSERT(!console.run_command(scene.node_a, "black_ice"), "A bare process cannot dispatch illegal protection")
-	var/datum/netrun_daemon/definition = SSnetrun.get_daemon("black_ice")
+	var/datum/netrun_program/daemon/definition = SSnetrun.get_daemon("black_ice")
 	var/datum/netrun_file/file = definition.create_file()
 	TEST_ASSERT(console.store_file(file), "The real contraband executable fits in local memory")
 	TEST_ASSERT(deploy.visible_to(console), "Owning its executable reveals the action")

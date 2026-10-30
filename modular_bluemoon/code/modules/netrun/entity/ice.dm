@@ -159,10 +159,8 @@
 /datum/netrun_ice/proc/casting_payload()
 	if(!pending_program)
 		return null
-	return list("name" = pending_program.name, "role" = pending_program.role,
-		"stun_turns" = pending_program.role == NETRUN_PROGRAM_STUN ? pending_program.stun_turns : 0,
-		"power" = pending_program.role == NETRUN_PROGRAM_ATTACK ? round(pending_program.power * damage_factor) : pending_program.power,
-		"remaining" = max(0, CEILING(round((attack_at - world.time) / (1 SECONDS), 0.01), 0.1)))
+	. = pending_program.casting_payload(damage_factor)
+	.["remaining"] = max(0, CEILING(round((attack_at - world.time) / (1 SECONDS), 0.01), 0.1))
 
 /datum/netrun_ice/proc/is_stunned()
 	return world.time < combat_stun_until
@@ -223,7 +221,7 @@
 	SSnetrun.get_daemon(null)
 	var/list/pool = list()
 	for(var/id in SSnetrun.daemons)
-		var/datum/netrun_daemon/daemon = SSnetrun.daemons[id]
+		var/datum/netrun_program/daemon/daemon = SSnetrun.daemons[id]
 		if(daemon.loot_weight > 0)
 			pool[id] = daemon.loot_weight
 	if(length(pool))
@@ -233,7 +231,7 @@
 		var/list/program_pool = list()
 		for(var/id in SSnetrun.programs)
 			var/datum/netrun_program/program = SSnetrun.programs[id]
-			if(program.size > 0 && program.role != NETRUN_PROGRAM_TRACE)
+			if(program.size > 0 && program.console_usable)
 				program_pool += id
 		if(length(program_pool))
 			deliver_loot(netrun_program_file(pick(program_pool)), killer)
@@ -409,11 +407,11 @@
 				return
 	for(var/id in program_ids)
 		var/datum/netrun_program/program = SSnetrun.get_program(id)
-		if(!program || program.role == NETRUN_PROGRAM_TRACE)
+		if(!program || program.targets_breach)
 			continue
 		if(encounter.active ? (encounter.cooldown_remaining(src, program) || program.ap_cost > encounter.remaining_ap(src)) : world.time < (program_cd[id] || 0))
 			continue
-		if(program.role == NETRUN_PROGRAM_SHIELD && (integrity > max_integrity * 0.75 || world.time < combat_shield_until))
+		if(!program.ice_should_use(src))
 			continue
 		if(begin_program(program, program.needs_target ? prey : src, opening_attack))
 			return
@@ -432,28 +430,7 @@
 
 /// Recheck authority and presence at both ends of the telegraph, not just at acquisition.
 /datum/netrun_ice/proc/valid_program_target(datum/netrun_program/program, datum/target, fresh_access = FALSE)
-	if(!program || QDELETED(target))
-		return FALSE
-	if(program.role == NETRUN_PROGRAM_TRACE)
-		if(!valid_trace_target(target))
-			return FALSE
-		if(!fresh_access)
-			return TRUE
-		var/datum/netrun_console/victim = target
-		var/datum/netrun_path_tree/tree = victim.connection.read_path_tree(TRUE)
-		. = victim.can_route(node, tree) && valid_trace_target(victim)
-		victim.release_path_tree(tree)
-		return
-	if(!program.needs_target)
-		return target == src
-	var/mob/camera/netrun_entity/entity = target
-	if(!istype(entity) || entity.host_node != node || world.time < entity.combat_ignore_until)
-		return FALSE
-	if(!fresh_access || enemy_ref?.resolve() == entity)
-		return is_intruder(entity, node)
-	var/datum/netrun_path_tree/tree = entity.console?.connection.read_path_tree(TRUE)
-	. = is_intruder(entity, node, tree)
-	entity.console?.release_path_tree(tree)
+	return program && program.valid_ice_target(src, target, fresh_access)
 
 /datum/netrun_ice/proc/begin_program(datum/netrun_program/program, datum/target, opening_attack = FALSE)
 	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
@@ -472,6 +449,7 @@
 		return FALSE
 	pending_program = program
 	pending_target_ref = WEAKREF(target)
+	program.capture_ice_target(src, target)
 	var/telegraph = already_in_combat ? NETRUN_ICE_COMBAT_TELEGRAPH : max(NETRUN_ICE_MIN_TELEGRAPH, program.windup)
 	attack_at = world.time + telegraph
 	program_cd[program.id] = attack_at + program.cooldown
@@ -479,23 +457,17 @@
 	if(istype(target, /mob/camera/netrun_entity))
 		var/mob/camera/netrun_entity/entity = target
 		victim = entity.console
-		var/counterplay = program.role == NETRUN_PROGRAM_STUN ? "Оглушение ICE или выход из узла сорвут оглушение." : "Щит снизит урон; оглушение ICE или выход из узла сорвут атаку."
-		if(encounter?.active)
-			counterplay = program.role == NETRUN_PROGRAM_STUN ? "Подавление пропустит ход. Контрмеры доступны в ваш ход; выход стоит 1 ОД." : "Подготовьте щит в свой ход. В свой ход можно отступить за 1 ОД."
+		var/counterplay = program.ice_counterplay(encounter?.active)
 		if(agent?.profile.illegal)
 			counterplay += " Чёрный ICE опасен для нейронного канала и тела!"
 		to_chat(entity, span_userdanger("[name] готовит [program.name]: до срабатывания [telegraph / (1 SECONDS)] с! [counterplay]"))
 	else if(istype(target, /datum/netrun_console))
 		victim = target
-		if(program.role == NETRUN_PROGRAM_TRACE)
-			pending_breach_ref = WEAKREF(victim.intrusion.breach)
 	SEND_SIGNAL(SSnetrun, COMSIG_NETRUN_ICE_CAST_STARTED, src, victim)
 	if(victim)
 		SEND_SIGNAL(victim, COMSIG_NETRUN_ICE_CAST_STARTED, src, victim)
 	SEND_SIGNAL(src, COMSIG_NETRUN_COMBAT_CHANGED)
-	var/trace_advice = program.role == NETRUN_PROGRAM_TRACE ? " Прервите взлом или оглушите ICE, чтобы сорвать трассировку." : ""
-	if(program.role == NETRUN_PROGRAM_TRACE && encounter?.active)
-		trace_advice = " Прервите взлом, чтобы сорвать трассировку; подавление ICE доступно в ваш ход."
+	var/trace_advice = program.ice_trace_advice(encounter?.active)
 	victim?.combat_log("[name] готовит [program.name], срабатывание через [telegraph / (1 SECONDS)] с.[trace_advice]", "bad")
 	node.add_log("[name]: подготовка [program.name].")
 	reaction.schedule_at(attack_at)
@@ -521,11 +493,9 @@
 	if(is_stunned() || !node?.is_online() || !valid_program_target(pending_program, target, world.time >= attack_at))
 		cancel_program()
 		return
-	if(pending_program.role == NETRUN_PROGRAM_TRACE)
-		var/datum/netrun_console/victim = target
-		if(pending_breach_ref?.resolve() != victim.intrusion.breach)
-			cancel_program()
-			return
+	if(!pending_program.ice_target_current(src, target))
+		cancel_program()
+		return
 	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
 	if(encounter?.active && (!encounter.has_turn(src) || !encounter.deferred))
 		cancel_program(FALSE)
@@ -539,7 +509,7 @@
 	var/datum/netrun_program/program = pending_program
 	cancel_program(FALSE)
 	next_attack = world.time + 0.5 SECONDS
-	netrun_apply_program(program, target, null, damage_factor)
+	program.apply(target, null, damage_factor)
 	if(!QDELETED(encounter))
 		encounter.apply_program_status(program, target)
 		encounter.resolve(src)

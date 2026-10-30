@@ -70,9 +70,9 @@
 	var/earliest = INFINITY
 	for(var/id in owner.program_ids)
 		var/datum/netrun_program/program = SSnetrun.get_program(id)
-		if(!program || (tracing != (program.role == NETRUN_PROGRAM_TRACE)))
+		if(!program || tracing != program.targets_breach)
 			continue
-		if(program.role == NETRUN_PROGRAM_SHIELD && (owner.integrity > owner.max_integrity * 0.75 || world.time < owner.combat_shield_until))
+		if(!program.ice_should_use(owner))
 			continue
 		var/ready_at = max(owner.next_attack, owner.program_cd[id] || 0)
 		if(ready_at > world.time)

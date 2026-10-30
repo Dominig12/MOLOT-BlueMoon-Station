@@ -29,7 +29,7 @@
 		return "Нет действующего подключения к работающему узлу."
 	if(console.node_level(node) < NETRUN_ACCESS_ROOT)
 		return "Постройка крепости требует доступа ROOT к узлу."
-	if(!console.daemon_bonus("forge"))
+	if(!console.daemon_capability("forge"))
 		return "Нужен демон forge.exe в памяти или на подключённом шарде."
 	var/datum/netrun_fortress/fortress = node.fortress
 	if(!fortress)
@@ -170,7 +170,7 @@
 
 // MARK: forge.exe
 
-/datum/netrun_daemon/forge
+/datum/netrun_program/daemon/forge
 	id = "forge"
 	name = "forge.exe"
 	desc = "Конструктор сетевых крепостей: с доступом ROOT позволяет возводить, чинить и разбирать модули укреплений узла."

@@ -101,6 +101,8 @@
 	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
 	for(var/id in list("scavenger", "collector", NETRUN_BOT_RAIDER, "archive_collector"))
 		var/mob/camera/netrun_entity/bot/bot = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_a, id)
+		// Test local collection independently of a visitor's initial access acquisition.
+		bot.brain.clear_goals()
 		var/datum/netrun_file/file = new("local-debris.txt", NETRUN_FILE_TEXT, id)
 		scene.node_a.leave_salvage(file)
 		bot.program.plan(bot.brain)

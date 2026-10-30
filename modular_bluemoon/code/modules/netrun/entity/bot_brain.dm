@@ -294,6 +294,8 @@
 	if(owner.travel_to(target))
 		state = "в пути"
 		return NETRUN_BOT_MOVE_PROGRESS
+	if(queue_frontier_hack(target))
+		return NETRUN_BOT_MOVE_PROGRESS
 	return NETRUN_BOT_MOVE_BLOCKED
 
 /// Breadth-first search over nodes this bot may enter, bounded to its surroundings.
@@ -324,7 +326,7 @@
 				continue
 			if(scope && !(next.network?.id in scope))
 				continue
-			if(!console.can_traverse_node(next, tree))
+			if(!can_plan_visit(next, tree))
 				continue
 			queue += address
 	console.release_path_tree(tree)
@@ -388,7 +390,7 @@
 		var/datum/component/netrun_node/node = candidates[candidates[salvage_cursor++]]
 		if(QDELETED(node) || node == current || is_blacklisted(node.address) || (station_only && node.network?.isolated) || (scope && !(node.network?.id in scope)))
 			continue
-		if(!console.can_traverse_node(node, tree) || !console.can_route(node, tree))
+		if(!can_plan_visit(node, tree) || !console.can_route(node, tree))
 			continue
 		var/datum/netrun_file/file = best_salvage(node)
 		if(!file)
@@ -435,7 +437,7 @@
 			continue
 		if(scope && !(node.network?.id in scope))
 			continue
-		if(!console.can_traverse_node(node, tree) || (police && console.node_level(node, tree) < NETRUN_ACCESS_USER))
+		if(!can_plan_visit(node, tree) || (police && console.node_level(node, tree) < NETRUN_ACCESS_USER))
 			continue
 		var/inspected = police ? SSnetrun.police_inspected[address] : visited[address]
 		var/score = isnull(inspected) ? -INFINITY : inspected
@@ -549,16 +551,7 @@
 /// Prefer effective benefit per AP, conserving consumables for worthwhile hits.
 /// Legacy real-time behavior retains its strongest-program policy.
 /datum/netrun_bot_brain/proc/program_value(datum/netrun_program/program, effective_limit, turn_based)
-	if(!turn_based)
-		return program.power
-	var/effect = program.power
-	if(program.role == NETRUN_PROGRAM_ATTACK || program.role == NETRUN_PROGRAM_REPAIR)
-		effect = min(effect, effective_limit)
-	else if(program.role == NETRUN_PROGRAM_STUN)
-		effect = 20 * max(1, program.stun_turns)
-	else if(program.role == NETRUN_PROGRAM_SHIELD)
-		effect *= max(1, program.shield_turns)
-	return effect / max(1, program.ap_cost) * (program.consumable ? 0.8 : 1)
+	return program.bot_value(effective_limit, turn_based)
 
 /// Readiness, target status, AP and execution still use the native combat path.
 /datum/netrun_bot_brain/proc/use_role(role, datum/target)

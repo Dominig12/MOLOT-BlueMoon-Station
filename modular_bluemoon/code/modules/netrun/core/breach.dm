@@ -43,11 +43,19 @@
 	src.target_kind = target_kind
 	src.target_id = target_id
 	src.target_name = target_name
-	src.security = clamp(security - console.daemon_bonus("icepick"), 1, 5)
+	var/datum/netrun_daemon_context/context = new
+	context.breach_security = security
+	console.apply_daemon_effects(context)
+	src.security = clamp(context.breach_security, 1, 5)
+	context.breach_security = null
 	size = 5 + (src.security >= 3) + (src.security >= 5)
-	buffer_size = 4 + round(src.security / 2) + console.intrusion.buffer_bonus + console.daemon_bonus("buffer")
+	context.breach_buffer = 4 + round(src.security / 2) + console.intrusion.buffer_bonus
+	context.breach_time = (45 SECONDS) - (src.security * 4 SECONDS)
+	console.apply_daemon_effects(context)
+	buffer_size = context.breach_buffer
 	buffer_size = min(buffer_size, size * 2)
-	deadline = world.time + (45 SECONDS) - (src.security * 4 SECONDS) + (console.daemon_bonus("extend") * (10 SECONDS))
+	deadline = world.time + context.breach_time
+	qdel(context)
 	if(target_kind == "network")
 		size++
 		deadline -= 5 SECONDS
@@ -92,6 +100,16 @@
 /datum/netrun_breach/proc/col_of(index)
 	return ((index - 1) % size) + 1
 
+/// The puzzle provides its ordinary reward; installed programs may modify it.
+/datum/netrun_breach/proc/access_daemon()
+	var/datum/netrun_daemon_context/context = new
+	context.target_kind = target_kind
+	context.access_name = "ДОСТУП"
+	context.access_reward = NETRUN_ACCESS_USER
+	console.apply_daemon_effects(context)
+	. = list("name" = context.access_name, "reward" = context.access_reward)
+	qdel(context)
+
 /datum/netrun_breach/proc/generate()
 	if(minigame == "sequence")
 		generate_sequence()
@@ -134,11 +152,9 @@
 	var/list/lengths = list(2, security >= 2 ? 3 : 2, security >= 4 ? 4 : 3)
 	if(target_kind == "network")
 		lengths = list(min(5, buffer_size), min(6, buffer_size), min(5, buffer_size))
-	var/list/names = list("ДОСТУП", "ROOT", "ЗАМЕСТИ СЛЕДЫ")
-	var/list/rewards = list(NETRUN_ACCESS_USER, NETRUN_ACCESS_ROOT, 0)
-	if(target_kind == "node" && console.daemon_bonus("skeleton"))
-		names = list("ОТМЫЧКА", "ROOT", "ЗАМЕСТИ СЛЕДЫ")
-		rewards = list(NETRUN_ACCESS_ROOT, NETRUN_ACCESS_ROOT, 0)
+	var/list/access = access_daemon()
+	var/list/names = list(access["name"], "ROOT", "ЗАМЕСТИ СЛЕДЫ")
+	var/list/rewards = list(access["reward"], NETRUN_ACCESS_ROOT, 0)
 	for(var/i in 1 to 3)
 		var/len = min(lengths[i], buffer_size)
 		var/start = rand(1, buffer_size - len + 1)
@@ -177,12 +193,10 @@
 		pool -= cell
 		order += cell
 	user_goal = min(user_goal, length(order))
-	var/user_name = "ДОСТУП"
-	var/user_reward = NETRUN_ACCESS_USER
-	if(target_kind == "node" && console.daemon_bonus("skeleton"))
-		user_name = "ОТМЫЧКА"
-		user_reward = NETRUN_ACCESS_ROOT
-	daemons += list(list("name" = user_name, "reward" = user_reward, "sequence" = list(), "done" = FALSE))
+	var/list/access = access_daemon()
+	access["sequence"] = list()
+	access["done"] = FALSE
+	daemons += list(access)
 	daemons += list(list("name" = "ROOT", "reward" = NETRUN_ACCESS_ROOT, "sequence" = list(), "done" = FALSE))
 	daemons += list(list("name" = "ЗАМЕСТИ СЛЕДЫ", "reward" = 0, "sequence" = list(), "done" = FALSE))
 
@@ -296,13 +310,18 @@
 
 /datum/netrun_breach/automatic/New(datum/netrun_console/console, target_kind, target_id, target_name, security)
 	..()
-	var/datum/netrun_daemon/autobreach/tool = SSnetrun.get_daemon("autobreach")
-	duration = tool.breach_duration(src.security, target_kind)
+	var/datum/netrun_daemon_context/context = new
+	context.target_kind = target_kind
+	context.target_security = src.security
+	context.automatic_duration = 0
+	console.apply_daemon_effects(context)
+	duration = context.automatic_duration
+	qdel(context)
 	deadline = world.time + duration
 	daemons = list(list("name" = "АВТОДОСТУП", "reward" = NETRUN_ACCESS_USER, "sequence" = list(), "done" = FALSE))
 
 /datum/netrun_breach/automatic/valid_target()
-	return console?.daemon_bonus("autobreach") && ..()
+	return console?.daemon_capability("autobreach") && ..()
 
 /datum/netrun_breach/automatic/pick_minigame()
 	return "automatic"

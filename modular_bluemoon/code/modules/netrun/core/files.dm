@@ -36,6 +36,7 @@
 		result.picture = picture.Copy()
 		result.picture.caption = picture.caption
 	result.techweb_ref = techweb_ref
+	result.data_receipt = data_receipt
 	return result
 
 /// Capability-bearing files can restrict transport at the storage boundary.
@@ -67,6 +68,7 @@
 	return FALSE
 
 /datum/netrun_file/Destroy()
+	data_receipt = null
 	QDEL_NULL(picture)
 	techweb_ref = null
 	return ..()
@@ -77,7 +79,7 @@
 		if(NETRUN_FILE_KEY)
 			preview = "[network_id]: [content]"
 		if(NETRUN_FILE_DAEMON)
-			var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(content)
+			var/datum/netrun_program/daemon/daemon = SSnetrun.get_daemon(content)
 			preview = daemon?.desc
 		if(NETRUN_FILE_PROGRAM)
 			var/datum/netrun_program/program = SSnetrun.get_program(content)
@@ -123,7 +125,7 @@
 
 /// Программы-демоны, влияющие на взлом
 /proc/netrun_daemon_file(id)
-	var/datum/netrun_daemon/daemon = SSnetrun.get_daemon(id)
+	var/datum/netrun_program/daemon/daemon = SSnetrun.get_daemon(id)
 	return daemon?.create_file()
 
 /// Шард данных: маленький переносной носитель

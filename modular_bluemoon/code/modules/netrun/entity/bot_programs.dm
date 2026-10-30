@@ -50,7 +50,7 @@
 		if(file && !bot.console.store_file(file))
 			qdel(file)
 	var/datum/netrun_network/network = bot.host_node?.network
-	if(carries_lan_key && network && !network.isolated)
+	if(carries_lan_key && !bot.is_network_visitor() && network && !network.isolated)
 		bot.console.store_file(new /datum/netrun_file("[network.id].key", NETRUN_FILE_KEY, network.passcode, 1, network.id))
 
 /datum/netrun_bot_program/proc/on_spawn(mob/camera/netrun_entity/bot/bot)
