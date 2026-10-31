@@ -54,6 +54,10 @@ SUBSYSTEM_DEF(netrun)
 	var/list/timed_nodes = list()
 	var/last_processed_nodes = 0
 	var/last_processed_consoles = 0
+	/// Shared with bounded task implementations only while this worker slice runs.
+	var/task_slice_budget_ms
+	var/task_slice_start_usage
+	var/task_slice_started_at
 	/// Topology rebuild instrumentation; timing only while adaptive profiling is armed.
 	var/topology_rebuilds = 0
 	var/topology_rebuild_ms = 0
@@ -145,7 +149,7 @@ SUBSYSTEM_DEF(netrun)
 		// The first event already admitted this node for this tick. Native signal
 		// bursts must not rebuild the scheduler key and promote the same task again.
 		if(due <= world.time && (isnull(previous_due) || previous_due != world.time))
-			get_task_scheduler().enqueue("node", node, NETRUN_TASK_NORMAL)
+			get_task_scheduler().ensure_queued("node", node, NETRUN_TASK_NORMAL)
 
 /// A route can be requested before the next node pass, including twice in one tick.
 /datum/controller/subsystem/netrun/proc/queue_availability(datum/component/netrun_node/node)
@@ -312,7 +316,7 @@ SUBSYSTEM_DEF(netrun)
 			node_interest_until -= node
 	for(var/datum/component/netrun_node/node as anything in dirty_nodes)
 		if(!QDELETED(node) && dirty_nodes[node] <= world.time)
-			scheduler.enqueue("node", node, NETRUN_TASK_NORMAL)
+			scheduler.ensure_queued("node", node, NETRUN_TASK_NORMAL)
 		else if(!QDELETED(node))
 			next_node_deadline = min(next_node_deadline, dirty_nodes[node])
 	for(var/datum/component/netrun_node/node as anything in poll_nodes)
@@ -320,7 +324,7 @@ SUBSYSTEM_DEF(netrun)
 			poll_nodes -= node
 			continue
 		if(poll_nodes[node] <= world.time)
-			scheduler.enqueue("node", node, NETRUN_TASK_BACKGROUND)
+			scheduler.ensure_queued("node", node, NETRUN_TASK_BACKGROUND)
 		else
 			next_node_deadline = min(next_node_deadline, poll_nodes[node])
 	for(var/datum/component/netrun_node/node as anything in timed_nodes)
@@ -382,6 +386,17 @@ SUBSYSTEM_DEF(netrun)
 /datum/controller/subsystem/netrun/proc/execute_task(datum/netrun_task/task)
 	return task.execute(src, get_execution_limits())
 
+/// Nested batches spend the remaining worker budget, rather than starting a new
+/// allowance near its deadline. A yielded callback cannot reuse an old tick's CPU.
+/// Direct calls outside the dispatcher still receive their own finite batch cap.
+/datum/controller/subsystem/netrun/proc/remaining_task_budget_ms(maximum_ms)
+	if(isnull(task_slice_budget_ms))
+		return maximum_ms
+	if(world.time != task_slice_started_at)
+		return 0
+	var/spent_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - task_slice_start_usage))
+	return max(0, min(maximum_ms, task_slice_budget_ms - spent_ms))
+
 /// Timers admit ready I/O to the existing MC worker, never execute it themselves.
 /datum/controller/subsystem/netrun/proc/wake_ready_delivery()
 	wait = world.tick_lag
@@ -409,6 +424,7 @@ SUBSYSTEM_DEF(netrun)
 
 /datum/controller/subsystem/netrun/fire(resumed = FALSE)
 	var/slice_start_usage = TICK_USAGE
+	var/slice_started_at = world.time
 	flush_node_publications()
 	if(!resumed && initialized)
 		get_machine_transport().prepare_network()
@@ -432,8 +448,11 @@ SUBSYSTEM_DEF(netrun)
 	// work; the item ceiling remains a separate hard stop for near-zero-cost tasks.
 	var/max_items = limits.max_per_pass
 	var/executed = 0
+	task_slice_start_usage = slice_start_usage
+	task_slice_started_at = slice_started_at
+	task_slice_budget_ms = budget_ms
 	while(executed < max_items)
-		if(executed && max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage)) >= budget_ms)
+		if(executed && (world.time != slice_started_at || max(0, TICK_DELTA_TO_MS(TICK_USAGE - slice_start_usage)) >= budget_ms))
 			break
 		var/datum/netrun_task/task = scheduler.take()
 		if(!task)
@@ -443,6 +462,7 @@ SUBSYSTEM_DEF(netrun)
 		var/datum/target = task.target()
 		execute_task(task)
 		if(QDELETED(scheduler))
+			task_slice_budget_ms = null
 			qdel(task)
 			return
 		var/cost_ms = max(0, TICK_DELTA_TO_MS(TICK_USAGE - task_started))
@@ -454,6 +474,7 @@ SUBSYSTEM_DEF(netrun)
 		scheduler.finish(task)
 		executed++
 		if(MC_TICK_CHECK)
+			task_slice_budget_ms = null
 			flush_node_publications()
 			refresh_delivery_interval()
 			scheduler.last_executed = executed
@@ -464,6 +485,7 @@ SUBSYSTEM_DEF(netrun)
 				scheduler.budget_overruns++
 			current_pass_cost_ms += scheduler.last_execution_ms
 			return
+	task_slice_budget_ms = null
 	flush_node_publications()
 	scheduler.last_executed = executed
 	scheduler.last_budget_ms = budget_ms

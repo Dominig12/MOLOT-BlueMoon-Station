@@ -555,3 +555,27 @@
 	TEST_ASSERT(isnull(worker.node_interest_until[unrelated]), "A network hop or unrelated registered device must not become hot")
 	worker.untrack_node(second)
 	TEST_ASSERT(isnull(worker.node_interest_until[second]), "Node teardown must release its interest lease")
+
+/// A backlog must not amplify one overdue node into new producer requests every population.
+/datum/unit_test/netrun_refresh_pending_node_admission/Run()
+	var/obj/item/host = allocate(/obj/item)
+	var/datum/component/netrun_node/node = host.AddComponent(/datum/component/netrun_node, NETRUN_NODE_TERMINAL)
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
+	worker.dirty_nodes[node] = world.time - 1 SECONDS
+	worker.poll_nodes[node] = world.time - 1 SECONDS
+	worker.timed_nodes[node] = world.time - 1 SECONDS
+	for(var/population in 1 to 64)
+		worker.populate_node_tasks()
+	var/datum/netrun_task_scheduler/scheduler = worker.get_task_scheduler()
+	var/datum/netrun_task_profile/profile = scheduler.profiles["node"]
+	TEST_ASSERT_EQUAL(scheduler.pending(), 1, "Dirty, poll and timer demand must share one pending reconciliation")
+	TEST_ASSERT_EQUAL(profile.requests, 1, "An overdue backlog must not repeatedly enter scheduler admission")
+	TEST_ASSERT_EQUAL(profile.created, 1, "Repeated populations must allocate one node task")
+	TEST_ASSERT(node.urgent_update, "Timer expiry must still bypass cold-node throttling")
+	var/datum/netrun_task/task = scheduler.by_key["node:[REF(node)]"]
+	TEST_ASSERT_EQUAL(task.priority, NETRUN_TASK_NORMAL, "A background poll cannot downgrade dirty/timer work")
+	scheduler.cancel("node", node)
+	worker.populate_node_tasks()
+	TEST_ASSERT_EQUAL(profile.created, 2, "Cancellation cannot strand still-overdue native state")
+	worker.untrack_node(node)
+	TEST_ASSERT_EQUAL(scheduler.pending(), 0, "Node teardown must release the pending state and all deadlines")

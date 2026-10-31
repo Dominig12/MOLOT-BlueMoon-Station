@@ -15,6 +15,7 @@
 	/// An owned registry snapshot keeps removals between slices from skipping peers.
 	var/list/candidates
 	var/candidate_cursor = 1
+	var/target_limit = 0
 	var/communications = FALSE
 	var/list/resolved_targets
 	var/target_cursor = 1
@@ -64,6 +65,9 @@
 		for(var/index in 1 to length(queued))
 			var/datum/netrun_machine_message/previous = queued[index]
 			if(previous.coalescing_key() == key)
+				if(!message.can_replace(previous))
+					qdel(message)
+					return TRUE
 				queued[index] = message
 				qdel(previous)
 				return TRUE
@@ -95,6 +99,8 @@
 /datum/netrun_machine_resolution/deliver()
 	set waitfor = FALSE
 	var/slice_started = TICK_USAGE
+	var/slice_time = world.time
+	var/budget_ms = SSnetrun.remaining_task_budget_ms(SSnetrun.get_execution_limits().min_budget_ms)
 	cancel_delivery()
 	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
 	if(!transport.is_ready())
@@ -114,9 +120,9 @@
 		candidates = bucket ? bucket.Copy() : list()
 		resolved_targets = list()
 		communications = netrun_communication_policy(source, destination_id)
+		target_limit = source.discovery_target_limit(destination_id)
 	if(candidates)
 		var/work = 0
-		var/budget_ms = SSnetrun.get_execution_limits().min_budget_ms
 		while(candidate_cursor <= length(candidates) && work++ < 8)
 			var/datum/netrun_machine_service/candidate = candidates[candidate_cursor++]
 			var/eligible = transport.discoverable(source, candidate, recipient_tag, communications)
@@ -125,7 +131,10 @@
 				return FALSE
 			if(eligible)
 				resolved_targets += candidate
-			if(TICK_DELTA_TO_MS(TICK_USAGE - slice_started) >= budget_ms)
+				if(target_limit > 0 && length(resolved_targets) >= target_limit)
+					candidate_cursor = length(candidates) + 1
+					break
+			if(world.time != slice_time || TICK_DELTA_TO_MS(TICK_USAGE - slice_started) >= budget_ms)
 				break
 		if(candidate_cursor <= length(candidates))
 			queue_delivery()
@@ -134,13 +143,15 @@
 		resolved_targets = source.select_targets(destination_id, resolved_targets)
 		if(QDELETED(src))
 			return FALSE
-		if(TICK_DELTA_TO_MS(TICK_USAGE - slice_started) >= budget_ms)
+		if(world.time != slice_time || TICK_DELTA_TO_MS(TICK_USAGE - slice_started) >= budget_ms)
 			queue_delivery()
 			return FALSE
 	// Bound both command bursts and broadcast fanout. Originals remain owned and
 	// counted until consumed; one packet admission is an indivisible routing step.
-	// Return to the worker between admissions so it can enforce its actual budget.
-	if(length(queued))
+	// Cheap local fanout may share a slice, but never outlive lookup's remaining
+	// CPU allowance or a native callback yielding into another world tick.
+	var/work = 0
+	while(length(queued) && work++ < 8)
 		if(QDELETED(source))
 			failure_reason = "Источник службы удалён"
 			qdel(src)
@@ -148,7 +159,10 @@
 		var/datum/netrun_machine_message/message = queued[1]
 		if(target_cursor <= length(resolved_targets))
 			var/datum/netrun_machine_service/target = resolved_targets[target_cursor++]
-			if(!QDELETED(target) && target.matches(source, recipient_tag))
+			var/matches = !QDELETED(target) && target.matches(source, recipient_tag)
+			if(QDELETED(src))
+				return FALSE
+			if(matches && !QDELETED(target))
 				if(target_cursor > length(resolved_targets))
 					// Transfer the owned original to the last recipient. Earlier
 					// recipients retain independent copies; a unicast needs none.
@@ -172,6 +186,8 @@
 			message_attempted = FALSE
 		if(QDELETED(src))
 			return FALSE
+		if(world.time != slice_time || TICK_DELTA_TO_MS(TICK_USAGE - slice_started) >= budget_ms)
+			break
 	if(length(queued))
 		queue_delivery()
 		return FALSE

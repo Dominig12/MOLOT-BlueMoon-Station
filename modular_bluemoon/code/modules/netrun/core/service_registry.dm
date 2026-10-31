@@ -130,6 +130,11 @@
 /datum/netrun_machine_service/proc/select_targets(destination_id, list/targets)
 	return targets
 
+/// Zero preserves broadcast enumeration. An adapter may stop after this many
+/// eligible peers only when later candidates cannot change its selection policy.
+/datum/netrun_machine_service/proc/discovery_target_limit(destination_id)
+	return 0
+
 /datum/netrun_machine_service/proc/send_to(datum/netrun_machine_service/target, datum/netrun_machine_message/message)
 	return SSnetrun.get_machine_transport().dispatch(src, target, message)
 
@@ -167,6 +172,9 @@
 /datum/netrun_machine_transport
 	var/list/services = list()
 	var/list/ready_services = list()
+	/// Closed readiness barriers park services without runnable polling tasks.
+	var/list/pending_ready_services = list()
+	var/ready_queued = FALSE
 	var/list/by_id = list()
 	var/list/by_tag = list()
 	var/list/waiting_resolutions = list()
@@ -245,6 +253,8 @@
 	// reopened barrier and coalesces one bounded wake, including during a live round.
 	if(bootstrap_complete && length(waiting_resolutions))
 		wake_resolutions()
+	if(bootstrap_complete)
+		wake_ready_services()
 	var/pregame = SSticker.current_state < GAME_STATE_PLAYING
 	if(bootstrap_complete && !pregame)
 		return
@@ -255,7 +265,9 @@
 /// One topology preparation slice or one retained infrastructure tree per task.
 /datum/netrun_machine_transport/proc/advance_bootstrap(datum/netrun_execution_limits/limits)
 	if(preparing || Master.initializing_subsystem || SSatoms.initialized != INITIALIZATION_INNEW_REGULAR)
-		return FALSE
+		// prepare_network() observes the reopened barrier. Retain partial startup
+		// state here without leaving a runnable continuation polling map loading.
+		return TRUE
 	preparing = TRUE
 	if(!bootstrap_complete)
 		SSnetrun.spawn_roundstart_servers()
@@ -282,7 +294,6 @@
 		bootstrap_services = null
 		bootstrap_complete = TRUE
 		bootstrap_at = world.time
-		SSnetrun.get_task_scheduler().enqueue("service_ready", src, NETRUN_TASK_BACKGROUND)
 		wake_resolutions()
 	if(prewarm_revision != graph.revision || prewarm_infrastructure != graph.infrastructure_revision)
 		prewarm_roots.Cut()
@@ -308,7 +319,25 @@
 			path_tree(graph, root)
 			prewarm_steps++
 	preparing = FALSE
+	wake_ready_services()
 	return !length(prewarm_roots)
+
+/// Registration and temporarily suspended domain work reuse the same bounded
+/// startup wave. Weak entries cannot retain a removed host while the barrier rests.
+/datum/netrun_machine_transport/proc/defer_ready_service(datum/netrun_machine_service/service)
+	if(QDELETED(service))
+		return
+	var/key = service.service_key()
+	if(services[key] != service)
+		return
+	pending_ready_services[key] = WEAKREF(service)
+	wake_ready_services()
+
+/datum/netrun_machine_transport/proc/wake_ready_services()
+	if(ready_queued || !is_ready() || (!ready_service_keys && !length(pending_ready_services)))
+		return
+	ready_queued = TRUE
+	SSnetrun.get_task_scheduler().enqueue("service_ready", src, NETRUN_TASK_BACKGROUND)
 
 /datum/netrun_task/network_bootstrap
 	parent_type = /datum/netrun_task/continuation
@@ -325,21 +354,31 @@
 /datum/netrun_task/service_ready/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
 	var/datum/netrun_machine_transport/transport = target()
 	if(!transport.is_ready())
-		return FALSE
+		// Retain the cursor, but leave no continuation polling a closed barrier.
+		transport.ready_queued = FALSE
+		return TRUE
 	if(!transport.ready_service_keys)
-		transport.ready_service_keys = transport.ready_services.Copy()
+		transport.ready_service_keys = transport.pending_ready_services
+		transport.pending_ready_services = list()
+		transport.ready_service_cursor = 1
 	var/stop = min(length(transport.ready_service_keys), transport.ready_service_cursor + 31)
 	var/started = TICK_USAGE_REAL
 	while(transport.ready_service_cursor <= stop)
 		var/key = transport.ready_service_keys[transport.ready_service_cursor++]
-		var/datum/netrun_machine_service/service = transport.services[key]
-		if(!QDELETED(service))
+		var/datum/weakref/reference = transport.ready_service_keys[key]
+		var/datum/netrun_machine_service/service = reference?.resolve()
+		if(!QDELETED(service) && transport.services[key] == service)
 			service.network_ready()
+		if(!transport.is_ready())
+			transport.ready_queued = FALSE
+			return TRUE
 		if(TICK_DELTA_TO_MS(TICK_USAGE_REAL - started) >= 2 || TICK_USAGE > Master.current_ticklimit)
 			break
 	if(transport.ready_service_cursor <= length(transport.ready_service_keys))
 		return FALSE
 	transport.ready_service_keys = null
+	transport.ready_queued = FALSE
+	transport.wake_ready_services()
 	return TRUE
 
 /// Services added by a later map/template load need the same readiness contract.
@@ -349,8 +388,12 @@
 
 /datum/netrun_task/service_initialize/advance(datum/controller/subsystem/netrun/worker, datum/netrun_execution_limits/limits)
 	var/datum/netrun_machine_service/service = target()
-	if(!worker.get_machine_transport().is_ready())
-		return FALSE
+	var/datum/netrun_machine_transport/transport = worker.get_machine_transport()
+	if(QDELETED(service) || transport.services[service.service_key()] != service)
+		return TRUE
+	if(!transport.is_ready())
+		transport.defer_ready_service(service)
+		return TRUE
 	service.network_ready()
 	return TRUE
 
@@ -431,6 +474,8 @@
 	wake_again = FALSE
 	bootstrap_services = null
 	ready_service_keys = null
+	pending_ready_services.Cut()
+	ready_queued = FALSE
 	ready_services.Cut()
 	QDEL_LIST(packets)
 	replaceable_packets.Cut()
@@ -441,8 +486,10 @@
 	services[service.service_key()] = service
 	if(service.start_when_ready)
 		ready_services[service.service_key()] = service
-		if(bootstrap_complete)
+		if(is_ready())
 			SSnetrun.get_task_scheduler().enqueue("service_initialize", service, NETRUN_TASK_BACKGROUND)
+		else
+			defer_ready_service(service)
 	var/list/bucket = by_id[service.service_id]
 	if(!bucket)
 		bucket = list()
@@ -475,8 +522,15 @@
 	service_revisions[service.service_id] = (service_revisions[service.service_id] || 0) + 1
 
 /datum/netrun_machine_transport/proc/unregister(datum/netrun_machine_service/service)
-	ready_services -= service.service_key()
-	services -= service.service_key()
+	var/key = service.service_key()
+	if(ready_services[key] == service)
+		ready_services -= key
+	// resolve() rejects a qdel-marked service during its own Destroy(). Compare
+	// its weakref identity so teardown can release only this service's demand.
+	if(IS_WEAKREF_OF(service, pending_ready_services[key]))
+		pending_ready_services -= key
+	if(services[key] == service)
+		services -= key
 	var/list/bucket = by_id[service.service_id]
 	if(bucket)
 		bucket -= service
@@ -515,7 +569,10 @@
 	if(QDELETED(source))
 		return
 	var/list/bucket = source.discovery_candidates(destination_id, recipient_tag)
+	var/target_limit = source.discovery_target_limit(destination_id)
 	for(var/datum/netrun_machine_service/target as anything in bucket)
 		if(discoverable(source, target, recipient_tag, communications))
 			. += target
+			if(target_limit > 0 && length(.) >= target_limit)
+				break
 

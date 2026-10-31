@@ -145,6 +145,7 @@
 /datum/netrun_machine_service/transport_fixture
 	var/candidate_lookups = 0
 	var/tag_override
+	var/target_limit = 0
 
 /datum/netrun_machine_service/transport_fixture/discovery_candidates(destination_id, recipient_tag)
 	candidate_lookups++
@@ -152,6 +153,150 @@
 
 /datum/netrun_machine_service/transport_fixture/service_tag()
 	return tag_override || ..()
+
+/datum/netrun_machine_service/transport_fixture/discovery_target_limit(destination_id)
+	return target_limit
+
+/// First-eligible discovery skips an unavailable peer, then stops without
+/// routing or matching the rest of the registry. Ordinary services still fan out.
+/datum/unit_test/netrun_delivery_discovery_target_limit/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/tag = "unicast-[REF(scene)]"
+	scene.target.tag_override = tag
+	transport.index_service(scene.target)
+	var/list/peers = list()
+	for(var/index in 1 to 12)
+		var/obj/machinery/netrun_server/transport_fixture/host = scene.machine(/obj/machinery/netrun_server/transport_fixture, scene.target_spot)
+		var/datum/netrun_machine_service/transport_fixture/peer = host.get_netrun_machine_service("transport.fixture")
+		peer.tag_override = tag
+		transport.index_service(peer)
+		peers += peer
+	scene.receiver.set_machine_stat(BROKEN)
+	scene.source.target_limit = 1
+	var/list/targets = scene.source.resolve("transport.fixture", tag)
+	TEST_ASSERT_EQUAL(length(targets), 1, "Unicast discovery must select one live peer after an unavailable first entry")
+	TEST_ASSERT_EQUAL(targets[1], peers[1], "Limiting discovery must preserve the existing first-eligible selection order")
+	for(var/index in 2 to length(peers))
+		var/datum/netrun_machine_service/transport_fixture/peer = peers[index]
+		TEST_ASSERT_EQUAL(peer.match_checks, 0, "Synchronous unicast must not inspect later eligible peers")
+	scene.target.match_checks = 0
+	for(var/datum/netrun_machine_service/transport_fixture/peer as anything in peers)
+		peer.match_checks = 0
+	var/list/outcomes = list()
+	scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list(), outcomes), tag)
+	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|[tag]"]
+	for(var/pass in 1 to 32)
+		if(QDELETED(query))
+			break
+		query.deliver()
+	TEST_ASSERT(QDELETED(query), "A limited lookup must finish without scanning the remaining registry")
+	for(var/index in 2 to length(peers))
+		var/datum/netrun_machine_service/transport_fixture/peer = peers[index]
+		TEST_ASSERT_EQUAL(peer.match_checks, 0, "Asynchronous unicast must share the synchronous early-stop policy")
+	TEST_ASSERT(netrun_wait_delivery(outcomes), "The first eligible recipient must receive the original unicast message")
+	TEST_ASSERT_EQUAL(outcomes["delivered"], 1, "A unicast operation must execute only once")
+	scene.source.target_limit = 0
+	targets = scene.source.resolve("transport.fixture", tag)
+	TEST_ASSERT_EQUAL(length(targets), length(peers), "The default zero limit must preserve full broadcast discovery")
+
+/// A later map load closes the same barrier as startup. Neither readiness task
+/// may busy-wait; reopening must deliver the parked callback exactly once.
+/datum/unit_test/netrun_delivery_readiness_parking/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	SSatoms.map_loader_begin()
+	var/datum/netrun_machine_service/readiness_fixture/service = allocate(/datum/netrun_machine_service/readiness_fixture, scene.source.node)
+	var/key = service.service_key()
+	var/datum/weakref/reference = transport.pending_ready_services[key]
+	var/parked = reference?.resolve() == service
+	var/datum/netrun_task/service_initialize/initialize = allocate(/datum/netrun_task/service_initialize, "service_initialize", "parked-initialize", NETRUN_TASK_BACKGROUND, service)
+	var/initialize_finished = initialize.advance(SSnetrun)
+	var/datum/netrun_task/service_ready/ready = allocate(/datum/netrun_task/service_ready, "service_ready", "parked-ready", NETRUN_TASK_BACKGROUND, transport)
+	var/ready_finished = ready.advance(SSnetrun)
+	var/bootstrap_finished = transport.advance_bootstrap(SSnetrun.get_execution_limits())
+	var/calls_while_closed = service.ready_calls
+	var/queued_while_closed = !!SSnetrun.task_scheduler.by_key["service_initialize:[REF(service)]"]
+	SSatoms.map_loader_stop()
+	transport.prepare_network()
+	TEST_ASSERT(parked && initialize_finished && ready_finished && bootstrap_finished, "A closed barrier must retain readiness demand without runnable continuations")
+	TEST_ASSERT(!queued_while_closed && !calls_while_closed, "No service callback or per-service polling task may run before readiness")
+	var/deadline = world.time + 5 SECONDS
+	while(!service.ready_calls && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(service.ready_calls, 1, "Reopening the barrier must resume the parked service exactly once")
+	TEST_ASSERT_NULL(transport.pending_ready_services[key], "A completed readiness wave must release its pending entry")
+	qdel(service)
+	TEST_ASSERT_NULL(transport.pending_ready_services[key], "Deleted services must never survive in the pending readiness index")
+
+/// A delayed task from a replaced service cannot overwrite its successor's
+/// readiness demand or remove the successor's registry entries during teardown.
+/datum/unit_test/netrun_delivery_readiness_replacement/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	SSatoms.map_loader_begin()
+	var/datum/netrun_machine_service/readiness_fixture/retired = allocate(/datum/netrun_machine_service/readiness_fixture, scene.source.node)
+	var/datum/netrun_machine_service/readiness_fixture/replacement = allocate(/datum/netrun_machine_service/readiness_fixture, scene.source.node)
+	var/key = replacement.service_key()
+	transport.defer_ready_service(retired)
+	var/datum/netrun_task/service_initialize/initialize = allocate(/datum/netrun_task/service_initialize, "service_initialize", "retired-initialize", NETRUN_TASK_BACKGROUND, retired)
+	var/finished_closed = initialize.advance(SSnetrun)
+	var/datum/weakref/reference = transport.pending_ready_services[key]
+	var/retained_replacement = reference?.resolve() == replacement
+	SSatoms.map_loader_stop()
+	var/finished_open = initialize.advance(SSnetrun)
+	var/retired_calls = retired.ready_calls
+	qdel(retired)
+	reference = transport.pending_ready_services[key]
+	var/registered_replacement = transport.services[key] == replacement && transport.ready_services[key] == replacement && reference?.resolve() == replacement
+	transport.prepare_network()
+	TEST_ASSERT(finished_closed && finished_open && !retired_calls, "Retired readiness tasks must finish without executing or replacing pending startup")
+	TEST_ASSERT(retained_replacement && registered_replacement, "Old-service deferral and deletion must preserve all replacement registry entries")
+	TEST_ASSERT(!(retired in transport.by_id["transport.readiness"]), "Old-service teardown must still release its own discovery bucket membership")
+	var/deadline = world.time + 5 SECONDS
+	while(!replacement.ready_calls && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(replacement.ready_calls, 1, "The surviving replacement must receive its parked readiness callback exactly once")
+	qdel(replacement)
+	TEST_ASSERT_NULL(transport.services[key], "Final teardown must release the actual current registry owner")
+	TEST_ASSERT_NULL(transport.ready_services[key], "Final teardown must release the actual current readiness owner")
+	TEST_ASSERT_NULL(transport.pending_ready_services[key], "Final teardown must release the actual current pending owner")
+
+/// Exhausted shared CPU still permits one atomic dispatch to make progress,
+/// but cannot turn a warm multi-recipient result into an unbounded fanout.
+/datum/unit_test/netrun_delivery_discovery_exhausted_budget/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	var/tag = "bounded-fanout-[REF(scene)]"
+	scene.target.tag_override = tag
+	transport.index_service(scene.target)
+	for(var/index in 1 to 9)
+		var/obj/machinery/netrun_server/transport_fixture/host = scene.machine(/obj/machinery/netrun_server/transport_fixture, scene.target_spot)
+		var/datum/netrun_machine_service/transport_fixture/peer = host.get_netrun_machine_service("transport.fixture")
+		peer.tag_override = tag
+		transport.index_service(peer)
+	scene.source.send("transport.fixture", new /datum/netrun_machine_message/transport_fixture(list(), list()), tag)
+	var/datum/netrun_machine_resolution/query = scene.source.resolutions["transport.fixture|[tag]"]
+	for(var/pass in 1 to 32)
+		if(query.completed && !query.candidates)
+			break
+		query.deliver()
+	TEST_ASSERT(!QDELETED(query) && !query.candidates && length(query.resolved_targets) == 10, "The regression requires a completed ten-peer lookup with pending fanout")
+	var/saved_budget = SSnetrun.task_slice_budget_ms
+	var/saved_start = SSnetrun.task_slice_start_usage
+	var/saved_time = SSnetrun.task_slice_started_at
+	SSnetrun.task_slice_budget_ms = 0
+	SSnetrun.task_slice_start_usage = TICK_USAGE
+	SSnetrun.task_slice_started_at = world.time
+	var/before = length(transport.packets)
+	query.deliver()
+	var/admitted = length(transport.packets) - before
+	var/remains_queued = !QDELETED(query) && query.delivery_queued
+	SSnetrun.task_slice_budget_ms = saved_budget
+	SSnetrun.task_slice_start_usage = saved_start
+	SSnetrun.task_slice_started_at = saved_time
+	TEST_ASSERT_EQUAL(admitted, 1, "An exhausted pass may admit only one indivisible packet before yielding")
+	TEST_ASSERT(remains_queued, "The remaining broadcast branches must retain a runnable continuation")
 
 /// Command bursts share one lookup and yield admission before consuming the batch.
 /datum/unit_test/netrun_delivery_discovery_burst_slices/Run()
@@ -163,7 +308,7 @@
 	TEST_ASSERT_EQUAL(scene.source.candidate_lookups, 0, "Sending a burst must not resolve synchronously")
 	query.deliver()
 	TEST_ASSERT(!QDELETED(query) && length(query.queued), "The first slice must retain the undispatched burst")
-	TEST_ASSERT(scene.pending_packets() <= 1, "One discovery slice may admit at most one routed packet")
+	TEST_ASSERT(scene.pending_packets() <= 8, "One discovery slice may admit at most eight routed packets within its CPU allowance")
 	TEST_ASSERT_EQUAL(scene.source.candidate_lookups, 1, "One burst must use one recipient lookup")
 	var/deadline = world.time + 5 SECONDS
 	while(outcomes["delivered"] != 17 && world.time < deadline)
@@ -204,7 +349,7 @@
 			break
 		var/before = length(transport.packets)
 		query.deliver()
-		TEST_ASSERT(length(transport.packets) - before <= 1, "Every continuation must return to the worker between routed admissions")
+		TEST_ASSERT(length(transport.packets) - before <= 8, "Every continuation must retain a finite routed-admission ceiling")
 	TEST_ASSERT(QDELETED(query), "A finite broadcast must finish enumeration and fanout")
 	TEST_ASSERT_EQUAL(scene.source.candidate_lookups, 1, "Registry mutations must not restart the retained enumeration")
 	var/deadline = world.time + 5 SECONDS

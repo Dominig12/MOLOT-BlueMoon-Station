@@ -53,6 +53,11 @@
 /datum/netrun_machine_message/proc/coalescing_key()
 	return null
 
+/// Replaceable state may carry a domain revision. A delayed older producer must
+/// not discard newer state already waiting in discovery or on the wire.
+/datum/netrun_machine_message/proc/can_replace(datum/netrun_machine_message/previous)
+	return TRUE
+
 /// Replaceable telemetry yields to ordinary traffic. An actor reference is not
 /// evidence of explicit input: radio speech and automated notices also have one.
 /datum/netrun_machine_message/proc/delivery_priority()
@@ -64,11 +69,15 @@
 	var/contract_key = message.coalescing_key()
 	var/key
 	if(!isnull(contract_key) && !QDELETED(source) && !QDELETED(target))
-		// A replaced component/tag creates a distinct delivery context. Never place
-		// a new binding's state into a packet admitted for an old recipient tag.
-		key = "[source.service_key()]|[source.resolve_node()?.address]|[target.service_key()]|[target.service_tag()]|[contract_key]"
+		// Service identity and binding both belong to the delivery context. A new
+		// service on the same host must not reuse a packet addressed to its predecessor.
+		key = "[REF(source)]|[source.resolve_node()?.address]|[REF(target)]|[target.service_tag()]|[contract_key]"
 		var/datum/netrun_machine_packet/data/previous = replaceable_packets[key]
 		if(!QDELETED(previous) && !previous.finishing)
+			if(!message.can_replace(previous.message))
+				qdel(message)
+				coalesced_packets++
+				return TRUE
 			message.source = source
 			message.recipient = target
 			message.correlation_id = previous.operation.operation_id

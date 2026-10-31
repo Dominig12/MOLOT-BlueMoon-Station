@@ -234,6 +234,121 @@
 	TEST_ASSERT(transport.borrowed_path(scene.source, targets[length(targets)]), "The newest pair must remain usable")
 	TEST_ASSERT_EQUAL(transport.path_builds, paths, "The most recently used pair must still be cached")
 
+/// Count cache maintenance rather than relying on wall-clock benchmark thresholds.
+/datum/netrun_machine_transport/netrun_cache_probe
+	var/forgets = 0
+	var/unlinks = 0
+	var/touches = 0
+	var/appends = 0
+
+/datum/netrun_machine_transport/netrun_cache_probe/forget_pair_route(key)
+	forgets++
+	return ..()
+
+/datum/netrun_machine_transport/netrun_cache_probe/unlink_pair_route(key)
+	unlinks++
+	return ..()
+
+/datum/netrun_machine_transport/netrun_cache_probe/touch_pair_route(key)
+	touches++
+	return ..()
+
+/datum/netrun_machine_transport/netrun_cache_probe/append_pair_route(key)
+	appends++
+	return ..()
+
+/// A cold working set beyond capacity must unlink only the entries actually evicted.
+/datum/unit_test/netrun_routing_cache_admission_work/Run()
+	var/datum/netrun_machine_transport/netrun_cache_probe/transport = allocate(/datum/netrun_machine_transport/netrun_cache_probe)
+	transport.route_cache_limit = 4
+	for(var/index in 1 to 32)
+		var/datum/netrun_machine_path/path = new
+		transport.store_pair_route("route-[index]", path)
+	TEST_ASSERT_EQUAL(length(transport.pair_routes), 4, "Cold traffic must retain only the configured working set")
+	TEST_ASSERT_EQUAL(transport.forgets, 28, "New-key admission must forget only real capacity victims")
+	TEST_ASSERT_EQUAL(transport.unlinks, 28, "A new key must never unlink an absent LRU entry")
+	TEST_ASSERT_EQUAL(transport.touches, 0, "New-key admission must append directly instead of performing a cache hit")
+	TEST_ASSERT_EQUAL(transport.appends, 32, "Each cold path must be appended exactly once")
+	TEST_ASSERT_EQUAL(transport.pair_oldest, "route-29", "Cold admission must preserve FIFO order before any hits")
+	TEST_ASSERT_EQUAL(transport.pair_newest, "route-32", "The most recent admission must be the MRU entry")
+	var/serial = transport.pair_serial
+	for(var/repeat in 1 to 16)
+		transport.touch_pair_route("route-32")
+	TEST_ASSERT_EQUAL(transport.unlinks, 28, "Repeated MRU hits must not mutate the LRU chain")
+	TEST_ASSERT_EQUAL(transport.appends, 32, "An MRU hit must not append an already-linked entry")
+	TEST_ASSERT_EQUAL(transport.pair_serial, serial + 16, "MRU hits must still advance the existing usage diagnostic")
+	transport.forget_pair_route("absent")
+	TEST_ASSERT_EQUAL(transport.unlinks, 28, "Forgetting a missing key must not perform link maintenance")
+	TEST_ASSERT_EQUAL(length(transport.pair_routes), 4, "A missing-key forget must not disturb retained paths")
+
+/// Replacement owns one value while ordinary hits still determine the exact LRU victim.
+/datum/unit_test/netrun_routing_cache_replacement_order/Run()
+	var/datum/netrun_machine_transport/netrun_cache_probe/transport = allocate(/datum/netrun_machine_transport/netrun_cache_probe)
+	transport.route_cache_limit = 3
+	var/datum/netrun_machine_path/first = new
+	var/datum/netrun_machine_path/second = new
+	var/datum/netrun_machine_path/third = new
+	transport.store_pair_route("first", first)
+	transport.store_pair_route("second", second)
+	transport.store_pair_route("third", third)
+	var/datum/netrun_machine_path/replacement = new
+	transport.store_pair_route("second", replacement)
+	TEST_ASSERT(QDELETED(second), "Replacing a cached route must release its previous owned value")
+	TEST_ASSERT(!QDELETED(first) && !QDELETED(third), "Replacement at capacity must not evict another pair")
+	TEST_ASSERT_EQUAL(length(transport.pair_routes), 3, "Replacement must preserve cache cardinality")
+	TEST_ASSERT_EQUAL(transport.pair_routes["second"], replacement, "The replacement must become the cached value")
+	TEST_ASSERT_EQUAL(transport.forgets, 0, "Replacement must not remove and reinsert its dictionary key")
+	TEST_ASSERT_EQUAL(transport.unlinks, 1, "Replacing an interior entry needs only one real LRU move")
+	TEST_ASSERT_EQUAL(transport.pair_oldest, "first", "Replacement must retain unrelated entries' relative order")
+	TEST_ASSERT_EQUAL(transport.pair_newest, "second", "A replaced route must become MRU")
+	transport.touch_pair_route("first")
+	var/datum/netrun_machine_path/fourth = new
+	transport.store_pair_route("fourth", fourth)
+	TEST_ASSERT(QDELETED(third), "Admission must evict the true LRU after replacement and a cache hit")
+	TEST_ASSERT(!QDELETED(first) && !QDELETED(replacement), "Touched and replaced paths must survive the next eviction")
+	TEST_ASSERT_EQUAL(transport.pair_oldest, "second", "Eviction must leave the remaining chain in access order")
+	var/unlinks = transport.unlinks
+	var/datum/netrun_machine_path/newest = new
+	transport.store_pair_route("fourth", newest)
+	TEST_ASSERT(QDELETED(fourth), "An MRU replacement must release its old value too")
+	TEST_ASSERT_EQUAL(transport.unlinks, unlinks, "An MRU replacement must not unlink or relink its key")
+	TEST_ASSERT_EQUAL(transport.pair_newest, "fourth", "An MRU replacement must retain its position")
+
+/// Live limit reductions must also apply to replacement, and clearing must release all links.
+/datum/unit_test/netrun_routing_cache_replacement_shrink/Run()
+	var/datum/netrun_machine_transport/netrun_cache_probe/transport = allocate(/datum/netrun_machine_transport/netrun_cache_probe)
+	transport.route_cache_limit = 4
+	var/datum/netrun_machine_path/first = new
+	var/datum/netrun_machine_path/second = new
+	var/datum/netrun_machine_path/third = new
+	var/datum/netrun_machine_path/fourth = new
+	transport.store_pair_route("first", first)
+	transport.store_pair_route("second", second)
+	transport.store_pair_route("third", third)
+	transport.store_pair_route("fourth", fourth)
+	transport.route_cache_limit = 2
+	var/datum/netrun_machine_path/replacement = new
+	transport.store_pair_route("second", replacement)
+	TEST_ASSERT(QDELETED(first) && QDELETED(second) && QDELETED(third), "Shrinking on replacement must release the old value and the oldest other entries")
+	TEST_ASSERT(!QDELETED(fourth) && !QDELETED(replacement), "Shrinking must retain the replacement and the most recent other pair")
+	TEST_ASSERT_EQUAL(length(transport.pair_routes), 2, "A replacement must enforce a lowered live cache limit")
+	TEST_ASSERT_EQUAL(transport.pair_oldest, "fourth", "The surviving older entry must head the shortened chain")
+	TEST_ASSERT_EQUAL(transport.pair_newest, "second", "The replacement must end the shortened chain")
+	transport.route_cache_limit = 1
+	var/datum/netrun_machine_path/only = new
+	transport.store_pair_route("only", only)
+	TEST_ASSERT(QDELETED(fourth) && QDELETED(replacement), "Shrinking on insertion must release every excess owned path")
+	TEST_ASSERT_EQUAL(length(transport.pair_routes), 1, "An insertion must enforce a lowered live cache limit too")
+	TEST_ASSERT_EQUAL(transport.pair_oldest, "only", "A singleton must be both ends of the LRU")
+	TEST_ASSERT_EQUAL(transport.pair_newest, "only", "A singleton must remain reachable from the MRU end")
+	TEST_ASSERT_NULL(transport.pair_previous["only"], "A singleton must not retain an evicted predecessor")
+	TEST_ASSERT_NULL(transport.pair_next["only"], "A singleton must not retain an evicted successor")
+	transport.clear_pair_routes()
+	TEST_ASSERT(QDELETED(only), "Clearing the cache must release its last owned path")
+	TEST_ASSERT_EQUAL(length(transport.pair_routes) + length(transport.pair_previous) + length(transport.pair_next) + length(transport.pair_used), 0, "Clearing must release all route and LRU metadata")
+	TEST_ASSERT_NULL(transport.pair_oldest, "Clearing must reset the LRU head")
+	TEST_ASSERT_NULL(transport.pair_newest, "Clearing must reset the LRU tail")
+
 /// An offline destination remains a visible leaf; an offline source cannot expose onward routes.
 /datum/unit_test/netrun_routing_cache_ui_availability/Run()
 	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene, run_loc_floor_bottom_left)

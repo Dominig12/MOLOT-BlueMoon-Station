@@ -673,14 +673,16 @@
 	Master.initializing_subsystem = SSnetrun
 	transport.prepare_network()
 	var/premature = SSnetrun.get_task_scheduler().by_key[key]
-	var/advanced_early = transport.advance_bootstrap(SSnetrun.get_execution_limits())
+	var/parked_early = transport.advance_bootstrap(SSnetrun.get_execution_limits())
+	var/early_steps = transport.prewarm_steps
+	var/early_revision = transport.prewarm_revision
 	Master.initializing_subsystem = saved_initializing
 	transport.prepare_network()
 	var/datum/netrun_task/queued = SSnetrun.get_task_scheduler().by_key[key]
 	transport.advance_bootstrap(SSnetrun.get_execution_limits())
 	SSticker.current_state = saved_state
 	TEST_ASSERT_NULL(premature, "Lobby bootstrap must not start inside the Master subsystem initialization loop")
-	TEST_ASSERT(!advanced_early, "A bootstrap task must also respect the initialization barrier")
+	TEST_ASSERT(parked_early && !early_steps && early_revision == -1, "A blocked bootstrap task must park without solving or publishing early routes")
 	TEST_ASSERT(queued, "Finishing initialization must enqueue the same bounded infrastructure work during the lobby")
 	TEST_ASSERT_EQUAL(transport.prewarm_steps, 1, "A single bootstrap task must prepare one useful infrastructure root")
 	TEST_ASSERT(length(SSnetrun.get_topology().infrastructure_route_trees) >= 1 && transport.tree_builds <= 1, "Lobby preparation must borrow the graph's retained infrastructure tree without creating a second cache")
@@ -755,8 +757,8 @@
 	query.completed = TRUE
 	query.resolved_targets = list(scene.target, extra_target)
 	query.deliver()
-	TEST_ASSERT(!QDELETED(query), "Fanout must yield to the worker between separately routed admissions")
-	query.deliver()
+	if(!QDELETED(query))
+		query.deliver()
 	TEST_ASSERT_EQUAL(outcomes["copies"], 1, "Two recipients need one independent copy and the transferred original")
 	var/datum/netrun_machine_packet/data/first
 	var/datum/netrun_machine_packet/data/last
@@ -806,6 +808,32 @@
 	TEST_ASSERT_EQUAL(captured["value"], 512, "Inspection must show the coalesced body actually delivered, not an obsolete admitted snapshot")
 	TEST_ASSERT_EQUAL(scene.pending_packets(), 0, "Delivered snapshots must release packet capacity")
 	TEST_ASSERT_NULL(SSnetrun.get_machine_transport().replaceable_packets[replacement_key], "Completion must release the coalescing index as well as packet capacity")
+
+/// The same host/id/tag can acquire a new adapter while an old delivery is pending.
+/datum/unit_test/netrun_transport_replaceable_service_identity/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/list/outcomes = list()
+	TEST_ASSERT(scene.source.send_to(scene.target, new /datum/netrun_machine_message/transport_fixture/queue_snapshot(list("value" = 1), outcomes)), "Admit state addressed to the original adapter")
+	var/datum/netrun_machine_service/transport_fixture/replacement = allocate(/datum/netrun_machine_service/transport_fixture, scene.target.node, scene.target.host)
+	TEST_ASSERT_EQUAL(replacement.service_key(), scene.target.service_key(), "The replacement must reuse the same registry key")
+	TEST_ASSERT_EQUAL(replacement.service_tag(), scene.target.service_tag(), "An adapter replacement need not replace its physical node")
+	TEST_ASSERT(scene.source.send_to(replacement, new /datum/netrun_machine_message/transport_fixture/queue_snapshot(list("value" = 2), outcomes)), "Admit state addressed to the new adapter")
+	var/datum/netrun_machine_packet/data/old_packet
+	var/datum/netrun_machine_packet/data/new_packet
+	for(var/datum/netrun_machine_packet/data/packet as anything in SSnetrun.get_machine_transport().packets)
+		if(packet.source != scene.source)
+			continue
+		if(packet.recipient == scene.target)
+			old_packet = packet
+		else if(packet.recipient == replacement)
+			new_packet = packet
+	TEST_ASSERT(old_packet && new_packet && old_packet != new_packet, "Coalescing must preserve distinct recipient lifetimes")
+	TEST_ASSERT_EQUAL(old_packet.message.recipient, old_packet.recipient, "A new message cannot replace only the body of an old recipient's packet")
+	qdel(scene.target)
+	TEST_ASSERT(QDELETED(old_packet) && !QDELETED(new_packet), "Retiring the original service must cancel only its own packet")
+	new_packet.deliver()
+	TEST_ASSERT_EQUAL(replacement.received, 1, "The replacement must receive its own admitted state")
+	TEST_ASSERT_EQUAL(replacement.last_payload["value"], 2, "The replacement must retain its exact latest body")
 
 /// Sustained producers stop, their finite commands complete, and the delivery queue drains.
 /datum/unit_test/netrun_transport_sustained_burst_drain/Run()

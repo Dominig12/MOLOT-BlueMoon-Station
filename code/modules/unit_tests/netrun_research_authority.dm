@@ -231,6 +231,69 @@
 	TEST_ASSERT_NULL(service.cluster_candidates, "Server deletion must release an unfinished candidate wave")
 	TEST_ASSERT(!service.cluster_listening, "Server deletion must release its power and global topology listeners")
 
+/// Research resolves the first eligible physical owner without changing the
+/// unicast policy or requiring every cluster member to remain available.
+/datum/unit_test/netrun_research_discovery_unicast/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/first = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	var/obj/machinery/rnd/server/second = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	SEND_SIGNAL(second, COMSIG_ATOM_SET_TECHWEB, first.stored_research)
+	var/obj/machinery/computer/rdconsole/console = scene.machine(/obj/machinery/computer/rdconsole, scene.source_spot)
+	SEND_SIGNAL(console, COMSIG_ATOM_SET_TECHWEB, first.stored_research)
+	var/datum/netrun_machine_service/research_client/client = console.get_netrun_machine_service("research.client")
+	var/datum/netrun_machine_service/research_server/first_service = first.get_netrun_machine_service("research.server")
+	var/datum/netrun_machine_service/research_server/second_service = second.get_netrun_machine_service("research.server")
+	TEST_ASSERT_EQUAL(client.discovery_target_limit("research.server"), 1, "Only one eligible physical owner may receive a research operation")
+	TEST_ASSERT_EQUAL(client.discovery_target_limit("research.client"), 0, "Research unicast must not silently limit unrelated discovery")
+	var/list/targets = client.resolve("research.server", REF(first.stored_research))
+	TEST_ASSERT_EQUAL(length(targets), 1, "Synchronous research discovery must preserve unicast")
+	TEST_ASSERT_EQUAL(targets[1], first_service, "Discovery must retain the existing registry selection order")
+	first.set_machine_stat(BROKEN)
+	targets = client.resolve("research.server", REF(second.stored_research))
+	TEST_ASSERT_EQUAL(length(targets), 1, "An unavailable earlier owner must not prevent discovery of a live peer")
+	TEST_ASSERT_EQUAL(targets[1], second_service, "Research discovery must fail over to the next eligible physical owner")
+	var/list/selected = client.select_targets("research.server", list(first_service, second_service))
+	TEST_ASSERT_EQUAL(length(selected), 1, "The public final-selection hook must remain compatible with complete candidate lists")
+	TEST_ASSERT_EQUAL(selected[1], first_service, "Early stopping must not change the independent final-selection contract")
+
+/// A closed startup or later map-loading barrier parks clustering until the
+/// common readiness wave observes usable routes, rather than spinning tasks.
+/datum/unit_test/netrun_research_cluster_readiness_parking/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/rnd/server/first = scene.machine(/obj/machinery/rnd/server, scene.source_spot)
+	var/obj/machinery/rnd/server/second = scene.machine(/obj/machinery/rnd/server, scene.target_spot)
+	first.netrun_mapped_server = TRUE
+	second.netrun_mapped_server = TRUE
+	first.network_id = "parked-cluster-[REF(scene)]"
+	second.network_id = first.network_id
+	var/datum/netrun_machine_service/research_server/first_service = first.get_netrun_machine_service("research.server")
+	var/datum/netrun_machine_service/research_server/second_service = second.get_netrun_machine_service("research.server")
+	first_service.finish_cluster()
+	second_service.finish_cluster()
+	var/datum/netrun_task_scheduler/scheduler = SSnetrun.get_task_scheduler()
+	scheduler.cancel("service_initialize", first_service)
+	scheduler.cancel("service_initialize", second_service)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	SSatoms.map_loader_begin()
+	first_service.queue_cluster()
+	second_service.queue_cluster()
+	first.set_machine_stat(BROKEN)
+	first.set_machine_stat(0)
+	var/finished_while_closed = first_service.advance_cluster()
+	var/polling_while_closed = first_service.cluster_queued || second_service.cluster_queued || scheduler.by_key["research.cluster:[REF(first_service)]"] || scheduler.by_key["research.cluster:[REF(second_service)]"]
+	var/datum/weakref/first_reference = transport.pending_ready_services[first_service.service_key()]
+	var/datum/weakref/second_reference = transport.pending_ready_services[second_service.service_key()]
+	var/parked = first_reference?.resolve() == first_service && second_reference?.resolve() == second_service
+	SSatoms.map_loader_stop()
+	transport.prepare_network()
+	TEST_ASSERT(first_service.start_when_ready && second_service.start_when_ready, "Mapped research servers must participate in the common startup readiness wave")
+	TEST_ASSERT(finished_while_closed && !polling_while_closed && parked, "Closed readiness must retain one demand per server without runnable cluster continuations")
+	var/deadline = world.time + 5 SECONDS
+	while(first.stored_research != second.stored_research && world.time < deadline)
+		sleep(world.tick_lag)
+	TEST_ASSERT_EQUAL(first.stored_research, second.stored_research, "Reopening readiness must resume parked clustering and retain native power recovery")
+	TEST_ASSERT_EQUAL(length(first.stored_research.research_owner_refs), 2, "Resumed startup must preserve both physical research owners")
+
 /// Already formed startup clusters must unite after a real relay recovers.
 /datum/unit_test/netrun_research_startup_partition_recovery/Run()
 	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
@@ -945,6 +1008,58 @@
 	TEST_ASSERT_EQUAL(delivered, 3, "Every subscriber must receive changed recipes")
 	TEST_ASSERT(console.netrun_research_cache.researched_designs["mmi"], "Full delivery must apply the new design")
 	TEST_ASSERT_NOTEQUAL(console.netrun_research_cache.researched_designs, console_designs, "A changed catalogue must replace the old recipe snapshot")
+
+/// Out-of-order publication cannot discard newer replaceable research state,
+/// either before service discovery or after admission to the physical transport.
+/datum/unit_test/netrun_research_snapshot_coalescing_revision/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	for(var/operation in list("snapshot", "state"))
+		var/list/data = list("operation" = operation, "binding" = "revision-fixture", "generation" = 1, "revision" = 12)
+		var/queued_before = transport.queued_messages
+		var/datum/netrun_machine_resolution/query = allocate(/datum/netrun_machine_resolution, scene.source, "transport.fixture", scene.target.service_tag())
+		var/datum/netrun_machine_message/research/newer = new(data)
+		TEST_ASSERT(query.enqueue(newer), "Discovery must admit the current research revision")
+		data["revision"] = 11
+		var/datum/netrun_machine_message/research/older = new(data)
+		TEST_ASSERT(query.enqueue(older), "Superseded research state may be acknowledged without another delivery")
+		TEST_ASSERT(QDELETED(older) && query.queued[1] == newer, "Older discovery state must not discard the newer admitted revision")
+		TEST_ASSERT_EQUAL(transport.queued_messages, queued_before + 1, "Discarding stale state must not consume or release another message slot")
+		data["revision"] = 13
+		var/datum/netrun_machine_message/research/latest = new(data)
+		query.enqueue(latest)
+		TEST_ASSERT(QDELETED(newer) && query.queued[1] == latest, "A newer revision must still replace older queued telemetry")
+		var/datum/netrun_machine_message/research/equal_revision = new(data)
+		query.enqueue(equal_revision)
+		TEST_ASSERT(QDELETED(latest) && query.queued[1] == equal_revision, "An equal revision must preserve ordinary latest-payload replacement")
+		var/list/action_data = data.Copy()
+		action_data["requested_operation"] = "download_disk"
+		query.enqueue(new /datum/netrun_machine_message/research(action_data))
+		action_data["revision"] = 1
+		query.enqueue(new /datum/netrun_machine_message/research(action_data))
+		TEST_ASSERT_EQUAL(length(query.queued), 3, "Version ordering must not coalesce or discard explicit action outcomes")
+		qdel(query)
+		TEST_ASSERT_EQUAL(transport.queued_messages, queued_before, "Resolution teardown must release all still-owned telemetry and action slots")
+		data["revision"] = 12
+		newer = new(data)
+		TEST_ASSERT(scene.source.send_to(scene.target, newer), "The current wire revision must acquire a real route")
+		var/datum/netrun_machine_packet/data/retained
+		for(var/datum/netrun_machine_packet/data/packet as anything in transport.packets)
+			if(packet.message == newer)
+				retained = packet
+		TEST_ASSERT_NOTNULL(retained, "The replacement test needs a live admitted data packet")
+		data["revision"] = 11
+		older = new(data)
+		TEST_ASSERT(scene.source.send_to(scene.target, older), "Superseded wire state must not report a delivery failure")
+		TEST_ASSERT(QDELETED(older) && retained.message == newer, "An older wire revision must not replace newer in-flight telemetry")
+		data["revision"] = 13
+		latest = new(data)
+		scene.source.send_to(scene.target, latest)
+		TEST_ASSERT(QDELETED(newer) && retained.message == latest, "A newer wire revision must reuse the same admitted packet")
+		equal_revision = new(data)
+		scene.source.send_to(scene.target, equal_revision)
+		TEST_ASSERT(QDELETED(latest) && retained.message == equal_revision, "Equal wire revisions must retain the existing replaceable-state behavior")
+		qdel(retained)
 
 /// A partial update must not supersede a missing full catalogue or roll state back.
 /datum/unit_test/netrun_research_compact_catalogue_recovery/Run()

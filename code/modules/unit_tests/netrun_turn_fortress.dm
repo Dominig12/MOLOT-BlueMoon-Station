@@ -100,7 +100,7 @@
 	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
 	var/datum/netrun_fortress/fortress = new(scene.node_b, "Trap battery", NETRUN_FACTION_ROGUE)
 	scene.node_b.fortress = fortress
-	fortress.add_module(NETRUN_FORT_TRAP, TRUE)
+	var/datum/netrun_fortress_module/trap = fortress.add_module(NETRUN_FORT_TRAP, TRUE)
 	var/datum/netrun_fortress_module/turret = fortress.add_module(NETRUN_FORT_TURRET, TRUE)
 	var/mob/camera/netrun_entity/bot/bot = allocate(/mob/camera/netrun_entity/bot, run_loc_floor_bottom_left, scene.node_a, NETRUN_BOT_CUSTODIAN)
 	bot.enter_node(scene.node_b)
@@ -125,9 +125,13 @@
 	bot.brain.clear_timer()
 	stun.on_recovered()
 	TEST_ASSERT(SSnetrun.get_task_scheduler().by_key["bot:[REF(bot.brain)]"], "Native recovery queues the bot without polling or a combat timeout")
-	var/before = turret.integrity
+	// Recovery must spend the current turn. Target ranking legitimately prefers
+	// the 60-HP trap over the 90-HP turret; this test does not prescribe that policy.
+	var/before = trap.integrity + turret.integrity
+	var/ap_before = encounter.remaining_ap(bot)
 	bot.brain.think()
-	TEST_ASSERT(turret.integrity < before, "The recovered bot spends its current turn attacking the battery")
+	TEST_ASSERT(trap.integrity + turret.integrity < before, "The recovered bot must deliver a native attack against the battery")
+	TEST_ASSERT(encounter.remaining_ap(bot) < ap_before, "Recovery must spend the bot's current AP without waiting for another turn")
 	encounter.apply_program_status(SSnetrun.get_program("blackout"), bot)
 	bot.combat_changed()
 	TEST_ASSERT_EQUAL(bot.combat_stun_until, INFINITY, "A turn-owned stun still uses its native sentinel")

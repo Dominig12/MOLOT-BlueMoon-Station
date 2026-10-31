@@ -346,6 +346,19 @@
 				types_by_kind[initial(path.kind)] = path
 	return types_by_kind[kind] ? types_by_kind[kind] : /datum/netrun_task
 
+/// State producers need one pending reconciliation, not a new request on every
+/// population pass. Promotion and changes arriving during execution still use
+/// ordinary admission, preserving FIFO age and the single retained follow-up.
+/datum/netrun_task_scheduler/proc/ensure_queued(kind, datum/target, priority = NETRUN_TASK_NORMAL, interactive = FALSE)
+	if(QDELETED(src) || !kind || (target && QDELETED(target)))
+		return FALSE
+	priority = IS_FINITE(priority) ? clamp(round(priority), NETRUN_TASK_CRITICAL, NETRUN_TASK_BACKGROUND) : NETRUN_TASK_NORMAL
+	var/key = "[kind]:[target ? REF(target) : "global"]"
+	var/datum/netrun_task/existing = by_key[key]
+	if(!QDELETED(existing) && existing.priority <= priority && (!interactive || existing.interactive))
+		return FALSE
+	return enqueue(kind, target, priority, interactive)
+
 /datum/netrun_task_scheduler/proc/enqueue(kind, datum/target, priority = NETRUN_TASK_NORMAL, interactive = FALSE)
 	if(QDELETED(src) || !kind || (target && QDELETED(target)))
 		return FALSE

@@ -34,11 +34,8 @@
 	pair_previous -= key
 	pair_next -= key
 
-/datum/netrun_machine_transport/proc/touch_pair_route(key)
-	pair_used[key] = ++pair_serial
-	if(pair_newest == key)
-		return
-	unlink_pair_route(key)
+/// Link an admitted, detached key at the MRU end. New entries need no unlink.
+/datum/netrun_machine_transport/proc/append_pair_route(key)
 	pair_previous[key] = pair_newest
 	pair_next[key] = null
 	if(pair_newest)
@@ -47,18 +44,40 @@
 		pair_oldest = key
 	pair_newest = key
 
-/datum/netrun_machine_transport/proc/forget_pair_route(key)
+/datum/netrun_machine_transport/proc/touch_pair_route(key)
+	pair_used[key] = ++pair_serial
+	if(pair_newest == key)
+		return
 	unlink_pair_route(key)
-	qdel(pair_routes[key])
+	append_pair_route(key)
+
+/datum/netrun_machine_transport/proc/forget_pair_route(key)
+	var/datum/netrun_machine_path/path = pair_routes[key]
+	if(!path)
+		return
+	unlink_pair_route(key)
+	qdel(path)
 	pair_routes -= key
 	pair_used -= key
 
 /datum/netrun_machine_transport/proc/store_pair_route(key, datum/netrun_machine_path/path)
-	forget_pair_route(key)
-	while(length(pair_routes) >= max(1, route_cache_limit))
+	var/limit = max(1, CEILING(route_cache_limit, 1))
+	var/datum/netrun_machine_path/previous = pair_routes[key]
+	if(previous)
+		// Replace the owned value in place; only a real LRU move changes links.
+		pair_routes[key] = path
+		if(previous != path)
+			qdel(previous)
+		touch_pair_route(key)
+		// Live tuning can shrink a cache even when this is only a replacement.
+		while(length(pair_routes) > limit)
+			forget_pair_route(pair_oldest)
+		return
+	while(length(pair_routes) >= limit)
 		forget_pair_route(pair_oldest)
 	pair_routes[key] = path
-	touch_pair_route(key)
+	pair_used[key] = ++pair_serial
+	append_pair_route(key)
 
 /// Transport borrows the graph's physical cache and retains only its solve diagnostic.
 /datum/netrun_machine_transport/proc/path_tree(datum/netrun_topology/graph, datum/component/netrun_node/root, availability_reconciled = FALSE)

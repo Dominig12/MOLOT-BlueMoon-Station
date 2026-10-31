@@ -220,6 +220,44 @@
 	event["area"] = get_area_name(src, TRUE)
 	service?.queue_event(event)
 
+/// Discovery notices and desired subscription state are replaceable control data.
+/// One wire slot per peer retains the latest toggle, not every intermediate click.
+/datum/netrun_machine_message/security_advertisement
+
+/datum/netrun_machine_message/security_advertisement/New(generation)
+	return ..(list("operation" = "advertise", "generation" = generation))
+
+/datum/netrun_machine_message/security_advertisement/coalescing_key()
+	return "security.advertise"
+
+/// Control traffic must drain alongside its NORMAL discovery producers; opting
+/// into replacement does not turn subscription setup into background telemetry.
+/datum/netrun_machine_message/security_advertisement/delivery_priority()
+	return NETRUN_TASK_NORMAL
+
+/datum/netrun_machine_message/security_advertisement/can_replace(datum/netrun_machine_message/previous)
+	return !istype(previous, /datum/netrun_machine_message/security_advertisement) || payload["generation"] >= previous.payload["generation"]
+
+/datum/netrun_machine_message/security_subscription
+
+/datum/netrun_machine_message/security_subscription/New(enabled, generation)
+	return ..(list("operation" = enabled ? "subscribe" : "unsubscribe", "generation" = generation))
+
+/datum/netrun_machine_message/security_subscription/coalescing_key()
+	return "security.subscription"
+
+/datum/netrun_machine_message/security_subscription/delivery_priority()
+	return NETRUN_TASK_NORMAL
+
+/datum/netrun_machine_message/security_subscription/can_replace(datum/netrun_machine_message/previous)
+	return !istype(previous, /datum/netrun_machine_message/security_subscription) || payload["generation"] >= previous.payload["generation"]
+
+/datum/netrun_machine_message/security_subscription/delivered(datum/netrun_machine_service/recipient_service)
+	var/datum/netrun_machine_service/security_monitor/monitor = source
+	var/datum/netrun_machine_service/security_events/publisher = recipient_service
+	if(istype(monitor) && !QDELETED(monitor) && istype(publisher) && !QDELETED(publisher))
+		monitor.acknowledge_subscription(publisher, payload["generation"], payload["operation"] == "subscribe")
+
 /datum/netrun_machine_service/security_events
 	service_id = "security.events"
 	start_when_ready = TRUE
@@ -228,9 +266,19 @@
 	var/list/publishing
 	var/list/recipient_keys
 	var/recipient_cursor = 1
+	/// A new readiness announcement also repairs subscriptions pruned during an
+	/// outage. An older acknowledgement cannot suppress this recovery generation.
+	var/advertisement_generation = 0
 
 /datum/netrun_machine_service/security_events/network_ready()
-	send("security.monitor", new /datum/netrun_machine_message(list("operation" = "advertise")))
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	if(!transport.is_ready())
+		// Cybernetics call this directly on reconnect, including during map loads;
+		// unlike machinery they may receive no later native power-restored signal.
+		transport.defer_ready_service(src)
+		return
+	advertisement_generation++
+	send("security.monitor", new /datum/netrun_machine_message/security_advertisement(advertisement_generation))
 
 /datum/netrun_machine_service/security_events/host_initialized()
 	. = ..()
@@ -265,23 +313,43 @@
 	var/datum/netrun_machine_service/security_monitor/monitor = message.source
 	if(!istype(monitor) || !monitor.authorized())
 		return FALSE
-	prune_subscribers()
-	var/key = monitor.service_key()
-	if(message.payload["operation"] == "unsubscribe")
-		subscribers -= key
-		return TRUE
-	if(message.payload["operation"] != "subscribe" || (length(subscribers) >= 32 && !subscribers[key]))
+	var/operation = message.payload["operation"]
+	if(istype(message, /datum/netrun_machine_message/security_subscription) && (message.payload["generation"] != monitor.subscription_generation || (operation == "subscribe") != monitor.enabled))
 		return FALSE
+	var/key = monitor.service_key()
+	if(operation == "unsubscribe")
+		remove_subscriber(key)
+		return TRUE
+	if(operation != "subscribe" || !monitor.enabled)
+		return FALSE
+	var/datum/weakref/existing = subscribers[key]
+	if(existing?.resolve() == monitor)
+		return TRUE
+	// A duplicate never scans peers. Only capacity pressure needs a bounded sweep
+	// to admit a replacement; publication separately rechecks each live recipient.
+	if(!existing && length(subscribers) >= 32)
+		prune_subscribers()
+		if(length(subscribers) >= 32)
+			return FALSE
 	subscribers[key] = WEAKREF(monitor)
 	return TRUE
+
+/// Dropping server state also retires its local acknowledgement hint. This is
+/// bookkeeping only: it neither grants access nor changes a peer's desired state.
+/datum/netrun_machine_service/security_events/proc/remove_subscriber(key)
+	var/datum/weakref/reference = subscribers[key]
+	var/datum/netrun_machine_service/security_monitor/monitor = reference?.resolve()
+	if(istype(monitor) && !QDELETED(monitor))
+		monitor.forget_subscription(src)
+	subscribers -= key
 
 /// A quiet publisher must also release retired subscriptions before admitting a replacement.
 /datum/netrun_machine_service/security_events/proc/prune_subscribers()
 	for(var/key in subscribers.Copy())
 		var/datum/weakref/reference = subscribers[key]
 		var/datum/netrun_machine_service/security_monitor/monitor = reference?.resolve()
-		if(!istype(monitor) || QDELETED(monitor) || !monitor.authorized())
-			subscribers -= key
+		if(!istype(monitor) || QDELETED(monitor) || !monitor.enabled || !monitor.authorized())
+			remove_subscriber(key)
 
 /datum/netrun_machine_service/security_events/proc/queue_event(list/event)
 	if(!length(subscribers))
@@ -305,8 +373,8 @@
 		var/key = recipient_keys[recipient_cursor++]
 		var/datum/weakref/reference = subscribers[key]
 		var/datum/netrun_machine_service/security_monitor/monitor = reference?.resolve()
-		if(QDELETED(monitor) || !monitor.authorized())
-			subscribers -= key
+		if(QDELETED(monitor) || !monitor.enabled || !monitor.authorized())
+			remove_subscriber(key)
 			continue
 		send_to(monitor, new /datum/netrun_machine_message(list("operation" = "event", "event" = publishing)))
 	if(recipient_cursor > length(recipient_keys))
@@ -340,6 +408,12 @@
 	start_when_ready = TRUE
 	var/list/alerts = list()
 	var/enabled = TRUE
+	/// Reject stale desired state even when separate discovery generations arrive
+	/// out of order. Ordinary event packets still validate native authorization.
+	var/subscription_generation = 0
+	/// Bounded weak acknowledgements are only a traffic hint. Eviction permits an
+	/// idempotent retry; it never grants authority or suppresses a new recovery.
+	var/list/acknowledged_publishers = list()
 	var/next_station_alarm = 0
 
 /datum/netrun_machine_service/security_monitor/New(datum/component/netrun_node/node, atom/host_override)
@@ -357,6 +431,7 @@
 		SSnetrun.get_task_scheduler().enqueue("service_initialize", src, NETRUN_TASK_BACKGROUND)
 
 /datum/netrun_machine_service/security_monitor/Destroy()
+	acknowledged_publishers.Cut()
 	if(host)
 		UnregisterSignal(host, COMSIG_NETRUN_ENTITY_NODE_CHANGED)
 		if(istype(host, /obj/machinery/computer/security))
@@ -386,19 +461,55 @@
 
 /datum/netrun_machine_service/security_monitor/network_ready()
 	if(enabled && authorized())
-		send("security.events", new /datum/netrun_machine_message(list("operation" = "subscribe")))
+		subscription_generation++
+		acknowledged_publishers.Cut()
+		send("security.events", new /datum/netrun_machine_message/security_subscription(TRUE, subscription_generation))
+
+/datum/netrun_machine_service/security_monitor/proc/acknowledge_subscription(datum/netrun_machine_service/security_events/publisher, generation, subscribed)
+	if(QDELETED(publisher) || generation != subscription_generation || subscribed != enabled)
+		return
+	var/key = publisher.service_key()
+	if(!subscribed)
+		acknowledged_publishers -= key
+		return
+	if(!acknowledged_publishers[key] && length(acknowledged_publishers) >= 512)
+		acknowledged_publishers.Cut(1, 2)
+	acknowledged_publishers[key] = list("publisher" = WEAKREF(publisher), "generation" = generation, "advertisement_generation" = publisher.advertisement_generation)
+
+/datum/netrun_machine_service/security_monitor/proc/subscription_acknowledged(datum/netrun_machine_service/security_events/publisher, advertisement_generation)
+	var/list/acknowledgement = acknowledged_publishers[publisher.service_key()]
+	if(!acknowledgement || acknowledgement["generation"] != subscription_generation || acknowledgement["advertisement_generation"] < advertisement_generation)
+		return FALSE
+	var/datum/weakref/reference = acknowledgement["publisher"]
+	return reference?.resolve() == publisher
+
+/datum/netrun_machine_service/security_monitor/proc/forget_subscription(datum/netrun_machine_service/security_events/publisher)
+	var/key = publisher.service_key()
+	var/list/acknowledgement = acknowledged_publishers[key]
+	if(!acknowledgement)
+		return
+	var/datum/weakref/reference = acknowledgement["publisher"]
+	if(reference?.resolve() == publisher)
+		acknowledged_publishers -= key
 
 /datum/netrun_machine_service/security_monitor/proc/set_subscription(value)
 	if(!authorized())
 		return FALSE
-	enabled = !!value
-	return send("security.events", new /datum/netrun_machine_message(list("operation" = enabled ? "subscribe" : "unsubscribe")))
+	value = !!value
+	if(enabled == value)
+		return TRUE
+	enabled = value
+	subscription_generation++
+	acknowledged_publishers.Cut()
+	return send("security.events", new /datum/netrun_machine_message/security_subscription(enabled, subscription_generation))
 
 /datum/netrun_machine_service/security_monitor/receive(datum/netrun_machine_message/message)
 	if(!enabled || !authorized() || !istype(message.source, /datum/netrun_machine_service/security_events))
 		return FALSE
 	if(message.payload["operation"] == "advertise")
-		return send_to(message.source, new /datum/netrun_machine_message(list("operation" = "subscribe")))
+		if(istype(message, /datum/netrun_machine_message/security_advertisement) && subscription_acknowledged(message.source, message.payload["generation"]))
+			return TRUE
+		return send_to(message.source, new /datum/netrun_machine_message/security_subscription(TRUE, subscription_generation))
 	var/list/event = message.payload["event"]
 	if(message.payload["operation"] != "event" || !islist(event))
 		return FALSE

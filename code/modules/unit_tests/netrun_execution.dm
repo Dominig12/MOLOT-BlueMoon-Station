@@ -313,3 +313,20 @@
 	task = scheduler.take()
 	TEST_ASSERT_EQUAL(task.target(), background, "Sustained input must still allow maintenance after the configured burst")
 	qdel(task)
+
+/// Cooperative batches share the pass allowance and cannot reuse CPU from an old tick.
+/datum/unit_test/netrun_execution_nested_batch_budget/Run()
+	var/datum/controller/subsystem/netrun/netrun_execution_test/worker = allocate(/datum/controller/subsystem/netrun/netrun_execution_test)
+	TEST_ASSERT_EQUAL(worker.remaining_task_budget_ms(1), 1, "Direct calls need a finite independent batch cap")
+	worker.task_slice_budget_ms = 0
+	worker.task_slice_start_usage = TICK_USAGE
+	worker.task_slice_started_at = world.time
+	TEST_ASSERT_EQUAL(worker.remaining_task_budget_ms(1), 0, "A nested batch cannot replenish an exhausted worker allowance")
+	worker.task_slice_budget_ms = 1000
+	TEST_ASSERT_EQUAL(worker.remaining_task_budget_ms(1), 1, "A batch cannot borrow more than its own cap from a large worker allowance")
+	worker.task_slice_started_at = world.time - world.tick_lag
+	TEST_ASSERT_EQUAL(worker.remaining_task_budget_ms(1), 0, "A callback resumed in another tick must yield before doing another batch")
+	worker.task_slice_budget_ms = null
+	worker.next_task_population = INFINITY
+	worker.run_pass()
+	TEST_ASSERT(isnull(worker.task_slice_budget_ms), "A completed worker pass must release its nested-batch context")

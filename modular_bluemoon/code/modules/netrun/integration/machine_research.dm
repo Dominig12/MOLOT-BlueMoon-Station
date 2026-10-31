@@ -171,8 +171,16 @@
 		return "research.[payload["operation"]]|[payload["binding"]]|[payload["generation"]]"
 	return null
 
+/datum/netrun_machine_message/research/can_replace(datum/netrun_machine_message/previous)
+	var/revision = payload["revision"]
+	var/previous_revision = previous.payload["revision"]
+	if(isnum(revision) && isnum(previous_revision))
+		return revision >= previous_revision
+	return ..()
+
 /datum/netrun_machine_service/research_server
 	service_id = "research.server"
+	start_when_ready = TRUE
 	var/datum/techweb/web
 	var/list/subscribers = list()
 	var/publish_timer
@@ -214,6 +222,10 @@
 		RegisterSignal(host, list(COMSIG_MACHINERY_POWER_LOST, COMSIG_MACHINERY_POWER_RESTORED, COMSIG_MACHINERY_STAT_CHANGED, COMSIG_MOVABLE_MOVED), PROC_REF(cluster_state_changed))
 		RegisterSignal(SSnetrun, list(COMSIG_NETRUN_TOPOLOGY_DIRTY, COMSIG_NETRUN_TOPOLOGY_CHANGED), PROC_REF(cluster_topology_changed))
 		RegisterSignal(SSnetrun, COMSIG_NETRUN_NODE_CHANGED, PROC_REF(cluster_node_changed))
+	var/datum/netrun_machine_transport/transport = SSnetrun.get_machine_transport()
+	if(!transport.is_ready())
+		transport.defer_ready_service(src)
+		return
 	if(cluster_queued)
 		cluster_again = TRUE
 		return
@@ -260,7 +272,9 @@
 		finish_cluster()
 		return TRUE
 	if(!SSnetrun.get_machine_transport().is_ready())
-		return FALSE
+		finish_cluster()
+		SSnetrun.get_machine_transport().defer_ready_service(src)
+		return TRUE
 	if(!cluster_candidates)
 		cluster_candidates = SSresearch.servers.Copy()
 		cluster_cursor = 1
@@ -616,6 +630,9 @@
 	return null
 
 /// A shared authority is unicast: broadcasting mutations would credit/debit it twice.
+/datum/netrun_machine_service/research_client/discovery_target_limit(destination_id)
+	return destination_id == "research.server" ? 1 : ..()
+
 /datum/netrun_machine_service/research_client/select_targets(destination_id, list/targets)
 	return destination_id == "research.server" && length(targets) ? list(targets[1]) : targets
 

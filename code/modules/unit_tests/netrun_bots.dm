@@ -298,8 +298,10 @@
 	police.brain.patrol_candidates = addresses.Copy()
 	var/list/visited = list()
 	for(var/index in 1 to length(addresses))
+		var/shuffled_before = police.brain.patrol_shuffled_until
 		var/datum/component/netrun_node/node = police.brain.police_destination()
 		TEST_ASSERT_NOTNULL(node, "A large connected LAN retains a patrol destination")
+		TEST_ASSERT(police.brain.patrol_shuffled_until - shuffled_before <= 24, "One patrol plan must not shuffle the whole station before checking its bounded window")
 		TEST_ASSERT(!visited[node.address], "An itinerary does not starve distant nodes by repeatedly selecting its first neighborhood")
 		visited[node.address] = TRUE
 		SSnetrun.police_inspected[node.address] = world.time

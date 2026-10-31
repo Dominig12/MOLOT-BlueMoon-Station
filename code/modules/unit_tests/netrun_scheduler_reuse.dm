@@ -237,3 +237,43 @@
 	qdel(replacement)
 	TEST_ASSERT_EQUAL(test_scheduler.counts[NETRUN_TASK_NORMAL], 0, "The replacement must drain without orphaned queue accounting")
 	TEST_ASSERT_EQUAL(test_scheduler.ready_deliveries, 0, "The replacement must drain without orphaned delivery accounting")
+
+/// Reobserving pending state is not a new event or a reason to touch its FIFO entry.
+/datum/unit_test/netrun_scheduler_ensure_pending_state/Run()
+	var/datum/netrun_task_scheduler/scheduler = netrun_scheduler_fixture()
+	var/datum/subject = allocate(/datum)
+	TEST_ASSERT(scheduler.ensure_queued("probe", subject, NETRUN_TASK_BACKGROUND), "The first state observation must admit work")
+	var/key = "probe:[REF(subject)]"
+	var/datum/netrun_task/original = scheduler.by_key[key]
+	var/datum/netrun_task_profile/profile = scheduler.profiles["probe"]
+	original.enqueued_at = world.time - 8 SECONDS
+	original.last_requested_at = original.enqueued_at
+	for(var/repeat in 1 to 256)
+		scheduler.ensure_queued("probe", subject, NETRUN_TASK_BACKGROUND)
+	TEST_ASSERT_EQUAL(profile.requests, 1, "Repeated population must not manufacture producer requests")
+	TEST_ASSERT_EQUAL(profile.merged, 0, "An unchanged pending state must not enter the event coalescing path")
+	TEST_ASSERT_EQUAL(scheduler.by_key[key], original, "Passive population must retain the pending object")
+	TEST_ASSERT_EQUAL(original.last_requested_at, original.enqueued_at, "Passive population must not refresh the last real request")
+	scheduler.ensure_queued("probe", subject, NETRUN_TASK_NORMAL, TRUE)
+	TEST_ASSERT(original.interactive && original.priority == NETRUN_TASK_NORMAL, "New urgency must still promote existing state work")
+	TEST_ASSERT_EQUAL(original.enqueued_at, world.time - 8 SECONDS, "Promotion must retain the oldest waiting clock")
+	TEST_ASSERT_EQUAL(profile.requests, 2, "A real priority change must pass through normal admission")
+	TEST_ASSERT_EQUAL(scheduler.pending(), 1, "Repeated state and promotion must own one queue entry")
+	TEST_ASSERT(scheduler.cancel("probe", subject), "Cancellation must find state admitted through ensure_queued")
+	TEST_ASSERT(scheduler.ensure_queued("probe", subject), "Cancellation must permit later state to be admitted afresh")
+	TEST_ASSERT_EQUAL(profile.created, 2, "Only cancellation and fresh demand may allocate a replacement")
+
+/// A producer changing state during execution still requires one retained follow-up.
+/datum/unit_test/netrun_scheduler_ensure_running_state/Run()
+	var/datum/netrun_task_scheduler/scheduler = netrun_scheduler_fixture()
+	var/datum/subject = allocate(/datum)
+	scheduler.ensure_queued("probe", subject)
+	var/datum/netrun_task/original = scheduler.take()
+	for(var/repeat in 1 to 64)
+		scheduler.ensure_queued("probe", subject)
+	TEST_ASSERT(original.rerun_requested, "Changes after dispatch must not disappear behind a pending-only fast path")
+	TEST_ASSERT_EQUAL(scheduler.pending(), 0, "The executing state owns its follow-up without a second task")
+	TEST_ASSERT(scheduler.finish(original), "The running state must retain its requested next reconciliation")
+	TEST_ASSERT_EQUAL(scheduler.take(), original, "The follow-up must reuse the original task")
+	scheduler.finish(original)
+	TEST_ASSERT_EQUAL(scheduler.pending(), 0, "The producer must drain once no further state arrives")

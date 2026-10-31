@@ -37,6 +37,8 @@
 	/// A rotating itinerary includes distant nodes without re-scanning the station each think.
 	var/list/patrol_candidates
 	var/patrol_cursor = 1
+	/// Fisher-Yates is advanced only as far as this plan's bounded candidate window.
+	var/patrol_shuffled_until = 0
 	var/salvage_cursor = 1
 	/// Earliest fresh debris deadline seen during the current bounded search.
 	var/salvage_wait_until = 0
@@ -424,12 +426,18 @@
 	var/datum/netrun_console/console = owner.console
 	var/datum/netrun_path_tree/tree = console.connection.read_path_tree(TRUE)
 	if(!length(patrol_candidates) || patrol_cursor > length(patrol_candidates))
-		patrol_candidates = shuffle(tree.reached.Copy())
+		patrol_candidates = tree.reached.Copy()
 		patrol_cursor = 1
+		patrol_shuffled_until = 0
 	var/best_index
 	var/best_time = INFINITY
 	var/best_activity = -INFINITY
 	var/end = min(length(patrol_candidates), patrol_cursor + 23)
+	// A full station shuffle used to run before the 24-candidate bound. Shuffle
+	// the next prefix lazily, preserving random coverage without a long cold step.
+	for(var/index = max(patrol_cursor, patrol_shuffled_until + 1), index <= end, index++)
+		patrol_candidates.Swap(index, rand(index, length(patrol_candidates)))
+	patrol_shuffled_until = end
 	for(var/index = patrol_cursor, index <= end, index++)
 		var/address = patrol_candidates[index]
 		var/datum/component/netrun_node/node = SSnetrun.nodes_by_address[address]
