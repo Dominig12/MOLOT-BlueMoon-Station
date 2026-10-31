@@ -26,6 +26,7 @@
 	var/revision = 0
 	var/updated_at = 0
 	var/list/reached = list()
+	/// LAN id -> first reached witness address; live authority validates that path.
 	var/list/reached_networks = list()
 	var/network_index_ready = FALSE
 	var/list/previous = list()
@@ -73,8 +74,8 @@
 			continue
 		settled[address] = TRUE
 		var/datum/component/netrun_node/current = graph.nodes[address]
-		if(current?.network)
-			reached_networks[current.network.id] = TRUE
+		if(current?.network && !reached_networks[current.network.id])
+			reached_networks[current.network.id] = address
 		if(QDELETED(current))
 			continue
 		var/current_relay = istype(current.parent, /obj/machinery/ntnet_relay)
@@ -113,8 +114,8 @@
 			if(infrastructure_only && !transit)
 				continue
 			relax(neighbor, address, current_cost + graph.cached_edge_cost(address, neighbor), current_remote, transit)
-			if(!transit && next.network)
-				reached_networks[next.network.id] = TRUE
+			if(!transit && next.network && !reached_networks[next.network.id])
+				reached_networks[next.network.id] = neighbor
 		// Every operational relay can reach every other relay at the same cost.
 		// The cheapest settled entry expands this virtual bucket exactly once.
 		if(relays_expanded || !current_relay || !backbone_enabled)
@@ -137,7 +138,7 @@
 		if(QDELETED(node))
 			continue
 		node.last_online = changed_availability[node]
-		graph.availability_changed(node)
+		graph.availability_changed(node, node.last_online)
 	availability_revision = graph.availability_revision
 	transit_availability_revision = graph.transit_availability_revision
 	for(var/datum/component/netrun_node/node as anything in changed_availability)
@@ -352,21 +353,24 @@
 		var/online = node.is_online()
 		if(online != node.last_online)
 			node.last_online = online
-			availability_changed(node)
+			availability_changed(node, online)
 			node.notify_changed(NETRUN_CHANGED_STATE, FALSE, TRUE)
-	// APC countdown recovery has no reliable native node signal. Poll at most
-	// once per tick, including when many clients need cold source trees. Solves
-	// themselves record any additional native changes they actually encounter.
+	// Positive paths and cold solves sample their actual forwarders. Only an
+	// observed outage can leave a negative tree waiting for unsigned countdown
+	// recovery, so poll that small set once per tick instead of every station APC.
 	if(forwarding_checked_at != world.time)
 		forwarding_checked_at = world.time
-		for(var/address in registered_apcs)
-			var/datum/component/netrun_node/node = nodes[address]
-			if(QDELETED(node))
+		for(var/address in unavailable_apcs)
+			var/datum/component/netrun_node/node = unavailable_apcs[address]
+			if(QDELETED(node) || registered_apcs[address] != node)
+				unavailable_apcs -= address
 				continue
 			var/online = node.is_online()
+			if(online)
+				unavailable_apcs -= address
 			if(online != node.last_online)
 				node.last_online = online
-				availability_changed(node)
+				availability_changed(node, online)
 				node.notify_changed(NETRUN_CHANGED_STATE, FALSE, TRUE)
 
 /// Requests validate the selected predecessor chain without allocating a hop list.
@@ -383,7 +387,15 @@
 		var/datum/component/netrun_node/from_node = graph.nodes[parent_address]
 		// Walking backwards samples every forwarder exactly once. The previous
 		// iteration already checked to_node when it was the source of that edge.
-		if(QDELETED(from_node) || !from_node.is_online())
+		if(QDELETED(from_node))
+			return FALSE
+		if(!from_node.is_online())
+			// A cached path may be the first observer of an unsigned native outage.
+			// Remember it before returning, so negative trees can recover by index.
+			if(from_node.last_online != FALSE)
+				from_node.last_online = FALSE
+				graph.availability_changed(from_node, FALSE)
+				from_node.notify_changed(NETRUN_CHANGED_STATE, FALSE, TRUE)
 			return FALSE
 		var/quantum = netrun_quantum_link(from_node, to_node)
 		if(!graph.edge_lookup["[parent_address]>[address]"] && !quantum)
@@ -400,6 +412,24 @@
 		address = parent_address
 		to_node = from_node
 	return address == source.address
+
+/// A cached LAN marker is a hint, not authority. Usually one witness suffices;
+/// only a failed witness needs to try other entrances to the same department.
+/datum/netrun_path_tree/proc/network_available(datum/netrun_topology/graph, datum/netrun_network/network)
+	var/address = reached_networks[network.id]
+	if(network_index_ready && !address)
+		return FALSE
+	var/datum/component/netrun_node/witness = istext(address) ? graph.nodes[address] : null
+	if(!QDELETED(witness) && witness.network == network && path_available(graph, address))
+		return TRUE
+	// A newly observed forwarding outage invalidates every predecessor chain.
+	// Let the connection retry one fresh tree instead of repeating the same cut.
+	if(transit_availability_revision != graph.transit_availability_revision)
+		return FALSE
+	for(var/datum/component/netrun_node/node as anything in network.nodes)
+		if(node != witness && !QDELETED(node) && node.network == network && graph.nodes[node.address] == node && path_available(graph, node.address))
+			return TRUE
+	return FALSE
 
 /// Geometry is already maintained by structural/movement signals. Reuse its cached
 /// edge weights while solving a tree instead of measuring every cable again.
@@ -572,7 +602,7 @@
 		tree.reached[start.address] = TRUE
 		tree.costs[start.address] = 0
 		if(start.network)
-			tree.reached_networks[start.network.id] = TRUE
+			tree.reached_networks[start.network.id] = start.address
 	return tree
 
 /// Explicit request trees are local variables, so concurrent yielding device

@@ -265,13 +265,22 @@
 	if(owns_tree)
 		tree = read_path_tree()
 	. = FALSE
-	if(tree.network_index_ready)
+	if(!tree.graph_ref)
+		// Restricted wireless trees contain only loopback; no station solve is needed.
+		. = tree.source?.network == network && !!tree.reached[tree.source?.address]
+	else if(owner.ui_serializing && tree == owner.ui_routes && tree.network_index_ready)
 		. = !!tree.reached_networks[network.id]
 	else
-		for(var/datum/component/netrun_node/node as anything in network.nodes)
-			if(tree.reached[node.address])
-				. = TRUE
-				break
+		var/datum/netrun_topology/graph = SSnetrun.topology
+		if(!graph || graph.dirty)
+			graph = SSnetrun.ensure_topology()
+		. = tree.network_available(graph, network)
+		if(!. && tree.transit_availability_revision != graph.transit_availability_revision)
+			// A failed witness may have discovered an unsigned intermediate outage.
+			// Rebuild once to consider alternate entrances; the graph owns this borrow.
+			var/datum/netrun_path_tree/current = graph.route_snapshot(tree.source, TRUE)
+			if(current)
+				. = current.network_available(graph, network)
 	if(owns_tree)
 		owner.release_path_tree(tree)
 

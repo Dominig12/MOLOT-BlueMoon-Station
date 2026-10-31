@@ -2,6 +2,7 @@
 /datum/netrun_routing_cache_scene
 	parent_type = /datum/netrun_transport_scene
 	var/area/remote_room
+	var/remote_area_type = /area/netrun_route_test
 	var/turf/remote_spot
 	var/obj/machinery/power/apc/remote_apc
 	var/original_cache_limit
@@ -11,7 +12,7 @@
 	..(origin)
 	original_cache_limit = SSnetrun.get_machine_transport().route_cache_limit
 	original_infrastructure_limit = SSnetrun.get_topology().infrastructure_route_limit
-	remote_room = room(/area/netrun_route_test)
+	remote_room = room(remote_area_type)
 	remote_spot = take(locate(origin.x + 4, origin.y + 2, origin.z), remote_room)
 	var/turf/power_spot = take(get_step(remote_spot, SOUTH), remote_room)
 	remote_apc = machine(/obj/machinery/power/apc, power_spot)
@@ -25,6 +26,9 @@
 	remote_spot = null
 	remote_room = null
 	return ..()
+
+/datum/netrun_routing_cache_scene/department
+	remote_area_type = /area/science/research
 
 /// Discovery, boolean reachability and owned delivery routes reuse one materialized path.
 /datum/unit_test/netrun_routing_cache_repeated_path/Run()
@@ -368,6 +372,41 @@
 	var/datum/netrun_path_tree/restored = graph.route_snapshot(scene.source.node, TRUE)
 	TEST_ASSERT(restored.reached[apc_node.address], "Restoring the source must restore its onward UI reachability immediately")
 
+/// Count native status reads without substituting the APC's availability policy.
+/obj/machinery/power/apc/netrun_availability_probe
+	var/online_checks = 0
+
+/obj/machinery/power/apc/netrun_availability_probe/netrun_online(remote = TRUE)
+	online_checks++
+	return ..()
+
+/// Quiet healthy APCs do not add native checks to every unrelated routing tick.
+/datum/unit_test/netrun_routing_cache_recovery_poll_work/Run()
+	var/datum/netrun_transport_scene/scene = allocate(/datum/netrun_transport_scene, run_loc_floor_bottom_left)
+	var/obj/machinery/power/apc/netrun_availability_probe/apc = scene.machine(/obj/machinery/power/apc/netrun_availability_probe, scene.source_spot)
+	var/datum/component/netrun_node/node = apc.GetComponent(/datum/component/netrun_node)
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	graph.reconcile_availability()
+	var/checks = apc.online_checks
+	for(var/i in 1 to 10)
+		graph.forwarding_checked_at = -INFINITY
+		graph.reconcile_availability()
+	TEST_ASSERT_EQUAL(apc.online_checks, checks, "Routing reconciliation must not poll healthy APCs elsewhere on the station")
+	apc.failure_timer = 5
+	node.notify_changed()
+	TEST_ASSERT_EQUAL(graph.unavailable_apcs[node.address], node, "An observed outage must retain its APC for unsigned countdown recovery")
+	var/generation = graph.transit_availability_revision
+	apc.failure_timer = 0
+	graph.forwarding_checked_at = -INFINITY
+	graph.reconcile_availability()
+	TEST_ASSERT(node.last_online && graph.transit_availability_revision > generation, "Unsigned recovery must immediately invalidate negative routing trees on the next fallback pass")
+	TEST_ASSERT_NULL(graph.unavailable_apcs[node.address], "Recovered APCs must leave the fallback polling set")
+	apc.failure_timer = 5
+	node.notify_changed()
+	var/address = node.address
+	qdel(apc)
+	TEST_ASSERT_NULL(graph.unavailable_apcs[address], "Deleting an offline APC must release its recovery entry")
+
 /// APC countdowns update native fields without a power/stat signal. A retained tree is not authority.
 /datum/unit_test/netrun_routing_cache_unsigned_apc_state/Run()
 	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene, run_loc_floor_bottom_left)
@@ -380,6 +419,26 @@
 	scene.remote_apc.failure_timer = 0
 	sleep(world.tick_lag)
 	TEST_ASSERT(terminal.console.can_route(scene.target.node), "An unsignalled APC countdown recovery must restore command routing")
+
+/// A cached LAN entry must not authorize access through an unsigned failed forwarder.
+/datum/unit_test/netrun_routing_cache_live_network_witness/Run()
+	var/datum/netrun_routing_cache_scene/scene = allocate(/datum/netrun_routing_cache_scene/department, run_loc_floor_bottom_left)
+	var/obj/machinery/computer/netrun_terminal/terminal = scene.machine(/obj/machinery/computer/netrun_terminal, scene.source_spot)
+	var/datum/netrun_network/network = scene.target.node.network
+	var/datum/component/netrun_node/source = terminal.console.route_source()
+	TEST_ASSERT_NOTEQUAL(network, source.network, "The witness fixture must cross into another department")
+	TEST_ASSERT(terminal.console.can_reach(network), "The remote LAN must initially be reachable")
+	var/datum/netrun_topology/graph = SSnetrun.get_topology()
+	var/datum/component/netrun_node/forwarder = scene.apc.GetComponent(/datum/component/netrun_node)
+	var/tick = world.time
+	scene.apc.failure_timer = 5
+	TEST_ASSERT(!terminal.console.can_reach(network), "A retained LAN marker must not authorize a route through an unsigned offline intermediate APC")
+	TEST_ASSERT_EQUAL(world.time, tick, "LAN authority must revoke access without waiting for a fallback tick")
+	TEST_ASSERT_EQUAL(graph.unavailable_apcs[forwarder.address], forwarder, "A failed witness must retain its actual forwarding outage for recovery")
+	TEST_ASSERT(!terminal.console.can_reach(network), "Rebuilding a negative tree must keep the cut LAN inaccessible")
+	scene.apc.failure_timer = 0
+	sleep(world.tick_lag)
+	TEST_ASSERT(terminal.console.can_reach(network), "Unsigned countdown recovery must reopen the LAN through the same physical APC")
 
 /// A new source can discover an unsigned APC outage after this tick's shared fallback.
 /datum/unit_test/netrun_routing_cache_unsigned_cold_recovery/Run()

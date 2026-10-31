@@ -183,7 +183,7 @@ SUBSYSTEM_DEF(netrun)
 		var/online = node.is_online()
 		if(online != node.last_online)
 			node.last_online = online
-			get_topology().availability_changed(node)
+			get_topology().availability_changed(node, online)
 			node.notify_changed(NETRUN_CHANGED_STATE, FALSE, TRUE)
 
 /datum/controller/subsystem/netrun/proc/track_node(datum/component/netrun_node/node)

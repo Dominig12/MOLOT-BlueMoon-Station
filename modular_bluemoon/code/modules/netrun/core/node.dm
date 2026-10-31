@@ -340,7 +340,7 @@
 		return
 	var/availability_changed = online != last_online
 	if(availability_changed)
-		SSnetrun.get_topology().availability_changed(src)
+		SSnetrun.get_topology().availability_changed(src, online)
 	pending_state_notification = FALSE
 	last_online = online
 	last_security = security
@@ -364,7 +364,7 @@
 		if(online != last_online)
 			availability_changed = TRUE
 			last_online = online
-			SSnetrun.get_topology().availability_changed(src)
+			SSnetrun.get_topology().availability_changed(src, online)
 	SEND_SIGNAL(src, COMSIG_NETRUN_NODE_CHANGED, src, flags)
 	// Machine-service readiness and clustering remain synchronous. UI observers
 	// consume the batched stream instead of these native lifecycle notifications.

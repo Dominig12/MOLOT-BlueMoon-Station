@@ -220,7 +220,7 @@
 		var/online = node.is_online()
 		if(node.last_online != online)
 			node.last_online = online
-			graph.availability_changed(node)
+			graph.availability_changed(node, online)
 			node.notify_changed(NETRUN_CHANGED_STATE, FALSE, TRUE)
 
 

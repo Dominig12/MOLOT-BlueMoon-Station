@@ -124,9 +124,14 @@
 	scene.owned.Insert(1, entity)
 	entity.console.operator = entity
 	TEST_ASSERT(entity.console.store_file(new /datum/netrun_file("route.key", NETRUN_FILE_KEY, source_node.network.passcode, 1, source_node.network.id)), "Traversal key must fit")
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/copies = graph.route_snapshot_copies
 	var/list/path = entity.enterable_path(target_node)
 	TEST_ASSERT_EQUAL(length(path), 2, "The full authorized graph must be searched without the former 200-node cutoff")
 	TEST_ASSERT_EQUAL(path[2], target_node.address, "The path must end at the requested endpoint")
+	TEST_ASSERT_EQUAL(graph.route_snapshot_copies, copies, "A synchronous complete-path search must not copy the station's physical tree")
+	var/datum/netrun_path_tree/retained = graph.route_tables[source_node.address]
+	TEST_ASSERT(retained && !QDELETED(retained), "Releasing a navigation borrow must preserve the graph-owned authority tree")
 
 /// A removed entity must not leave its navigation controller/timer alive.
 /datum/unit_test/netrun_navigation_teardown/Run()
@@ -252,7 +257,10 @@
 	TEST_ASSERT_EQUAL(length(path), 2, "The destination still requires A → APC → B")
 	var/datum/netrun_ice/guard = allocate(/datum/netrun_ice, scene.apc_node, NETRUN_ICE_SENTRY)
 	TEST_ASSERT(guard.is_intruder(entity, scene.apc_node), "Traversal permission does not make the process safe from ICE")
+	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
+	var/copies = graph.route_snapshot_copies
 	TEST_ASSERT_NOTNULL(entity.navigation.threat_at(scene.apc_node), "Autopilot still detects a hostile patrol on the next step")
+	TEST_ASSERT_EQUAL(graph.route_snapshot_copies, copies, "A synchronous next-hop threat check must borrow without copying the full physical tree")
 	qdel(guard)
 	TEST_ASSERT(entity.hop(scene.apc_node), "An explicit first hop uses the normal movement operation")
 	entity.next_hop = world.time

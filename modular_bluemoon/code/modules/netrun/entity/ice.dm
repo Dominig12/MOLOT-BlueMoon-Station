@@ -543,9 +543,18 @@
 		return FALSE
 	var/datum/netrun_network/network = defense_network()
 	var/list/targets = list()
+	var/list/checked_nodes = list()
 	for(var/mob/camera/netrun_entity/entity as anything in SSnetrun.entities)
-		if(!QDELETED(entity) && entity.host_node?.network == network && find_intruder(entity.host_node))
-			targets[entity.host_node.address] = TRUE
+		if(QDELETED(entity))
+			continue
+		var/datum/component/netrun_node/host = entity.host_node
+		if(QDELETED(host) || host.network != network || checked_nodes[host.address])
+			continue
+		// find_intruder inspects all residents. Authorized crowds need the same
+		// one check per host as hostile crowds, including a negative result.
+		checked_nodes[host.address] = TRUE
+		if(find_intruder(host))
+			targets[host.address] = TRUE
 	if(!length(targets))
 		return FALSE
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()

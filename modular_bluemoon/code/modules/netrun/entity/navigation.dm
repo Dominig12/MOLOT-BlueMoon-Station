@@ -124,12 +124,12 @@
 	return list("target_ref" = REF(target), "name" = pursuit_name, "node" = pursuit_node,
 		"following" = is_active(), "status" = pursuit_status)
 
-/// Search the entire reachable graph once. One request-owned path tree keeps permission
-/// checks fresh without rebuilding Dijkstra for each candidate or imposing a 200-node cap.
+/// Search the entire reachable graph once. This synchronous search borrows one
+/// fresh authority tree without copying the station or imposing a 200-node cap.
 /datum/netrun_entity_navigation/proc/path_to(datum/component/netrun_node/target)
 	if(QDELETED(target) || QDELETED(owner) || !owner.host_node || owner.console.is_locked())
 		return list()
-	var/datum/netrun_path_tree/tree = owner.console.make_path_tree()
+	var/datum/netrun_path_tree/tree = owner.console.connection.read_path_tree(TRUE)
 	var/datum/netrun_topology/graph = SSnetrun.ensure_topology()
 	var/start = owner.host_node.address
 	var/list/visited = list()
@@ -151,12 +151,18 @@
 			var/datum/component/netrun_node/node = graph.nodes[neighbor]
 			if(QDELETED(node) || !netrun_link_available(current, node))
 				continue
-			if(!owner.console.can_traverse_node(node, tree))
+			var/allowed = owner.console.can_traverse_node(node, tree)
+			if(QDELETED(tree))
+				// Live authority may replace a retained tree after an unsigned outage.
+				// Retry this candidate once with its replacement, never a stale borrow.
+				tree = owner.console.connection.read_path_tree(TRUE)
+				allowed = owner.console.can_traverse_node(node, tree)
+			if(!allowed || QDELETED(tree))
 				continue
 			visited[neighbor] = TRUE
 			previous[neighbor] = address
 			frontier += neighbor
-	qdel(tree)
+	owner.console.release_path_tree(tree)
 	return result
 
 /// Selected-node admission is cheap: no BFS and no path promise on a UI pass.
@@ -242,12 +248,18 @@
 /datum/netrun_entity_navigation/proc/threat_at(datum/component/netrun_node/next)
 	if(QDELETED(next) || !next.is_online() || !length(next.netrun_ice))
 		return null
-	var/datum/netrun_path_tree/tree = owner.console.make_path_tree()
+	var/datum/netrun_path_tree/tree = owner.console.connection.read_path_tree(TRUE)
 	for(var/datum/netrun_ice/ice as anything in next.netrun_ice)
-		if(!QDELETED(ice) && ice.is_intruder(owner, next, tree) && owner.can_enter(next, tree))
+		if(QDELETED(ice))
+			continue
+		var/hostile = ice.is_intruder(owner, next, tree) && owner.can_enter(next, tree)
+		if(QDELETED(tree))
+			tree = owner.console.connection.read_path_tree(TRUE)
+			hostile = ice.is_intruder(owner, next, tree) && owner.can_enter(next, tree)
+		if(hostile && !QDELETED(tree))
 			. = ice
 			break
-	qdel(tree)
+	owner.console.release_path_tree(tree)
 
 /datum/netrun_entity_navigation/proc/advance_route(expected_generation)
 	if(expected_generation != generation || QDELETED(owner) || (!is_active() && !pursuit_target_ref))

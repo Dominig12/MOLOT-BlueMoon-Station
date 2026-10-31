@@ -29,6 +29,8 @@
 			continue
 		if(node.node_type == NETRUN_NODE_APC)
 			registered_apcs[address] = node
+			if(!node.is_online())
+				unavailable_apcs[address] = node
 		else if(is_relay(node))
 			registered_relays[address] = node
 
@@ -38,6 +40,8 @@
 		return
 	if(node.node_type == NETRUN_NODE_APC)
 		registered_apcs[node.address] = node
+		if(!node.is_online())
+			unavailable_apcs[node.address] = node
 		infrastructure_changed()
 	else if(is_relay(node))
 		registered_relays[node.address] = node
@@ -101,6 +105,8 @@
 	var/list/apcs_by_area = list()
 	var/list/relay_addresses = list()
 	var/list/registered_apcs = list()
+	/// Only observed outages need fallback recovery polling; usable paths stay live-checked.
+	var/list/unavailable_apcs = list()
 	var/list/registered_relays = list()
 	/// Coalesced leaf geometry changes, shared by node workers and route snapshots.
 	var/list/moved_nodes = list()
@@ -115,7 +121,14 @@
 	var/transit_availability_revision = 0
 	var/backbone_disabled
 
-/datum/netrun_topology/proc/availability_changed(datum/component/netrun_node/node)
+/datum/netrun_topology/proc/availability_changed(datum/component/netrun_node/node, online)
+	if(node.node_type == NETRUN_NODE_APC)
+		if(isnull(online))
+			online = node.is_online()
+		if(online || QDELETED(node))
+			unavailable_apcs -= node.address
+		else
+			unavailable_apcs[node.address] = node
 	availability_revision++
 	if(is_infrastructure(node) || length(adjacency[node.address]) > 1)
 		transit_availability_revision++
@@ -136,6 +149,7 @@
 	moved_nodes -= node
 	if(!node)
 		return
+	unavailable_apcs -= node.address
 	forget_infrastructure_route(node.address)
 	forget_route_table(node.address)
 	nodes -= node.address
@@ -607,6 +621,7 @@
 	apcs_by_sector.Cut()
 	apcs_by_area.Cut()
 	registered_apcs.Cut()
+	unavailable_apcs.Cut()
 	registered_relays.Cut()
 	moved_nodes.Cut()
 	relay_addresses.Cut()

@@ -273,6 +273,33 @@
 	TEST_ASSERT(ice.hunt(), "An intruder arriving in the hunter's own LAN must be pursued")
 	TEST_ASSERT_EQUAL(ice.node, eng_target, "The pursuit must take the actual adjacent cable to its target")
 
+/// Count real authorization scans without replacing their target policy.
+/datum/netrun_ice/hunt_probe
+	var/list/intruder_checks = list()
+
+/datum/netrun_ice/hunt_probe/find_intruder(datum/component/netrun_node/where)
+	intruder_checks[where.address] = (intruder_checks[where.address] || 0) + 1
+	return ..()
+
+/// Several residents of one host require one scan, whether authorized or hostile.
+/datum/unit_test/netrun_ice_hunt_checks_each_host_once/Run()
+	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
+	for(var/i in 1 to 4)
+		var/mob/camera/netrun_entity/authorized = allocate(/mob/camera/netrun_entity)
+		authorized.enter_node(scene.node_a)
+		authorized.console.access_session.grant_node(scene.node_a, NETRUN_ACCESS_USER)
+		var/mob/camera/netrun_entity/intruder = allocate(/mob/camera/netrun_entity)
+		intruder.enter_node(scene.node_b)
+	var/datum/netrun_ice/hunt_probe/ice = allocate(/datum/netrun_ice/hunt_probe, scene.apc_node, NETRUN_ICE_HUNTER)
+	ice.persistent = TRUE
+	TEST_ASSERT_NULL(ice.find_intruder(scene.node_a), "The first crowd must actually be authorized, so its scan has a negative result")
+	TEST_ASSERT_NOTNULL(ice.find_intruder(scene.node_b), "The second crowd must contain a real intruder")
+	ice.intruder_checks.Cut()
+	TEST_ASSERT(ice.hunt(), "A real intruder on the adjacent leaf must still be pursued")
+	TEST_ASSERT_EQUAL(ice.intruder_checks[scene.node_a.address], 1, "Authorized residents sharing a host must not repeat a negative intruder scan")
+	TEST_ASSERT_EQUAL(ice.intruder_checks[scene.node_b.address], 1, "Hostile residents sharing a host must not repeat a positive intruder scan")
+	TEST_ASSERT_EQUAL(ice.node, scene.node_b, "Deduplicated acquisition must preserve the actual authorized cable step toward the target")
+
 /// Initialization waits for a committed graph and also covers departments introduced later.
 /datum/unit_test/netrun_ice_patrol_topology_lifecycle/Run()
 	var/turf/origin = run_loc_floor_bottom_left
