@@ -1,8 +1,9 @@
 /**
  * Мозг автономного бота. Думает по одному отменяемому таймеру через задачу
  * планировщика `bot` и за один шаг выполняет не больше одного действия: переход,
- * команду узла, боевую программу или подбор обломков. Бой проверяется первым,
- * затем текущая цель; без целей программа бота составляет план.
+ * команду узла, боевую программу или подбор обломков. Фоновый взлом может
+ * запускаться до боя, не отнимая боевой шаг. Движение и команды следуют после
+ * боевого поведения; без целей программа бота составляет план.
  */
 /datum/netrun_bot_brain
 	var/mob/camera/netrun_entity/bot/owner
@@ -11,6 +12,10 @@
 	var/handling_behavior = FALSE
 	var/in_combat = FALSE
 	var/timer_id
+	/// One deadline for signal-waiting work, independent of paced combat actions.
+	var/goal_wait_timer_id
+	var/datum/weakref/waiting_goal_ref
+	var/goal_wait_deadline = 0
 	/// address -> world.time of the last visit, bounded.
 	var/list/visited = list()
 	/// address -> expiry: unreachable or dangerous nodes are skipped for a while.
@@ -50,6 +55,7 @@
 	src.owner = owner
 
 /datum/netrun_bot_brain/Destroy()
+	clear_goal_wait()
 	clear_timer()
 	SSnetrun.task_scheduler?.cancel("bot", src)
 	QDEL_LIST(goals)
@@ -67,6 +73,36 @@
 	if(timer_id)
 		deltimer(timer_id)
 	timer_id = null
+
+/// Repeated scheduling of the same wait retains one cancellable deadline.
+/datum/netrun_bot_brain/proc/schedule_goal_wait(datum/netrun_bot_goal/goal)
+	if(QDELETED(src) || QDELETED(owner) || QDELETED(goal) || goal != current_goal() || !goal.waits_for_signal())
+		return
+	if(goal_wait_timer_id && IS_WEAKREF_OF(goal, waiting_goal_ref) && goal_wait_deadline == goal.expires_at)
+		return
+	clear_goal_wait()
+	waiting_goal_ref = WEAKREF(goal)
+	goal_wait_deadline = goal.expires_at
+	goal_wait_timer_id = addtimer(CALLBACK(src, PROC_REF(on_goal_wait_timeout), waiting_goal_ref, goal_wait_deadline), max(NETRUN_EXECUTION_MIN_INTERVAL, goal_wait_deadline - world.time), TIMER_STOPPABLE | TIMER_DELETE_ME)
+
+/datum/netrun_bot_brain/proc/clear_goal_wait(datum/netrun_bot_goal/goal)
+	// Destruction may already hide goal from resolve(); compare its owned weakref.
+	if(goal && !IS_WEAKREF_OF(goal, waiting_goal_ref))
+		return
+	if(goal_wait_timer_id)
+		deltimer(goal_wait_timer_id)
+	goal_wait_timer_id = null
+	waiting_goal_ref = null
+	goal_wait_deadline = 0
+
+/// Timers admit work only. Goal cancellation and replanning run in the worker.
+/datum/netrun_bot_brain/proc/on_goal_wait_timeout(datum/weakref/expected_goal, expected_deadline)
+	if(waiting_goal_ref != expected_goal || goal_wait_deadline != expected_deadline)
+		return
+	var/datum/netrun_bot_goal/goal = expected_goal?.resolve()
+	clear_goal_wait()
+	if(!QDELETED(goal) && goal == current_goal() && goal.waits_for_signal())
+		wake_now()
 
 /datum/netrun_bot_brain/proc/schedule(delay)
 	clear_timer()
@@ -87,7 +123,9 @@
 	var/datum/netrun_entity_module/goals_module = owner.entity_modules["bot_goals"]
 	if(!goals_module?.enabled && !in_combat)
 		return
-	if(!in_combat && current_goal()?.waits_for_signal())
+	var/datum/netrun_bot_goal/waiting_goal = current_goal()
+	if(!in_combat && waiting_goal?.waits_for_signal())
+		schedule_goal_wait(waiting_goal)
 		return
 	if(command_nonce && !(command_phase in list("completed", "rejected", "cancelled")))
 		schedule(max(NETRUN_EXECUTION_MIN_INTERVAL, command_deadline - world.time))
@@ -111,6 +149,12 @@
 	if(QDELETED(owner) || QDELETED(owner.console) || owner.client || handling_behavior)
 		return
 	handling_behavior = TRUE
+	// A stalled signal wait must expire even when combat/stun has priority.
+	var/datum/netrun_bot_goal/goal = current_goal()
+	if(goal && world.time >= goal.expires_at)
+		finish_goal(goal)
+	if(QDELETED(src) || QDELETED(owner))
+		return
 	owner.process_behavior(src)
 	if(!QDELETED(src))
 		handling_behavior = FALSE
@@ -154,6 +198,7 @@
 	return length(goals) ? goals[1] : null
 
 /datum/netrun_bot_brain/proc/finish_goal(datum/netrun_bot_goal/goal)
+	clear_goal_wait(goal)
 	if(istype(goal, /datum/netrun_bot_goal/command) && order == "command")
 		order = "guard"
 		order_command = null
@@ -165,6 +210,7 @@
 	SEND_SIGNAL(owner, COMSIG_NETRUN_ENTITY_GOALS_CHANGED, handling_behavior)
 
 /datum/netrun_bot_brain/proc/clear_goals()
+	clear_goal_wait()
 	// A one-shot device mutation must never replay after recall/relaunch.
 	if(order == "command")
 		order = "guard"

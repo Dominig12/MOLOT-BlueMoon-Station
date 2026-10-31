@@ -131,7 +131,7 @@
 /// The planning capability never writes an access grant itself.
 /datum/netrun_entity_module/hacking
 	id = "hacking"
-	priority = 145
+	priority = 125
 	requires = list("console", "navigation", "agent_extensions")
 	var/datum/weakref/breach_ref
 	var/datum/weakref/goal_ref
@@ -142,6 +142,21 @@
 	listen(owner, COMSIG_NETRUN_AGENT_ORDER_LIST, PROC_REF(on_order_list))
 	listen(owner, COMSIG_NETRUN_AGENT_CONTROL, PROC_REF(on_agent_control))
 	return TRUE
+
+/// Mini-game input is a background activity for players and NPCs alike. Combat
+/// must not starve admission of an existing hack goal, including on an enemy turn.
+/// Movement and device commands remain ordinary goal actions after combat policy.
+/datum/netrun_entity_module/hacking/behavior_step(datum/netrun_bot_brain/brain)
+	if(!brain || brain.owner != owner || !owner.console.automates_breach_input())
+		return FALSE
+	var/datum/netrun_bot_goal/hack/goal = brain.current_goal()
+	if(!istype(goal) || goal.module_ref?.resolve() != src || goal.waiting)
+		return FALSE
+	var/result = goal.advance(TRUE)
+	if(!QDELETED(goal) && result != NETRUN_BOT_GOAL_CONTINUE)
+		brain.finish_goal(goal)
+	// Starting a puzzle spends no AP and must not strand the current AI turn.
+	return FALSE
 
 /datum/netrun_entity_module/hacking/proc/can_hack()
 	return installed && enabled && !QDELETED(owner?.console) && owner.console.intrusion.can_breach && owner.console.daemon_capability("autobreach")
@@ -181,6 +196,7 @@
 	goal_ref = WEAKREF(goal)
 	goal.waiting = TRUE
 	listen(breach, COMSIG_PARENT_QDELETING, PROC_REF(on_breach_ended))
+	goal.brain.schedule_goal_wait(goal)
 	return TRUE
 
 /datum/netrun_entity_module/hacking/proc/on_breach_ended(datum/source)
@@ -188,6 +204,7 @@
 	unlisten(source, COMSIG_PARENT_QDELETING)
 	var/datum/netrun_bot_goal/hack/goal = goal_ref?.resolve()
 	if(goal)
+		goal.brain?.clear_goal_wait(goal)
 		goal.waiting = FALSE
 	breach_ref = null
 	goal_ref = null
@@ -200,6 +217,8 @@
 		return
 	var/datum/netrun_breach/breach = breach_ref?.resolve()
 	var/datum/netrun_bot_goal/hack/current = goal_ref?.resolve()
+	if(goal || current)
+		owner?.module_brain()?.clear_goal_wait(goal || current)
 	if(current)
 		current.waiting = FALSE
 		current.cancelled = TRUE
@@ -275,22 +294,38 @@
 	var/datum/netrun_entity_module/hacking/module = module_ref?.resolve()
 	return waiting && !QDELETED(module)
 
-/datum/netrun_bot_goal/hack/advance()
+/// A failed frontier must not become the next autonomous plan immediately.
+/// Explicit owner orders can still try again; only automatic selection consults
+/// the blacklist. Cancellation/recall never enters this failure path.
+/datum/netrun_bot_goal/hack/proc/fail_at(datum/component/netrun_node/frontier)
+	var/datum/component/netrun_node/target = target_ref?.resolve()
+	if(!cancelled && !QDELETED(brain))
+		if(!QDELETED(frontier))
+			brain.blacklist(frontier.address, 1 MINUTES)
+		if(!QDELETED(target) && target != frontier)
+			brain.blacklist(target.address, 1 MINUTES)
+	return NETRUN_BOT_GOAL_FAILED
+
+/datum/netrun_bot_goal/hack/advance(background_only = FALSE)
 	var/datum/netrun_entity_module/hacking/module = module_ref?.resolve()
 	var/datum/component/netrun_node/target = target_ref?.resolve()
 	var/mob/camera/netrun_entity/actor = brain.owner
-	if(cancelled || QDELETED(module) || !module.can_hack() || QDELETED(target) || QDELETED(actor.console) || actor.console.is_locked() || !target.is_online())
+	if(cancelled || QDELETED(module) || !module.can_hack() || QDELETED(target) || QDELETED(actor.console))
 		return NETRUN_BOT_GOAL_FAILED
+	if(actor.console.is_locked() || !target.is_online())
+		return fail_at(target)
 	if(waiting)
 		brain.state = "взлом"
 		return NETRUN_BOT_GOAL_CONTINUE
 	if(actor.host_node == target && actor.console.node_level(target) >= NETRUN_ACCESS_USER)
 		brain.state = command_id ? "команда после взлома" : "взлом завершён"
+		if(background_only && command_id)
+			return NETRUN_BOT_GOAL_CONTINUE
 		return command_id ? brain.command_step(target, command_id) : NETRUN_BOT_GOAL_DONE
 	var/datum/netrun_path_tree/tree = actor.console.connection.read_path_tree(TRUE)
 	if(!actor.host_node || !actor.console.can_route(target, tree))
 		actor.console.release_path_tree(tree)
-		return NETRUN_BOT_GOAL_FAILED
+		return fail_at(target)
 	var/address = target.address
 	while(tree.previous[address] && tree.previous[address] != actor.host_node.address)
 		address = tree.previous[address]
@@ -298,18 +333,17 @@
 	var/level = actor.console.node_level(frontier, tree)
 	actor.console.release_path_tree(tree)
 	if(QDELETED(frontier))
-		return NETRUN_BOT_GOAL_FAILED
+		return fail_at(target)
 	if(level < NETRUN_ACCESS_USER)
 		var/kind = actor.console.network_level(frontier.network) < NETRUN_ACCESS_GUEST ? "network" : "node"
 		var/id = kind == "network" ? frontier.network?.id : frontier.address
 		var/key = "[kind]:[id]"
 		if(!id || attempted_key == key)
-			brain.blacklist(frontier.address, 1 MINUTES)
-			return NETRUN_BOT_GOAL_FAILED
+			return fail_at(frontier)
 		attempted_key = key
 		brain.state = "взлом"
-		return module.start_for_goal(src, kind, id) ? NETRUN_BOT_GOAL_CONTINUE : NETRUN_BOT_GOAL_FAILED
-	if(world.time < actor.next_hop)
+		return module.start_for_goal(src, kind, id) ? NETRUN_BOT_GOAL_CONTINUE : fail_at(frontier)
+	if(background_only || world.time < actor.next_hop)
 		return NETRUN_BOT_GOAL_CONTINUE
 	brain.state = "переход к цели взлома"
-	return actor.hop(frontier) ? NETRUN_BOT_GOAL_CONTINUE : NETRUN_BOT_GOAL_FAILED
+	return actor.hop(frontier) ? NETRUN_BOT_GOAL_CONTINUE : fail_at(frontier)

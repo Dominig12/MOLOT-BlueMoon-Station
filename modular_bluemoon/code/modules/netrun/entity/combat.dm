@@ -103,9 +103,14 @@
 	var/mob/camera/netrun_entity/entity = self
 	if(istype(entity))
 		entity.combat_ignore_until = world.time + grace
+	var/mob/camera/netrun_entity/bot/bot = self
 	for(var/datum/netrun_ice/ice as anything in SSnetrun.ice_processes)
 		if(QDELETED(ice))
 			continue
+		if(istype(bot))
+			// Successful cleanup also releases the NPC's remembered guard target;
+			// otherwise it immediately provokes the same ICE after earning USER.
+			bot.brain?.enemies -= WEAKREF(ice)
 		var/datum/target = ice.pending_target()
 		var/datum/resolved_enemy = ice.enemy_ref?.resolve()
 		if(target == src || (self && (target == self || resolved_enemy == self)))
