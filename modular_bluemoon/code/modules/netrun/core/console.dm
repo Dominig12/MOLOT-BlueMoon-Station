@@ -177,6 +177,12 @@
 /datum/netrun_console/proc/autonomous()
 	return origin == NETRUN_ORIGIN_CIRCUIT
 
+/// Only an autonomous resident without a controlling player supplies puzzle input.
+/// Other autonomous clients may opt in without changing the breach implementation.
+/datum/netrun_console/proc/automates_breach_input()
+	var/mob/camera/netrun_entity/entity = host
+	return autonomous() && istype(entity) && !entity.client
+
 /datum/netrun_console/proc/is_ui_active()
 	var/datum/netrun_execution_limits/limits = SSnetrun.get_execution_limits()
 	if(world.time <= last_ui_at + limits.ui_activity_lease)
@@ -620,7 +626,9 @@
 	trace = 0
 	QDEL_NULL(breach)
 	owner.map_view.invalidate()
-	var/where = get_area_name(owner.host, TRUE) || "неизвестно"
+	var/datum/resident = owner.netrun_actor()
+	var/datum/component/netrun_node/resident_node = resident?.netrun_actor_node()
+	var/where = get_area_name(resident_node?.parent || owner.host, TRUE) || "неизвестно"
 	SSnetrun.post_event("trace", null, owner.map_view.selected_address)
 	SSnetrun.ntnet_log("Нарушитель отслежен: точка [owner.origin], район: [where].", TRUE)
 	for(var/network_id in SSnetrun.networks)
@@ -629,10 +637,10 @@
 			network.add_log("Трассировка завершена: нарушитель в районе [where].")
 	var/mob/camera/netrun_entity/entity = owner.combat_self()
 	SSnetrun.report_incident("trace", istype(entity) ? entity.host_node : owner.route_source(), istype(entity) ? entity : owner, NETRUN_INCIDENT_HIGH, "Нарушитель отслежен: точка [owner.origin], район: [where].")
-	if(istype(entity))
+	if(istype(entity) || istype(resident, /datum/netrun_ice))
 		// Сущность живёт в сети: её не выбрасывает, но защита поднимается и идёт к её узлу.
 		owner.log_line("ВАС ОБНАРУЖИЛИ! Заметайте следы, иначе процессы защиты доберутся до вас.", "bad")
-		SSnetrun.alert_defenses(entity.host_node, owner)
+		SSnetrun.alert_defenses(resident_node, owner)
 	else
 		// Удалённая точка подключения: трассировка рвёт соединение и блокирует точку.
 		lockout_until = world.time + NETRUN_TRACE_LOCKOUT
@@ -712,6 +720,7 @@
 			breach.finish()
 		else
 			owner.add_trace(0.6 * breach.security * delta * (breach.target_kind == "network" ? 1.25 : 1))
+			breach?.advance_automation()
 	else if(trace > 0 && world.time - last_illegal > 10 SECONDS)
 		var/datum/netrun_daemon_context/context = new
 		context.trace_decay = NETRUN_TRACE_DECAY * delta
@@ -772,7 +781,12 @@
 	if((kind in list("node", "network")) && !owner.canonical_acquired_key(TRUE))
 		owner.log_line("Взлом не начат: для файла добытых прав нужна одна свободная ячейка в памяти или подключённом шарде.", "bad")
 		return FALSE
-	breach = automatic ? new /datum/netrun_breach/automatic(owner, kind, id, target_name, security) : new /datum/netrun_breach(owner, kind, id, target_name, security)
+	if(automatic)
+		breach = new /datum/netrun_breach/automatic(owner, kind, id, target_name, security)
+	else if(owner.automates_breach_input())
+		breach = new /datum/netrun_breach/npc(owner, kind, id, target_name, security)
+	else
+		breach = new /datum/netrun_breach(owner, kind, id, target_name, security)
 	last_breach_tick = world.time
 	SSnetrun.currentbreaches |= owner
 	if(kind != "network")

@@ -22,6 +22,8 @@
 	var/console_type = /datum/netrun_console/entity/bot
 	/// Capabilities are assembled from data; new behavior does not change the brain dispatcher.
 	var/list/behavior_modules = list(
+		/datum/netrun_agent_behavior/pattern/temperament,
+		/datum/netrun_agent_behavior/pattern/communication,
 		/datum/netrun_entity_module/bot_lifecycle,
 		/datum/netrun_entity_module/bot_stun,
 		/datum/netrun_entity_module/bot_local/combat,

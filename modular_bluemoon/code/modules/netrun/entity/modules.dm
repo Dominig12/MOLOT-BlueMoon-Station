@@ -1,104 +1,17 @@
-/** A capability owns its resources, reactions and optional clock. Entities compose
- * capabilities; player/agent interfaces remain aliases to the installed resources.
- */
-/datum/netrun_agent_behavior
-	var/id
-	var/priority = 100
-	var/enabled = TRUE
-	/// Each behavior owns its subscriptions, independently of its agent's representation.
-	var/list/subscriptions = list()
-
-/datum/netrun_agent_behavior/Destroy()
-	clear_subscriptions()
-	return ..()
-
+/** Entity capabilities keep their typed owner; composition belongs to the shared host. */
 /datum/netrun_entity_module
 	parent_type = /datum/netrun_agent_behavior
 	var/mob/camera/netrun_entity/owner
-	var/list/requires = list()
-	/// A discarded factory candidate has never acquired capability resources.
-	var/install_started = FALSE
-	var/installed = FALSE
-	var/removed = FALSE
 
 /datum/netrun_entity_module/New(mob/camera/netrun_entity/owner)
 	src.owner = owner
 
+/datum/netrun_entity_module/bound_owner()
+	return owner
+
 /datum/netrun_entity_module/Destroy()
-	var/mob/camera/netrun_entity/previous = owner
-	previous?.detach_entity_module(src)
-	installed = FALSE
-	if(install_started && !removed)
-		removed = TRUE
-		on_remove()
-	clear_subscriptions()
+	. = ..()
 	owner = null
-	return ..()
-
-/datum/netrun_entity_module/proc/on_install()
-	return TRUE
-
-/datum/netrun_entity_module/proc/on_remove()
-	return
-
-/datum/netrun_entity_module/proc/process_tick(delta)
-	return
-
-/datum/netrun_entity_module/proc/needs_processing()
-	return FALSE
-
-/datum/netrun_entity_module/proc/handle_action(action, list/params, mob/user)
-	return FALSE
-
-/datum/netrun_entity_module/proc/behavior_step(datum/netrun_bot_brain/brain)
-	return FALSE
-
-/// A module is the signal receiver. Repeating a subscription is a no-op;
-/// conflicting callbacks for the same source/signal are rejected atomically.
-/datum/netrun_agent_behavior/proc/listen(datum/source, signals, callback)
-	if(QDELETED(source) || !istext(callback))
-		return FALSE
-	var/list/names = islist(signals) ? signals : list(signals)
-	var/key = REF(source)
-	var/list/entry = subscriptions[key]
-	var/list/owned = entry ? entry["signals"] : list()
-	for(var/signal in names)
-		if(!istext(signal) || (owned[signal] && owned[signal] != callback))
-			return FALSE
-	var/list/added = list()
-	for(var/signal in names)
-		if(!owned[signal])
-			owned[signal] = callback
-			added += signal
-	if(length(added))
-		RegisterSignal(source, added, callback)
-	if(!entry)
-		subscriptions[key] = list("source" = WEAKREF(source), "signals" = owned)
-	return TRUE
-
-/datum/netrun_agent_behavior/proc/unlisten(datum/source, signals)
-	if(!source)
-		return
-	var/key = REF(source)
-	var/list/entry = subscriptions[key]
-	if(!entry)
-		return
-	var/list/owned = entry["signals"]
-	var/list/names = islist(signals) ? signals : list(signals)
-	UnregisterSignal(source, names)
-	for(var/signal in names)
-		owned -= signal
-	if(!length(owned))
-		subscriptions -= key
-
-/datum/netrun_agent_behavior/proc/clear_subscriptions()
-	for(var/key in subscriptions)
-		var/list/entry = subscriptions[key]
-		var/datum/weakref/reference = entry["source"]
-		var/datum/source = reference.resolve()
-		if(source)
-			UnregisterSignal(source, entry["signals"])
-	subscriptions.Cut()
 
 /datum/netrun_entity_module/proc/wake_behavior()
 	if(!installed || !enabled || QDELETED(owner))
@@ -107,14 +20,23 @@
 	if(!QDELETED(brain) && !brain.handling_behavior)
 		brain.wake_now()
 
-/proc/cmp_netrun_agent_behavior(datum/netrun_agent_behavior/first, datum/netrun_agent_behavior/second)
-	return first.priority == second.priority ? sorttext(second.id, first.id) : first.priority - second.priority
-
 /mob/camera/netrun_entity
-	var/list/datum/netrun_entity_module/entity_modules = list()
-	/// Replaced on installation/removal. Active dispatches retain their immutable list.
-	var/list/datum/netrun_entity_module/entity_module_order = list()
-	var/destroying_entity_modules = FALSE
+	var/datum/netrun_module_host/module_host
+	/// Compatibility aliases; the host publishes a replacement order after mutation.
+	var/list/datum/netrun_agent_behavior/entity_modules = list()
+	var/list/datum/netrun_agent_behavior/entity_module_order = list()
+
+/mob/camera/netrun_entity/netrun_modules_changed(datum/netrun_module_host/controller)
+	entity_modules = controller.modules
+	entity_module_order = controller.ordered
+
+/mob/camera/netrun_entity/netrun_module_ready(datum/netrun_agent_behavior/module)
+	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_MODULE_READY, module)
+
+/mob/camera/netrun_entity/proc/get_module_host()
+	if(!module_host)
+		module_host = new(src, /datum/netrun_entity_module)
+	return module_host
 
 /mob/camera/netrun_entity/proc/entity_module_types()
 	return list(/datum/netrun_entity_module/identity, /datum/netrun_entity_module/console,
@@ -130,187 +52,40 @@
 	return brain
 
 /mob/camera/netrun_entity/proc/module_dependencies_met(list/requirements)
-	if(!islist(requirements))
-		return FALSE
-	for(var/required in requirements)
-		var/datum/netrun_entity_module/module = entity_modules[required]
-		if(!istext(required) || QDELETED(module) || !module.installed)
-			return FALSE
-	return TRUE
-
-/mob/camera/netrun_entity/proc/rebuild_entity_module_order()
-	var/list/ordered = list()
-	for(var/id in entity_modules)
-		var/datum/netrun_entity_module/module = entity_modules[id]
-		if(!QDELETED(module) && module.installed)
-			ordered += module
-	sortTim(ordered, GLOBAL_PROC_REF(cmp_netrun_agent_behavior))
-	entity_module_order = ordered
+	return get_module_host().module_dependencies_met(requirements)
 
 /mob/camera/netrun_entity/proc/install_module(module_type)
-	RETURN_TYPE(/datum/netrun_entity_module)
-	if(destroying_entity_modules || QDELETED(src) || !ispath(module_type, /datum/netrun_entity_module))
-		return null
-	var/datum/netrun_entity_module/module = new module_type(src)
-	return install_module_candidate(module)
+	return get_module_host().install_module(module_type)
 
-/// Lists declared on a type are initialized on its instance in DM. The factory
-/// and assembly both validate this single candidate, never initial(type.requires).
-/mob/camera/netrun_entity/proc/install_module_candidate(datum/netrun_entity_module/module)
-	RETURN_TYPE(/datum/netrun_entity_module)
-	if(QDELETED(module) || module.owner != src)
-		return null
-	var/id = module.id
-	if(destroying_entity_modules || QDELETED(src) || module.install_started || !istext(id) || !length(id) || entity_modules[id] || !IS_FINITE(module.priority) || !module_dependencies_met(module.requires))
-		qdel(module)
-		return null
-	entity_modules[id] = module
-	module.install_started = TRUE
-	if(!module.on_install() || QDELETED(src) || QDELETED(module) || module.id != id || entity_modules[id] != module)
-		if(entity_modules[id] == module)
-			entity_modules -= id
-		qdel(module)
-		return null
-	module.installed = TRUE
-	rebuild_entity_module_order()
-	SEND_SIGNAL(src, COMSIG_NETRUN_ENTITY_MODULE_READY, module)
-	return QDELETED(module) ? null : module
+/mob/camera/netrun_entity/proc/install_module_candidate(datum/netrun_agent_behavior/module)
+	return get_module_host().install_module_candidate(module)
 
-/// Forced detach belongs to destruction; normal removal additionally checks dependents.
-/mob/camera/netrun_entity/proc/detach_entity_module(datum/netrun_entity_module/module)
-	if(entity_modules[module.id] != module)
-		return FALSE
-	entity_modules -= module.id
-	module.installed = FALSE
-	rebuild_entity_module_order()
-	return TRUE
+/mob/camera/netrun_entity/proc/detach_entity_module(datum/netrun_agent_behavior/module)
+	return get_module_host().detach_entity_module(module)
 
 /mob/camera/netrun_entity/proc/remove_module(id)
-	var/datum/netrun_entity_module/module = entity_modules[id]
-	if(QDELETED(module) || destroying_entity_modules)
-		return FALSE
-	for(var/other_id in entity_modules)
-		var/datum/netrun_entity_module/other = entity_modules[other_id]
-		if(other != module && !QDELETED(other) && (id in other.requires))
-			return FALSE
-	detach_entity_module(module)
-	qdel(module)
-	return TRUE
+	return get_module_host().remove_module(id)
 
-/// Assemble in dependency order, independently of a program's authored list order.
-/// Failure rolls back only this assembly's additions; pre-existing capabilities survive.
-/mob/camera/netrun_entity/proc/assemble_modules()
-	var/list/module_types = entity_module_types()
-	if(!islist(module_types) || destroying_entity_modules || QDELETED(src))
-		return FALSE
-	var/list/pending = list()
-	var/list/requested = list()
-	var/success = TRUE
-	for(var/module_type in module_types)
-		if(!ispath(module_type, /datum/netrun_entity_module))
-			success = FALSE
-			break
-		var/datum/netrun_entity_module/candidate = new module_type(src)
-		var/id = candidate.id
-		if(!istext(id) || !length(id) || requested[id] || !IS_FINITE(candidate.priority) || !islist(candidate.requires))
-			qdel(candidate)
-			success = FALSE
-			break
-		requested[id] = TRUE
-		pending += candidate
-	var/list/added = list()
-	while(length(pending) && success)
-		var/progress = FALSE
-		for(var/index = 1; index <= length(pending);)
-			var/datum/netrun_entity_module/candidate = pending[index]
-			var/id = candidate.id
-			var/datum/netrun_entity_module/existing = entity_modules[id]
-			if(existing)
-				if(QDELETED(existing) || !existing.installed || !istype(existing, candidate.type))
-					success = FALSE
-					break
-				qdel(candidate)
-			else
-				if(!module_dependencies_met(candidate.requires))
-					index++
-					continue
-				var/datum/netrun_entity_module/module = install_module_candidate(candidate)
-				if(!module)
-					success = FALSE
-					break
-				added += module
-			pending.Cut(index, index + 1)
-			progress = TRUE
-		if(!progress)
-			success = FALSE
-	// Uninstalled candidates own no resources and must not run on_remove hooks.
-	for(var/datum/netrun_entity_module/candidate as anything in pending)
-		if(!QDELETED(candidate))
-			qdel(candidate)
-	if(!success)
-		for(var/index = length(added); index >= 1; index--)
-			var/datum/netrun_entity_module/module = added[index]
-			if(!QDELETED(module))
-				remove_module(module.id)
-	return success
-
-/mob/camera/netrun_entity/proc/destroy_modules()
-	if(destroying_entity_modules)
-		return
-	destroying_entity_modules = TRUE
-	var/list/ordered = entity_module_order
-	var/list/previous = entity_modules
-	entity_modules = list()
-	entity_module_order = list()
-	for(var/index = length(ordered); index >= 1; index--)
-		qdel(ordered[index])
-	// An on_install hook may have ended the owner before its module became ready.
-	for(var/id in previous)
-		var/datum/netrun_entity_module/module = previous[id]
-		if(!QDELETED(module))
-			qdel(module)
-	destroying_entity_modules = FALSE
-
-/mob/camera/netrun_entity/proc/entity_module_current(datum/netrun_entity_module/module)
-	return !QDELETED(module) && module.installed && module.enabled && entity_modules[module.id] == module && module_dependencies_met(module.requires)
+/mob/camera/netrun_entity/proc/entity_module_current(datum/netrun_agent_behavior/module)
+	return get_module_host().entity_module_current(module)
 
 /mob/camera/netrun_entity/proc/process_modules(delta)
-	var/list/ordered = entity_module_order
-	for(var/datum/netrun_entity_module/module as anything in ordered)
-		if(QDELETED(src))
-			return
-		if(entity_module_current(module))
-			module.process_tick(delta)
+	return get_module_host().process_modules(delta)
 
 /mob/camera/netrun_entity/proc/modules_need_processing()
-	var/list/ordered = entity_module_order
-	for(var/datum/netrun_entity_module/module as anything in ordered)
-		if(QDELETED(src))
-			return FALSE
-		if(entity_module_current(module) && module.needs_processing())
-			return TRUE
-	return FALSE
+	return get_module_host().modules_need_processing()
 
 /mob/camera/netrun_entity/proc/dispatch_module_action(action, list/params, mob/user)
-	var/list/ordered = entity_module_order
-	for(var/datum/netrun_entity_module/module as anything in ordered)
-		if(QDELETED(src))
-			return FALSE
-		if(entity_module_current(module) && module.handle_action(action, params, user))
-			return TRUE
-	return FALSE
+	return get_module_host().dispatch_module_action(action, params, user)
 
-/// Priority arbitrates one behavioral action; each capability owns its own facts/reactions.
 /mob/camera/netrun_entity/proc/process_behavior(datum/netrun_bot_brain/brain)
-	if(brain && (QDELETED(brain) || brain.owner != src))
-		return FALSE
-	var/list/ordered = entity_module_order
-	for(var/datum/netrun_entity_module/module as anything in ordered)
-		if(QDELETED(src))
-			return FALSE
-		if(entity_module_current(module) && module.behavior_step(brain))
-			return TRUE
-	return FALSE
+	return get_module_host().process_behavior(brain)
+
+/mob/camera/netrun_entity/proc/assemble_modules()
+	return get_module_host().assemble_modules(entity_module_types())
+
+/mob/camera/netrun_entity/proc/destroy_modules()
+	module_host?.destroy_modules()
 
 // Shared capabilities ---------------------------------------------------------
 

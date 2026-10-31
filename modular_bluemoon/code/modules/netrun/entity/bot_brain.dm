@@ -122,7 +122,11 @@
 		finish_goal(goal)
 		goal = null
 	if(!goal)
-		owner.program.plan(src)
+		var/datum/netrun_agent_behavior/pattern/temperament/policy = netrun_actor_temperament(owner)
+		if(policy)
+			policy.plan(src)
+		else
+			owner.program.plan(src)
 		goal = current_goal()
 	if(!goal)
 		state = "ожидание"
@@ -413,7 +417,7 @@
 	if(!node.is_online())
 		return FALSE
 	for(var/mob/camera/netrun_entity/entity as anything in node.entities)
-		if(entity != owner && !QDELETED(entity) && owner.program.is_enemy(src, entity))
+		if(entity != owner && !QDELETED(entity) && proactive_enemy(entity))
 			return TRUE
 	return FALSE
 
@@ -470,13 +474,17 @@
 	if(!node)
 		return
 	var/list/candidates = list()
+	var/datum/netrun_agent_behavior/pattern/temperament/policy = netrun_actor_temperament(owner)
 	for(var/datum/netrun_ice/ice as anything in node.netrun_ice)
-		if(!QDELETED(ice) && (ice.enemy_ref?.resolve() == owner || ice.is_intruder(owner, node)))
+		if(QDELETED(ice))
+			continue
+		var/retaliating = remembered_enemy(ice) || ice.enemy_ref?.resolve() == owner || ice.pending_target() == owner
+		if(retaliating || (ice.is_intruder(owner, node) && (!policy || policy.willing_to_engage(ice))))
 			candidates += ice
 	for(var/mob/camera/netrun_entity/entity as anything in node.entities)
 		if(entity == owner || QDELETED(entity) || world.time < entity.combat_ignore_until)
 			continue
-		if(remembered_enemy(entity) || owner.program.is_enemy(src, entity))
+		if(remembered_enemy(entity) || proactive_enemy(entity))
 			candidates += entity
 	var/list/fortified_nodes = list(node) + netrun_adjacent_fortress_nodes(node)
 	for(var/datum/component/netrun_node/fortified as anything in fortified_nodes)
@@ -520,7 +528,8 @@
 	if(owner.navigation.is_active())
 		owner.navigation.cancel()
 	var/ratio = owner.integrity / max(1, owner.max_integrity)
-	if(ratio < owner.program.flee_ratio && try_flee())
+	var/datum/netrun_agent_behavior/pattern/temperament/policy = netrun_actor_temperament(owner)
+	if(ratio < (policy ? policy.caution / 100 : owner.program.flee_ratio) && try_flee())
 		return TRUE
 	if(ratio < 0.5 && world.time >= owner.combat_shield_until && use_role(NETRUN_PROGRAM_SHIELD, owner))
 		return TRUE
@@ -707,3 +716,7 @@
 /// These bots deliberately engage ICE; each hop still revalidates the entity's actual authority.
 /datum/netrun_entity_navigation/bot/threat_at(datum/component/netrun_node/next)
 	return null
+
+/datum/netrun_bot_brain/proc/proactive_enemy(mob/camera/netrun_entity/entity)
+	var/datum/netrun_agent_behavior/pattern/temperament/policy = netrun_actor_temperament(owner)
+	return owner.program.is_enemy(src, entity) && (!policy || policy.willing_to_engage(entity))

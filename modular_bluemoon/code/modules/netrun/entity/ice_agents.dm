@@ -44,38 +44,58 @@
 			ice_profiles[profile.id] = profile
 	return ice_profiles[id] || ice_profiles[NETRUN_ICE_SENTRY]
 
+/// The same host used by native players; only representation-specific capabilities differ.
 /datum/netrun_ice_agent
-	var/datum/netrun_ice/owner
+	parent_type = /datum/netrun_module_host
 	var/datum/netrun_ice_profile/profile
 	var/datum/netrun_file_store/memory
-	var/list/datum/netrun_ice_behavior/behaviors = list()
+	/// Compatibility view of the shared immutable order.
+	var/list/datum/netrun_agent_behavior/behaviors = list()
 	var/state = "охрана"
 
 /datum/netrun_ice_agent/New(datum/netrun_ice/owner, datum/netrun_ice_profile/profile)
-	src.owner = owner
+	..(owner, /datum/netrun_ice_behavior)
 	src.profile = profile
 	memory = new(src, profile.storage)
 	for(var/id in profile.program_ids)
 		memory.insert(netrun_program_file(id))
-	for(var/path in profile.behavior_types)
-		var/datum/netrun_ice_behavior/behavior = new path(owner)
-		behaviors += behavior
-	sortTim(behaviors, GLOBAL_PROC_REF(cmp_netrun_agent_behavior))
+	RegisterSignal(memory, COMSIG_NETRUN_STORAGE_CHANGED, PROC_REF(on_memory_changed))
+	on_memory_changed(memory)
+	assemble_modules(profile.behavior_types + list(/datum/netrun_agent_behavior/pattern/temperament, /datum/netrun_agent_behavior/pattern/communication))
+
+/datum/netrun_ice_agent/rebuild_ordered()
+	..()
+	behaviors = ordered
 
 /datum/netrun_ice_agent/Destroy()
-	QDEL_LIST(behaviors)
+	destroy_modules()
+	behaviors = list()
+	UnregisterSignal(memory, COMSIG_NETRUN_STORAGE_CHANGED)
 	QDEL_NULL(memory)
-	owner = null
 	profile = null
 	return ..()
 
-/// Exactly one capability may perform an action; passive reactions return FALSE.
-/datum/netrun_ice_agent/proc/advance(delta)
-	for(var/datum/netrun_ice_behavior/behavior as anything in behaviors)
-		if(QDELETED(owner))
-			return
-		if(behavior.enabled && behavior.advance(delta))
-			return
+/datum/netrun_ice_agent/proc/on_memory_changed(datum/source)
+	SIGNAL_HANDLER
+	var/datum/netrun_ice/ice = owner
+	ice.program_ids = list()
+	for(var/datum/netrun_file/file as anything in memory.files)
+		if(!QDELETED(file) && file.kind == NETRUN_FILE_PROGRAM && SSnetrun.get_program(file.content))
+			ice.program_ids |= file.content
+	if(ice.pending_program && !ice.pending_program.consumable && !program_file(ice.pending_program.id))
+		ice.cancel_program()
+	if(ice.agent == src)
+		ice.netrun_actor_wake()
+
+/datum/netrun_ice_agent/destroy_modules()
+	..()
+	behaviors = ordered
+
+/datum/netrun_ice_agent/proc/program_file(id)
+	for(var/datum/netrun_file/file as anything in memory?.files)
+		if(!QDELETED(file) && file.kind == NETRUN_FILE_PROGRAM && file.content == id)
+			return file
+	return null
 
 /datum/netrun_ice_behavior
 	parent_type = /datum/netrun_agent_behavior
@@ -83,21 +103,20 @@
 
 /datum/netrun_ice_behavior/New(datum/netrun_ice/owner)
 	src.owner = owner
-	on_install()
+
+/datum/netrun_ice_behavior/bound_owner()
+	return owner
 
 /datum/netrun_ice_behavior/Destroy()
+	. = ..()
 	owner = null
-	return ..()
 
-/datum/netrun_ice_behavior/proc/on_install()
-	return
-
-/datum/netrun_ice_behavior/proc/advance(delta)
+/datum/netrun_ice_behavior/advance(delta)
 	return FALSE
 
 /datum/netrun_ice_behavior/lifecycle
 	id = "lifecycle"
-	priority = 10
+	priority = 100
 
 /datum/netrun_ice_behavior/lifecycle/advance(delta)
 	if(QDELETED(owner.node) || QDELETED(owner.node.parent) || (owner.kind == NETRUN_ICE_HUNTER && owner.node.network != owner.defense_network()))
@@ -117,7 +136,7 @@
 
 /datum/netrun_ice_behavior/availability
 	id = "availability"
-	priority = 20
+	priority = 110
 
 /datum/netrun_ice_behavior/availability/advance(delta)
 	if(owner.is_stunned() || !owner.node.is_online())
@@ -127,7 +146,7 @@
 
 /datum/netrun_ice_behavior/cast
 	id = "cast"
-	priority = 30
+	priority = 115
 
 /datum/netrun_ice_behavior/cast/advance(delta)
 	if(!owner.pending_program)
@@ -138,20 +157,23 @@
 
 /datum/netrun_ice_behavior/local_combat
 	id = "local_combat"
-	priority = 40
+	priority = 130
 
 /datum/netrun_ice_behavior/local_combat/advance(delta)
-	var/mob/camera/netrun_entity/prey = owner.find_intruder(owner.node)
+	var/datum/netrun_agent_behavior/pattern/temperament/policy = netrun_actor_temperament(owner)
+	var/datum/prey = owner.find_intruder(owner.node)
+	if(policy && !policy.willing_to_engage(prey) && owner.enemy_ref?.resolve() != prey)
+		return FALSE
 	if(!prey)
 		return FALSE
-	owner.agent.state = "бой: [prey.real_name]"
+	owner.agent.state = "бой: [prey.netrun_actor_name()]"
 	owner.idle_expires_at = world.time + owner.patrol_life * (1 SECONDS)
 	owner.try_attack(prey)
 	return TRUE
 
 /datum/netrun_ice_behavior/trace
 	id = "trace"
-	priority = 50
+	priority = 140
 
 /datum/netrun_ice_behavior/trace/advance(delta)
 	if(owner.harass_intruders())
@@ -162,10 +184,11 @@
 
 /datum/netrun_ice_behavior/pursuit
 	id = "pursuit"
-	priority = 60
+	priority = 150
 
 /datum/netrun_ice_behavior/pursuit/advance(delta)
-	if(world.time < owner.hop_cooldown)
+	var/datum/netrun_agent_behavior/pattern/temperament/policy = netrun_actor_temperament(owner)
+	if(policy?.strategy == "guard" || world.time < owner.hop_cooldown)
 		return FALSE
 	owner.agent.state = owner.hunt() ? "преследование" : "патруль"
 	if(owner.agent.state == "патруль")
@@ -176,10 +199,10 @@
 /// every other ICE program. Only a delivered hostile effect can reach the body.
 /datum/netrun_ice_behavior/biofeedback
 	id = "biofeedback"
-	priority = 70
+	priority = 170
 
 /datum/netrun_ice_behavior/biofeedback/on_install()
-	listen(owner, COMSIG_NETRUN_ICE_PROGRAM_RESOLVED, PROC_REF(on_resolved))
+	return listen(owner, COMSIG_NETRUN_ICE_PROGRAM_RESOLVED, PROC_REF(on_resolved))
 
 /datum/netrun_ice_behavior/biofeedback/proc/on_resolved(datum/source, datum/netrun_program/program, datum/target)
 	SIGNAL_HANDLER

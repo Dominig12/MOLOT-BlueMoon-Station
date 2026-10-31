@@ -560,6 +560,13 @@ export type NetEvent = {
 };
 
 /** An autonomous agent launched by this console's owner. */
+export type AgentBehavior = {
+  strategy: 'profile' | 'patrol' | 'scavenge' | 'guard';
+  aggression: number;
+  caution: number;
+  cooperation: boolean;
+};
+
 export type AgentState = {
   ref: string;
   name: string;
@@ -575,6 +582,7 @@ export type AgentState = {
   programs?: CombatProgram[];
   files?: NetFile[];
   goals?: { id: string; name: string; desc: string; selected?: boolean }[];
+  behavior?: AgentBehavior;
   orders: { id: string; name: string; needs_node?: boolean; enabled?: boolean; reason?: string }[];
 };
 

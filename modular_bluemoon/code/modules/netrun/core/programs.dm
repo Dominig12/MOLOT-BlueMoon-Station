@@ -76,6 +76,8 @@
 		return FALSE
 	if(!needs_target)
 		return target == ice
+	if(istype(target, /datum/netrun_ice))
+		return ice.hostile_actor(target, ice.node)
 	var/mob/camera/netrun_entity/entity = target
 	if(!istype(entity) || entity.host_node != ice.node || world.time < entity.combat_ignore_until)
 		return FALSE

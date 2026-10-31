@@ -165,6 +165,12 @@
 #define COMSIG_NETRUN_ENTITY_GOALS_CHANGED "netrun_entity_goals_changed"
 #define COMSIG_NETRUN_ENTITY_COMMAND_FINISHED "netrun_entity_command_finished"
 #define COMSIG_NETRUN_ENTITY_MODULE_READY "netrun_entity_module_ready"
+/// Receiving actor: (datum/netrun_console/sender, message), after authorized packet delivery.
+#define COMSIG_NETRUN_ACTOR_CONTACT "netrun_actor_contact"
+/// Receiving actor: (datum/attacker), after a hostile effect or intent.
+#define COMSIG_NETRUN_ACTOR_ATTACKED "netrun_actor_attacked"
+/// Allied actor: (datum/victim, datum/attacker), bounded to local residents.
+#define COMSIG_NETRUN_ACTOR_DISTRESS "netrun_actor_distress"
 #define COMSIG_NETRUN_ENTITY_INTEGRITY "netrun_entity_integrity"
 #define COMSIG_NETRUN_CONSOLE_EVENT "netrun_console_event"
 /// Нелегальный сетевой доступ к кибернетическому узлу носителя: (datum/netrun_console, datum/component/netrun_node)

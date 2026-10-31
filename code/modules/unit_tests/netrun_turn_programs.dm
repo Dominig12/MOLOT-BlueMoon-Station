@@ -187,6 +187,7 @@
 	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
 	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
 	var/datum/netrun_ice/ice = allocate(/datum/netrun_ice, scene.node_a)
+	TEST_ASSERT(ice.agent.memory.insert(program.create_file()), "The custom executable occupies real ICE memory")
 	ice.program_ids = list(program.id)
 	ice.damage_factor = 0.5
 	TEST_ASSERT(ice.register_enemy(entity.console), "The resident explicitly provokes ICE before it can become a legal combat target")

@@ -695,6 +695,33 @@
 
 // MARK: Оформление клиента и личность процесса
 
+/datum/netrun_cli_command/agent
+	id = "agent"
+	args = "\[REF behavior <profile|patrol|scavenge|guard> <агрессия> <осторожность> <on|off>\]"
+	desc = "Список собственных агентов или изменение их стратегии, агрессии, осторожности и сотрудничества через обычный пакет приказа."
+	category = "Действия"
+
+/datum/netrun_cli_command/agent/execute(datum/netrun_console/console, list/words, raw)
+	if(length(words) == 1)
+		var/list/agents = console.agents()
+		if(!length(agents))
+			console.log_line("Нет запущенных собственных агентов.")
+		for(var/mob/camera/netrun_entity/bot/agent as anything in agents)
+			var/list/behavior = agent.behavior_settings()
+			console.log_line("[agent.real_name] · [REF(agent)] · [behavior?["strategy"] || "нет паттерна"] · агрессия [behavior?["aggression"]] · осторожность [behavior?["caution"]] · сотрудничество [behavior?["cooperation"] ? "on" : "off"]")
+		return
+	if(length(words) != 7 || lowertext(words[3]) != "behavior" || !(lowertext(words[7]) in list("on", "off")))
+		console.log_line("Использование: agent <REF> behavior <profile|patrol|scavenge|guard> <0–100> <0–100> <on|off>.", "bad")
+		return
+	var/list/changes = list("strategy" = lowertext(words[4]), "aggression" = text2num(words[5]), "caution" = text2num(words[6]), "cooperation" = lowertext(words[7]) == "on")
+	if(console.agent_order(words[2], "behavior", null, changes))
+		console.log_line("Изменение поведения отправлено агенту.", "average")
+
+/datum/netrun_cli_command/agent/completions(datum/netrun_console/console, partial)
+	. = list("behavior", "profile", "patrol", "scavenge", "guard", "on", "off")
+	for(var/mob/camera/netrun_entity/bot/agent as anything in console.agents())
+		. += REF(agent)
+
 /datum/netrun_cli_command/theme
 	id = "theme"
 	args = "\[стиль\]"

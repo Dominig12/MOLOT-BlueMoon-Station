@@ -74,6 +74,8 @@
 	if(kind == NETRUN_ICE_HUNTER)
 		idle_expires_at = world.time + patrol_life * (1 SECONDS)
 	SSnetrun.ice_processes += src
+	if(profile.illegal)
+		SSnetrun.illegal_ice |= src
 	if(start)
 		enter_node(start)
 		anchor_ref = WEAKREF(start)
@@ -86,6 +88,7 @@
 	deployer_principal_ref = null
 	cancel_program()
 	SSnetrun.ice_processes -= src
+	SSnetrun.illegal_ice -= src
 	SSnetrun.task_scheduler?.cancel("ice", src)
 	leave_node()
 	anchor_ref = null
@@ -107,8 +110,8 @@
 	LAZYADD(new_node.netrun_ice, src)
 	new_node.notify_changed(NETRUN_CHANGED_OCCUPANTS)
 	SEND_SIGNAL(src, COMSIG_NETRUN_ICE_NODE_CHANGED, null, new_node)
-	if(length(new_node.entities))
-		reaction.wake()
+	if(length(new_node.entities) || length(new_node.netrun_ice) > 1)
+		new_node.wake_defenses()
 	return TRUE
 
 /datum/netrun_ice/proc/leave_node()
@@ -177,6 +180,8 @@
 	if(QDELETED(src))
 		return
 	register_enemy(attacker)
+	if(amount > 0)
+		netrun_actor_attacked(attacker?.netrun_actor())
 	if(world.time < combat_shield_until)
 		amount *= combat_shield_factor
 	integrity -= amount
@@ -296,7 +301,7 @@
 		return FALSE
 	if(is_stunned() || !node.is_online())
 		return FALSE
-	if(length(node.entities))
+	if(length(node.entities) || find_intruder(node))
 		return TRUE
 	if(kind == NETRUN_ICE_HUNTER)
 		return world.time >= hop_cooldown
@@ -362,6 +367,7 @@
 		principal = bot.agent_orphaned() ? null : bot.owner_principal_ref?.resolve()
 	if(QDELETED(principal))
 		return FALSE
+	console.get_personal_faction_id()
 	deployer_ref = WEAKREF(console)
 	deployer_principal_ref = WEAKREF(principal)
 	return TRUE
@@ -376,21 +382,33 @@
 	return console.personal_faction_principal() == principal
 
 /// Нарушитель в узле: нелегальная сущность или тот, кто спровоцировал этот ICE.
-/datum/netrun_ice/proc/find_intruder(datum/component/netrun_node/where)
-	var/mob/camera/netrun_entity/enemy = enemy_ref?.resolve()
-	if(enemy?.host_node == where && is_intruder(enemy, where))
-		return enemy
-	var/mob/camera/netrun_entity/best
-	var/best_integrity = INFINITY
-	for(var/mob/camera/netrun_entity/entity as anything in where?.entities)
-		if(!is_intruder(entity, where))
-			continue
-		if(entity.integrity < best_integrity)
-			best = entity
-			best_integrity = entity.integrity
-	return best
+/// Both lightweight guards and resident entities use the same local combat interface.
+/datum/netrun_ice/proc/hostile_actor(datum/actor, datum/component/netrun_node/where)
+	if(QDELETED(actor) || actor == src || QDELETED(where) || actor.netrun_actor_node() != where)
+		return FALSE
+	if(istype(actor, /mob/camera/netrun_entity))
+		return is_intruder(actor, where)
+	if(!istype(actor, /datum/netrun_ice))
+		return FALSE
+	return enemy_ref?.resolve() == actor || netrun_actor_faction() != actor.netrun_actor_faction()
 
-/datum/netrun_ice/proc/try_attack(mob/camera/netrun_entity/prey)
+/datum/netrun_ice/proc/find_intruder(datum/component/netrun_node/where)
+	var/datum/enemy = enemy_ref?.resolve()
+	if(hostile_actor(enemy, where))
+		return enemy
+	var/list/occupants = list()
+	occupants |= where?.entities
+	occupants |= where?.netrun_ice
+	var/best_integrity = INFINITY
+	for(var/datum/actor as anything in occupants)
+		if(!hostile_actor(actor, where))
+			continue
+		var/list/health = actor.get_netrun_combatant()?.integrity_payload()
+		if(health && health["cur"] < best_integrity)
+			. = actor
+			best_integrity = health["cur"]
+
+/datum/netrun_ice/proc/try_attack(datum/prey)
 	if(QDELETED(prey))
 		return
 	var/datum/netrun_combat_encounter/encounter = node.get_combat_encounter()
@@ -421,7 +439,7 @@
 
 /// A console is a valid trace target only while it is still attacking this node/LAN.
 /datum/netrun_ice/proc/valid_trace_target(datum/netrun_console/console)
-	if(!istype(console) || QDELETED(console))
+	if(!istype(console) || QDELETED(console) || console.netrun_actor() == src)
 		return FALSE
 	if(agent?.profile.illegal && is_deployer(console))
 		return FALSE
@@ -434,7 +452,7 @@
 
 /datum/netrun_ice/proc/begin_program(datum/netrun_program/program, datum/target, opening_attack = FALSE)
 	var/datum/netrun_combat_encounter/encounter = get_combat_encounter()
-	if(!program || pending_program || is_stunned() || !node?.is_online() || !(program.id in program_ids))
+	if(!program || pending_program || is_stunned() || !node?.is_online() || !agent.program_file(program.id))
 		return FALSE
 	if(encounter?.active ? encounter.cooldown_remaining(src, program) : (world.time < next_attack || world.time < (program_cd[program.id] || 0)))
 		return FALSE
@@ -447,6 +465,10 @@
 	var/already_in_combat = encounter?.active && !opening_attack
 	if(encounter && (!encounter.admit(src, program.ap_cost, target) || !encounter.can_apply_program_status(program, target) || !encounter.commit_program(src, program, TRUE)))
 		return FALSE
+	if(program.consumable)
+		var/datum/netrun_file/file = agent.program_file(program.id)
+		agent.memory.remove(file)
+		qdel(file)
 	pending_program = program
 	pending_target_ref = WEAKREF(target)
 	program.capture_ice_target(src, target)
@@ -509,6 +531,8 @@
 	var/datum/netrun_program/program = pending_program
 	cancel_program(FALSE)
 	next_attack = world.time + 0.5 SECONDS
+	if(program.hostile)
+		target.netrun_actor_attacked(src)
 	program.apply(target, null, damage_factor)
 	if(!QDELETED(encounter))
 		encounter.apply_program_status(program, target)
@@ -552,6 +576,13 @@
 			continue
 		// find_intruder inspects all residents. Authorized crowds need the same
 		// one check per host as hostile crowds, including a negative result.
+		checked_nodes[host.address] = TRUE
+		if(find_intruder(host))
+			targets[host.address] = TRUE
+	for(var/datum/netrun_ice/other as anything in SSnetrun.illegal_ice)
+		var/datum/component/netrun_node/host = other.node
+		if(QDELETED(other) || QDELETED(host) || host.network != network || checked_nodes[host.address])
+			continue
 		checked_nodes[host.address] = TRUE
 		if(find_intruder(host))
 			targets[host.address] = TRUE
@@ -617,6 +648,8 @@
 /datum/controller/subsystem/netrun
 	var/list/datum/netrun_ice/ice_processes = list()
 	var/list/currentice = list()
+	/// Explicit contraband deployments are capped; guards never scan every other guard.
+	var/list/datum/netrun_ice/illegal_ice = list()
 	/// Патрульные процессы поднимаются один раз за раунд при первом игровом тике.
 	var/patrol_initialized = FALSE
 	var/patrol_topology_revision = -1
@@ -637,6 +670,10 @@
 	for(var/mob/camera/netrun_entity/entity as anything in entities)
 		var/network_id = entity.host_node?.network?.id
 		if(!QDELETED(entity) && network_id && entity.defense_threat())
+			active_defense_networks[network_id] = TRUE
+	for(var/datum/netrun_ice/ice as anything in illegal_ice)
+		var/network_id = ice.node?.network?.id
+		if(!QDELETED(ice) && network_id)
 			active_defense_networks[network_id] = TRUE
 	for(var/datum/netrun_console/console as anything in currentbreaches)
 		if(QDELETED(console))

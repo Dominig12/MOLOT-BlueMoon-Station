@@ -205,7 +205,9 @@
 	worker.active_consoles.Cut()
 	worker.next_node_deadline = world.time + 5
 	worker.refresh_delivery_interval()
-	TEST_ASSERT_EQUAL(worker.wait, max(world.tick_lag, 5), "A known native deadline must shorten idle maintenance without scanning every node")
+	// Fractional world.time can round across a float boundary when five is added
+	// and subtracted; the tolerance is far below one native scheduling tick.
+	TEST_ASSERT(abs(worker.wait - max(world.tick_lag, 5)) < 0.001, "A known native deadline must shorten idle maintenance without scanning every node")
 	worker.next_node_deadline = world.time - 1
 	worker.refresh_delivery_interval()
 	TEST_ASSERT_EQUAL(worker.wait, population_delay, "A stale cancelled native deadline must wait for one population rather than spin every tick")

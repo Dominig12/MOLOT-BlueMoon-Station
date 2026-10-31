@@ -8,6 +8,10 @@ const template = { uid: 'template-1', name: 'hacker.bot', kind: 'bot', size: 8, 
 const builder = { template_uid: template.uid, profile: 'hacker', name: 'Взломщик', description: 'Подбирает доступ', capacity: 64, base_size: 5,
   defaults: [], programs: [], avatars: [{ id: 'cipher', name: 'Шифр' }], accents: [{ id: 'violet', name: 'Ирис', color: '#b7a0ff' }],
   themes: ['ion'], orders: [{ id: 'guard', name: 'На месте' }] };
+const agent = { ref: 'agent-1', name: 'ХАК-1', bot_kind: 'hacker', integrity: 90, max_integrity: 90, node: 'HOME', node_name: 'Терминал',
+  state: 'ожидает', goal: 'охрана узла', storage: { used: 4, capacity: 64 }, programs: [], files: [], goals: [],
+  behavior: { strategy: 'profile', aggression: 40, caution: 60, cooperation: true },
+  orders: [{ id: 'hack', name: 'Взломать выбранный узел', needs_node: true }, { id: 'recall', name: 'Отозвать' }, { id: 'behavior', name: 'Настроить поведение' }] };
 const setup = () => {
   const topic = jest.fn(); (global as any).Byond = { topic, winset: () => {} };
   const store = createStore(combineReducers({ backend: backendReducer })); setGlobalStore(store);
@@ -15,9 +19,7 @@ const setup = () => {
     shard: { name: 'Шард', used: 8, capacity: 128, files: [{ ...template, uid: 'shard-template', name: 'breacher.bot' }] },
     selected: { address: 'TARGET', name: 'Сервер', commands: [] }, entity: { host: 'HOME', host_name: 'Терминал' },
     file: { ...template, source: 'local', content: null, image: null, agent_builder: builder },
-    agents: [{ ref: 'agent-1', name: 'ХАК-1', bot_kind: 'hacker', integrity: 90, max_integrity: 90, node: 'HOME', node_name: 'Терминал',
-      state: 'ожидает', goal: 'охрана узла', storage: { used: 4, capacity: 64 }, programs: [], files: [], goals: [],
-      orders: [{ id: 'hack', name: 'Взломать выбранный узел', needs_node: true }, { id: 'recall', name: 'Отозвать' }] }],
+    agents: [agent],
   } }));
   const panel = render(<AgentsWorkspace />);
   const update = (data: object) => act(() => store.dispatch(backendUpdate({ data })));
@@ -73,4 +75,31 @@ test('collection keeps an explicit target and agent details explain turn recover
   update({ selected: null });
   fireEvent.click(panel.getByText('Собрать трофеи на выбранном узле'));
   expect(sent('agent_order')).toHaveLength(1);
+});
+
+test('behavior settings send one complete policy and preserve drafts across status patches', () => {
+  const { panel, update, sent } = setup();
+  expect(panel.queryByText('Настроить поведение')).toBeNull();
+  const summary = panel.getByText('Поведение');
+  const details = summary.closest('details');
+  fireEvent.click(summary);
+  const strategy = panel.getByLabelText('Стратегия агента ХАК-1') as HTMLSelectElement;
+  const aggression = panel.getByLabelText('Агрессия агента ХАК-1') as HTMLInputElement;
+  const caution = panel.getByLabelText('Осторожность агента ХАК-1') as HTMLInputElement;
+  fireEvent.change(strategy, { target: { value: 'scavenge' } });
+  fireEvent.change(aggression, { target: { value: '25' } });
+  fireEvent.change(caution, { target: { value: '85' } });
+  fireEvent.click(panel.getByLabelText('Помогать союзникам'));
+  expect(sent('agent_order')).toEqual([]);
+  update({ agents: [{ ...agent, state: 'переход в соседний узел', behavior: { ...agent.behavior } }] });
+  expect(panel.getByText('Поведение').closest('details')).toBe(details);
+  expect(strategy.value).toBe('scavenge');
+  expect(aggression.value).toBe('25');
+  fireEvent.click(panel.getByText('Применить поведение'));
+  expect(sent('agent_order')).toEqual([{ ref: 'agent-1', order: 'behavior', strategy: 'scavenge', aggression: 25, caution: 85, cooperation: false }]);
+  update({ agents: [{ ...agent, behavior: { strategy: 'guard', aggression: 10, caution: 90, cooperation: true } }] });
+  expect(strategy.value).toBe('guard');
+  expect(aggression.value).toBe('10');
+  expect(caution.value).toBe('90');
+  expect((panel.getByLabelText('Помогать союзникам') as HTMLInputElement).checked).toBe(true);
 });

@@ -21,17 +21,16 @@
 	for(var/index in 1 to 14)
 		bot.next_hop = world.time
 		TEST_ASSERT(goal.advance() != NETRUN_BOT_GOAL_FAILED, "The closed but physical route remains hackable")
-		var/datum/netrun_breach/automatic/breach = bot.console.intrusion.breach
+		var/datum/netrun_breach/npc/breach = bot.console.intrusion.breach
 		if(breach)
 			if(breach.target_kind == "node")
 				node_breaches++
-			breach.deadline = world.time
-			breach.finish()
+			TEST_ASSERT(netrun_complete_npc_breach(bot.console), "The visitor solves its native frontier puzzle through legal delayed inputs")
 		else if(bot.host_node == scene.node_b)
 			break
 	TEST_ASSERT(node_breaches >= 2, "The visitor independently hacks APC and destination after opening the LAN")
 	TEST_ASSERT_EQUAL(bot.host_node, scene.node_b, "Every traversed edge used the normal authorized hop")
-	TEST_ASSERT_EQUAL(bot.console.node_level(scene.node_b), NETRUN_ACCESS_USER, "An automatic hack grants USER, never free ROOT")
+	TEST_ASSERT_EQUAL(bot.console.node_level(scene.node_b), NETRUN_ACCESS_ROOT, "The visitor earns the same native puzzle reward as a player")
 	scene.apc_node.raise_firewall()
 	bot.console.access_session.process_events()
 	TEST_ASSERT(!bot.can_enter(scene.apc_node), "A firewall revokes the learned entry despite the retained LAN grant")

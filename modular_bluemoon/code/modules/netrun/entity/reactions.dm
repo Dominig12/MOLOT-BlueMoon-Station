@@ -53,7 +53,7 @@
 	if(owner.pending_program)
 		schedule_at(owner.attack_at)
 		return
-	var/mob/camera/netrun_entity/prey = owner.find_intruder(owner.node)
+	var/datum/prey = owner.find_intruder(owner.node)
 	var/tracing = FALSE
 	if(!prey)
 		for(var/datum/netrun_console/console as anything in SSnetrun.currentbreaches)
@@ -92,6 +92,11 @@
 		if(entity.defense_threat())
 			has_threat = TRUE
 			break
+	if(!has_threat)
+		for(var/datum/netrun_ice/ice as anything in netrun_ice)
+			if(!QDELETED(ice) && ice.agent?.profile.illegal)
+				has_threat = TRUE
+				break
 	if(!has_threat)
 		for(var/datum/netrun_console/console as anything in SSnetrun.currentbreaches)
 			var/datum/netrun_breach/breach = console.intrusion.breach

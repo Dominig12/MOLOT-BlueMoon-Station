@@ -115,7 +115,7 @@ const ContactCard = (props: { address: string; contact: EntityContact; pending: 
       {bot && !!contact.goal && <Box fontSize="11px">Задача: {contact.goal}</Box>}
       {blackIce && <BlackIceWarning />}
       {!!contact.threat && <Box mt={0.5} color={THEME.warn} fontSize="11px">{contact.threat}</Box>}
-      {!contact.self && contact.kind === 'entity' && (
+      {!contact.self && (contact.can_signal || contact.can_message) && (
         <Box mt={0.5}>
           <Button compact icon="satellite-dish" content="Послать сигнал"
             disabled={pending || !contact.can_signal}
@@ -132,7 +132,7 @@ const ContactCard = (props: { address: string; contact: EntityContact; pending: 
           </form>
         </Box>
       )}
-      {!contact.self && contact.kind !== 'ice' && contact.can_offer !== undefined && <FileOffer address={props.address} contact={contact} pending={pending} />}
+      {!contact.self && contact.can_offer !== undefined && <FileOffer address={props.address} contact={contact} pending={pending} />}
     </Box>
   );
 };

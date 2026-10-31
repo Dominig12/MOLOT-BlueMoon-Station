@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 
 import { Box, Button, Icon } from '../../components';
 import { Meter } from './CombatPanel';
@@ -6,11 +6,11 @@ import { EntityAvatar, PERSONA_ACCENTS, PERSONA_AVATAR_OPTIONS } from './EntityA
 import { BotAvatar, botKindLabel } from './EntityContacts';
 import { isTransferableFile } from './filePermissions';
 import { NETRUN_THEMES } from './themes';
-import { AgentState, CombatProgram, NetFile, NetrunData, SelectedNode, THEME } from './types';
+import { AgentBehavior, AgentState, CombatProgram, NetFile, NetrunData, SelectedNode, THEME } from './types';
 import { useNetrunBackend as useBackend } from './useNetrunBackend';
 
 type Order = (order: string, options?: object) => void;
-const DETAIL_ORDERS = new Set(['command', 'persona', 'upload', 'download']);
+const DETAIL_ORDERS = new Set(['command', 'persona', 'upload', 'download', 'behavior']);
 const ACCENT_NAMES: Record<string, string> = { cyan: 'Лёд', mint: 'Мята', amber: 'Янтарь', rose: 'Роза', violet: 'Ирис', silver: 'Серебро' };
 const PROGRAM_ROLES: Record<string, string> = { attack: 'атака', stun: 'подавление', shield: 'щит', repair: 'ремонт', purge: 'очистка' };
 const programReadiness = (program: CombatProgram) => program.unavailable_reason
@@ -45,6 +45,45 @@ const AgentPersona = ({ agent, order }: { agent: AgentState; order: Order }) => 
     <Button compact icon="check" content="Сохранить личность" disabled={!name.trim()}
       onClick={() => name.trim() && order('persona', { name: name.trim(), avatar, accent, tagline, theme })} />
           </form>);
+};
+
+const AgentBehaviorSettings = ({ agent, behavior, order }: { agent: AgentState; behavior: AgentBehavior; order: Order }) => {
+  const [strategy, setStrategy] = useState(behavior.strategy);
+  const [aggression, setAggression] = useState(behavior.aggression);
+  const [caution, setCaution] = useState(behavior.caution);
+  const [cooperation, setCooperation] = useState(behavior.cooperation);
+  // Ordinary status patches preserve an unsent draft. Actual policy changes
+  // reconcile the controls without recreating the card or its open details.
+  useEffect(() => {
+    setStrategy(behavior.strategy);
+    setAggression(behavior.aggression);
+    setCaution(behavior.caution);
+    setCooperation(behavior.cooperation);
+  }, [behavior.strategy, behavior.aggression, behavior.caution, behavior.cooperation]);
+  const save = () => order('behavior', { strategy, aggression, caution, cooperation });
+  return (
+    <details className="netrun-agent-details"><summary><Icon name="sliders" /> Поведение</summary>
+      <form className="netrun-agent-form" aria-label={`Поведение агента ${agent.name}`}
+        onSubmit={(event) => { event.preventDefault(); save(); }}>
+        <label className="netrun-field">Стратегия<select aria-label={`Стратегия агента ${agent.name}`} value={strategy}
+          onChange={(event) => setStrategy(event.target.value as AgentBehavior['strategy'])}>
+          <option value="profile">По профилю</option>
+          <option value="patrol">Патруль</option>
+          <option value="scavenge">Сбор трофеев</option>
+          <option value="guard">Охрана узла</option>
+                                                 </select>
+        </label>
+        <label className="netrun-field">Агрессия · {aggression}%<input type="range" min={0} max={100} step={1} value={aggression}
+          aria-label={`Агрессия агента ${agent.name}`} onChange={(event) => setAggression(Number(event.target.value))} />
+        </label>
+        <label className="netrun-field">Осторожность · {caution}%<input type="range" min={0} max={100} step={1} value={caution}
+          aria-label={`Осторожность агента ${agent.name}`} onChange={(event) => setCaution(Number(event.target.value))} />
+        </label>
+        <label><input type="checkbox" checked={cooperation} onChange={(event) => setCooperation(event.target.checked)} /> Помогать союзникам</label>
+        <Button compact icon="check" content="Применить поведение" onClick={save} />
+      </form>
+    </details>
+  );
 };
 
 const AgentCard = (props: { agent: AgentState; selected: SelectedNode | null; files: NetFile[]; act: (action: string, payload?: object) => void }) => {
@@ -92,6 +131,7 @@ const AgentCard = (props: { agent: AgentState; selected: SelectedNode | null; fi
         {hasOrder('persona') && <Button compact icon="fingerprint" content="Личность" selected={editing} onClick={() => setEditing(!editing)} />}
       </Box>
       {editing && hasOrder('persona') && <AgentPersona agent={agent} order={order} />}
+      {hasOrder('behavior') && agent.behavior && <AgentBehaviorSettings agent={agent} behavior={agent.behavior} order={order} />}
       {!!agent.goals?.length && <details className="netrun-agent-details"><summary><Icon name="bullseye" /> План агента · {agent.goals.length}</summary>
         <ol>{agent.goals.map((goal) => (<li key={goal.id} aria-current={goal.selected ? 'step' : undefined}>
           <strong>{goal.name}</strong>{goal.selected && <span className="netrun-agent-active-goal"> · сейчас</span>}

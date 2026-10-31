@@ -15,8 +15,8 @@
 	var/datum/netrun_bot_goal/hack/goal = new(agent.brain, scene.node_b)
 	agent.brain.push_goal(goal)
 	TEST_ASSERT_EQUAL(goal.advance(), NETRUN_BOT_GOAL_CONTINUE, "The first inaccessible frontier starts ordinary work")
-	var/datum/netrun_breach/automatic/breach = agent.console.intrusion.breach
-	TEST_ASSERT(istype(breach), "The module starts the existing automatic breach implementation")
+	var/datum/netrun_breach/npc/breach = agent.console.intrusion.breach
+	TEST_ASSERT(istype(breach), "The module starts an ordinary puzzle with delayed autonomous input")
 	TEST_ASSERT(goal.waits_for_signal(), "The brain sleeps until the owned breach emits its completion fact")
 	agent.console.intrusion.trace = 7
 	TEST_ASSERT(agent.console.inventory.local_store.remove(tool), "Removing the real file revokes the capability")
@@ -51,20 +51,19 @@
 		agent.next_hop = world.time
 		var/result = goal.advance()
 		TEST_ASSERT(result != NETRUN_BOT_GOAL_FAILED, "A reachable physical frontier remains usable")
-		var/datum/netrun_breach/automatic/breach = agent.console.intrusion.breach
+		var/datum/netrun_breach/npc/breach = agent.console.intrusion.breach
 		if(breach)
 			breaches++
 			var/datum/component/netrun_node/frontier = SSnetrun.find_node(breach.target_id)
 			if(breach.target_kind == "node")
 				TEST_ASSERT(agent.console.node_level(frontier) < NETRUN_ACCESS_USER, "Starting a timer does not grant frontier USER")
-			breach.deadline = world.time
-			breach.finish()
+			TEST_ASSERT(netrun_complete_npc_breach(agent.console), "The agent completes the real puzzle one legal input at a time")
 			TEST_ASSERT(!goal.waiting, "Native breach destruction wakes the waiting goal")
 		else if(agent.host_node == scene.node_b)
 			break
 	TEST_ASSERT(breaches >= 2, "The agent cracks the APC and the destination independently")
 	TEST_ASSERT_EQUAL(agent.host_node, scene.node_b, "The agent traverses A → APC → B with ordinary authorized hops")
-	TEST_ASSERT_EQUAL(agent.console.node_level(scene.node_b), NETRUN_ACCESS_USER, "Automatic hacking grants USER, never implicit ROOT")
+	TEST_ASSERT_EQUAL(agent.console.node_level(scene.node_b), NETRUN_ACCESS_ROOT, "Solving the ordinary puzzle earns its real ROOT reward")
 	TEST_ASSERT(owner.console.node_level(scene.node_b) < NETRUN_ACCESS_USER, "The agent's acquired access is not granted to its master")
 	TEST_ASSERT_EQUAL(goal.advance(), NETRUN_BOT_GOAL_CONTINUE, "The post-breach command still awaits its own delivery")
 	var/datum/netrun_request/command/packet = netrun_operation_packet(agent.console, /datum/netrun_request/command)

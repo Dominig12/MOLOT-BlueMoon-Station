@@ -4,9 +4,7 @@
 	var/datum/netrun_fortress_scene/scene = allocate(/datum/netrun_fortress_scene, run_loc_floor_bottom_left)
 	var/mob/camera/netrun_entity/entity = allocate(/mob/camera/netrun_entity, run_loc_floor_bottom_left, scene.node_a)
 	var/datum/netrun_ice/legal = allocate(/datum/netrun_ice, scene.node_a)
-	var/datum/netrun_ice/black = allocate(/datum/netrun_ice, scene.node_a, NETRUN_ICE_BLACK)
 	TEST_ASSERT_NOTNULL(legal.agent.memory, "Protection agents own program memory")
-	TEST_ASSERT(legal.agent.memory != black.agent.memory, "Agent storage is never shared")
 	TEST_ASSERT_EQUAL(length(legal.agent.memory.files), length(legal.agent.profile.program_ids), "The guard receives its declared loadout")
 	for(var/id in legal.agent.profile.program_ids)
 		var/found = FALSE
@@ -16,9 +14,11 @@
 				break
 		TEST_ASSERT(found, "Every declared guard program [id] must occupy an actual owned file")
 	TEST_ASSERT(!legal.is_intruder(entity), "Ordinary ICE respects legitimate host residency")
-	TEST_ASSERT(black.is_intruder(entity), "Illegal ICE remains dangerous even to a USER")
 	legal.process_ai(1)
 	TEST_ASSERT_NULL(legal.pending_program, "A legitimate resident does not trigger ordinary protection")
+	var/datum/netrun_ice/black = allocate(/datum/netrun_ice, scene.node_a, NETRUN_ICE_BLACK)
+	TEST_ASSERT(legal.agent.memory != black.agent.memory, "Agent storage is never shared")
+	TEST_ASSERT(black.is_intruder(entity), "Illegal ICE remains dangerous even to a USER")
 	for(var/datum/netrun_ice_behavior/local_combat/behavior in black.agent.behaviors)
 		behavior.enabled = FALSE
 	black.process_ai(1)

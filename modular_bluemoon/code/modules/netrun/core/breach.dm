@@ -37,6 +37,8 @@
 	var/progress = 0
 	/// Для "sequence": сколько нажатий даёт USER (чекпоинт); полный порядок даёт ROOT.
 	var/user_goal = 0
+	/// The generator's legal route is private input for autonomous puzzle solvers.
+	var/list/solution_path
 
 /datum/netrun_breach/New(datum/netrun_console/console, target_kind, target_id, target_name, security)
 	src.console = console
@@ -143,6 +145,7 @@
 		col = col_of(next)
 		by_column = !by_column
 	buffer_size = length(path)
+	solution_path = path
 
 	var/list/path_codes = list()
 	for(var/index in path)
@@ -193,6 +196,7 @@
 		pool -= cell
 		order += cell
 	user_goal = min(user_goal, length(order))
+	solution_path = order
 	var/list/access = access_daemon()
 	access["sequence"] = list()
 	access["done"] = FALSE
@@ -259,6 +263,10 @@
 		return
 	finished = TRUE
 	console.breach_finished(src)
+
+/// Manual puzzles have no autonomous input; the intrusion session owns their clock.
+/datum/netrun_breach/proc/advance_automation()
+	return
 
 /datum/netrun_breach/proc/ui_payload()
 	if(minigame == "sequence")
@@ -353,3 +361,40 @@
 		"size" = 0, "cells" = list(), "daemons" = daemons,
 		"time_left" = CEILING(time_left() / (1 SECONDS), 1),
 		"progress" = clamp(1 - time_left() / duration, 0, 1))
+
+/// An NPC solves the same generated puzzle, one legal input per second. It does
+/// not grant access itself or replace the player's slower autobreach executable.
+/datum/netrun_breach/npc
+	var/solution_cursor = 1
+	var/next_choice_at = 0
+	var/automating_choice = FALSE
+	var/manual_input = FALSE
+
+/datum/netrun_breach/npc/New(datum/netrun_console/console, target_kind, target_id, target_name, security)
+	..()
+	next_choice_at = world.time + 1 SECONDS
+
+/datum/netrun_breach/npc/generate()
+	..()
+	solution_cursor = 1
+	next_choice_at = world.time + 1 SECONDS
+	manual_input = FALSE
+
+/// A player taking control owns subsequent inputs, including an invalid attempt.
+/// The generated route must never be replayed over a manually changed buffer.
+/datum/netrun_breach/npc/choose(index)
+	if(!automating_choice)
+		manual_input = TRUE
+	return ..()
+
+/datum/netrun_breach/npc/advance_automation()
+	if(finished || manual_input || world.time < next_choice_at || time_left() <= 0 || !console?.automates_breach_input() || console.intrusion.breach != src || !valid_target())
+		return
+	if(solution_cursor > length(solution_path))
+		return
+	// Late scheduler wakes never catch up several inputs in one subsystem step.
+	next_choice_at = world.time + 1 SECONDS
+	automating_choice = TRUE
+	choose(solution_path[solution_cursor++])
+	if(!QDELETED(src))
+		automating_choice = FALSE

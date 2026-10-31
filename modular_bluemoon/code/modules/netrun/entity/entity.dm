@@ -45,6 +45,7 @@
 	navigation?.cancel()
 	leave_node()
 	destroy_modules()
+	QDEL_NULL(module_host)
 	return ..()
 
 /mob/camera/netrun_entity/Login()
@@ -319,6 +320,8 @@
 /mob/camera/netrun_entity/proc/apply_damage(amount, reason, datum/netrun_console/attacker)
 	if(world.time < combat_shield_until)
 		amount *= combat_shield_factor
+	if(amount > 0)
+		netrun_actor_attacked(attacker?.netrun_actor())
 	take_integrity(amount, reason)
 
 /mob/camera/netrun_entity/proc/apply_stun(duration)

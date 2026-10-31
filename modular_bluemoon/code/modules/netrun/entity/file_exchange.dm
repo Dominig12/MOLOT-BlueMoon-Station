@@ -85,7 +85,7 @@
 	return list("incoming" = entries, "max_offers" = 8)
 
 /datum/netrun_file_exchange/proc/respond(id, accept)
-	if(!istext(id) || !istype(owner.host, /mob/camera/netrun_entity))
+	if(!istext(id) || !owner.netrun_actor())
 		return FALSE
 	var/datum/netrun_file_offer/offer = incoming[id]
 	if(QDELETED(offer) || world.time >= offer.expires_at)
@@ -108,15 +108,16 @@
 	return TRUE
 
 /datum/netrun_console/proc/offer_entity_file(address, recipient_ref, uid)
-	var/mob/camera/netrun_entity/self = combat_self()
-	if(!istype(self) || !istext(recipient_ref) || !istext(uid) || world.time < file_exchange.next_offer)
+	var/datum/self = netrun_actor()
+	if(!self || !istext(recipient_ref) || !istext(uid) || world.time < file_exchange.next_offer)
 		return FALSE
-	var/mob/camera/netrun_entity/recipient = locate(recipient_ref)
+	var/datum/recipient = locate(recipient_ref)
 	var/datum/component/netrun_node/node = SSnetrun.find_node(address)
 	var/datum/netrun_file/file = find_local_file(uid)
 	var/datum/netrun_path_tree/tree = connection.read_path_tree(TRUE)
 	var/reason = entity_contact_denial(node, recipient, tree)
-	if(reason || QDELETED(file) || !inventory.store_for(file) || !file.can_copy() || !file.can_transfer(recipient?.console?.inventory.local_store))
+	var/datum/netrun_console/receiving_console = reason ? null : recipient.netrun_actor_console()
+	if(reason || QDELETED(receiving_console) || QDELETED(file) || !inventory.store_for(file) || !file.can_copy() || !file.can_transfer(receiving_console.inventory.local_store))
 		release_path_tree(tree)
 		log_line("Нельзя предложить файл: [reason || "файл не принадлежит отправителю"].", "bad")
 		return FALSE
@@ -134,28 +135,29 @@
 	operation_kind = "entity.file"
 	operation_label = "Предложение копии файла"
 
-/datum/netrun_request/entity_file_offer/New(datum/netrun_console/console, datum/component/netrun_node/node, mob/camera/netrun_entity/recipient, datum/netrun_file/file)
+/datum/netrun_request/entity_file_offer/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/recipient, datum/netrun_file/file)
 	..(console, node, node.network, console.operator, file.uid)
 	recipient_ref = WEAKREF(recipient)
 	sender_name = console.get_handle()
-	operation.capture(list("recipient" = recipient.real_name, "file_uid" = file.uid, "name" = file.name))
-	for(var/datum/dependency as anything in list(recipient, recipient.console))
+	operation.capture(list("recipient" = recipient.netrun_actor_name(), "file_uid" = file.uid, "name" = file.name))
+	for(var/datum/dependency as anything in list(recipient, recipient.netrun_actor_console(FALSE)))
 		if(dependency in dependencies)
 			continue
 		dependencies += dependency
 		RegisterSignal(dependency, COMSIG_PARENT_QDELETING, TYPE_PROC_REF(/datum/netrun_request/delivery, on_dependency_deleted))
 
 /datum/netrun_request/entity_file_offer/execute()
-	var/mob/camera/netrun_entity/recipient = recipient_ref?.resolve()
+	var/datum/recipient = recipient_ref?.resolve()
 	var/datum/netrun_file/file = console.find_local_file(file_uid)
 	var/datum/netrun_path_tree/tree = console.connection.read_path_tree(TRUE)
 	var/reason = console.entity_contact_denial(node, recipient, tree)
-	if(reason || QDELETED(file) || !console.inventory.store_for(file) || !file.can_copy() || !file.can_transfer(recipient?.console?.inventory.local_store) || sender != console.operator || node.network != sent_network || !console.combat_self())
+	var/datum/netrun_console/receiving_console = reason ? null : recipient.netrun_actor_console(FALSE)
+	if(reason || QDELETED(receiving_console) || QDELETED(file) || !console.inventory.store_for(file) || !file.can_copy() || !file.can_transfer(receiving_console.inventory.local_store) || sender != console.operator || node.network != sent_network || !console.netrun_actor())
 		console.release_path_tree(tree)
 		return reject("Получатель, файл, маршрут или отправитель изменились.")
 	operation.receive(tree.addresses_to(node.address))
 	console.release_path_tree(tree)
-	if(!recipient.console.file_exchange.receive(file.copy(), sender_name))
+	if(!receiving_console.file_exchange.receive(file.copy(), sender_name))
 		return reject("Очередь предложений получателя заполнена или файл больше его памяти.")
-	operation.set_result("Копия предложена [recipient.real_name]; ожидается согласие получателя.")
+	operation.set_result("Копия предложена [recipient.netrun_actor_name()]; ожидается согласие получателя.")
 	return TRUE

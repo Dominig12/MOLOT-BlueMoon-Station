@@ -11,14 +11,14 @@
 	id = "hacking"
 	daemon_id = "autobreach"
 	name = "Модуль взлома"
-	desc = "Последовательно получает гостевой вход ЛВС и USER узлов обычным автовзломом, двигается по реальным переходам и выполняет приказ."
+	desc = "Планирует взлом: последовательно решает обычные миниигры с задержкой, получает права по их результату, двигается по реальным переходам и выполняет приказ."
 	module_type = /datum/netrun_entity_module/hacking
 
 /datum/netrun_agent_extension/icepick
 	id = "icepick"
 	daemon_id = "icepick"
 	name = "Подбор защиты"
-	desc = "Штатный icepick.exe снижает сложность взлома. Не даёт агенту разрешение на автоматический взлом прошивки."
+	desc = "Штатный icepick.exe снижает сложность взлома и открывает миниигру прошивки при наличии ROOT. Права и совместимость устройства проверяются обычно."
 
 /datum/netrun_agent_extension/cloak
 	id = "cloak"
@@ -126,8 +126,9 @@
 			owner.remove_module(id)
 	managed.Cut()
 
-/// This capability uses the existing autobreach daemon as both the executable
-/// and the required tool. It never writes an access grant itself.
+/// The installed autobreach tool enables autonomous hacking goals and orders.
+/// Their puzzles and rewards use ordinary player paths with delayed NPC input.
+/// The planning capability never writes an access grant itself.
 /datum/netrun_entity_module/hacking
 	id = "hacking"
 	priority = 145
@@ -169,11 +170,11 @@
 	return TRUE
 
 /datum/netrun_entity_module/hacking/proc/start_for_goal(datum/netrun_bot_goal/hack/goal, kind, target_id)
-	if(!can_hack() || goal.brain?.owner != owner || goal.brain.current_goal() != goal || owner.console.intrusion.breach)
+	if(!can_hack() || !owner.console.automates_breach_input() || goal.brain?.owner != owner || goal.brain.current_goal() != goal || owner.console.intrusion.breach)
 		return FALSE
-	if(!(kind in list("node", "network")) || !owner.console.start_breach(kind, target_id, TRUE))
+	if(!(kind in list("node", "network")) || !owner.console.start_breach(kind, target_id))
 		return FALSE
-	var/datum/netrun_breach/automatic/breach = owner.console.intrusion.breach
+	var/datum/netrun_breach/npc/breach = owner.console.intrusion.breach
 	if(!istype(breach))
 		return FALSE
 	breach_ref = WEAKREF(breach)

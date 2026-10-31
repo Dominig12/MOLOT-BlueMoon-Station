@@ -237,13 +237,50 @@
 		"integrity" = round(integrity), "max_integrity" = max_integrity,
 		"state" = contact_state(), "goal" = brain?.goal_text(),
 		"storage" = list("used" = store.used(), "capacity" = store.capacity), "orders" = orders,
-		"persona" = get_persona().ui_payload(FALSE), "files" = files, "programs" = console.combat_context.programs(), "goals" = goals)
+		"persona" = get_persona().ui_payload(FALSE), "files" = files, "programs" = console.combat_context.programs(), "goals" = goals,
+		"behavior" = behavior_settings())
+
+/// A primitive snapshot is safe to display, transport and persist independently.
+/mob/camera/netrun_entity/bot/proc/behavior_settings()
+	var/datum/netrun_agent_behavior/pattern/temperament/policy = netrun_actor_temperament(src)
+	if(!policy)
+		return null
+	return list("strategy" = policy.strategy, "aggression" = policy.aggression, "caution" = policy.caution, "cooperation" = policy.cooperation)
+
+/// Requests contain other control fields; persisted policy must contain only these.
+/// Validation precedes all mutation and produces a fresh scalar-only snapshot.
+/proc/netrun_agent_behavior_settings(list/options, strict = FALSE)
+	if(!islist(options))
+		return null
+	var/list/keys = list("strategy", "aggression", "caution", "cooperation")
+	if(strict)
+		for(var/key in options)
+			if(!(key in keys))
+				return null
+	var/list/result = list()
+	for(var/key in keys)
+		if(!(key in options))
+			continue
+		var/value = options[key]
+		switch(key)
+			if("strategy")
+				if(!(value in list("profile", "patrol", "scavenge", "guard")))
+					return null
+			if("aggression", "caution")
+				if(!isnum(value) || !IS_FINITE(value) || value < 0 || value > 100)
+					return null
+			if("cooperation")
+				if(!(value in list(TRUE, FALSE)))
+					return null
+		result[key] = value
+	return length(result) ? result : null
 
 /mob/camera/netrun_entity/bot/proc/agent_orders()
 	var/list/orders = list(list("id" = "recall", "name" = "Отозвать"), list("id" = "guard", "name" = "Перевести на выбранный узел", "needs_node" = TRUE), list("id" = "terminate", "name" = "Завершить"))
 	orders += list(list("id" = "patrol", "name" = "Патрулировать доступную сеть"), list("id" = "command", "name" = "Команда выбранного узла", "needs_node" = TRUE))
 	orders += list(list("id" = "collect", "name" = "Собрать трофеи на выбранном узле", "needs_node" = TRUE))
 	orders += list(list("id" = "persona", "name" = "Личность"), list("id" = "upload", "name" = "Передать файл"), list("id" = "download", "name" = "Забрать файл"))
+	orders += list(list("id" = "behavior", "name" = "Настроить поведение"))
 	SEND_SIGNAL(src, COMSIG_NETRUN_AGENT_ORDER_LIST, orders)
 	return orders
 
@@ -486,6 +523,12 @@
 	if(!known_order)
 		log_line("Неизвестный приказ агенту.", "bad")
 		return FALSE
+	var/list/behavior
+	if(order == "behavior")
+		behavior = netrun_agent_behavior_settings(options)
+		if(!behavior)
+			log_line("Недопустимые настройки поведения агента.", "bad")
+			return FALSE
 	var/datum/component/netrun_node/site = agent.host_node
 	var/datum/netrun_path_tree/tree = make_path_tree()
 	if(!site || is_locked() || !can_route(site, tree))
@@ -495,10 +538,13 @@
 	var/eta = latency_to(site, tree)
 	var/list/route = tree.addresses_to(site.address)
 	qdel(tree)
-	var/list/arguments = list("order" = order, "address" = address || selected_node()?.address)
-	for(var/key in list("command", "uid", "name", "avatar", "accent", "tagline", "theme"))
-		if(options && (key in options))
-			arguments[key] = options[key]
+	var/list/arguments = list("order" = order, "address" = order == "behavior" ? null : (address || selected_node()?.address))
+	if(order != "behavior")
+		for(var/key in list("command", "uid", "name", "avatar", "accent", "tagline", "theme"))
+			if(options && (key in options))
+				arguments[key] = options[key]
+	for(var/key in behavior)
+		arguments[key] = behavior[key]
 	var/datum/netrun_request/agent_control/packet = new(src, agent, arguments)
 	return packet.send(eta, route)
 
@@ -536,6 +582,8 @@
 			if(!node || !can_route(node) || node_level(node) < NETRUN_ACCESS_USER)
 				log_line("Новый пост агента должен быть узлом с вашим доступом ПОЛЬЗОВАТЕЛЯ.", "bad")
 				return FALSE
+			// An explicit standing order replaces the default strategy, retaining traits.
+			agent.get_module_host().mutate_pattern("temperament", list("strategy" = "profile"))
 			// The owner delegates residency on the new post.
 			agent.console.access_session.grant_node(node, NETRUN_ACCESS_USER)
 			agent.brain.order = "guard"
@@ -552,6 +600,7 @@
 			if(!agent.brain.best_salvage(node))
 				log_line("В выбранном узле нет обломков, которые помещаются в память агента.", "average")
 				return FALSE
+			agent.get_module_host().mutate_pattern("temperament", list("strategy" = "profile"))
 			// This delegates residency only. No private device disk is read, and
 			// every physical hop still observes gates and the agent's own authority.
 			agent.console.access_session.grant_node(node, NETRUN_ACCESS_USER)
@@ -563,6 +612,7 @@
 			log_line("[agent.real_name]: собрать ценные обломки в узле [node.get_name()] и остаться на посту.", "good")
 			return TRUE
 		if("patrol")
+			agent.get_module_host().mutate_pattern("temperament", list("strategy" = "profile"))
 			agent.brain.clear_goals()
 			agent.brain.order = "patrol"
 			agent.brain.push_goal(new /datum/netrun_bot_goal/patrol(agent.brain))
@@ -587,6 +637,13 @@
 				return FALSE
 			if("theme" in options)
 				agent.console.set_ui_theme(options["theme"], agent)
+			return TRUE
+		if("behavior")
+			var/list/changes = netrun_agent_behavior_settings(options)
+			if(!changes || !agent.get_module_host().mutate_pattern("temperament", changes))
+				return FALSE
+			agent.console.invalidate_ui()
+			log_line("Поведение агента [agent.real_name] обновлено.", "good")
 			return TRUE
 		if("upload", "download")
 			var/datum/netrun_console/source = order == "upload" ? src : agent.console
@@ -688,6 +745,7 @@
 /datum/netrun_file/bot
 	var/list/datum/netrun_file/stored_files
 	var/list/stored_persona
+	var/list/stored_behavior
 	var/stored_name
 	var/stored_order
 	var/stored_post
@@ -697,11 +755,13 @@
 /datum/netrun_file/bot/Destroy()
 	QDEL_LIST(stored_files)
 	stored_persona = null
+	stored_behavior = null
 	return ..()
 
 /datum/netrun_file/bot/copy()
 	var/datum/netrun_file/bot/result = new(name, kind, content, size, network_id)
 	result.stored_persona = stored_persona?.Copy()
+	result.stored_behavior = islist(stored_behavior) ? stored_behavior.Copy() : stored_behavior
 	result.stored_name = stored_name
 	result.stored_order = stored_order
 	result.stored_post = stored_post
@@ -715,6 +775,7 @@
 
 /datum/netrun_file/bot/proc/remember_agent(mob/camera/netrun_entity/bot/agent)
 	stored_persona = agent.get_persona().ui_payload(FALSE)
+	stored_behavior = agent.behavior_settings()
 	stored_name = agent.real_name
 	stored_order = agent.brain.order
 	stored_post = agent.brain.post_node()?.address
@@ -727,13 +788,20 @@
 		stored_files += file
 
 /datum/netrun_file/bot/proc/restore_agent(mob/camera/netrun_entity/bot/agent)
+	var/list/behavior
+	if(!isnull(stored_behavior))
+		behavior = netrun_agent_behavior_settings(stored_behavior, TRUE)
+		if(!behavior || !netrun_actor_temperament(agent))
+			return FALSE
 	if(isnull(stored_files))
-		return TRUE
+		return !behavior || agent.get_module_host().mutate_pattern("temperament", behavior)
 	var/required = 0
 	for(var/datum/netrun_file/file as anything in stored_files)
 		required += file.size
 	var/datum/netrun_file_store/store = agent.console.inventory.local_store
 	if(required > store.capacity)
+		return FALSE
+	if(behavior && !agent.get_module_host().mutate_pattern("temperament", behavior))
 		return FALSE
 	for(var/datum/netrun_file/file as anything in store.files.Copy())
 		store.delete_file(file)

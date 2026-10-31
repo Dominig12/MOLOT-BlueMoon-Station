@@ -17,12 +17,11 @@
 		if(!combatant || combatant.node() != node)
 			continue
 		var/list/entry = combatant.ui_entry()
-		var/is_self = occupant == host
+		var/is_self = occupant == netrun_actor()
 		entry["self"] = is_self
-		var/mob/camera/netrun_entity/resident = istype(occupant, /mob/camera/netrun_entity) ? occupant : null
-		entry["can_signal"] = resident && !QDELETED(resident.console) && !is_self && !is_locked()
+		entry["can_signal"] = occupant.netrun_actor_present(node) && !is_self && !is_locked()
 		entry["can_message"] = entry["can_signal"]
-		entry["can_offer"] = entry["can_signal"] && !!combat_self()
+		entry["can_offer"] = entry["can_signal"] && !!netrun_actor()
 		entry["offer_reason"] = entry["can_offer"] ? null : "Прямой обмен доступен между сетевыми сущностями."
 		if(istype(occupant, /mob/camera/netrun_entity))
 			var/mob/camera/netrun_entity/entity = occupant
@@ -49,10 +48,10 @@
 	return "Доступ ПОЛЬЗОВАТЕЛЯ позволяет пройти. Атака или оглушение ICE вызовет ответ. Взлом узла или ЛВС всё ещё вызывает трассировку."
 
 /// Reused at dispatch and delivery: a stale card cannot address an arbitrary mob REF.
-/datum/netrun_console/proc/entity_contact_denial(datum/component/netrun_node/node, mob/camera/netrun_entity/recipient, datum/netrun_path_tree/tree)
+/datum/netrun_console/proc/entity_contact_denial(datum/component/netrun_node/node, datum/recipient, datum/netrun_path_tree/tree)
 	if(is_locked())
 		return "точка подключения заблокирована"
-	if(QDELETED(node) || QDELETED(recipient) || QDELETED(recipient.console) || recipient == host || recipient.host_node != node || !(recipient in node.entities))
+	if(QDELETED(node) || !istype(recipient) || QDELETED(recipient) || recipient == netrun_actor() || !recipient.netrun_actor_present(node))
 		return "процесс уже покинул узел"
 	if(!node.is_online() || !can_route(node, tree) || node_level(node, tree) < NETRUN_ACCESS_GUEST)
 		return "нет связи или доступа к узлу"
@@ -68,8 +67,8 @@
 	if(world.time < next_entity_signal)
 		log_line("Канал связи с процессами ещё занят.", "average")
 		return reject_operation(operation, "Канал связи с процессами ещё занят.")
-	var/mob/camera/netrun_entity/recipient = locate(recipient_ref)
-	if(!istype(recipient))
+	var/datum/recipient = locate(recipient_ref)
+	if(!istype(recipient) || QDELETED(recipient) || !recipient.netrun_actor_node())
 		return reject_operation(operation, "Процесс больше не существует.")
 	var/datum/netrun_path_tree/tree = make_path_tree()
 	var/reason = entity_contact_denial(node, recipient, tree)
@@ -102,13 +101,16 @@
 	operation_kind = "entity.signal"
 	operation_label = "Связь с процессом"
 
-/datum/netrun_request/entity_contact/New(datum/netrun_console/console, datum/component/netrun_node/node, mob/camera/netrun_entity/recipient, text, datum/netrun_packet_context/context)
+/datum/netrun_request/entity_contact/New(datum/netrun_console/console, datum/component/netrun_node/node, datum/recipient, text, datum/netrun_packet_context/context)
 	..(console, node, node?.network, console.operator, null, context)
 	recipient_ref = WEAKREF(recipient)
 	message = text
 	sender_name = console.get_handle()
 	source_address = operation.from_address
 	operation.capture(list("recipient" = REF(recipient), "message" = text))
+	if(!(recipient in dependencies))
+		dependencies += recipient
+		RegisterSignal(recipient, COMSIG_PARENT_QDELETING, TYPE_PROC_REF(/datum/netrun_request/delivery, on_dependency_deleted))
 
 /datum/netrun_request/entity_contact/Destroy()
 	recipient_ref = null
@@ -117,7 +119,7 @@
 /datum/netrun_request/entity_contact/execute()
 	if(QDELETED(console) || QDELETED(node))
 		return FALSE
-	var/mob/camera/netrun_entity/recipient = recipient_ref?.resolve()
+	var/datum/recipient = recipient_ref?.resolve()
 	node.join_network()
 	var/datum/netrun_path_tree/tree = console.make_path_tree()
 	var/reason = console.entity_contact_denial(node, recipient, tree)
@@ -130,12 +132,18 @@
 	var/list/route_hops = tree.addresses_to(node.address)
 	qdel(tree)
 	operation.receive(route_hops)
+	var/datum/netrun_console/receiving_console = recipient.netrun_actor_console()
+	if(QDELETED(receiving_console))
+		return reject("Сеанс получателя недоступен.")
+	var/recipient_name = recipient.netrun_actor_name()
 	var/line = isnull(message) ? "Адресный сигнал от [sender_name] ([source_address])." : "Личное сообщение от [sender_name] ([source_address]): [message]"
-	recipient.console.log_line(line, "good")
-	to_chat(recipient, span_notice(line))
-	console.log_line(isnull(message) ? "Сигнал доставлен: [recipient.real_name] @ [node.address]." : "Сообщение доставлено: [recipient.real_name] @ [node.address].", "good")
-	node.add_log("[sender_name]: [isnull(message) ? "сигнал" : "личное сообщение"] процессу [recipient.real_name].")
+	receiving_console.log_line(line, "good")
+	if(ismob(recipient))
+		to_chat(recipient, span_notice(line))
+	console.log_line(isnull(message) ? "Сигнал доставлен: [recipient_name] @ [node.address]." : "Сообщение доставлено: [recipient_name] @ [node.address].", "good")
+	node.add_log("[sender_name]: [isnull(message) ? "сигнал" : "личное сообщение"] процессу [recipient_name].")
 	if(!isnull(message) && sender)
-		sender.log_talk(message, LOG_CHAT, tag = "NETRUN private to [recipient.real_name]")
+		sender.log_talk(message, LOG_CHAT, tag = "NETRUN private to [recipient_name]")
 	SSnetrun.post_event("command", node.network?.id, node.address)
+	SEND_SIGNAL(recipient, COMSIG_NETRUN_ACTOR_CONTACT, console, message)
 	return TRUE
