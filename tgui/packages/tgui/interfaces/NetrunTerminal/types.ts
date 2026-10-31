@@ -342,6 +342,8 @@ export type CombatProgram = {
 export type CombatTurn = {
   /** An exact decision identity; delayed input cannot act on another turn. */
   id?: string;
+  /** Stable encounter identity for joining across other actors' turn changes. */
+  join_id?: string;
   round: number;
   actor_ref: string;
   actor_name: string;

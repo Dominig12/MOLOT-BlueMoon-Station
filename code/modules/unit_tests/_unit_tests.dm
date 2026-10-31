@@ -419,6 +419,8 @@
 #include "netrun_navigation.dm"
 #include "netrun_npc_breach.dm"
 #include "netrun_turn_combat.dm"
+#include "netrun_turn_disengagement.dm"
+#include "netrun_turn_observers.dm"
 #include "netrun_turn_fortress.dm"
 #include "netrun_turn_programs.dm"
 #include "netrun_personal_factions.dm"

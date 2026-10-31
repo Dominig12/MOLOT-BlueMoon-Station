@@ -534,3 +534,33 @@ test('local expiry locks actions and a recreated encounter resets the same actor
     jest.useRealTimers();
   }
 });
+
+
+test('a spectator joins the encounter without a target even after the displayed NPC decision expires', () => {
+  const { topic, store, combat } = setup({ targets: [], turn: {
+    ...ownTurn, id: 'encounter-6:14', join_id: 'encounter-6', remaining: 0,
+    your_turn: false, can_pass: false, participating: false, can_join: true,
+  } });
+  const panel = render(<CombatPanel />);
+  expect(panel.getByText('Цель: не выбрана')).toBeTruthy();
+  fireEvent.click(panel.getByText('Вступить в бой'));
+  const joins = () => topic.mock.calls.filter((call) => call[0]?.type === 'act/combat_join');
+  expect(joins()).toHaveLength(1);
+  expect(JSON.parse(joins()[0][0].payload)).toEqual({ turn_id: 'encounter-6' });
+  expect(uses(topic)).toHaveLength(0);
+  act(() => store.dispatch(backendUpdate({ data: { combat: {
+    ...combat, turn: { ...combat.turn!, id: 'encounter-6:15', can_join: false },
+  } } })));
+  fireEvent.click(panel.getByText('Вступить в бой'));
+  expect(joins()).toHaveLength(1);
+});
+
+test('a newly locked spectator cannot use a previously enabled join card', () => {
+  const { topic } = setup({ turn: {
+    ...ownTurn, id: 'encounter-7:1', join_id: 'encounter-7',
+    your_turn: false, can_pass: false, participating: false, can_join: true,
+  } }, 30);
+  const panel = render(<CombatPanel />);
+  fireEvent.click(panel.getByText('Вступить в бой'));
+  expect(topic).not.toHaveBeenCalled();
+});

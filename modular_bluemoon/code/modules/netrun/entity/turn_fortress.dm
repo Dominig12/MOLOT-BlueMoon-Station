@@ -43,6 +43,7 @@
 	if(!turn_volley_definition)
 		turn_volley_definition = new
 		turn_volley_definition.id = "fortress.volley"
+		turn_volley_definition.hostile = TRUE
 		turn_volley_definition.ap_cost = 2
 		turn_volley_definition.cooldown_turns = 1
 	return turn_volley_definition

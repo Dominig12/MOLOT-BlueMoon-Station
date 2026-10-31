@@ -253,6 +253,8 @@
 	var/list/datum/netrun_turn_participant/participants = list()
 	var/current_index = 0
 	var/round = 1
+	var/quiet_rounds = 0
+	var/round_had_combat = FALSE
 	var/deadline = 0
 	var/timer_id
 	var/generation = 0
@@ -316,6 +318,24 @@
 
 /datum/netrun_combat_encounter/proc/accepts_input(turn_id)
 	return isnull(turn_id) || (istext(turn_id) && active && !closing && turn_id == decision_id())
+
+/// Joining is an encounter-level intent, so NPC turn changes cannot invalidate
+/// the click. Older clients may still send a decision from this same encounter.
+/datum/netrun_combat_encounter/proc/join_id()
+	return "[serial]"
+
+/datum/netrun_combat_encounter/proc/accepts_join_input(token)
+	if(!active || closing)
+		return FALSE
+	if(isnull(token) || token == join_id())
+		return TRUE
+	if(!istext(token))
+		return FALSE
+	var/list/parts = splittext(token, ":")
+	if(length(parts) != 2 || parts[1] != join_id())
+		return FALSE
+	var/decision = text2num(parts[2])
+	return isnum(decision) && decision >= 1 && decision <= generation && "[decision]" == parts[2]
 
 /// Input cannot spend an expired turn while its queued timeout awaits the worker.
 /datum/netrun_combat_encounter/proc/expired_input()
@@ -446,7 +466,7 @@
 		advance()
 	return !active || (has_turn(actor) && !deferred && participant.ap >= cost)
 
-/datum/netrun_combat_encounter/proc/spend(datum/actor, cost, deferred = FALSE)
+/datum/netrun_combat_encounter/proc/spend(datum/actor, cost, deferred = FALSE, combat_activity = FALSE)
 	if(closing || !IS_FINITE(cost) || cost < 1 || cost > NETRUN_COMBAT_AP || cost != round(cost))
 		return FALSE
 	if(expired_input())
@@ -457,6 +477,10 @@
 	if(!participant || !has_turn(actor) || src.deferred || !IS_FINITE(cost) || cost < 1 || cost != round(cost) || participant.ap < cost)
 		return FALSE
 	participant.ap -= cost
+	// Record only an accepted action, before the last AP may wrap the round.
+	if(combat_activity)
+		round_had_combat = TRUE
+		quiet_rounds = 0
 	src.deferred = deferred
 	if(!deferred && participant.ap <= 0)
 		advance()
@@ -472,7 +496,7 @@
 	if(!program || cooldown_remaining(actor, program))
 		return FALSE
 	var/datum/netrun_turn_participant/participant = member(actor)
-	if(!spend(actor, program.ap_cost, deferred))
+	if(!spend(actor, program.ap_cost, deferred, program.hostile || program.targets_breach))
 		return FALSE
 	if(participant && !QDELETED(participant))
 		participant.program_turn_cooldowns[program.id] = participant.own_turn + max(0, program.cooldown_turns)
@@ -513,6 +537,12 @@
 		current_index++
 		if(current_index > length(participants))
 			current_index = 1
+			quiet_rounds = round_had_combat ? 0 : quiet_rounds + 1
+			round_had_combat = FALSE
+			if(quiet_rounds >= NETRUN_COMBAT_IDLE_ROUNDS)
+				advancing = FALSE
+				qdel(src)
+				return
 			round++
 		var/datum/netrun_turn_participant/participant = current()
 		if(!participant.valid())
@@ -611,11 +641,11 @@
 		queue += list(list("ref" = entry.visible_ref(), "name" = entry.display_name(), "current" = entry == participant,
 			"ap" = entry.ap, "max_ap" = NETRUN_COMBAT_AP))
 	var/participating = contains(viewer)
-	return list("id" = decision_id(), "round" = round, "actor_ref" = participant.visible_ref(), "actor_name" = participant.display_name(),
+	return list("id" = decision_id(), "join_id" = join_id(), "round" = round, "actor_ref" = participant.visible_ref(), "actor_name" = participant.display_name(),
 		"your_turn" = has_turn(viewer), "ap" = participant.ap, "max_ap" = NETRUN_COMBAT_AP,
 		"remaining" = max(0, (deadline - world.time) / (1 SECONDS)), "decision_seconds" = NETRUN_COMBAT_DECISION_TIME / (1 SECONDS),
 		"can_pass" = has_turn(viewer) && !deferred, "participants" = queue, "participating" = participating,
-		"can_join" = !participating && world.time < deadline && !QDELETED(viewer) && !viewer.is_locked() && !viewer.get_combat_encounter())
+		"can_join" = !participating && !QDELETED(viewer) && !viewer.is_locked() && !viewer.get_combat_encounter())
 
 /datum/netrun_task/combat_turn
 	kind = "combat_turn"

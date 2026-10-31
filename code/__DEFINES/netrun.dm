@@ -204,6 +204,8 @@
 /// One encounter owns the current participant's decision deadline.
 #define NETRUN_COMBAT_AP 3
 #define NETRUN_COMBAT_DECISION_TIME (12 SECONDS)
+/// Consecutive complete rounds without a committed hostile action end the encounter.
+#define NETRUN_COMBAT_IDLE_ROUNDS 3
 /// Shared UI state outside the physical map: (network), and a new channel message.
 #define COMSIG_NETRUN_NETWORK_CHANGED "netrun_network_changed"
 #define COMSIG_NETRUN_CHAT_CHANGED "netrun_chat_changed"

@@ -39,7 +39,12 @@
 	var/datum/component/netrun_node/node = combat_node(tree)
 	var/datum/netrun_combat_encounter/encounter = node?.combat_encounter
 	release_path_tree(tree)
-	if(!encounter?.active || !encounter.accepts_input(turn_id) || encounter.expired_input() || encounter.contains(src) || !encounter.join(src))
+	if(!encounter?.accepts_join_input(turn_id))
+		return FALSE
+	// A spectator spends no AP: a queued timeout may rotate the decision but
+	// must not discard a valid request to enter this same surviving encounter.
+	encounter.expired_input()
+	if(QDELETED(encounter) || !encounter.active || encounter.contains(src) || !encounter.join(src))
 		return FALSE
 	encounter.changed()
 	return TRUE
@@ -141,13 +146,22 @@
 	/// Last visible opponents, for expiring status badges without rebuilding routes.
 	var/list/visible_status_sources = list()
 	var/datum/weakref/observed_turn_node
+	var/datum/weakref/resident_ref
 
 /datum/netrun_combat_context/New(datum/netrun_console/console)
 	src.console = console
 	RegisterSignal(console, COMSIG_NETRUN_ICE_CAST_STARTED, PROC_REF(on_cast_started))
+	var/mob/camera/netrun_entity/resident = console.combat_self()
+	if(istype(resident))
+		resident_ref = WEAKREF(resident)
+		RegisterSignal(resident, COMSIG_NETRUN_ENTITY_NODE_CHANGED, PROC_REF(on_resident_moved))
 
 /datum/netrun_combat_context/Destroy()
 	UnregisterSignal(console, COMSIG_NETRUN_ICE_CAST_STARTED)
+	var/mob/camera/netrun_entity/resident = resident_ref?.resolve()
+	if(resident)
+		UnregisterSignal(resident, COMSIG_NETRUN_ENTITY_NODE_CHANGED)
+	resident_ref = null
 	observe_turns(null)
 	clear_contacts()
 	for(var/id in observed_ice)
@@ -178,8 +192,16 @@
 
 /datum/netrun_combat_context/proc/on_turn_changed(datum/source)
 	SIGNAL_HANDLER
-	if(console.workspace_view == "combat" || console.get_combat_encounter())
+	if(console.workspace_view == "combat" || console.get_combat_encounter() || console.is_ui_active())
 		changed()
+
+/datum/netrun_combat_context/proc/on_resident_moved(datum/source, datum/component/netrun_node/previous, datum/component/netrun_node/current)
+	SIGNAL_HANDLER
+	// Dormant autonomous consoles never acquire a UI observer just by walking.
+	if(!observed_turn_node && !console.is_ui_active())
+		return
+	observe_turns(current)
+	changed()
 
 /datum/netrun_combat_context/proc/on_turn_node_deleted(datum/source)
 	SIGNAL_HANDLER
@@ -408,7 +430,16 @@
 /datum/netrun_combat_context/proc/status_payload()
 	SSnetrun.combat_summary_payloads++
 	var/list/warnings = incoming()
-	var/list/turn = console.get_combat_encounter()?.payload(console)
+	var/datum/netrun_combat_encounter/encounter = console.get_combat_encounter()
+	var/mob/camera/netrun_entity/resident = console.combat_self()
+	if(istype(resident))
+		// Native residency is already authoritative. A compact spectator summary
+		// must not build routes or trust another selected device's combat state.
+		var/datum/component/netrun_node/node = resident.console == console && resident.netrun_actor_present(resident.host_node) ? resident.host_node : null
+		observe_turns(node)
+		if(!encounter)
+			encounter = node?.combat_encounter
+	var/list/turn = encounter?.payload(console)
 	if(!length(warnings) && !turn)
 		return null
 	return list("incoming" = warnings, "turn" = turn)

@@ -48,6 +48,9 @@ const SessionStatusView = (props: { onCombat: () => void; onBreach: () => void; 
           </>
         )}
       </div>
+      {turn?.participating === false && <Button compact icon="user-plus" content="Вступить в бой"
+        disabled={!turn.can_join || data.locked > 0}
+        onClick={() => act('combat_join', turn.join_id || turn.id ? { turn_id: turn.join_id || turn.id } : {})} />}
       {!!travel && <Button compact icon="stop" content={incoming ? 'Стоп' : 'Остановить маршрут'}
         aria-label="Остановить автопроход" tooltip={`Остановить автопроход к ${travel.target}`}
         onClick={() => act('travel_cancel')} />}

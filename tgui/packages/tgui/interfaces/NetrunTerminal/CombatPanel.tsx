@@ -202,8 +202,8 @@ const blockedCombatActions = (combat: CombatState, locked: number) => [
 /** One local display clock per active encounter. Expiry never polls or sends an action. */
 const turnKey = (turn: CombatTurn) => turn.id || `${turn.round}:${turn.actor_ref}`;
 
-const TurnHud = ({ turn, active, pass, join, onExpired }: {
-  turn: CombatTurn; active: boolean; pass: () => void; join: () => void; onExpired: (key: string) => void;
+const TurnHud = ({ turn, active, joinBlocked, pass, join, onExpired }: {
+  turn: CombatTurn; active: boolean; joinBlocked: boolean; pass: () => void; join: () => void; onExpired: (key: string) => void;
 }) => {
   const key = turnKey(turn);
   const clock = useRef({ key: '', value: turn, deadline: 0, duration: 1 });
@@ -246,7 +246,7 @@ const TurnHud = ({ turn, active, pass, join, onExpired }: {
         <Meter value={remaining} max={clock.current.duration} label="Время на решение" color={remaining <= 3 ? THEME.bad : THEME.accent} />
       </div>
       {turn.participating === false
-        ? <Button compact icon="user-plus" content="Вступить в бой" disabled={!turn.can_join || expired} onClick={join} />
+        ? <Button compact icon="user-plus" content="Вступить в бой" disabled={!turn.can_join || joinBlocked} onClick={join} />
         : <Button compact icon="forward-step" content="Завершить ход" disabled={!turn.your_turn || !turn.can_pass || expired} onClick={pass} />}
       {!!turn.participants?.length && (
         <div className="netrun-turn-order" aria-label="Участники боя">
@@ -347,8 +347,8 @@ const CombatPanelView = () => {
   return (
     <Box className="netrun-combat-panel" style={{ background: THEME.bg, border: `1px solid ${THEME.line}`, height: '100%', width: '100%', overflowY: 'auto', boxSizing: 'border-box', fontFamily: 'monospace' }} p={1}>
       <div className="netrun-combat-content">
-      {!!turn && <TurnHud turn={turn} active={active} pass={() => act('combat_pass', turnParams)}
-        join={() => act('combat_join', turnParams)} onExpired={setExpiredDecision} />}
+      {!!turn && <TurnHud turn={turn} active={active} joinBlocked={data.locked > 0} pass={() => act('combat_pass', turnParams)}
+        join={() => act('combat_join', turn.join_id || turn.id ? { turn_id: turn.join_id || turn.id } : {})} onExpired={setExpiredDecision} />}
       <Box color={THEME.muted} fontSize="12px" mb={1}>
         <Icon name="crosshairs" mr={1} />
         {combat.node ? <>Узел боя: {combat.node_name} {combat.node}</> : 'Ответный бой'}

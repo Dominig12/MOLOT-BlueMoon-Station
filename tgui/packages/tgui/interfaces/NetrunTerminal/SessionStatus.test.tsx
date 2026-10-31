@@ -50,3 +50,21 @@ test('a spectator sees the ongoing encounter without being described as a waitin
   expect(onCombat).toHaveBeenCalledTimes(1);
   expect(panel.queryByText(/Ожидание хода/)).toBeNull();
 });
+
+
+test('an unthreatened spectator can join directly from another workspace using the stable encounter identity', () => {
+  const { panel, update } = setup({ ...turn, id: 'battle:3', join_id: 'battle',
+    remaining: 0, your_turn: false, participating: false, can_join: true });
+  fireEvent.click(panel.getByText('Вступить в бой'));
+  const topic = (global as any).Byond.topic;
+  const joins = () => topic.mock.calls.filter((call) => call[0]?.type === 'act/combat_join');
+  expect(joins()).toHaveLength(1);
+  expect(JSON.parse(joins()[0][0].payload)).toEqual({ turn_id: 'battle' });
+  update({ node: 'A', node_name: 'Сервер', self: null, programs: [], targets: [], incoming: [], turn: {
+    ...turn, join_id: 'battle', participating: false, your_turn: false, can_join: false,
+  } });
+  fireEvent.click(panel.getByText('Вступить в бой'));
+  expect(joins()).toHaveLength(1);
+  update({ node: 'A', node_name: 'Сервер', self: null, programs: [], targets: [], incoming: [], turn });
+  expect(panel.queryByText('Вступить в бой')).toBeNull();
+});
