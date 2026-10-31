@@ -70,12 +70,13 @@
 	qdel(doomed)
 	SSicon_smooth.smooth_queue = list(null, doomed)
 	SSicon_smooth.deferred = list()
-	// A spent tick budget may stop fire() after either deleted entry.
-	for(var/slice in 1 to 2)
-		SSicon_smooth.state = SS_RUNNING
-		SSicon_smooth.fire()
-		if(!length(SSicon_smooth.smooth_queue) && !length(SSicon_smooth.deferred))
-			break
+	SSicon_smooth.state = SS_RUNNING
+	// после тяжёлых тестов тик уже съеден, и MC_TICK_CHECK бросает проход на первом атоме
+	var/saved_ticklimit = Master.current_ticklimit
+	Master.current_ticklimit = INFINITY
+	SSicon_smooth.fire()
+	Master.current_ticklimit = saved_ticklimit
+	SSicon_smooth.state = saved_state
 	var/list/leftover = SSicon_smooth.smooth_queue + SSicon_smooth.deferred
 	SSicon_smooth.smooth_queue = saved_queue
 	SSicon_smooth.deferred = saved_deferred
