@@ -10,6 +10,12 @@
 	TEST_ASSERT(findtext(json_disabled, "\"enabled\":false"), "Radio off must emit a strict JSON boolean")
 	TEST_ASSERT(findtext(bridge.netdm_serialize_command(list("op" = "packet_send", "trafficClass" = 1)),
 		"\"trafficClass\":1"), "Packet class must remain a number")
+	var/list/radio_batch = list("op" = "game_radio_batch", "changes" = list(
+		list("op" = "game_radio", "a" = 1, "enabled" = TRUE),
+		list("op" = "game_radio", "a" = 2, "enabled" = FALSE)))
+	var/batch_json = bridge.netdm_serialize_command(radio_batch)
+	TEST_ASSERT(findtext(batch_json, "\"enabled\":true"), "Radio batch enable must be a JSON boolean")
+	TEST_ASSERT(findtext(batch_json, "\"enabled\":false"), "Radio batch disable must be a JSON boolean")
 	qdel(bridge)
 
 /datum/unit_test/netdm_component_registry/Run()

@@ -122,3 +122,17 @@ because duplicate execution could be unsafe.
    harness from NetDM.Core, **not yet compiled/executed in DreamDaemon**
    for this particular SS13 branch. BYOND DM compilation and runtime
    validation remain necessary on the server.
+
+
+## Observatory · live SS13 map
+
+The independent Host game graph appears in the existing observatory at
+`http://127.0.0.1:5087` using **SS13 · LIVE GAME** in Topology explorer.
+Select a BYOND Z level and press FIT. The visualizer shows the physical
+links and radio domain cells without mixing benchmark graph data.
+
+Initial synchronization now sends `game_reset` followed by acknowledged
+batches of up to 48 changes. This avoids a 4096-command startup queue.
+Changes during snapshot upload force a new reconciliation pass and failed
+batches or lost acknowledgements trigger an automatic retry. The Host
+and the game graph are designed for a single trusted SS13 server.

@@ -26,11 +26,10 @@
  */
 /datum/netdm_bridge/proc/netdm_serialize_command(list/command)
 	var/raw = json_encode(command)
-	if(command["op"] == "game_radio")
-		if(command["enabled"])
-			raw = replacetext(raw, "\"enabled\":1", "\"enabled\":true")
-		else
-			raw = replacetext(raw, "\"enabled\":0", "\"enabled\":false")
+	if(command["op"] == "game_radio" || command["op"] == "game_radio_batch")
+		// The only fields called enabled in radio commands are booleans.
+		raw = replacetext(raw, "\"enabled\":1", "\"enabled\":true")
+		raw = replacetext(raw, "\"enabled\":0", "\"enabled\":false")
 	return raw
 
 /// Returns a locally enqueued command ID, not transport delivery.
