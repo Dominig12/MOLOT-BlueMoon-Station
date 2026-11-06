@@ -24,7 +24,7 @@
  * expects JSON booleans for PipeRequest.Enabled. Normalize that single
  * well-defined field without changing packet class or numeric IDs.
  */
-/datum/netdm_bridge/proc/serialize(list/command)
+/datum/netdm_bridge/proc/netdm_serialize_command(list/command)
 	var/raw = json_encode(command)
 	if(command["op"] == "game_radio")
 		if(command["enabled"])
@@ -40,7 +40,7 @@
 	serial++
 	var/command_id = "netdm-[serial]"
 	command["id"] = command_id
-	if(call_ext(NETDM_DLL, "netdm_send")(serialize(command)) != "1")
+	if(call_ext(NETDM_DLL, "netdm_send")(netdm_serialize_command(command)) != "1")
 		return null
 	return command_id
 

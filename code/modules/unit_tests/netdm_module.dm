@@ -4,11 +4,11 @@
  */
 /datum/unit_test/netdm_bridge_strict_radio_booleans/Run()
 	var/datum/netdm_bridge/bridge = new
-	var/json_enabled = bridge.serialize(list("op" = "game_radio", "a" = 1, "enabled" = TRUE))
-	var/json_disabled = bridge.serialize(list("op" = "game_radio", "a" = 1, "enabled" = FALSE))
+	var/json_enabled = bridge.netdm_serialize_command(list("op" = "game_radio", "a" = 1, "enabled" = TRUE))
+	var/json_disabled = bridge.netdm_serialize_command(list("op" = "game_radio", "a" = 1, "enabled" = FALSE))
 	TEST_ASSERT(findtext(json_enabled, "\"enabled\":true"), "Radio on must emit a strict JSON boolean")
 	TEST_ASSERT(findtext(json_disabled, "\"enabled\":false"), "Radio off must emit a strict JSON boolean")
-	TEST_ASSERT(findtext(bridge.serialize(list("op" = "packet_send", "trafficClass" = 1)),
+	TEST_ASSERT(findtext(bridge.netdm_serialize_command(list("op" = "packet_send", "trafficClass" = 1)),
 		"\"trafficClass\":1"), "Packet class must remain a number")
 	qdel(bridge)
 
