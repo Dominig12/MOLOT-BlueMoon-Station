@@ -93,6 +93,12 @@
 		"node_ids" = disk_web.researched_nodes.Copy(),
 		"design_ids" = disk_web.researched_designs.Copy()))
 
+/datum/component/techweb_holder/proc/request_upload_designs(list/design_ids)
+	if(!islist(design_ids))
+		return FALSE
+	return netdm_request("upload_tech", list(
+		"node_ids" = list(), "design_ids" = design_ids.Copy()))
+
 /datum/component/techweb_holder/proc/request_download_tech(obj/item/disk/tech_disk/disk)
 	if(!disk || QDELETED(disk))
 		return FALSE

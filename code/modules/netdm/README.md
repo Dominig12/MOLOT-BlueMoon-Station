@@ -85,3 +85,41 @@ inter-sector shortcut; such traffic must go through the local Relay.
 When an APC changes coordinates/area or a relay changes its operational
 state, obsolete managed backbone links are disconnected immediately.
 The bounded area rescan only adds links that remain valid afterward.
+
+
+## First networked gameplay service: R&D
+
+R&D servers of the same research network (same /datum/techweb) now
+register in a round-scoped logical /datum/netdm_rnd_cluster. The cluster
+owns the authoritative research points, unlocked nodes, research
+designs and a bounded deduplication cache (512 mutation request IDs).
+Any active member can respond; if all members are offline, clients
+cannot issue or read networked R&D operations.
+
+The techweb_holder component acts as the generic NetDM RPC client:
+- request_snapshot() reads research points, nodes, unlocked designs,
+  availability and prices from an operational server.
+- request_research() purchases one research node on the server only,
+  after transport delivery and server-side revalidation of its cost.
+- request_add_design(), request_upload_tech(), request_upload_designs()
+  and request_download_tech() use the same request/response path.
+- Device updates are sent only on application replies; transport
+  "delivered" is not considered a successful research operation.
+
+R&D consoles render their network snapshots and send node-unlock and
+disk operations through the protocol. Fabricators download the designs
+snapshot through NetDM into their *local* production cache. If the
+Host, route, APC, relay or entire server cluster is unavailable, new
+mutations are rejected and existing downloaded recipes can remain
+cached locally. Mutating requests are not automatically resent:
+the server cluster caches recent request IDs to prevent double-spending
+if a response is lost or a request reaches another member.
+
+This is the initial service integration, not yet a full migration of
+every legacy research subsystem. Other callers which mutate a raw
+datum/techweb directly (e.g. legacy analyzers/boost scripts) must
+be migrated to explicit R&D RPCs in subsequent changes. Shared techweb
+data is currently one in-process authoritative database per logical
+cluster, not durable per-server disk replicas across DreamDaemon
+restarts. The Host still routes byte-count metadata, while gameplay
+payloads stay in DM.

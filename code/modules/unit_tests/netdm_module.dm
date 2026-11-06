@@ -124,3 +124,39 @@
 	var/turf/position = run_loc_floor_bottom_left
 	TEST_ASSERT(!!SSnetdm.sector_key(position), "Any world turf must have an addressable sector")
 	TEST_ASSERT_EQUAL(SSnetdm.sector_key(position), SSnetdm.sector_key(position), "Sector addressing must be stable")
+
+
+/// Cluster state is shared by all R&D servers in one research network.
+/// A second purchase request cannot spend points or grant a bounty twice.
+/datum/unit_test/netdm_rnd_cluster_atomic_research/Run()
+	var/datum/techweb/isolated/web = new
+	allocated += web
+	var/datum/netdm_rnd_cluster/cluster = new(web)
+	allocated += cluster
+	var/node_id
+	for(var/id in web.available_nodes)
+		if(!web.researched_nodes[id])
+			node_id = id
+			break
+	TEST_ASSERT_NOTNULL(node_id, "Isolated techweb must have at least one researchable node")
+	web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = 100000), FALSE)
+	var/list/request = list("rpc_id" = "netdm-test-write-1",
+		"op" = "research", "node_id" = node_id, "actor" = "unit_test")
+	var/list/first = cluster.execute(request)
+	TEST_ASSERT(first["ok"], "Cluster must accept an affordable research purchase")
+	var/balance = web.research_points[TECHWEB_POINT_TYPE_GENERIC]
+	var/list/replay = cluster.execute(request)
+	TEST_ASSERT(replay["ok"], "Duplicate request receives its original result")
+	TEST_ASSERT_EQUAL(web.research_points[TECHWEB_POINT_TYPE_GENERIC], balance, "Request replay must not spend points again")
+	TEST_ASSERT(web.researched_nodes[node_id], "Cluster research must update the authoritative web")
+	var/list/next = cluster.execute(list("rpc_id" = "netdm-test-write-2", "op" = "research",
+		"node_id" = node_id, "actor" = "unit_test"))
+	TEST_ASSERT(!next["ok"], "A different request cannot research an already unlocked node")
+
+/// No R&D server means no available cluster endpoint.
+/datum/unit_test/netdm_rnd_cluster_requires_server/Run()
+	var/datum/techweb/isolated/web = new
+	allocated += web
+	var/datum/netdm_rnd_cluster/cluster = new(web)
+	allocated += cluster
+	TEST_ASSERT_NULL(cluster.find_server(run_loc_floor_bottom_left), "Empty R&D cluster must be offline")

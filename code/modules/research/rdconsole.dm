@@ -174,49 +174,14 @@ Nothing else in the console has ID requirements.
 	else if(!(linked_destroy && linked_destroy.busy) && !(linked_lathe && linked_lathe.busy) && !(linked_imprinter && linked_imprinter.busy))
 		. = ..()
 
+/// Research purchases are accepted only by an operational R&D server after
+/// NetDM transport delivers the request. The console never spends points.
 /obj/machinery/computer/rdconsole/proc/research_node(id, mob/user)
-	if(!stored_research)	//BLUEMOON ADD: консоль без подключённой сети
-		say("База данных исследований не подключена! Подключите консоль мультитулом от РнД-сервера.")
+	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+	if(!holder?.request_research(id, user))
+		say("Research network unavailable; check R&D servers and APC links.")
 		return FALSE
-	if(!stored_research.available_nodes[id] || stored_research.researched_nodes[id])
-		say("Node unlock failed: Either already researched or not available!")
-		return FALSE
-	var/datum/techweb_node/TN = SSresearch.techweb_node_by_id(id)
-	if(!istype(TN))
-		say("Node unlock failed: Unknown error.")
-		return FALSE
-	var/list/price = TN.get_price(stored_research)
-	if(stored_research.can_afford(price))
-		investigate_log("[key_name(user)] researched [id]([json_encode(price)]) on techweb id [stored_research.id].", INVESTIGATE_RESEARCH)
-		if(stored_research == SSresearch.science_tech)
-			SSblackbox.record_feedback("associative", "science_techweb_unlock", 1, list("id" = "[id]", "name" = TN.display_name, "price" = "[json_encode(price)]", "time" = SQLtime()))
-		if(stored_research.research_node_id(id))
-			SSresearch.on_node_researched(id, stored_research)	// Отправка id на упаковку
-			SEND_GLOBAL_SIGNAL(COMSIG_GLOB_RESEARCH_NODE_UNLOCKED, id)	// Запрос синхронизации печатной машинерии с облаком
-			say("Successfully researched [TN.display_name].")
-			var/logname = "Unknown"
-			if(isAI(user))
-				logname = "AI: [user.name]"
-			if(iscarbon(user))
-				var/obj/item/card/id/idcard = user.get_active_held_item()
-				if(istype(idcard))
-					logname = "User: [idcard.registered_name]"
-			if(ishuman(user))
-				var/mob/living/carbon/human/H = user
-				var/obj/item/I = H.wear_id
-				if(istype(I))
-					var/obj/item/card/id/ID = I.GetID()
-					if(istype(ID))
-						logname = "User: [ID.registered_name]"
-			var/i = stored_research.research_logs.len
-			stored_research.research_logs += null
-			stored_research.research_logs[++i] = list(TN.display_name, price["General Research"], logname, "[get_area(src)] ([src.x],[src.y],[src.z])")
-			return TRUE
-		else
-			say("Failed to research node: Internal database error!")
-			return FALSE
-	say("Not enough research points...")
-	return FALSE
+	return TRUE
 
 /obj/machinery/computer/rdconsole/on_deconstruction()
 	if(linked_destroy)
@@ -260,6 +225,8 @@ Nothing else in the console has ID requirements.
 	return TRUE
 
 /obj/machinery/computer/rdconsole/ui_interact(mob/user, datum/tgui/ui = null)
+	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+	holder?.request_snapshot()
 	ui = SStgui.try_update_ui(user, src, ui)
 	if (!ui)
 		ui = new(user, src, "Techweb", name)
@@ -291,12 +258,18 @@ Nothing else in the console has ID requirements.
 		"analyzeritem" = null,
 		"compact" = compact
 	)
-	//BLUEMOON CHANGE: вместо раннего возврата — сериализация без сети идёт с полями по умолчанию
-	if(stored_research)	//консоль без подключённой сети исследований
-		.["researched_designs"] = stored_research.researched_designs
-		.["points"] = stored_research.research_points
-		.["points_last_tick"] = stored_research.last_bitcoins
-		.["web_org"] = stored_research.organization
+	// Read only the last confirmed NetDM response. Do not access the
+	// authoritative techweb datum to render research points or unlocks.
+	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+	holder?.request_snapshot()
+	var/list/network_state = holder?.netdm_snapshot
+	if(islist(network_state))
+		.["researched_designs"] = network_state["researched_designs"]
+		.["points"] = network_state["points"]
+		.["points_last_tick"] = network_state["points_last_tick"]
+		.["web_org"] = network_state["organization"]
+	else if(stored_research)
+		.["web_org"] = "[stored_research.organization] (offline)"
 
 	if (t_disk)
 		.["t_disk"] = list (
@@ -346,25 +319,9 @@ Nothing else in the console has ID requirements.
 
 
 
-	// Serialize all nodes to display
-	//BLUEMOON CHANGE: узлы показываются только при подключённой базе исследований
-	if(stored_research)
-		for(var/v in stored_research.tiers)
-			var/datum/techweb_node/n = SSresearch.techweb_node_by_id(v)
-
-			// Ensure node is supposed to be visible
-			if (stored_research.hidden_nodes[v])
-				continue
-
-			var/costs = n.get_price(stored_research)
-
-			.["nodes"] += list(list(
-				"id" = n.id,
-				"can_unlock" = stored_research.can_afford(costs),
-				"costs" = costs,
-				"tier" = stored_research.tiers[n.id]
-			))
-	//BLUEMOON CHANGE END
+	// UI node availability, prices and tiers originate at the R&D server.
+	if(islist(network_state))
+		.["nodes"] = network_state["nodes"]
 
 /obj/machinery/computer/rdconsole/proc/compress_id(id)
 	if (!id_cache[id])
@@ -464,8 +421,6 @@ Nothing else in the console has ID requirements.
 		if ("researchNode")
 			if(!research_control)
 				return TRUE
-			if(!stored_research.available_nodes[params["node_id"]])
-				return TRUE
 			research_node(params["node_id"], usr)
 			return TRUE
 		if ("ejectDisk")
@@ -492,7 +447,10 @@ Nothing else in the console has ID requirements.
 				say("No design disk found.")
 				return TRUE
 			var/n = text2num(params["slot"])
-			stored_research.add_design(d_disk.blueprints[n], TRUE)
+			var/datum/design/design = d_disk.blueprints[n]
+			var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+			if(!design || !holder?.request_add_design(design.id))
+				say("Research server unavailable; design not uploaded.")
 			return TRUE
 		if ("clearDesignSlot")
 			if(QDELETED(d_disk))
@@ -520,26 +478,31 @@ Nothing else in the console has ID requirements.
 				say("Wiping technology disk.")
 			return TRUE
 		if ("uploadDisk")
+			var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
 			if (params["type"] == RND_DESIGN_DISK)
 				if(QDELETED(d_disk))
 					say("No design disk inserted!")
 					return TRUE
-				for(var/D in d_disk.blueprints)
-					if(D)
-						stored_research.add_design(D, TRUE)
+				var/list/design_ids = list()
+				for(var/datum/design/design in d_disk.blueprints)
+					if(design)
+						design_ids[design.id] = TRUE
+				if(!holder?.request_upload_designs(design_ids))
+					say("Research server unavailable; designs not uploaded.")
 			if (params["type"] == RND_TECH_DISK)
 				if (QDELETED(t_disk))
 					say("No tech disk inserted!")
 					return TRUE
-				say("Uploading technology disk.")
-				t_disk.stored_research.copy_research_to(stored_research)
+				if(!holder?.request_upload_tech(t_disk.stored_research))
+					say("Research server unavailable; disk not uploaded.")
 			return TRUE
 		if ("loadTech")
 			if(QDELETED(t_disk))
 				say("No tech disk inserted!")
 				return
-			stored_research.copy_research_to(t_disk.stored_research)
-			say("Downloading to technology disk.")
+			var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+			if(!holder?.request_download_tech(t_disk))
+				say("Research server unavailable; disk not downloaded.")
 			return TRUE
 
 		if ("destroyfortech")
