@@ -140,8 +140,12 @@
 	if(!islist(network_state) || !stored_research)
 		return
 	var/list/old_designs = designs_cache_built ? stored_research.researched_designs.Copy() : null
-	stored_research.researched_nodes = network_state["researched_nodes"].Copy()
-	stored_research.researched_designs = network_state["researched_designs"].Copy()
+	var/list/remote_nodes = network_state["researched_nodes"]
+	var/list/remote_designs = network_state["researched_designs"]
+	if(!islist(remote_nodes) || !islist(remote_designs))
+		return
+	stored_research.researched_nodes = remote_nodes.Copy()
+	stored_research.researched_designs = remote_designs.Copy()
 	if(old_designs)
 		for(var/id in old_designs)
 			if(!stored_research.researched_designs[id])
