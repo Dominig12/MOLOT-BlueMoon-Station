@@ -27,7 +27,14 @@ SUBSYSTEM_DEF(netdm)
 
 	var/list/topology_commands = list()
 	var/sync_marker
-	var/sync_errors = 0
+	var/sync_stage = "idle"
+	var/sync_index = 1
+	var/sync_pending_count = 0
+	var/sync_deadline = 0
+	var/next_sync_retry = 0
+	var/sync_dirty = FALSE
+	var/list/sync_endpoints = list()
+	var/list/sync_links = list()
 	var/receipt_request
 	var/receipt_cursor = 0
 	var/stream_id
@@ -70,6 +77,9 @@ SUBSYSTEM_DEF(netdm)
 	synchronizing = FALSE
 	topology_commands.Cut()
 	sync_marker = null
+	sync_stage = "idle"
+	sync_endpoints.Cut()
+	sync_links.Cut()
 	receipt_request = null
 
 /datum/controller/subsystem/netdm/proc/register_endpoint(datum/component/netdm_node/endpoint)
@@ -103,7 +113,8 @@ SUBSYSTEM_DEF(netdm)
 			remove_link(link)
 	endpoints_by_id -= "[id]"
 	endpoints -= endpoint
-	retired_ids["[id]"] = id
+	if(!connected || synchronizing)
+		retired_ids["[id]"] = id
 	if(connected)
 		queue_topology(list("op" = "game_remove_node", "a" = id))
 	endpoint.node_id = 0
@@ -174,12 +185,11 @@ SUBSYSTEM_DEF(netdm)
 /datum/controller/subsystem/netdm/proc/queue_topology(list/command)
 	if(!connected || !islist(command))
 		return
+	if(synchronizing)
+		sync_dirty = TRUE
+		return
 	if(length(topology_commands) >= max_topology_queue)
-		synchronized = FALSE
-		synchronizing = FALSE
-		topology_commands.Cut()
-		sync_marker = null
-		stack_trace("NetDM topology queue overflow. Manual resync is required.")
+		begin_sync()
 		return
 	topology_commands += list(command)
 
@@ -188,22 +198,94 @@ SUBSYSTEM_DEF(netdm)
 		return
 	synchronized = FALSE
 	synchronizing = TRUE
+	sync_stage = "reset"
 	sync_marker = null
-	sync_errors = 0
+	sync_index = 1
+	sync_pending_count = 0
+	sync_dirty = FALSE
+	sync_deadline = 0
+	next_sync_retry = 0
 	topology_commands.Cut()
-	// Remove every node we deleted during an offline interval before adds.
-	for(var/key in retired_ids)
-		queue_topology(list("op" = "game_remove_node", "a" = retired_ids[key]))
-	for(var/datum/component/netdm_node/endpoint as anything in endpoints)
-		if(!QDELETED(endpoint))
-			queue_endpoint(endpoint)
+	sync_endpoints = endpoints.Copy()
+	sync_links = list()
 	for(var/key in links)
-		var/datum/netdm_link/link = links[key]
-		queue_topology(list("op" = "game_connect", "a" = link.from_id,
-			"b" = link.to_id, "cost" = link.cost))
+		sync_links += links[key]
+	fail_outstanding("topology_resync")
+
+/datum/controller/subsystem/netdm/proc/sync_retry()
+	synchronized = FALSE
+	synchronizing = FALSE
+	sync_marker = null
+	sync_stage = "idle"
+	sync_endpoints.Cut()
+	sync_links.Cut()
+	next_sync_retry = world.time + 30
+
+/datum/controller/subsystem/netdm/proc/advance_sync()
+	if(!synchronizing || sync_marker)
+		return
+	var/list/changes = list()
+	var/list/command
+	var/list/source
+	var/i
+	switch(sync_stage)
+		if("reset")
+			command = list("op" = "game_reset")
+		if("nodes", "radios")
+			source = sync_endpoints
+			if(sync_index > length(source))
+				sync_stage = sync_stage == "nodes" ? "radios" : "links"
+				sync_index = 1
+				return
+			for(i = sync_index, i <= length(source) && i < sync_index + 48, i++)
+				var/datum/component/netdm_node/endpoint = source[i]
+				if(!endpoint || !endpoint.node_id || QDELETED(endpoint))
+					continue
+				if(sync_stage == "nodes")
+					var/turf/position = endpoint.get_position()
+					if(position)
+						changes += list(list("op" = "game_add_node", "a" = endpoint.node_id, "x" = position.x, "y" = position.y, "z" = position.z))
+				else
+					changes += list(list("op" = "game_radio", "a" = endpoint.node_id, "enabled" = endpoint.radio_enabled, "range" = endpoint.radio_range, "channel" = endpoint.radio_channel, "radioCost" = endpoint.radio_cost))
+			sync_pending_count = i - sync_index
+			if(!length(changes))
+				sync_index += sync_pending_count
+				return
+			command = list("op" = sync_stage == "nodes" ? "game_batch" : "game_radio_batch", "changes" = changes)
+		if("links")
+			source = sync_links
+			if(sync_index > length(source))
+				sync_stage = "verify"
+				return
+			for(i = sync_index, i <= length(source) && i < sync_index + 48, i++)
+				var/datum/netdm_link/link = source[i]
+				if(link && endpoints_by_id["[link.from_id]"] && endpoints_by_id["[link.to_id]"])
+					changes += list(list("op" = "game_connect", "a" = link.from_id, "b" = link.to_id, "cost" = link.cost))
+			sync_pending_count = i - sync_index
+			if(!length(changes))
+				sync_index += sync_pending_count
+				return
+			command = list("op" = "game_batch", "changes" = changes)
+		if("verify")
+			command = list("op" = "game_stats")
+		else
+			return
+	sync_marker = bridge.send(command)
+	if(sync_marker)
+		sync_deadline = world.time + 100
 
 /datum/controller/subsystem/netdm/proc/flush_commands()
 	if(!connected)
+		return
+	if(synchronizing)
+		if(sync_marker && world.time > sync_deadline)
+			sync_retry()
+		else
+			advance_sync()
+		return
+	if(!synchronized)
+		if(world.time >= next_sync_retry)
+			begin_sync()
 		return
 	var/count = min(32, length(topology_commands))
 	for(var/i = 1, i <= count, i++)
@@ -211,8 +293,6 @@ SUBSYSTEM_DEF(netdm)
 		if(!bridge.send(command))
 			break
 		topology_commands.Cut(1, 2)
-	if(synchronizing && !length(topology_commands) && !sync_marker)
-		sync_marker = bridge.send(list("op" = "game_stats"))
 
 /datum/controller/subsystem/netdm/proc/fail_outstanding(reason)
 	for(var/request_id in transactions.Copy())
@@ -235,6 +315,9 @@ SUBSYSTEM_DEF(netdm)
 	synchronizing = FALSE
 	receipt_request = null
 	sync_marker = null
+	sync_stage = "idle"
+	sync_endpoints.Cut()
+	sync_links.Cut()
 	topology_commands.Cut()
 	fail_outstanding("connection_lost")
 
@@ -287,16 +370,34 @@ SUBSYSTEM_DEF(netdm)
 		if("disconnected")
 			on_disconnected()
 			return
-	if(message["id"] == sync_marker && sync_marker)
+	if(sync_marker && message["id"] == sync_marker)
 		sync_marker = null
-		synchronizing = FALSE
-		synchronized = !!message["ok"] && !sync_errors
-		if(synchronized)
-			var/list/game = message["game"]
-			if(islist(game))
-				stream_id = game["streamId"]
-	else if(synchronizing && !message["ok"] && !isnull(message["id"]))
-		sync_errors++
+		sync_deadline = 0
+		if(!message["ok"])
+			sync_retry()
+			return
+		if(sync_stage == "reset")
+			sync_stage = "nodes"
+			sync_index = 1
+		else if(sync_stage == "nodes" || sync_stage == "radios" || sync_stage == "links")
+			sync_index += sync_pending_count
+		else if(sync_stage == "verify")
+			if(sync_dirty)
+				begin_sync()
+			else
+				synchronized = TRUE
+				synchronizing = FALSE
+				sync_stage = "idle"
+				sync_endpoints.Cut()
+				sync_links.Cut()
+				retired_ids.Cut()
+				var/list/game = message["game"]
+				if(islist(game))
+					stream_id = game["streamId"]
+		return
+	if(!isnull(message["id"]) && !message["ok"] && synchronized)
+		begin_sync()
+		return
 	if(message["id"] == receipt_request)
 		receipt_request = null
 	if(message["error"] == "stream_changed")
