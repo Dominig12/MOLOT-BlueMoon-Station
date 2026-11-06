@@ -854,8 +854,10 @@ SUBSYSTEM_DEF(netdm)
 	var/datum/component/netdm_node/origin = sender
 	spawn(0)
 		if(target_object && !QDELETED(target_object))
+			SEND_SIGNAL(target_object, "netdm_packet_received", data, origin, id)
 			target_object.netdm_receive(data, origin, id)
 		if(source_object && !QDELETED(source_object))
+			SEND_SIGNAL(source_object, "netdm_packet_delivery", id, "delivered", "transport_delivered")
 			source_object.netdm_delivery(id, "delivered", "transport_delivered")
 	qdel(src)
 
@@ -867,5 +869,6 @@ SUBSYSTEM_DEF(netdm)
 	var/id = request_id
 	spawn(0)
 		if(source_object && !QDELETED(source_object))
+			SEND_SIGNAL(source_object, "netdm_packet_delivery", id, final_status, reason)
 			source_object.netdm_delivery(id, final_status, reason)
 	qdel(src)

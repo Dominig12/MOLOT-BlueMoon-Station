@@ -35,6 +35,8 @@
 	/// Сеть AUTO-сервера, выбранная по запросу соседа до LateInitialize; сам сервер потом встаёт в неё же.
 	var/datum/techweb/early_network
 	var/resolving_network = FALSE
+	/// Logical storage cluster for servers sharing the same research network.
+	var/datum/netdm_rnd_cluster/netdm_cluster
 
 /obj/machinery/rnd/server/Initialize(mapload)
 	. = ..()
@@ -80,6 +82,7 @@
 		. += span_notice("Исследовательская сеть: <b>[stored_research.organization]</b>. Мультитул с пустым буфером копирует её с сервера, после чего клик по консоли или машине РнД подключает их к этой сети.")
 
 /obj/machinery/rnd/server/Destroy()
+	SSresearch.netdm_detach_rnd_server(src)
 	early_network = null
 	SSresearch.servers -= src
 	GLOB.rndservers_list -= src
@@ -98,7 +101,9 @@
 /obj/machinery/rnd/server/proc/on_techweb_changed(datum/source, datum/techweb/new_web)
 	SIGNAL_HANDLER
 
+	SSresearch.netdm_detach_rnd_server(src)
 	stored_research = new_web
+	SSresearch.netdm_attach_rnd_server(src)
 
 /// Сеть сервера. До LateInitialize фракционная берётся по ID, AUTO выбирается сразу и запоминается: соседи при загрузке карты не зависят от порядка.
 /obj/machinery/rnd/server/proc/get_rnd_network()
