@@ -109,7 +109,8 @@
 	data["programs"] = list()
 	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
 	holder?.request_snapshot()
-	var/list/designs = holder?.netdm_snapshot?["researched_designs"]
+	var/list/state = holder?.netdm_snapshot
+	var/list/designs = islist(state) ? state["researched_designs"] : null
 	if(islist(designs))
 		for(var/i in designs)
 			var/datum/design/nanites/D = SSresearch.techweb_design_by_id(i)
@@ -141,7 +142,7 @@
 				return
 			var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
 			var/list/network_state = holder?.netdm_snapshot
-			var/list/known_designs = network_state?["researched_designs"]
+			var/list/known_designs = islist(network_state) ? network_state["researched_designs"] : null
 			if(!islist(known_designs) || !known_designs[params["program_id"]])
 				return
 			var/datum/design/nanites/downloaded = SSresearch.techweb_design_by_id(params["program_id"])
