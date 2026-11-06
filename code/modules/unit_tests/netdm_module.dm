@@ -98,7 +98,7 @@
 	var/datum/component/netdm_node/console_node = console.netdm_interface()
 	TEST_ASSERT_NOTNULL(apc_node, "Standard APC automatically registers with NetDM")
 	TEST_ASSERT_NOTNULL(console_node, "Standard stationary computer automatically registers with NetDM")
-	TEST_ASSERT(!apc_node.radio_enabled, "APC must be wired")
+	TEST_ASSERT(apc_node.radio_enabled, "APC must provide wireless access into its wired backbone")
 	TEST_ASSERT(!console_node.radio_enabled, "Anchored computer must be wired")
 	TEST_ASSERT(SSnetdm.apc_backbone.Find(apc_node), "APC must participate in backbone")
 	qdel(console)

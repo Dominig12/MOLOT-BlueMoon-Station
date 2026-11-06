@@ -60,7 +60,9 @@
 	var/obj/machinery/machine = null
 	if(istype(parent, /obj/machinery))
 		machine = parent
-	var/should_radio = !machine || !machine.anchored
+	// APCs are wired into the backbone, but also serve as access points
+	// so that mobile radio clients can reach the wired station graph.
+	var/should_radio = !machine || !machine.anchored || istype(machine, /obj/machinery/power/apc)
 	if(radio_enabled != should_radio)
 		set_radio(should_radio)
 	var/datum/component/netdm_node/new_apc = null

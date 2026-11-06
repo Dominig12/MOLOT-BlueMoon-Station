@@ -7,7 +7,8 @@ structure. All normal /obj/machinery instances automatically get an
 endpoint; embedded power terminals are skipped, since their APC is the
 actual network node.
 
-- **APC**: fixed wired endpoint, member of the sparse station backbone.
+- **APC**: fixed wired endpoint and radio access point for mobile devices,
+  member of the sparse station backbone.
   Existing APCs connect into a deterministic (Z, Y, X)-ordered chain,
   with one or two neighboring links rather than O(N²) full-mesh wiring.
   Added/removed APCs update neighboring backbone edges dynamically.
