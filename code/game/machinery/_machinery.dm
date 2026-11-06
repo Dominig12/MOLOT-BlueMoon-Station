@@ -238,6 +238,8 @@ Class Procs:
 /// у атмос-машинерии он живёт не в самой машине, а в списках area, и без этого
 /// венты/скрабберы навсегда оставались приписанными к зоне, из которой их вырезали.
 /obj/machinery/proc/on_area_swap(area/old_area, area/new_area)
+	if(istype(src, /obj/machinery/power/apc))
+		SSnetdm.mark_topology_dirty()
 	return
 
 ///Re-homes the subscription on an area move and resyncs: the new area's channels can differ from the old one's.

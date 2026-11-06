@@ -34,6 +34,7 @@ SUBSYSTEM_DEF(netdm)
 	var/list/topology_managed_links = list()
 	var/list/topology_desired_links = list()
 	var/topology_dirty = TRUE
+	var/topology_scan_complete = FALSE
 	var/list/topology_scan_apcs = list()
 	var/topology_apc_index = 1
 	var/list/topology_scan_areas
@@ -319,8 +320,11 @@ SUBSYSTEM_DEF(netdm)
 				endpoint.sync_transport()
 				mark_topology_dirty()
 
+	if(!topology_dirty && topology_scan_complete)
+		return
 	if(topology_dirty)
 		topology_dirty = FALSE
+		topology_scan_complete = FALSE
 		topology_scan_apcs = apc_backbone.Copy()
 		topology_desired_links = list()
 		topology_apc_index = 1
@@ -333,6 +337,7 @@ SUBSYSTEM_DEF(netdm)
 		if(topology_apc_index > length(topology_scan_apcs))
 			add_relay_topology(topology_desired_links)
 			apply_area_topology()
+			topology_scan_complete = TRUE
 			return
 
 		var/datum/component/netdm_node/endpoint = topology_scan_apcs[topology_apc_index]

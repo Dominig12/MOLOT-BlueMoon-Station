@@ -72,3 +72,8 @@ A transport receipt is not an application-level acknowledgement.
 The Host and bridge are local trusted-development processes, not a
 multi-server service. There is no automatic retry for gameplay
 operations that might execute twice.
+
+The boundary scan stops after publishing a stable topology and restarts
+only when APCs or relays change, when an APC moves, or when an area-swap
+notification invalidates a controller. This avoids rewalking the map on
+every subsystem tick.
