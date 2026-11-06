@@ -7,11 +7,11 @@ structure. All normal /obj/machinery instances automatically get an
 endpoint; embedded power terminals are skipped, since their APC is the
 actual network node.
 
-- **APC**: fixed wired endpoint and radio access point for mobile devices,
-  member of the sparse station backbone.
-  Existing APCs connect into a deterministic (Z, Y, X)-ordered chain,
-  with one or two neighboring links rather than O(N²) full-mesh wiring.
-  Added/removed APCs update neighboring backbone edges dynamically.
+- **APC**: wired endpoint and radio access point for mobile devices.
+  Two APCs have a direct wired link **only when their distinct power
+  areas share a border of cardinally adjacent turfs on the same Z-level**.
+  A gap, diagonal contact, or merely being on the same map is not
+  sufficient. Linked sub-areas use their shared root APC.
 - **Anchored machinery, including regular and modular consoles**: a
   wired endpoint with one uplink to the APC registered as
   `get_area(machine).base_area?.power_apc` (or the area's own APC).
@@ -28,10 +28,24 @@ Subtypes `/apc/netdm` and `/console/netdm` remain aliases for
 mapping compatibility, not special opt-in devices. Other kinds of
 handheld items can still explicitly call `netdm_connect()`.
 
-The background `SSnetdm` reconciliation pass updates area membership,
-position, and anchoring in bounded groups; device creation and removal
-are sent incrementally with acknowledged batches. No link is inferred
-from an electrical powernet or NTNet.
+- **Between sectors**: operational `/obj/machinery/ntnet_relay`
+  machines provide the inter-sector backbone. A single available relay
+  per sector participates in a sparse chain to other sectors with an
+  operational relay. Powered-off, EMP-disabled, broken or DoS-crashed
+  relays stop carrying the inter-sector link. The sector identity is
+  taken from `SSmapping.space_grid` and its declarations; for legacy
+  maps without sector declarations, each Z-level is treated as a sector.
+  Relays attach to their own area's APC, so a sector with no connected
+  relay/zone does not gain a magical direct APC connection.
+
+The `SSnetdm` reconciliation pass updates area membership, position,
+and anchoring in bounded groups. A separate, bounded border scan
+examines APC areas in chunks of 256 contents per fire on topology
+changes and builds only real neighboring-area edges. Ordinary devices
+are still sent incrementally using acknowledged Host batches.
+No link is inferred from electrical cables or NTNet's global
+communication datum; only the NTNet relay machines' operational status
+is reused.
 
 ## Deployment
 

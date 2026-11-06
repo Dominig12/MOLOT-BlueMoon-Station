@@ -75,6 +75,11 @@
 				new_apc = controller.netdm_interface()
 	if(new_apc == src)
 		new_apc = null
+	// A switched-off or crashed quantum relay must not bridge the area.
+	if(istype(machine, /obj/machinery/ntnet_relay))
+		var/obj/machinery/ntnet_relay/relay = machine
+		if(!relay.is_operational())
+			new_apc = null
 	if(zone_apc == new_apc)
 		return
 	if(zone_apc && zone_apc.node_id)

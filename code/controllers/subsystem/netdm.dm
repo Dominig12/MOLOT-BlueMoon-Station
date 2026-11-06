@@ -27,8 +27,20 @@ SUBSYSTEM_DEF(netdm)
 	var/next_endpoint_id = 1
 	var/scan_index = 1
 	var/list/links = list()
-	/// Sparse, deterministic APC backbone. No O(APC²) clique.
+	/// Registered APCs. Links are created only for touching APC areas.
 	var/list/datum/component/netdm_node/apc_backbone = list()
+	/// Operational NTNet quantum relays are the only inter-sector gateways.
+	var/list/datum/component/netdm_node/ntnet_relays = list()
+	var/list/topology_managed_links = list()
+	var/list/topology_desired_links = list()
+	var/topology_dirty = TRUE
+	var/list/topology_scan_apcs = list()
+	var/topology_apc_index = 1
+	var/list/topology_scan_areas
+	var/topology_area_index = 1
+	var/topology_content_index = 1
+	var/topology_next_relay_check = 0
+	var/list/topology_relay_states = list()
 	/// Tombstones retain offline removals across a local pipe reconnect.
 	var/list/retired_ids = list()
 
@@ -124,6 +136,8 @@ SUBSYSTEM_DEF(netdm)
 		queue_endpoint(endpoint)
 	if(istype(endpoint.parent, /obj/machinery/power/apc))
 		register_backbone_apc(endpoint)
+	if(istype(endpoint.parent, /obj/machinery/ntnet_relay))
+		register_ntnet_relay(endpoint)
 	return TRUE
 
 /datum/controller/subsystem/netdm/proc/unregister_endpoint(datum/component/netdm_node/endpoint)
@@ -132,6 +146,8 @@ SUBSYSTEM_DEF(netdm)
 	var/id = endpoint.node_id
 	if(istype(endpoint.parent, /obj/machinery/power/apc))
 		unregister_backbone_apc(endpoint)
+	if(istype(endpoint.parent, /obj/machinery/ntnet_relay))
+		unregister_ntnet_relay(endpoint)
 	for(var/key in links.Copy())
 		var/datum/netdm_link/link = links[key]
 		if(link && (link.from_id == id || link.to_id == id))
@@ -151,8 +167,9 @@ SUBSYSTEM_DEF(netdm)
 	queue_topology(list("op" = "game_move_node", "a" = endpoint.node_id,
 		"x" = endpoint.last_x, "y" = endpoint.last_y, "z" = endpoint.last_z))
 	if(istype(endpoint.parent, /obj/machinery/power/apc))
-		unregister_backbone_apc(endpoint)
-		register_backbone_apc(endpoint)
+		mark_topology_dirty()
+	if(istype(endpoint.parent, /obj/machinery/ntnet_relay))
+		mark_topology_dirty()
 
 /datum/controller/subsystem/netdm/proc/update_endpoint_radio(datum/component/netdm_node/endpoint)
 	if(connected && endpoint?.node_id)
@@ -181,47 +198,203 @@ SUBSYSTEM_DEF(netdm)
 	endpoint.auto_managed = TRUE
 	endpoint.sync_transport()
 
-/// APC backbone is a spatially ordered chain (Z, Y, X), rather than a
-/// full mesh. Adjacent chain edges preserve global connectivity and cost O(N).
-/datum/controller/subsystem/netdm/proc/apc_precedes(datum/component/netdm_node/a,
-	datum/component/netdm_node/b)
-	var/turf/left = a?.get_position()
-	var/turf/right = b?.get_position()
-	if(!left || !right)
-		return a.node_id < b.node_id
-	if(left.z != right.z)
-		return left.z < right.z
-	if(left.y != right.y)
-		return left.y < right.y
-	if(left.x != right.x)
-		return left.x < right.x
-	return a.node_id < b.node_id
+/// A controller's sector is the actual space-grid declaration, rather than
+/// just its z-level. Legacy maps use distinct z-levels as sectors.
+/datum/controller/subsystem/netdm/proc/sector_key(turf/position)
+	if(!position)
+		return null
+	var/datum/space_grid/grid = SSmapping.space_grid
+	if(grid)
+		for(var/datum/space_level/level as anything in grid.level_sectors)
+			if(level.z_value == position.z)
+				var/datum/space_sector/sector = grid.level_sectors[level]
+				if(sector?.id)
+					return "sector:[sector.id]"
+	return "z:[position.z]"
+
+/datum/controller/subsystem/netdm/proc/mark_topology_dirty()
+	topology_dirty = TRUE
 
 /datum/controller/subsystem/netdm/proc/register_backbone_apc(datum/component/netdm_node/apc)
 	if(!apc?.node_id || apc_backbone.Find(apc))
 		return
-	var/index = 1
-	while(index <= length(apc_backbone) && !apc_precedes(apc, apc_backbone[index]))
-		index++
-	var/datum/component/netdm_node/previous = index > 1 ? apc_backbone[index - 1] : null
-	var/datum/component/netdm_node/next = index <= length(apc_backbone) ? apc_backbone[index] : null
-	apc_backbone.Insert(index, apc)
-	if(previous && next)
-		disconnect_nodes(previous, next)
-	if(previous)
-		connect_nodes(previous, apc)
-	if(next)
-		connect_nodes(apc, next)
+	apc_backbone += apc
+	mark_topology_dirty()
 
 /datum/controller/subsystem/netdm/proc/unregister_backbone_apc(datum/component/netdm_node/apc)
-	var/index = apc_backbone.Find(apc)
-	if(!index)
+	apc_backbone -= apc
+	mark_topology_dirty()
+
+/datum/controller/subsystem/netdm/proc/register_ntnet_relay(datum/component/netdm_node/relay)
+	if(!relay?.node_id || ntnet_relays.Find(relay))
 		return
-	var/datum/component/netdm_node/previous = index > 1 ? apc_backbone[index - 1] : null
-	var/datum/component/netdm_node/next = index < length(apc_backbone) ? apc_backbone[index + 1] : null
-	apc_backbone.Cut(index, index + 1)
-	if(previous && next)
-		connect_nodes(previous, next)
+	ntnet_relays += relay
+	mark_topology_dirty()
+
+/datum/controller/subsystem/netdm/proc/unregister_ntnet_relay(datum/component/netdm_node/relay)
+	ntnet_relays -= relay
+	topology_relay_states -= "[relay.node_id]"
+	mark_topology_dirty()
+
+/// Root APC areas may consist of subareas, all sharing one controller.
+/datum/controller/subsystem/netdm/proc/apc_area_root(obj/machinery/power/apc/controller)
+	var/area/root = controller?.area
+	if(!root && controller)
+		root = get_area(controller)
+	if(root?.base_area)
+		return root.base_area
+	return root
+
+/// Return a different APC only when its power area shares a cardinal
+/// border with the source power area on the same z-level.
+/datum/controller/subsystem/netdm/proc/border_controller(turf/source,
+	obj/machinery/power/apc/current, direction)
+	if(!source || !current)
+		return null
+	var/turf/neighbor = get_step(source, direction)
+	if(!neighbor || neighbor.z != source.z)
+		return null
+	var/area/source_zone = get_area(source)
+	var/area/neighbor_zone = get_area(neighbor)
+	if(!source_zone || !neighbor_zone)
+		return null
+	if(source_zone.base_area)
+		source_zone = source_zone.base_area
+	if(neighbor_zone.base_area)
+		neighbor_zone = neighbor_zone.base_area
+	if(source_zone == neighbor_zone)
+		return null
+	if(apc_area_root(current) != source_zone)
+		return null
+	var/obj/machinery/power/apc/other = neighbor_zone.power_apc
+	if(!other || other == current || QDELETED(other) || other.z != source.z)
+		return null
+	return other.netdm_interface()
+
+/datum/controller/subsystem/netdm/proc/remember_topology_edge(
+	list/desired, datum/component/netdm_node/a, datum/component/netdm_node/b)
+	if(!a?.node_id || !b?.node_id || a == b)
+		return
+	var/key = link_key(a.node_id, b.node_id)
+	if(!desired[key])
+		desired[key] = list(a, b)
+
+/// Relays form a sparse cross-sector backbone. Each sector contributes
+/// one operational relay; all other local relays remain area-connected.
+/datum/controller/subsystem/netdm/proc/add_relay_topology(list/desired)
+	var/list/sector_relays = list()
+	var/list/sectors = list()
+	for(var/datum/component/netdm_node/endpoint as anything in ntnet_relays)
+		if(!endpoint?.node_id || QDELETED(endpoint))
+			continue
+		var/obj/machinery/ntnet_relay/relay = endpoint.parent
+		if(!relay || QDELETED(relay) || !relay.is_operational())
+			continue
+		var/key = sector_key(endpoint.get_position())
+		if(!key || sector_relays[key])
+			continue
+		sector_relays[key] = endpoint
+		sectors += key
+	var/datum/component/netdm_node/previous
+	for(var/key in sectors)
+		var/datum/component/netdm_node/current = sector_relays[key]
+		if(previous)
+			remember_topology_edge(desired, previous, current)
+		previous = current
+
+/// Only one incremental scan owns the APC adjacency topology at once.
+/// It visits at most 256 area contents per SSnetdm fire, not every machine
+/// on every tick. Rebuilds are triggered by APC/relay lifecycle changes.
+/datum/controller/subsystem/netdm/proc/process_area_topology()
+	if(world.time >= topology_next_relay_check)
+		topology_next_relay_check = world.time + 10
+		for(var/datum/component/netdm_node/endpoint as anything in ntnet_relays)
+			if(!endpoint?.node_id || QDELETED(endpoint))
+				continue
+			var/obj/machinery/ntnet_relay/relay = endpoint.parent
+			var/working = !!relay?.is_operational()
+			var/key = "[endpoint.node_id]"
+			if(topology_relay_states[key] != working + 1)
+				topology_relay_states[key] = working + 1
+				endpoint.sync_transport()
+				mark_topology_dirty()
+
+	if(topology_dirty)
+		topology_dirty = FALSE
+		topology_scan_apcs = apc_backbone.Copy()
+		topology_desired_links = list()
+		topology_apc_index = 1
+		topology_scan_areas = null
+		topology_area_index = 1
+		topology_content_index = 1
+
+	var/budget = 256
+	while(budget > 0)
+		if(topology_apc_index > length(topology_scan_apcs))
+			add_relay_topology(topology_desired_links)
+			apply_area_topology()
+			return
+
+		var/datum/component/netdm_node/endpoint = topology_scan_apcs[topology_apc_index]
+		var/obj/machinery/power/apc/apc = endpoint?.parent
+		if(!endpoint?.node_id || !apc || QDELETED(apc))
+			topology_apc_index++
+			topology_scan_areas = null
+			continue
+
+		if(!topology_scan_areas)
+			var/area/root = apc_area_root(apc)
+			if(!root || root.power_apc != apc)
+				topology_apc_index++
+				continue
+			topology_scan_areas = list(root)
+			if(root.sub_areas)
+				topology_scan_areas += root.sub_areas
+			topology_area_index = 1
+			topology_content_index = 1
+
+		if(topology_area_index > length(topology_scan_areas))
+			topology_apc_index++
+			topology_scan_areas = null
+			continue
+
+		var/area/zone = topology_scan_areas[topology_area_index]
+		if(!zone || topology_content_index > length(zone.contents))
+			topology_area_index++
+			topology_content_index = 1
+			continue
+		var/atom/entry = zone.contents[topology_content_index++]
+		budget--
+		if(!isturf(entry))
+			continue
+		var/turf/tile = entry
+		if(tile.z != apc.z)
+			continue
+		var/datum/component/netdm_node/neighbor = border_controller(tile, apc, NORTH)
+		if(neighbor)
+			remember_topology_edge(topology_desired_links, endpoint, neighbor)
+		neighbor = border_controller(tile, apc, EAST)
+		if(neighbor)
+			remember_topology_edge(topology_desired_links, endpoint, neighbor)
+
+/datum/controller/subsystem/netdm/proc/apply_area_topology()
+	for(var/key in topology_managed_links.Copy())
+		if(topology_desired_links[key])
+			continue
+		var/list/pair = topology_managed_links[key]
+		var/datum/component/netdm_node/first = pair[1]
+		var/datum/component/netdm_node/second = pair[2]
+		if(first?.node_id && second?.node_id)
+			disconnect_nodes(first, second)
+		topology_managed_links -= key
+	for(var/key in topology_desired_links)
+		if(topology_managed_links[key])
+			continue
+		var/list/pair = topology_desired_links[key]
+		var/datum/component/netdm_node/first = pair[1]
+		var/datum/component/netdm_node/second = pair[2]
+		if(connect_nodes(first, second))
+			topology_managed_links[key] = pair
 
 /datum/controller/subsystem/netdm/proc/link_key(a, b)
 	return "[min(a, b)]:[max(a, b)]"
@@ -572,6 +745,8 @@ SUBSYSTEM_DEF(netdm)
 	return transaction
 
 /datum/controller/subsystem/netdm/fire(resumed = FALSE)
+	// Rebuild area-border and quantum relay edges even before Host connects.
+	process_area_topology()
 	if(!enabled && auto_enable_bridge && world.time >= next_bridge_attempt)
 		next_bridge_attempt = world.time + 100
 		if(fexists("netdm_byond.dll"))

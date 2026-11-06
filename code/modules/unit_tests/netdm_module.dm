@@ -103,3 +103,24 @@
 	TEST_ASSERT(SSnetdm.apc_backbone.Find(apc_node), "APC must participate in backbone")
 	qdel(console)
 	qdel(apc)
+
+/// APCs must never be joined solely by their location in a global
+/// coordinate-sorted list. Only the boundary scanner can add those edges.
+/datum/unit_test/netdm_apc_backbone_requires_border/Run()
+	var/turf/first_position = run_loc_floor_bottom_left
+	var/turf/second_position = locate(first_position.x, first_position.y, first_position.z)
+	var/obj/machinery/power/apc/first = allocate(/obj/machinery/power/apc, first_position)
+	var/obj/machinery/power/apc/second = allocate(/obj/machinery/power/apc, second_position)
+	var/datum/component/netdm_node/first_node = first.netdm_interface()
+	var/datum/component/netdm_node/second_node = second.netdm_interface()
+	TEST_ASSERT_NOTNULL(first_node, "First APC must register")
+	TEST_ASSERT_NOTNULL(second_node, "Second APC must register")
+	var/key = SSnetdm.link_key(first_node.node_id, second_node.node_id)
+	TEST_ASSERT_NULL(SSnetdm.links[key], "APC insertion must not create an arbitrary direct link")
+	qdel(first)
+	qdel(second)
+
+/datum/unit_test/netdm_relay_sector_identity/Run()
+	var/turf/position = run_loc_floor_bottom_left
+	TEST_ASSERT(!!SSnetdm.sector_key(position), "Any world turf must have an addressable sector")
+	TEST_ASSERT_EQUAL(SSnetdm.sector_key(position), SSnetdm.sector_key(position), "Sector addressing must be stable")
