@@ -239,6 +239,8 @@ Class Procs:
 /// венты/скрабберы навсегда оставались приписанными к зоне, из которой их вырезали.
 /obj/machinery/proc/on_area_swap(area/old_area, area/new_area)
 	if(istype(src, /obj/machinery/power/apc))
+		var/datum/component/netdm_node/endpoint = netdm_interface()
+		SSnetdm.invalidate_managed_edges(endpoint)
 		SSnetdm.mark_topology_dirty()
 	return
 

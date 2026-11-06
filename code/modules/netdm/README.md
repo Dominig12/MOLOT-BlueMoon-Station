@@ -81,3 +81,7 @@ every subsystem tick.
 APC uplinks also compare actual space-sector identities, so a root
 area reused on different map sectors cannot silently produce a wired
 inter-sector shortcut; such traffic must go through the local Relay.
+
+When an APC changes coordinates/area or a relay changes its operational
+state, obsolete managed backbone links are disconnected immediately.
+The bounded area rescan only adds links that remain valid afterward.

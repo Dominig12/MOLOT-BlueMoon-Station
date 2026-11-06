@@ -167,9 +167,8 @@ SUBSYSTEM_DEF(netdm)
 		return
 	queue_topology(list("op" = "game_move_node", "a" = endpoint.node_id,
 		"x" = endpoint.last_x, "y" = endpoint.last_y, "z" = endpoint.last_z))
-	if(istype(endpoint.parent, /obj/machinery/power/apc))
-		mark_topology_dirty()
-	if(istype(endpoint.parent, /obj/machinery/ntnet_relay))
+	if(istype(endpoint.parent, /obj/machinery/power/apc) || istype(endpoint.parent, /obj/machinery/ntnet_relay))
+		invalidate_managed_edges(endpoint)
 		mark_topology_dirty()
 
 /datum/controller/subsystem/netdm/proc/update_endpoint_radio(datum/component/netdm_node/endpoint)
@@ -215,6 +214,21 @@ SUBSYSTEM_DEF(netdm)
 
 /datum/controller/subsystem/netdm/proc/mark_topology_dirty()
 	topology_dirty = TRUE
+
+/// Invalidate obsolete backbone links immediately. A Relay shutdown or APC
+/// move must not allow routing over an old link while area scanning continues.
+/datum/controller/subsystem/netdm/proc/invalidate_managed_edges(datum/component/netdm_node/endpoint)
+	if(!endpoint)
+		return
+	for(var/key in topology_managed_links.Copy())
+		var/list/pair = topology_managed_links[key]
+		if(!pair || (pair[1] != endpoint && pair[2] != endpoint))
+			continue
+		var/datum/component/netdm_node/first = pair[1]
+		var/datum/component/netdm_node/second = pair[2]
+		if(first?.node_id && second?.node_id)
+			disconnect_nodes(first, second)
+		topology_managed_links -= key
 
 /datum/controller/subsystem/netdm/proc/register_backbone_apc(datum/component/netdm_node/apc)
 	if(!apc?.node_id || apc_backbone.Find(apc))
@@ -317,6 +331,7 @@ SUBSYSTEM_DEF(netdm)
 			var/key = "[endpoint.node_id]"
 			if(topology_relay_states[key] != working + 1)
 				topology_relay_states[key] = working + 1
+				invalidate_managed_edges(endpoint)
 				endpoint.sync_transport()
 				mark_topology_dirty()
 
