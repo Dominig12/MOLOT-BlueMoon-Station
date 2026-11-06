@@ -72,7 +72,12 @@
 			var/area/root = zone.base_area ? zone.base_area : zone
 			var/obj/machinery/power/apc/controller = root.power_apc
 			if(controller && !QDELETED(controller))
-				new_apc = controller.netdm_interface()
+				// A shared area name/root across distinct space sectors
+				// must never create an unmediated inter-sector wired path.
+				var/turf/device_turf = get_position()
+				var/turf/controller_turf = get_turf(controller)
+				if(device_turf && controller_turf && SSnetdm.sector_key(device_turf) == SSnetdm.sector_key(controller_turf))
+					new_apc = controller.netdm_interface()
 	if(new_apc == src)
 		new_apc = null
 	// A switched-off or crashed quantum relay must not bridge the area.

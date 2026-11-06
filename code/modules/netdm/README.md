@@ -77,3 +77,7 @@ The boundary scan stops after publishing a stable topology and restarts
 only when APCs or relays change, when an APC moves, or when an area-swap
 notification invalidates a controller. This avoids rewalking the map on
 every subsystem tick.
+
+APC uplinks also compare actual space-sector identities, so a root
+area reused on different map sectors cannot silently produce a wired
+inter-sector shortcut; such traffic must go through the local Relay.
