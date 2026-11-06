@@ -314,9 +314,11 @@ SUBSYSTEM_DEF(netdm)
 /datum/controller/subsystem/netdm/proc/send_payload(datum/component/netdm_node/sender,
 	datum/component/netdm_node/recipient, list/payload, bytes = 96,
 	interactive = TRUE, timeout_ticks = 30)
-	if(!enabled || !connected || !synchronized ||
-		!sender?.node_id || !recipient?.node_id || !islist(payload) ||
-		length(transactions) >= max_transactions)
+	if(!enabled || !connected || !synchronized)
+		return null
+	if(!sender?.node_id || !recipient?.node_id)
+		return null
+	if(!islist(payload) || length(transactions) >= max_transactions)
 		return null
 	bytes = round(bytes)
 	timeout_ticks = round(timeout_ticks)
