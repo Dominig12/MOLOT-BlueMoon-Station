@@ -160,3 +160,22 @@
 	var/datum/netdm_rnd_cluster/cluster = new(web)
 	allocated += cluster
 	TEST_ASSERT_NULL(cluster.find_server(run_loc_floor_bottom_left), "Empty R&D cluster must be offline")
+
+
+/// Server snapshots must not permanently reduce globally shared costs
+/// when a network has boosted one node.
+/datum/unit_test/netdm_research_price_snapshot_immutable/Run()
+	var/datum/techweb/web = new
+	allocated += web
+	var/datum/techweb_node/chosen
+	for(var/id in SSresearch.techweb_nodes)
+		var/datum/techweb_node/candidate = SSresearch.techweb_nodes[id]
+		if(candidate.research_costs[TECHWEB_POINT_TYPE_GENERIC] > 1)
+			chosen = candidate
+			break
+	TEST_ASSERT_NOTNULL(chosen, "Expected a research node with a nonzero generic point cost")
+	var/initial_price = chosen.research_costs[TECHWEB_POINT_TYPE_GENERIC]
+	web.boosted_nodes[chosen.id] = list(TECHWEB_POINT_TYPE_GENERIC = 1)
+	var/list/price = chosen.get_price(web)
+	TEST_ASSERT_EQUAL(price[TECHWEB_POINT_TYPE_GENERIC], initial_price - 1, "Boost must reduce the local price")
+	TEST_ASSERT_EQUAL(chosen.research_costs[TECHWEB_POINT_TYPE_GENERIC], initial_price, "Snapshot pricing must never mutate the shared global design")

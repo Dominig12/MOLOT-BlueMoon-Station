@@ -46,6 +46,8 @@
 	var/list/completed_requests = list()
 	var/list/completed_order = list()
 	var/max_completed = 512
+	/// Excludes overlapping writes if techweb code yields via CHECK_TICK.
+	var/processing = FALSE
 
 /datum/netdm_rnd_cluster/New(datum/techweb/network)
 	. = ..()
@@ -98,11 +100,14 @@
 	var/key = request["rpc_id"]
 	if(!istext(key) || length(key) > 128)
 		return list("ok" = FALSE, "reason" = "invalid_request")
+	if(processing)
+		return list("ok" = FALSE, "reason" = "cluster_busy")
 	if(op == "snapshot" || op == "download_tech")
 		return list("ok" = TRUE, "reason" = "ok")
 	var/list/previous = completed_requests[key]
 	if(islist(previous))
 		return previous.Copy()
+	processing = TRUE
 	var/list/result = list("ok" = FALSE, "reason" = "unsupported_operation")
 	switch(op)
 		if("research")
@@ -119,7 +124,7 @@
 					result["reason"] = "researched"
 					SSresearch.on_node_researched(id, web)
 					SEND_GLOBAL_SIGNAL(COMSIG_GLOB_RESEARCH_NODE_UNLOCKED, id)
-					investigate_log("NetDM research [id] on techweb [web.id] by [request["actor"]].", INVESTIGATE_RESEARCH)
+					log_game("NetDM research [id] on techweb [web.id] by [request["actor"]].")
 		if("add_design")
 			var/design_id = request["design_id"]
 			if(SSresearch.techweb_design_by_id(design_id))
@@ -143,6 +148,7 @@
 						web.add_design_by_id(design_id, TRUE)
 				result["ok"] = TRUE
 				result["reason"] = "uploaded"
+	processing = FALSE
 	completed_requests[key] = result.Copy()
 	completed_order += key
 	if(length(completed_order) > max_completed)
@@ -163,18 +169,23 @@
 	var/datum/component/techweb_holder/client_holder = client?.GetComponent(/datum/component/techweb_holder)
 	if(!client_holder || !netdm_cluster || client_holder.linked_techweb != stored_research)
 		return
-	// Only a research console with permission can purchase research nodes.
-	if(request["op"] == "research")
+	// Write operations require an actual unlocked R&D console.
+	var/op = request["op"]
+	var/allowed = TRUE
+	if(op == "research" || op == "add_design" || op == "upload_tech")
 		if(!istype(client, /obj/machinery/computer/rdconsole))
-			return
-		var/obj/machinery/computer/rdconsole/console = client
-		if(!console.research_control || console.locked)
-			return
-	var/list/result = netdm_cluster.execute(request)
+			allowed = FALSE
+		else
+			var/obj/machinery/computer/rdconsole/console = client
+			if(console.locked || (op == "research" && !console.research_control))
+				allowed = FALSE
+	var/list/result = allowed ? netdm_cluster.execute(request) : list("ok" = FALSE, "reason" = "forbidden")
+	var/list/research_snapshot = result["reason"] == "cluster_busy" ? null : netdm_cluster.snapshot()
 	var/list/reply = list("kind" = "techweb_reply",
 		"rpc_id" = request["rpc_id"], "web" = stored_research,
 		"ok" = result["ok"], "reason" = result["reason"],
-		"snapshot" = netdm_cluster.snapshot())
-	var/list/state = reply["snapshot"]
-	var/estimated_bytes = min(1000000, 256 + length(state["researched_designs"]) * 12 + length(state["nodes"]) * 48)
+		"snapshot" = research_snapshot)
+	var/estimated_bytes = 256
+	if(research_snapshot)
+		estimated_bytes = min(1000000, estimated_bytes + length(research_snapshot["researched_designs"]) * 12 + length(research_snapshot["nodes"]) * 48)
 	mine.send_to(sender, reply, estimated_bytes, TRUE, 90)

@@ -135,7 +135,7 @@
 	return TRUE
 
 /datum/component/techweb_holder/proc/netdm_request_timeout(id)
-	var/list/entry = netdm_pending?[id]
+	var/list/entry = netdm_pending ? netdm_pending[id] : null
 	if(!entry)
 		return
 	netdm_pending -= id

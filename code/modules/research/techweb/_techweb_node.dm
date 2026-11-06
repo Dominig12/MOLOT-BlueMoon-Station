@@ -85,7 +85,7 @@
 
 /datum/techweb_node/proc/get_price(datum/techweb/host)
 	if(host)
-		var/list/actual_costs = research_costs
+		var/list/actual_costs = research_costs.Copy() // Never mutate globally shared node prices.
 		if(host.boosted_nodes[id])
 			var/list/L = host.boosted_nodes[id]
 			for(var/i in L)
