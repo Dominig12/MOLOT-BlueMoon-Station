@@ -2,6 +2,16 @@
  * Offline tests of the clean-master NetDM module. No native DLL or Host
  * required: the registry and object lifecycle must remain usable alone.
  */
+/datum/unit_test/netdm_bridge_strict_radio_booleans/Run()
+	var/datum/netdm_bridge/bridge = new
+	var/json_enabled = bridge.serialize(list("op" = "game_radio", "a" = 1, "enabled" = TRUE))
+	var/json_disabled = bridge.serialize(list("op" = "game_radio", "a" = 1, "enabled" = FALSE))
+	TEST_ASSERT(findtext(json_enabled, "\"enabled\":true"), "Radio on must emit a strict JSON boolean")
+	TEST_ASSERT(findtext(json_disabled, "\"enabled\":false"), "Radio off must emit a strict JSON boolean")
+	TEST_ASSERT(findtext(bridge.serialize(list("op" = "packet_send", "trafficClass" = 1)),
+		"\"trafficClass\":1"), "Packet class must remain a number")
+	qdel(bridge)
+
 /datum/unit_test/netdm_component_registry/Run()
 	var/obj/a = allocate(/obj, run_loc_floor_bottom_left)
 	var/obj/b = allocate(/obj, get_step(run_loc_floor_bottom_left, EAST))

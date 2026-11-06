@@ -19,6 +19,20 @@
 		call_ext(NETDM_DLL, "netdm_shutdown")()
 	active = FALSE
 
+/**
+ * DreamMaker encodes booleans as numeric 1/0; the x64 Host's System.Text.Json
+ * expects JSON booleans for PipeRequest.Enabled. Normalize that single
+ * well-defined field without changing packet class or numeric IDs.
+ */
+/datum/netdm_bridge/proc/serialize(list/command)
+	var/raw = json_encode(command)
+	if(command["op"] == "game_radio")
+		if(command["enabled"])
+			raw = replacetext(raw, "\"enabled\":1", "\"enabled\":true")
+		else
+			raw = replacetext(raw, "\"enabled\":0", "\"enabled\":false")
+	return raw
+
 /// Returns a locally enqueued command ID, not transport delivery.
 /datum/netdm_bridge/proc/send(list/command)
 	if(!active || !islist(command))
@@ -26,7 +40,7 @@
 	serial++
 	var/command_id = "netdm-[serial]"
 	command["id"] = command_id
-	if(call_ext(NETDM_DLL, "netdm_send")(json_encode(command)) != "1")
+	if(call_ext(NETDM_DLL, "netdm_send")(serialize(command)) != "1")
 		return null
 	return command_id
 
