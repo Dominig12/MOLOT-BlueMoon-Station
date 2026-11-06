@@ -190,6 +190,9 @@
 		if(istype(parent, /obj/machinery/computer/rdconsole))
 			var/obj/machinery/computer/rdconsole/console = parent
 			console.ui_update()
+		if(istype(parent, /obj/machinery/nanite_program_hub))
+			var/obj/machinery/nanite_program_hub/hub = parent
+			hub.update_static_data()
 	if(entry["op"] == "download_tech" && message["ok"])
 		var/obj/item/disk/tech_disk/disk = entry["disk"]
 		if(disk && !QDELETED(disk) && disk.loc == parent && disk.stored_research && islist(snapshot))

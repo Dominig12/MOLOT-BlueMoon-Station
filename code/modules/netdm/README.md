@@ -123,3 +123,11 @@ data is currently one in-process authoritative database per logical
 cluster, not durable per-server disk replicas across DreamDaemon
 restarts. The Host still routes byte-count metadata, while gameplay
 payloads stay in DM.
+
+
+The nanite program hub is also a snapshot reader: it lists and
+downloads only designs in the latest research snapshot delivered via
+NetDM. The hub's refresh button asks the server for a new snapshot.
+All legacy networked device types can use techweb_holder.request_snapshot()
+and the typed request_* helpers without implementing their own pipe
+transport.
