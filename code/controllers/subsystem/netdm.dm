@@ -27,6 +27,8 @@ SUBSYSTEM_DEF(netdm)
 	var/next_endpoint_id = 1
 	var/scan_index = 1
 	var/list/links = list()
+	/// Sparse, deterministic APC backbone. No O(APC²) clique.
+	var/list/datum/component/netdm_node/apc_backbone = list()
 	/// Tombstones retain offline removals across a local pipe reconnect.
 	var/list/retired_ids = list()
 
@@ -120,12 +122,16 @@ SUBSYSTEM_DEF(netdm)
 	endpoints += endpoint
 	if(connected)
 		queue_endpoint(endpoint)
+	if(istype(endpoint.parent, /obj/machinery/power/apc))
+		register_backbone_apc(endpoint)
 	return TRUE
 
 /datum/controller/subsystem/netdm/proc/unregister_endpoint(datum/component/netdm_node/endpoint)
 	if(!endpoint || !endpoint.node_id)
 		return
 	var/id = endpoint.node_id
+	if(istype(endpoint.parent, /obj/machinery/power/apc))
+		unregister_backbone_apc(endpoint)
 	for(var/key in links.Copy())
 		var/datum/netdm_link/link = links[key]
 		if(link && (link.from_id == id || link.to_id == id))
@@ -144,10 +150,78 @@ SUBSYSTEM_DEF(netdm)
 		return
 	queue_topology(list("op" = "game_move_node", "a" = endpoint.node_id,
 		"x" = endpoint.last_x, "y" = endpoint.last_y, "z" = endpoint.last_z))
+	if(istype(endpoint.parent, /obj/machinery/power/apc))
+		unregister_backbone_apc(endpoint)
+		register_backbone_apc(endpoint)
 
 /datum/controller/subsystem/netdm/proc/update_endpoint_radio(datum/component/netdm_node/endpoint)
 	if(connected && endpoint?.node_id)
 		queue_radio(endpoint)
+
+/// Include ordinary machines, computers, tools with no individual /netdm subtypes.
+/datum/controller/subsystem/netdm/proc/attach_machinery(obj/machinery/machine)
+	if(!machine || QDELETED(machine) || istype(machine, /obj/machinery/power/terminal))
+		return
+	var/datum/component/netdm_node/endpoint = machine.netdm_interface()
+	if(!endpoint)
+		endpoint = machine.netdm_connect(14, 1, !machine.anchored)
+	if(!endpoint)
+		return
+	endpoint.auto_managed = TRUE
+	endpoint.sync_transport()
+
+/datum/controller/subsystem/netdm/proc/attach_portable(obj/item/modular_computer/device)
+	if(!device || QDELETED(device) || istype(device, /obj/item/modular_computer/processor))
+		return
+	var/datum/component/netdm_node/endpoint = device.netdm_interface()
+	if(!endpoint)
+		endpoint = device.netdm_connect(14, 1, TRUE)
+	if(!endpoint)
+		return
+	endpoint.auto_managed = TRUE
+	endpoint.sync_transport()
+
+/// APC backbone is a spatially ordered chain (Z, Y, X), rather than a
+/// full mesh. Adjacent chain edges preserve global connectivity and cost O(N).
+/datum/controller/subsystem/netdm/proc/apc_precedes(datum/component/netdm_node/a,
+	datum/component/netdm_node/b)
+	var/turf/left = a?.get_position()
+	var/turf/right = b?.get_position()
+	if(!left || !right)
+		return a.node_id < b.node_id
+	if(left.z != right.z)
+		return left.z < right.z
+	if(left.y != right.y)
+		return left.y < right.y
+	if(left.x != right.x)
+		return left.x < right.x
+	return a.node_id < b.node_id
+
+/datum/controller/subsystem/netdm/proc/register_backbone_apc(datum/component/netdm_node/apc)
+	if(!apc?.node_id || apc_backbone.Find(apc))
+		return
+	var/index = 1
+	while(index <= length(apc_backbone) && !apc_precedes(apc, apc_backbone[index]))
+		index++
+	var/datum/component/netdm_node/previous = index > 1 ? apc_backbone[index - 1] : null
+	var/datum/component/netdm_node/next = index <= length(apc_backbone) ? apc_backbone[index] : null
+	apc_backbone.Insert(index, apc)
+	if(previous && next)
+		disconnect_nodes(previous, next)
+	if(previous)
+		connect_nodes(previous, apc)
+	if(next)
+		connect_nodes(apc, next)
+
+/datum/controller/subsystem/netdm/proc/unregister_backbone_apc(datum/component/netdm_node/apc)
+	var/index = apc_backbone.Find(apc)
+	if(!index)
+		return
+	var/datum/component/netdm_node/previous = index > 1 ? apc_backbone[index - 1] : null
+	var/datum/component/netdm_node/next = index < length(apc_backbone) ? apc_backbone[index + 1] : null
+	apc_backbone.Cut(index, index + 1)
+	if(previous && next)
+		connect_nodes(previous, next)
 
 /datum/controller/subsystem/netdm/proc/link_key(a, b)
 	return "[min(a, b)]:[max(a, b)]"

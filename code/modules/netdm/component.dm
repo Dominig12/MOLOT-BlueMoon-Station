@@ -13,6 +13,10 @@
 	var/last_x
 	var/last_y
 	var/last_z
+	/// Engine-assigned modes are maintained as the object changes location/anchoring.
+	var/auto_managed = FALSE
+	/// Current wired uplink; the APC itself belongs to the sparse APC backbone.
+	var/datum/component/netdm_node/zone_apc
 
 /datum/component/netdm_node/Initialize(range = 14, channel = 1, enabled = TRUE)
 	if(!ismovable(parent))
@@ -28,6 +32,7 @@
 
 /datum/component/netdm_node/UnregisterFromParent()
 	SSnetdm.unregister_endpoint(src)
+	zone_apc = null
 	return ..()
 
 /datum/component/netdm_node/proc/get_position()
@@ -36,6 +41,8 @@
 /datum/component/netdm_node/proc/sync_position()
 	if(!node_id)
 		return
+	// APC assignments can change without a tile coordinate changing.
+	sync_transport()
 	var/turf/current = get_position()
 	if(!current || (current.x == last_x && current.y == last_y && current.z == last_z))
 		return
@@ -43,6 +50,36 @@
 	last_y = current.y
 	last_z = current.z
 	SSnetdm.update_endpoint_position(src)
+
+/// Assign a radio profile to movable equipment and an APC uplink to
+/// stationary machinery. This runs only on initial registration and on
+/// bounded SSnetdm reconciliation; it does not walk the whole machine list.
+/datum/component/netdm_node/proc/sync_transport()
+	if(!auto_managed || !node_id || QDELETED(parent))
+		return
+	var/obj/machinery/machine = null
+	if(istype(parent, /obj/machinery))
+		machine = parent
+	var/should_radio = !machine || !machine.anchored
+	if(radio_enabled != should_radio)
+		set_radio(should_radio)
+	var/datum/component/netdm_node/new_apc = null
+	if(machine && machine.anchored && !istype(machine, /obj/machinery/power/apc))
+		var/area/zone = get_area(machine)
+		if(zone)
+			var/area/root = zone.base_area ? zone.base_area : zone
+			var/obj/machinery/power/apc/controller = root.power_apc
+			if(controller && !QDELETED(controller))
+				new_apc = controller.netdm_interface()
+	if(new_apc == src)
+		new_apc = null
+	if(zone_apc == new_apc)
+		return
+	if(zone_apc && zone_apc.node_id)
+		SSnetdm.disconnect_nodes(src, zone_apc)
+	zone_apc = new_apc
+	if(zone_apc && zone_apc.node_id)
+		SSnetdm.connect_nodes(src, zone_apc)
 
 /datum/component/netdm_node/proc/set_radio(enabled, range = radio_range, channel = radio_channel)
 	radio_enabled = !!enabled

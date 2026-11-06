@@ -111,6 +111,8 @@
 		soundloop = new(src, enabled)
 	install_default_programs()
 	update_appearance()
+	// PDA/tablet/laptop = mobile radio endpoint. Embedded console CPU is excluded.
+	SSnetdm.attach_portable(src)
 
 /obj/item/modular_computer/Destroy()
 	kill_program(forced = TRUE)

@@ -88,3 +88,18 @@
 	SSnetdm.connected = was_connected
 	SSnetdm.synchronized = was_synchronized
 	SSnetdm.synchronizing = was_synchronizing
+
+/// Any anchored machine routes through its area's APC; moving devices use radio.
+/datum/unit_test/netdm_apc_area_and_backbone/Run()
+	var/turf/spot = run_loc_floor_bottom_left
+	var/obj/machinery/power/apc/apc = allocate(/obj/machinery/power/apc, spot)
+	var/obj/machinery/computer/console = allocate(/obj/machinery/computer, spot)
+	var/datum/component/netdm_node/apc_node = apc.netdm_interface()
+	var/datum/component/netdm_node/console_node = console.netdm_interface()
+	TEST_ASSERT_NOTNULL(apc_node, "Standard APC automatically registers with NetDM")
+	TEST_ASSERT_NOTNULL(console_node, "Standard stationary computer automatically registers with NetDM")
+	TEST_ASSERT(!apc_node.radio_enabled, "APC must be wired")
+	TEST_ASSERT(!console_node.radio_enabled, "Anchored computer must be wired")
+	TEST_ASSERT(SSnetdm.apc_backbone.Find(apc_node), "APC must participate in backbone")
+	qdel(console)
+	qdel(apc)

@@ -187,6 +187,9 @@ Class Procs:
 	RegisterSignal(src, COMSIG_ENTER_AREA, PROC_REF(on_enter_area))
 	RegisterSignal(src, COMSIG_EXIT_AREA, PROC_REF(on_exit_area))
 	register_power_change_area(get_area(src))
+	// NetDM assigns stationary machinery to the APC of its power area.
+	// No electricity-cable topology is imported into the network graph.
+	SSnetdm.attach_machinery(src)
 
 	if (occupant_typecache)
 		occupant_typecache = typecacheof(occupant_typecache)

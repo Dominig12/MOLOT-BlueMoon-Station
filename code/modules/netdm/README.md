@@ -1,161 +1,59 @@
 # NetDM module for BlueMoon SS13 (net-feature-new)
 
-This module was implemented **from the clean master branch**, not from
-NetRun. It does not modify the existing NTNet implementation or the
-powernet. No existing station machine is registered automatically.
+## Device topology (automatic)
 
-## Pieces
+The game network models **station APC areas**, not the power cable
+structure. All normal /obj/machinery instances automatically get an
+endpoint; embedded power terminals are skipped, since their APC is the
+actual network node.
 
-- \`SSnetdm\` (\`code/controllers/subsystem/netdm.dm\`): network object
-  registry, physical links, bounded topology changes, bounded polling,
-  packet-result correlation, and position synchronization. Uses small
-  batches per SS13 subsystem fire; no network IO blocks a game tick.
-- \`/datum/component/netdm_node\`: opt-in network endpoint for any
-  \`/atom/movable\`; auto register/unregister. A device's position is
-  reconciled incrementally (32 endpoints per subsystem fire).
-- \`/datum/netdm_bridge\`: wraps the native Win32 DLL's five \`call_ext\`
-  exports. Uses the external x64 NetDM.Host's game graph.
-- \`/obj/machinery/power/apc/netdm\` and
-  \`/obj/machinery/modular_computer/console/netdm\`: explicit example
-  device subtypes, with ordinary APCs and modular consoles unchanged.
+- **APC**: fixed wired endpoint, member of the sparse station backbone.
+  Existing APCs connect into a deterministic (Z, Y, X)-ordered chain,
+  with one or two neighboring links rather than O(N²) full-mesh wiring.
+  Added/removed APCs update neighboring backbone edges dynamically.
+- **Anchored machinery, including regular and modular consoles**: a
+  wired endpoint with one uplink to the APC registered as
+  `get_area(machine).base_area?.power_apc` (or the area's own APC).
+  The link is updated when a machine moves or is reanchored.
+  Machines in an area with no APC remain present but disconnected.
+- **Portable modular computers**: PDA, tablet and item-based laptop
+  automatically use the spatial radio medium, channel 1, range 14.
+  Console-internal `/obj/item/modular_computer/processor` does **not**
+  create a duplicate network node.
+- **Unanchored machinery**: automatically switches to radio; when
+  reanchored it reconnects to the area's APC.
 
-The NetDM bridge's Win32 DLL is **not checked into the SS13 repo**.
-Obtain its tested artifact from NetDM.Core
-[PR #25](https://github.com/Dominig12/netDM-core/pull/25) and place
-\`netdm_byond.dll\` where BYOND DreamDaemon can load/trust it. Run the
-separate NetDM.Host x64 on the same Windows machine. The bridge connects
-via \`\\\\.\\pipe\\netdm-core\`. See
-[backend documentation](https://github.com/Dominig12/netDM-core/blob/feature/byond-native-bridge/docs/byond-bridge.md).
+Subtypes `/apc/netdm` and `/console/netdm` remain aliases for
+mapping compatibility, not special opt-in devices. Other kinds of
+handheld items can still explicitly call `netdm_connect()`.
 
-The native adapter is **disabled by default** to allow normal DM
-compilation and ordinary SS13 rounds without any external DLL. Enable
-after deploying the binary:
+The background `SSnetdm` reconciliation pass updates area membership,
+position, and anchoring in bounded groups; device creation and removal
+are sent incrementally with acknowledged batches. No link is inferred
+from an electrical powernet or NTNet.
 
-\`\`\`dm
-SSnetdm.enable_bridge()
-\`\`\`
+## Deployment
 
-To stop:
+Put `netdm_byond.dll` beside DreamDaemon's `.dmb`, run the
+separate x64 `NetDM.Host` locally, and start SS13. The bridge attempts
+to enable automatically while the DLL is available; Host may start
+later. Use `SSnetdm.disable_bridge()` to pause or
+`SSnetdm.enable_bridge()` to resume.
 
-\`\`\`dm
-SSnetdm.disable_bridge()
-\`\`\`
+Open `http://127.0.0.1:5087` and select **SS13 · LIVE GAME** to see
+the real APC backbone, area-based wired links, radio domain cells,
+and device positions, including new devices spawned during the round.
 
-These are intentionally backend setup calls, not player verbs.
+## Game payloads
 
-## Register objects and create links
+An object can retrieve its component through `netdm_interface()`
+and send a payload via `endpoint.send_to(target, payload)`. The
+binary Host routes only packet size/metadata. DM retains the actual
+bounded payload and dispatches it after a Delivered receipt through
+`netdm_receive(payload, sender, request_id)`, reporting transport
+state via `netdm_delivery(request_id, state, reason)`.
+A transport receipt is not an application-level acknowledgement.
 
-\`\`\`dm
-var/obj/machinery/device_a = ... // any initialized movable
-var/obj/machinery/device_b = ...
-var/datum/component/netdm_node/a = device_a.netdm_connect(14, 1, TRUE)
-var/datum/component/netdm_node/b = device_b.netdm_connect(14, 1, TRUE)
-
-// The external game medium can now find local wireless routes.
-// Explicit physical cable links are also supported:
-SSnetdm.connect_nodes(a, b, 1)
-SSnetdm.disconnect_nodes(a, b)
-\`\`\`
-
-To get a component without installing a duplicate:
-
-\`\`\`dm
-var/datum/component/netdm_node/node = device_a.netdm_interface()
-\`\`\`
-
-When deleting an object, its component unregisters from SSnetdm and
-physical links are released. Movement sync uses a bounded incremental
-position pass. The wire/radio topology is independent from NTNet.
-
-## Send a game payload
-
-\`\`\`dm
-var/list/message = list("type" = "ping", "value" = "hello")
-var/datum/netdm_transaction/transaction = a.send_to(b, message, 96, TRUE, 30)
-if(!transaction)
-    // Bridge unavailable, syncing, invalid nodes or local capacity full.
-    return
-\`\`\`
-
-NetDM.Host currently transports **packet size and route**, not arbitrary
-game payload bytes. Therefore \`payload\` remains inside DreamDaemon's
-bounded transaction table. It is dispatched to the local recipient
-**only after** the external packet returns a terminal Delivered receipt.
-Override these DM callbacks on your objects:
-
-\`\`\`dm
-/obj/machinery/my_networked_machine/netdm_receive(list/payload,
-    datum/component/netdm_node/sender, request_id)
-    if(payload["type"] == "ping")
-        // Process the incoming message in DM.
-        return
-
-/obj/machinery/my_networked_machine/netdm_delivery(request_id, state, reason)
-    // state: delivered | rejected | failed | unknown.
-    // Transport Delivered is not an ACK that an action was executed.
-    return
-\`\`\`
-
-The callbacks are dispatched asynchronously after the subsystem
-processes its bounded mailbox. Do not assume reception if a command was
-merely added to the local shim queue or if \`packet_send\` was accepted
-by Host. In-flight transactions are marked \`unknown\` on disconnect,
-cursor loss or mailbox overflow. They are **not resent** automatically
-because duplicate execution could be unsafe.
-
-## Current limits and next steps
-
-1. No automatic mapping of all APCs, power cables or existing NTNet
-   devices. The two example subtypes and component API are a safe
-   opt-in foundation; device-specific adapters will follow.
-2. Reconnection replays registered nodes and links and offline
-   deletion tombstones in command order. It does **not** yet replace
-   an arbitrary pre-existing Host graph from a *different SS13 process
-   lifetime*. Restart NetDM.Host together with the SS13 round for
-   complete cleanup, until a versioned authoritative \`game_reset\`
-   or snapshot-replace protocol is added.
-3. The payload stays local in one DreamDaemon process. Remote SS13
-   servers, content-addressed payload streams, application ACKs,
-   gameplay authorization and idempotent request deduplication remain
-   future work.
-4. The low-level x86 ABI has been tested using a real Windows x86
-   harness from NetDM.Core, **not yet compiled/executed in DreamDaemon**
-   for this particular SS13 branch. BYOND DM compilation and runtime
-   validation remain necessary on the server.
-
-
-## Observatory · live SS13 map
-
-The independent Host game graph appears in the existing observatory at
-`http://127.0.0.1:5087` using **SS13 · LIVE GAME** in Topology explorer.
-Select a BYOND Z level and press FIT. The visualizer shows the physical
-links and radio domain cells without mixing benchmark graph data.
-
-Initial synchronization now sends `game_reset` followed by acknowledged
-batches of up to 48 changes. This avoids a 4096-command startup queue.
-Changes during snapshot upload force a new reconciliation pass and failed
-batches or lost acknowledgements trigger an automatic retry. The Host
-and the game graph are designed for a single trusted SS13 server.
-
-
-## Startup and live updates
-
-NetDM attempts to load `netdm_byond.dll` automatically during
-`SSnetdm.Initialize()` if the DLL exists beside the game. The normal
-subsystem tick retries while the DLL is absent; the native worker waits
-for NetDM.Host to become available. `SSnetdm.disable_bridge()` now
-pauses auto-start until `SSnetdm.enable_bridge()` is called explicitly.
-For DLLs installed only in BYOND's global trusted bin rather than the
-server working directory, call `enable_bridge()` manually.
-
-The network subsystem runs in the regular tick bracket, rather than
-SS_BACKGROUND (which can starve under load). Incremental adds,
-removals, links, positions and radio changes are sent in ordered batches,
-up to 48 changes each, and are dequeued only after the Host responds.
-Failed or timed-out changes cause authoritative full resynchronization;
-regular live operation never requires disabling/re-enabling the bridge.
-The subsystem status now shows `Q:` for outstanding topology changes.
-
-Only objects with the `/datum/component/netdm_node` interface appear
-in this graph. Ordinary unmodified consoles/APCs are not automatically
-registered; use the `/netdm` subtype or call `netdm_connect()`.
+The Host and bridge are local trusted-development processes, not a
+multi-server service. There is no automatic retry for gameplay
+operations that might execute twice.
