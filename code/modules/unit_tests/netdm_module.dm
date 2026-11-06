@@ -52,3 +52,39 @@
 	TEST_ASSERT_EQUAL(length(SSnetdm.links), 0, "Removing an endpoint must clean up its links")
 	qdel(b)
 	TEST_ASSERT_NULL(SSnetdm.endpoints_by_id["[id_b]"], "Second object must unregister")
+
+/// Regression: newly spawned network objects must enqueue live Host mutations.
+/datum/unit_test/netdm_live_registration_updates/Run()
+	var/was_connected = SSnetdm.connected
+	var/was_synchronized = SSnetdm.synchronized
+	var/was_synchronizing = SSnetdm.synchronizing
+	var/list/previous_commands = SSnetdm.topology_commands.Copy()
+	SSnetdm.connected = TRUE
+	SSnetdm.synchronized = TRUE
+	SSnetdm.synchronizing = FALSE
+	SSnetdm.topology_commands.Cut()
+
+	var/obj/device = allocate(/obj, run_loc_floor_bottom_left)
+	var/datum/component/netdm_node/endpoint = device.netdm_connect()
+	var/id = endpoint.node_id
+	TEST_ASSERT_EQUAL(length(SSnetdm.topology_commands), 2, "New node must queue add + radio without bridge restart")
+	var/list/add_command = SSnetdm.topology_commands[1]
+	var/list/radio_command = SSnetdm.topology_commands[2]
+	TEST_ASSERT_EQUAL(add_command["op"], "game_add_node", "First mutation must register the node")
+	TEST_ASSERT_EQUAL(radio_command["op"], "game_radio", "Second mutation must configure radio")
+
+	var/list/first_batch = SSnetdm.build_live_batch()
+	TEST_ASSERT_EQUAL(first_batch["op"], "game_batch", "Node mutations use the game topology batch")
+	TEST_ASSERT_EQUAL(SSnetdm.live_batch_count, 1, "Batch must stop before a radio command")
+	SSnetdm.topology_commands.Cut(1, 2)
+	var/list/second_batch = SSnetdm.build_live_batch()
+	TEST_ASSERT_EQUAL(second_batch["op"], "game_radio_batch", "Radio mutations use the strict radio batch")
+
+	SSnetdm.connected = FALSE
+	qdel(device)
+	SSnetdm.retired_ids -= "[id]"
+	SSnetdm.topology_commands = previous_commands
+	SSnetdm.live_batch_count = 0
+	SSnetdm.connected = was_connected
+	SSnetdm.synchronized = was_synchronized
+	SSnetdm.synchronizing = was_synchronizing

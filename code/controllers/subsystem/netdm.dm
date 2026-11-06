@@ -9,9 +9,14 @@
 SUBSYSTEM_DEF(netdm)
 	name = "NetDM Network"
 	wait = 2
-	flags = SS_BACKGROUND
+	// Transport updates must run even when the server has no spare background CPU.
+	flags = SS_KEEP_TIMING
 
 	var/datum/netdm_bridge/bridge
+	// Auto-connect whenever the native DLL is deployed beside the game.
+	// Manual disable_bridge() pauses further automatic attempts.
+	var/auto_enable_bridge = TRUE
+	var/next_bridge_attempt = 0
 	var/enabled = FALSE
 	var/connected = FALSE
 	var/synchronized = FALSE
@@ -26,6 +31,10 @@ SUBSYSTEM_DEF(netdm)
 	var/list/retired_ids = list()
 
 	var/list/topology_commands = list()
+	// A live topology batch stays queued until Host acknowledges it.
+	var/live_marker
+	var/live_deadline = 0
+	var/live_batch_count = 0
 	var/sync_marker
 	var/sync_stage = "idle"
 	var/sync_index = 1
@@ -49,7 +58,12 @@ SUBSYSTEM_DEF(netdm)
 
 /datum/controller/subsystem/netdm/Initialize(start_timeofday)
 	bridge = new
-	return ..()
+	. = ..()
+	// Do not attempt call_ext when the optional DLL has not been deployed.
+	// Host can start later; the native worker reconnects by itself.
+	if(auto_enable_bridge && fexists("netdm_byond.dll"))
+		enable_bridge()
+	return .
 
 /datum/controller/subsystem/netdm/Destroy()
 	disable_bridge()
@@ -57,16 +71,19 @@ SUBSYSTEM_DEF(netdm)
 	return ..()
 
 /datum/controller/subsystem/netdm/proc/enable_bridge()
+	auto_enable_bridge = TRUE
 	if(enabled)
 		return TRUE
 	if(!bridge)
 		bridge = new
 	if(!bridge.open())
 		return FALSE
+	known_lost_responses = 0
 	enabled = TRUE
 	return TRUE
 
 /datum/controller/subsystem/netdm/proc/disable_bridge()
+	auto_enable_bridge = FALSE
 	if(!enabled)
 		return
 	fail_outstanding("bridge_disabled")
@@ -76,6 +93,8 @@ SUBSYSTEM_DEF(netdm)
 	synchronized = FALSE
 	synchronizing = FALSE
 	topology_commands.Cut()
+	live_marker = null
+	live_batch_count = 0
 	sync_marker = null
 	sync_stage = "idle"
 	sync_endpoints.Cut()
@@ -206,6 +225,8 @@ SUBSYSTEM_DEF(netdm)
 	sync_deadline = 0
 	next_sync_retry = 0
 	topology_commands.Cut()
+	live_marker = null
+	live_batch_count = 0
 	sync_endpoints = endpoints.Copy()
 	sync_links = list()
 	for(var/key in links)
@@ -213,6 +234,8 @@ SUBSYSTEM_DEF(netdm)
 	fail_outstanding("topology_resync")
 
 /datum/controller/subsystem/netdm/proc/sync_retry()
+	live_marker = null
+	live_batch_count = 0
 	synchronized = FALSE
 	synchronizing = FALSE
 	sync_marker = null
@@ -287,12 +310,39 @@ SUBSYSTEM_DEF(netdm)
 		if(world.time >= next_sync_retry)
 			begin_sync()
 		return
-	var/count = min(32, length(topology_commands))
+	if(live_marker)
+		if(world.time > live_deadline)
+			// The Host may have applied the update; replay only via a full
+			// authoritative snapshot, not by blindly resending the command.
+			begin_sync()
+		return
+	if(!length(topology_commands))
+		return
+	var/list/command = build_live_batch()
+	if(!command)
+		return
+	var/id = bridge.send(command)
+	if(id)
+		live_marker = id
+		live_deadline = world.time + 100
+
+/// Preserve ordering of create/radio/link changes using two Host batch APIs.
+/datum/controller/subsystem/netdm/proc/build_live_batch()
+	if(!length(topology_commands))
+		return null
+	var/list/first = topology_commands[1]
+	var/radio = first["op"] == "game_radio"
+	var/list/changes = list()
+	var/count = min(48, length(topology_commands))
 	for(var/i = 1, i <= count, i++)
-		var/list/command = topology_commands[1]
-		if(!bridge.send(command))
+		var/list/change = topology_commands[i]
+		if((change["op"] == "game_radio") != radio)
 			break
-		topology_commands.Cut(1, 2)
+		changes += list(change)
+	live_batch_count = length(changes)
+	if(!live_batch_count)
+		return null
+	return list("op" = radio ? "game_radio_batch" : "game_batch", "changes" = changes)
 
 /datum/controller/subsystem/netdm/proc/fail_outstanding(reason)
 	for(var/request_id in transactions.Copy())
@@ -315,6 +365,8 @@ SUBSYSTEM_DEF(netdm)
 	synchronizing = FALSE
 	receipt_request = null
 	sync_marker = null
+	live_marker = null
+	live_batch_count = 0
 	sync_stage = "idle"
 	sync_endpoints.Cut()
 	sync_links.Cut()
@@ -395,6 +447,14 @@ SUBSYSTEM_DEF(netdm)
 				if(islist(game))
 					stream_id = game["streamId"]
 		return
+	if(live_marker && message["id"] == live_marker)
+		live_marker = null
+		if(!message["ok"])
+			begin_sync()
+		else
+			topology_commands.Cut(1, live_batch_count + 1)
+		live_batch_count = 0
+		return
 	if(!isnull(message["id"]) && !message["ok"] && synchronized)
 		begin_sync()
 		return
@@ -438,6 +498,10 @@ SUBSYSTEM_DEF(netdm)
 	return transaction
 
 /datum/controller/subsystem/netdm/fire(resumed = FALSE)
+	if(!enabled && auto_enable_bridge && world.time >= next_bridge_attempt)
+		next_bridge_attempt = world.time + 100
+		if(fexists("netdm_byond.dll"))
+			enable_bridge()
 	if(!enabled || !bridge)
 		return
 	for(var/list/message as anything in bridge.read(64))
@@ -475,7 +539,7 @@ SUBSYSTEM_DEF(netdm)
 			CHECK_TICK
 
 /datum/controller/subsystem/netdm/stat_entry(msg)
-	msg = "N:[length(endpoints)] L:[length(links)] P:[length(transactions)] [connected ? (synchronized ? "Ready" : "Sync") : "Offline"]"
+	msg = "N:[length(endpoints)] L:[length(links)] Q:[length(topology_commands)] P:[length(transactions)] [!enabled ? "Disabled" : (connected ? (synchronized ? (live_marker ? "Applying" : "Ready") : "Sync") : "Offline")]"
 	return ..()
 
 /datum/netdm_link

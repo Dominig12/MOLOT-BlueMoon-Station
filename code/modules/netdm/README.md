@@ -136,3 +136,26 @@ batches of up to 48 changes. This avoids a 4096-command startup queue.
 Changes during snapshot upload force a new reconciliation pass and failed
 batches or lost acknowledgements trigger an automatic retry. The Host
 and the game graph are designed for a single trusted SS13 server.
+
+
+## Startup and live updates
+
+NetDM attempts to load `netdm_byond.dll` automatically during
+`SSnetdm.Initialize()` if the DLL exists beside the game. The normal
+subsystem tick retries while the DLL is absent; the native worker waits
+for NetDM.Host to become available. `SSnetdm.disable_bridge()` now
+pauses auto-start until `SSnetdm.enable_bridge()` is called explicitly.
+For DLLs installed only in BYOND's global trusted bin rather than the
+server working directory, call `enable_bridge()` manually.
+
+The network subsystem runs in the regular tick bracket, rather than
+SS_BACKGROUND (which can starve under load). Incremental adds,
+removals, links, positions and radio changes are sent in ordered batches,
+up to 48 changes each, and are dequeued only after the Host responds.
+Failed or timed-out changes cause authoritative full resynchronization;
+regular live operation never requires disabling/re-enabling the bridge.
+The subsystem status now shows `Q:` for outstanding topology changes.
+
+Only objects with the `/datum/component/netdm_node` interface appear
+in this graph. Ordinary unmodified consoles/APCs are not automatically
+registered; use the `/netdm` subtype or call `netdm_connect()`.
