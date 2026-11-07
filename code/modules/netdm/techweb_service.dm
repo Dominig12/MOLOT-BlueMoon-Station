@@ -99,6 +99,7 @@
 		"points_last_tick" = web.last_bitcoins.Copy(),
 		"researched_nodes" = web.researched_nodes.Copy(),
 		"researched_designs" = web.researched_designs.Copy(),
+		"discovered_mutations" = web.discovered_mutations.Copy(),
 		"problem_charges" = web.get_problem_computer_charges(),
 		"problem_max_charges" = web.get_problem_computer_max_charges(),
 		"boosted_nodes" = web.boosted_nodes.Copy(),
@@ -237,11 +238,11 @@
 			if(!isnum(gain) || gain <= 0 || gain > 1000000)
 				result["reason"] = "invalid_explosion"
 			else
-				var/previous = web.largest_values[LARGEST_BOMB] || 0
-				if(gain <= previous)
+				var/previous_bomb_yield = web.largest_values[LARGEST_BOMB] || 0
+				if(gain <= previous_bomb_yield
 					result["reason"] = "already_recorded"
 				else
-					var/credit = gain - previous
+					var/credit = gain - previous_bomb_yield
 					web.largest_values[LARGEST_BOMB] = gain
 					web.add_point_type(TECHWEB_POINT_TYPE_DEFAULT, credit, FALSE)
 					var/datum/bank_account/account = SSeconomy.get_dep_account(ACCOUNT_SCI)
@@ -280,6 +281,36 @@
 				result["ok"] = TRUE
 				result["reason"] = "answer_recorded"
 				result["amount"] = amount
+		if("discovery_scan")
+			var/datum/component/discoverable/target = request["discoverable"]
+			var/obj/item/discovery_scanner/scanner = request["scanner"]
+			var/mob/living/user = request["user"]
+			var/atom/object = target?.parent
+			if(!target || QDELETED(target) || !object || QDELETED(object) || target.scanned || !user || QDELETED(user) || user.get_active_held_item() != scanner)
+				result["reason"] = "invalid_discovery"
+			else if(GLOB.scanned_atom_types[object.type] && !target.unique)
+				result["reason"] = "already_scanned_type"
+			else if(!isnum(target.point_reward) || target.point_reward < 0 || target.point_reward > 1000000)
+				result["reason"] = "invalid_discovery_reward"
+			else
+				target.scanned = TRUE
+				GLOB.scanned_atom_types[object.type] = TRUE
+				if(target.point_reward)
+					web.add_point_type(TECHWEB_POINT_TYPE_GENERIC, target.point_reward, FALSE)
+				playsound(user, 'sound/machines/terminal_success.ogg', 60)
+				to_chat(user, span_notice("Новый тип отсканирован, [target.point_reward] очков получено через исследовательский сервер."))
+				pulse_effect(get_turf(object), 4)
+				result["ok"] = TRUE
+				result["reason"] = "discovery_recorded"
+		if("mutation_discovery")
+			var/path = request["mutation_path"]
+			if(!ispath(path, /datum/mutation/human))
+				result["reason"] = "invalid_mutation"
+			else
+				if(!(path in web.discovered_mutations))
+					web.discovered_mutations += path
+				result["ok"] = TRUE
+				result["reason"] = "mutation_recorded"
 		if("add_design")
 			var/design_id = request["design_id"]
 			if(SSresearch.techweb_design_by_id(design_id))
@@ -358,7 +389,19 @@
 			var/obj/machinery/research_table/table = client
 			if(table.point_type != "science" || !table.configured)
 				allowed = FALSE
+		else if(istype(client, /obj/machinery/power/tesla_coil))
+			var/obj/machinery/power/tesla_coil/coil = client
+			if(!coil.anchored || coil.panel_open || !isnum(request["amount"]) || request["amount"] < 0 || request["amount"] > 3)
+				allowed = FALSE
 		else
+			allowed = FALSE
+	else if(op == "discovery_scan")
+		if(!istype(client, /obj/item/discovery_scanner))
+			allowed = FALSE
+		else
+			request["scanner"] = client
+	else if(op == "mutation_discovery")
+		if(!istype(client, /obj/machinery/computer/scan_consolenew))
 			allowed = FALSE
 	else if(op == "solve_problem")
 		if(!istype(client, /obj/item/computermath/science))

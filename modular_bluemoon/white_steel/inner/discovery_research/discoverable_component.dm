@@ -31,19 +31,13 @@
 	to_chat(user, span_notice("Сканирование: [scanned ? "Истина" : "Ложь"]."))
 	to_chat(user, span_notice("Награда: [point_reward]."))
 
-/datum/component/discoverable/proc/discovery_scan(datum/techweb/linked_techweb, mob/user)
-	//Already scanned our atom.
-	var/atom/A = parent
-	if(scanned)
-		to_chat(user, span_warning("[A] уже было проанализировано."))
-		return
-	//Already scanned another of this type.
-	if(GLOB.scanned_atom_types[A.type] && !unique)
-		to_chat(user, span_warning("Мы уже знаем про тип [A]."))
-		return
-	scanned = TRUE
-	linked_techweb.research_points[TECHWEB_POINT_TYPE_GENERIC] += point_reward
-	GLOB.scanned_atom_types[A.type] = TRUE
-	playsound(user, 'sound/machines/terminal_success.ogg', 60)
-	to_chat(user, span_notice("Новый тип отсканирован, [point_reward] очков было получено."))
-	pulse_effect(get_turf(A), 4)
+/datum/component/discoverable/proc/discovery_scan(obj/item/discovery_scanner/scanner, mob/living/user)
+	var/atom/object = parent
+	if(scanned || !scanner || !user || !object)
+		return FALSE
+	var/datum/component/techweb_holder/holder = scanner.GetComponent(/datum/component/techweb_holder)
+	if(!holder?.request_discovery(src, user))
+		to_chat(user, span_warning("Исследовательский сервер недоступен. Объект не отмечен изученным."))
+		return FALSE
+	to_chat(user, span_notice("Данные [object] отправлены исследовательскому серверу."))
+	return TRUE

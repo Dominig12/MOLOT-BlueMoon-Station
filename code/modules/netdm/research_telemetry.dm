@@ -35,7 +35,10 @@
 	if(!SSnetdm.enabled || !SSnetdm.connected || !SSnetdm.synchronized || !science_tech)
 		return null
 	var/obj/machinery/power/apc/controller = netdm_station_apc(source)
-	if(!controller || !controller.netdm_interface()?.node_id)
+	if(!controller)
+		return null
+	var/datum/component/netdm_node/endpoint = controller.netdm_interface()
+	if(!endpoint?.node_id)
 		return null
 	return controller.AddComponent(/datum/component/netdm_science_telemetry)
 

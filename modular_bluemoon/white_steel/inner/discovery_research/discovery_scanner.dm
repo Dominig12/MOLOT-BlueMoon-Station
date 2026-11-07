@@ -13,6 +13,8 @@
 	. = ..()
 	if(!linked_techweb)
 		linked_techweb = SSresearch.science_tech
+	AddComponent(/datum/component/techweb_holder)
+	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, linked_techweb)
 
 /obj/item/discovery_scanner/Destroy()
 	linked_techweb = null	//Note: Shouldn't hard del anyway since techwebs don't get deleted, however if they do then troubles will arise and this will need to be changed.
@@ -29,10 +31,12 @@
 		to_chat(user, span_notice("Привязываю [src] к [O]."))
 		var/obj/machinery/computer/rdconsole/rdconsole = O
 		linked_techweb = rdconsole.stored_research
+		if(linked_techweb)
+			SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, linked_techweb)
 		return
 	. = ..()
 
 /obj/item/discovery_scanner/proc/begin_scanning(mob/user, datum/component/discoverable/discoverable)
 	to_chat(user, span_notice("Начинаю сканировать [discoverable.parent]..."))
 	if(do_after(user, 50, target=get_turf(user)))
-		discoverable.discovery_scan(linked_techweb, user)
+		discoverable.discovery_scan(src, user)

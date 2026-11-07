@@ -119,6 +119,16 @@
 		return FALSE
 	return netdm_request("solve_problem", list("correct" = !!correct, "difficulty" = difficulty))
 
+/datum/component/techweb_holder/proc/request_discovery(datum/component/discoverable/target, mob/living/user)
+	if(!target || !user)
+		return FALSE
+	return netdm_request("discovery_scan", list("discoverable" = target, "user" = user))
+
+/datum/component/techweb_holder/proc/request_mutation_discovery(path)
+	if(!ispath(path, /datum/mutation/human))
+		return FALSE
+	return netdm_request("mutation_discovery", list("mutation_path" = path))
+
 /datum/component/techweb_holder/proc/request_add_design(design_id)
 	if(!istext(design_id) || !SSresearch.techweb_design_by_id(design_id))
 		return FALSE

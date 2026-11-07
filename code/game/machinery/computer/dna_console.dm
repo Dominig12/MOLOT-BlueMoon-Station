@@ -255,6 +255,8 @@
 	return TRUE
 
 /obj/machinery/computer/scan_consolenew/ui_interact(mob/user, datum/tgui/ui)
+	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+	holder?.request_snapshot()
 	// Most of ui_interact is spent setting variables for passing to the tgui
 	//  interface.
 	// We can also do some general state processing here too as it's a good
@@ -1044,12 +1046,11 @@
 			// If it's already discovered, end here. Otherwise, add it to the list of
 			//  discovered mutations.
 			// We've already checked for stored_research earlier
-			if(result_path in stored_research.discovered_mutations)
-				return
-
-			var/datum/mutation/human/HM = GET_INITIALIZED_MUTATION(result_path)
-			stored_research.discovered_mutations += result_path
-			say("Успешно мутировано: [HM.name].")
+			var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+			if(!holder?.request_mutation_discovery(result_path))
+				say("Исследовательская сеть недоступна; мутация сохранена локально.")
+			else
+				say("Новая мутация отправлена на исследовательский сервер.")
 			return
 
 		// Combines two mutations from the disk to try and create a new mutation
@@ -1106,12 +1107,11 @@
 			// If it's already discovered, end here. Otherwise, add it to the list of
 			//  discovered mutations
 			// We've already checked for stored_research earlier
-			if(result_path in stored_research.discovered_mutations)
-				return
-
-			var/datum/mutation/human/HM = GET_INITIALIZED_MUTATION(result_path)
-			stored_research.discovered_mutations += result_path
-			say("Успешно мутировано: [HM.name].")
+			var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+			if(!holder?.request_mutation_discovery(result_path))
+				say("Исследовательская сеть недоступна; мутация сохранена локально.")
+			else
+				say("Новая мутация отправлена на исследовательский сервер.")
 			return
 
 		// Sets the Genetic Makeup pulse strength.
@@ -1854,7 +1854,10 @@
 			var/list/mutation_data = list()
 			var/text_sequence = scanner_occupant.dna.mutation_index[mutation_type]
 			var/default_sequence = scanner_occupant.dna.default_mutation_genes[mutation_type]
-			var/discovered = (stored_research && (mutation_type in stored_research.discovered_mutations))
+			var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+			var/list/network_state = holder?.netdm_snapshot
+			var/list/discoveries = islist(network_state) ? network_state["discovered_mutations"] : null
+			var/discovered = islist(discoveries) && (mutation_type in discoveries)
 
 			mutation_data["Alias"] = HM.alias
 			mutation_data["Sequence"] = text_sequence
@@ -2102,11 +2105,11 @@
 		return FALSE
 	if(M.scrambled)
 		return FALSE
-	if(stored_research && !(path in stored_research.discovered_mutations))
-		var/datum/mutation/human/HM = GET_INITIALIZED_MUTATION(path)
-		stored_research.discovered_mutations += path
-		say("Мутация обнаружена: [HM.name].")
-		return TRUE
+	if(stored_research)
+		var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+		if(holder?.request_mutation_discovery(path))
+			say("Мутация отправлена на исследовательский сервер.")
+			return TRUE
 
 	return FALSE
 

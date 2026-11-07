@@ -160,3 +160,6 @@ designs from a delivered research snapshot.
 
 
 Science Problem Computers now obtain shared research charge counts from server snapshots. A completed quiz is one `solve_problem` RPC: the server consumes a charge and awards or deducts the validated amount atomically. Handheld techweb-holder devices automatically receive a radio NetDM endpoint, and no science charge or point is changed locally.
+
+
+Tesla coils now submit science bonuses through NetDM instead of modifying linked research datums. The handheld discovery scanner is a radio client; the cluster marks an item type scanned and credits points only after receiving a validated request. DNA consoles send discovered mutation types as network RPCs and display discovery status from server snapshots.
