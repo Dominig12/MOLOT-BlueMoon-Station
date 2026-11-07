@@ -14,6 +14,11 @@
 	RegisterSignal(parent, COMSIG_ATOM_SET_TECHWEB, PROC_REF(on_set_techweb))
 	RegisterSignal(parent, "netdm_packet_received", PROC_REF(on_netdm_received))
 	RegisterSignal(parent, "netdm_packet_delivery", PROC_REF(on_netdm_delivery))
+	// Research-capable handheld items are radio nodes as well.
+	if(ismovable(parent))
+		var/atom/movable/device = parent
+		if(!device.netdm_interface())
+			device.netdm_connect(14, 1, TRUE)
 
 /datum/component/techweb_holder/Destroy(force, silent)
 	. = ..()
@@ -108,6 +113,11 @@
 	if(!isnum(amount) || !amount)
 		return FALSE
 	return netdm_request("adjust_points", list("amount" = amount))
+
+/datum/component/techweb_holder/proc/request_solve_problem(correct, difficulty)
+	if(!(difficulty in list("Easy", "Medium", "Hard")))
+		return FALSE
+	return netdm_request("solve_problem", list("correct" = !!correct, "difficulty" = difficulty))
 
 /datum/component/techweb_holder/proc/request_add_design(design_id)
 	if(!istext(design_id) || !SSresearch.techweb_design_by_id(design_id))
@@ -225,6 +235,9 @@
 			var/obj/machinery/computer/operating/operating = parent
 			operating.sync_surgeries()
 			operating.ui_update()
+		if(istype(parent, /obj/item/computermath/science))
+			var/obj/item/computermath/science/computer = parent
+			computer.ui_update()
 	if(entry["op"] == "download_tech" && message["ok"])
 		var/obj/item/disk/tech_disk/disk = entry["disk"]
 		if(disk && !QDELETED(disk) && disk.loc == parent && disk.stored_research && islist(snapshot))
@@ -236,6 +249,9 @@
 			for(var/design_id in designs)
 				if(!disk.stored_research.researched_designs[design_id])
 					disk.stored_research.add_design_by_id(design_id)
+	if(entry["op"] == "solve_problem" && istype(parent, /obj/item/computermath/science))
+		var/obj/item/computermath/science/computer = parent
+		computer.netdm_apply_problem_reply(message)
 	if(entry["op"] != "snapshot" && istype(parent, /obj/machinery))
 		var/obj/machinery/device = parent
 		if(entry["op"] == "bomb_report" && message["ok"])

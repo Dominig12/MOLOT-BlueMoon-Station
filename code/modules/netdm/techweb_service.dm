@@ -99,6 +99,8 @@
 		"points_last_tick" = web.last_bitcoins.Copy(),
 		"researched_nodes" = web.researched_nodes.Copy(),
 		"researched_designs" = web.researched_designs.Copy(),
+		"problem_charges" = web.get_problem_computer_charges(),
+		"problem_max_charges" = web.get_problem_computer_max_charges(),
 		"boosted_nodes" = web.boosted_nodes.Copy(),
 		"deconstructed_items" = web.deconstructed_items.Copy(),
 		"nodes" = visible)
@@ -257,6 +259,27 @@
 				result["ok"] = TRUE
 				result["reason"] = "balance_updated"
 				result["amount"] = amount
+		if("solve_problem")
+			var/difficulty = request["difficulty"]
+			var/correct = !!request["correct"]
+			var/reward = 0
+			switch(difficulty)
+				if("Easy")
+					reward = 750
+				if("Medium")
+					reward = 1875
+				if("Hard")
+					reward = 3750
+			if(!reward)
+				result["reason"] = "invalid_difficulty"
+			else if(!web.consume_problem_computer_charge())
+				result["reason"] = "no_problem_charges"
+			else
+				var/amount = correct ? reward : -reward / 4
+				web.modify_point_type(TECHWEB_POINT_TYPE_GENERIC, amount, FALSE)
+				result["ok"] = TRUE
+				result["reason"] = "answer_recorded"
+				result["amount"] = amount
 		if("add_design")
 			var/design_id = request["design_id"]
 			if(SSresearch.techweb_design_by_id(design_id))
@@ -335,7 +358,10 @@
 			var/obj/machinery/research_table/table = client
 			if(table.point_type != "science" || !table.configured)
 				allowed = FALSE
-		else if(!istype(client, /obj/item/computermath/science))
+		else
+			allowed = FALSE
+	else if(op == "solve_problem")
+		if(!istype(client, /obj/item/computermath/science))
 			allowed = FALSE
 	else if(op != "snapshot" && op != "download_tech" && op != "station_award")
 		allowed = FALSE
