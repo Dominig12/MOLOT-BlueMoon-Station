@@ -303,19 +303,18 @@
 
 /// Точка входа для атмоса: сообщить, что газ синтезирован. Проверка готовности
 /// науки держится в одном месте - реакции идут и до, и после её инициализации.
-/proc/register_gas_synthesis(gas_id)
+/proc/register_gas_synthesis(gas_id, atom/source)
 	if(!SSresearch || !SSresearch.science_tech)
 		return FALSE
-	return SSresearch.science_tech.discover_gas_synthesis(gas_id)
+	return SSresearch.netdm_queue_gas_discovery(gas_id, source)
 
 /// То же для машин, отдающих сразу смесь (HFR). Смесь обязана содержать только
 /// свежий выхлоп, иначе открытием засчитается транзитный газ.
-/proc/register_gas_synthesis_from_mixture(datum/gas_mixture/mixture)
+/proc/register_gas_synthesis_from_mixture(datum/gas_mixture/mixture, atom/source)
 	if(!mixture || !SSresearch || !SSresearch.science_tech)
 		return
-	var/datum/techweb/science_web = SSresearch.science_tech
 	for(var/gas_id in mixture.get_gases())
-		science_web.discover_gas_synthesis(gas_id)
+		SSresearch.netdm_queue_gas_discovery(gas_id, source)
 
 /datum/techweb/proc/modify_point_type(type, amount, income = TRUE)
 	if(!SSresearch.point_types[type])

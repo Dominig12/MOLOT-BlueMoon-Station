@@ -133,3 +133,18 @@ and the typed request_* helpers without implementing their own pipe
 transport.
 
 Experimentor research boosts now call the console's server RPC. Physical relics carry a weak source reference and a one-time reward marker. Their 5000-point discovery award is issued by the server after a successful NetDM request, never by the experimentor itself.
+
+
+### Atmospheric sources
+
+BZ, Stimulum, Hyper-Noblium, Miasma recycling and QCD reactions no
+longer credit the station's /datum/techweb directly. They queue
+bounded telemetry at the owning area APC. A single batch per APC
+contains point totals, QCD events and first-ever gas discoveries.
+Actual rewards, discovery history and QCD high-watermarks are updated
+by the station R&D cluster only when the NetDM packet is delivered.
+The APC retains an unacknowledged batch with the original RPC ID for
+retry, so response loss cannot double-credit the same event.
+Telemetry is disabled without a ready network and a station APC route.
+An unattributed first-synthesis event uses the APC local to an active
+station R&D server rather than inventing a direct connection.

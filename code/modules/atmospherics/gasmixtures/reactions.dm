@@ -64,11 +64,13 @@
 /// взвести флаг вслепую значило бы потерять открытие на весь раунд. Дальше флаг
 /// взводится в любом случае - очки за газ платятся один раз, кто бы из реакций
 /// ни успел первым.
-/datum/gas_reaction/proc/report_synthesis()
+/datum/gas_reaction/proc/report_synthesis(atom/source)
 	if(!SSresearch || !SSresearch.science_tech)
 		return
-	synthesis_reported = TRUE
-	register_gas_synthesis(synthesis_gas)
+	// The first successful submission is retained by the APC sensor until
+	// the R&D cluster acknowledges it. A missing network cannot claim it.
+	if(register_gas_synthesis(synthesis_gas, source))
+		synthesis_reported = TRUE
 
 /datum/gas_reaction/proc/react(datum/gas_mixture/air, atom/location)
 	return NO_REACTION
@@ -307,7 +309,7 @@
 			if (super_saturation)
 				air.adjust_moles(GAS_TRITIUM, plasma_burn_rate)
 				if(!synthesis_reported)
-					report_synthesis()
+					report_synthesis(holder)
 			else
 				air.adjust_moles(GAS_CO2, plasma_burn_rate)
 
@@ -673,7 +675,7 @@
 	)
 
 
-/datum/gas_reaction/bzformation/react(datum/gas_mixture/air)
+/datum/gas_reaction/bzformation/react(datum/gas_mixture/air, atom/holder)
 	var/temperature = air.return_temperature()
 	var/pressure = air.return_pressure()
 	var/old_heat_capacity = air.heat_capacity()
@@ -688,7 +690,7 @@
 	air.adjust_moles(GAS_NITROUS, -reaction_efficency)
 	air.adjust_moles(GAS_PLASMA, -2*reaction_efficency)
 
-	SSresearch.science_tech.add_point_type(TECHWEB_POINT_TYPE_DEFAULT, min((reaction_efficency**2)*BZ_RESEARCH_SCALE),BZ_RESEARCH_MAX_AMOUNT)
+	SSresearch.netdm_queue_station_points(min((reaction_efficency**2) * BZ_RESEARCH_SCALE, BZ_RESEARCH_MAX_AMOUNT), holder, TECHWEB_POINT_TYPE_DEFAULT)
 
 	if(energy_released > 0)
 		var/new_heat_capacity = air.heat_capacity()
@@ -723,7 +725,7 @@
 		GAS_NITRYL = 30,
 		"TEMP" = STIMULUM_HEAT_SCALE/2)
 
-/datum/gas_reaction/stimformation/react(datum/gas_mixture/air)
+/datum/gas_reaction/stimformation/react(datum/gas_mixture/air, atom/holder)
 	var/old_heat_capacity = air.heat_capacity()
 	var/heat_scale = min(air.return_temperature()/STIMULUM_HEAT_SCALE,air.get_moles(GAS_TRITIUM),air.get_moles(GAS_PLASMA),air.get_moles(GAS_NITRYL))
 	var/stim_energy_change = heat_scale + STIMULUM_FIRST_RISE*(heat_scale**2) - STIMULUM_FIRST_DROP*(heat_scale**3) + STIMULUM_SECOND_RISE*(heat_scale**4) - STIMULUM_ABSOLUTE_DROP*(heat_scale**5)
@@ -735,7 +737,7 @@
 	air.adjust_moles(GAS_PLASMA, -heat_scale)
 	air.adjust_moles(GAS_NITRYL, -heat_scale)
 
-	SSresearch.science_tech.add_point_type(TECHWEB_POINT_TYPE_DEFAULT, STIMULUM_RESEARCH_AMOUNT*max(stim_energy_change,0))
+	SSresearch.netdm_queue_station_points(STIMULUM_RESEARCH_AMOUNT * max(stim_energy_change, 0), holder, TECHWEB_POINT_TYPE_DEFAULT)
 	if(stim_energy_change)
 		var/new_heat_capacity = air.heat_capacity()
 		if(new_heat_capacity > MINIMUM_HEAT_CAPACITY)
@@ -772,7 +774,7 @@
 		"MAX_TEMP" = NOBLIUM_FORMATION_MAX_TEMP
 	)
 
-/datum/gas_reaction/nobliumformation/react(datum/gas_mixture/air)
+/datum/gas_reaction/nobliumformation/react(datum/gas_mixture/air, atom/holder)
 	var/temperature = air.return_temperature()
 	if(temperature > NOBLIUM_FORMATION_MAX_TEMP)
 		return NO_REACTION
@@ -793,7 +795,7 @@
 	air.adjust_moles(GAS_HYPERNOB, nob_formed)
 	// Exothermic; BZ reduces energy released
 	var/energy_released = nob_formed * NOBLIUM_FORMATION_ENERGY / max(1, bz_moles * 10)
-	SSresearch.science_tech.add_point_type(TECHWEB_POINT_TYPE_DEFAULT, nob_formed*NOBLIUM_RESEARCH_AMOUNT)
+	SSresearch.netdm_queue_station_points(nob_formed * NOBLIUM_RESEARCH_AMOUNT, holder, TECHWEB_POINT_TYPE_DEFAULT)
 	var/new_heat_capacity = air.heat_capacity()
 	if(new_heat_capacity > MINIMUM_HEAT_CAPACITY)
 		air.set_temperature(max((temperature * old_heat_capacity + energy_released) / new_heat_capacity, TCMB))
@@ -840,7 +842,7 @@
 
 	// Slightly exothermic
 	air.set_temperature(air.return_temperature() + cleaned_air * 0.002)
-	SSresearch.science_tech.add_point_type(TECHWEB_POINT_TYPE_DEFAULT, cleaned_air*MIASMA_RESEARCH_AMOUNT)
+	SSresearch.netdm_queue_station_points(cleaned_air * MIASMA_RESEARCH_AMOUNT, holder, TECHWEB_POINT_TYPE_DEFAULT)
 	return REACTING
 
 /datum/gas_reaction/miaster/test()
@@ -927,17 +929,10 @@
 	var/amount = initial_energy / (air.return_temperature() * GLOB.gas_data.specific_heats[GAS_QCD])
 	air.set_moles(GAS_QCD, amount)
 	if(!synthesis_reported)
-		report_synthesis()
-	var/list/largest_values = SSresearch.science_tech.largest_values
-	if(!(GAS_QCD in largest_values))
-		largest_values[GAS_QCD] = 0
-	var/previous_largest = largest_values[GAS_QCD]
+		report_synthesis(holder)
+	// QCD high-watermark and all credits are decided inside the server.
 	var/research_amount = min(amount * QCD_RESEARCH_AMOUNT, 100000)
-	if(previous_largest <= research_amount)
-		SSresearch.science_tech.add_point_type(TECHWEB_POINT_TYPE_DEFAULT, research_amount)
-		largest_values[GAS_QCD] = research_amount
-	else
-		SSresearch.science_tech.add_point_type(TECHWEB_POINT_TYPE_DEFAULT, research_amount / 100)
+	SSresearch.netdm_queue_station_qcd(research_amount, holder)
 
 /datum/gas_reaction/dehagedorn
 	priority = 50

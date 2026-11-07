@@ -45,6 +45,12 @@
 	var/datum/component/netdm_science_telemetry/sensor = netdm_station_sensor(source)
 	return sensor?.add_points(type, amount)
 
+/datum/controller/subsystem/research/proc/netdm_queue_station_qcd(amount, atom/source)
+	if(!isnum(amount) || amount <= 0)
+		return FALSE
+	var/datum/component/netdm_science_telemetry/sensor = netdm_station_sensor(source)
+	return sensor?.add_qcd(amount)
+
 /datum/controller/subsystem/research/proc/netdm_queue_gas_discovery(gas_id, atom/source)
 	if(!gas_id || !GLOB.gas_data.datums[gas_id])
 		return FALSE
@@ -64,6 +70,7 @@
 	dupe_mode = COMPONENT_DUPE_HIGHLANDER
 	var/list/points = list()
 	var/list/gases = list()
+	var/list/qcd = list()
 	var/list/inflight
 	var/inflight_id
 	var/serial = 0
@@ -98,8 +105,14 @@
 	gases[gas_id] = TRUE
 	return TRUE
 
+/datum/component/netdm_science_telemetry/proc/add_qcd(amount)
+	if(!isnum(amount) || amount <= 0 || length(qcd) >= 256)
+		return FALSE
+	qcd += min(100000, amount)
+	return TRUE
+
 /datum/component/netdm_science_telemetry/proc/flush()
-	if(!inflight && !length(points) && !length(gases))
+	if(!inflight && !length(points) && !length(gases) && !length(qcd))
 		return
 	if(world.time < retry_after || !SSnetdm.enabled || !SSnetdm.connected || !SSnetdm.synchronized)
 		return
@@ -117,12 +130,13 @@
 		inflight_id = "ss13-science-[sender.node_id]-[world.realtime]-[serial]"
 		inflight = list(
 			"kind" = "techweb_request", "rpc_id" = inflight_id,
-			"op" = "station_award", "points" = points.Copy(), "gases" = gases.Copy())
+			"op" = "station_award", "points" = points.Copy(), "gases" = gases.Copy(), "qcd" = qcd.Copy())
 		points.Cut()
 		gases.Cut()
+		qcd.Cut()
 	// Retransmissions reuse the identical rpc_id and the identical payload.
 	var/datum/netdm_transaction/transaction = sender.send_to(recipient, inflight,
-		128 + length(inflight["points"]) * 16 + length(inflight["gases"]) * 16, TRUE, 90)
+		128 + length(inflight["points"]) * 16 + length(inflight["gases"]) * 16 + length(inflight["qcd"]) * 8, TRUE, 90)
 	retry_after = world.time + 100
 	if(!transaction)
 		retry_after = world.time + 30
@@ -135,7 +149,7 @@
 /datum/component/netdm_science_telemetry/proc/on_packet(datum/source,
 	list/payload, datum/component/netdm_node/sender, request_id)
 	SIGNAL_HANDLER
-	if(!inflight || payload?["kind"] != "techweb_telemetry_reply" || payload["rpc_id"] != inflight_id)
+	if(!inflight || !islist(payload) || payload["kind"] != "techweb_telemetry_reply" || payload["rpc_id"] != inflight_id)
 		return
 	var/obj/machinery/rnd/server/server = sender?.parent
 	if(!istype(server) || server.stored_research != SSresearch.science_tech)

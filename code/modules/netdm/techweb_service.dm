@@ -200,7 +200,8 @@
 			// by the R&D server before execute() is called).
 			var/list/points = request["points"]
 			var/list/gases = request["gases"]
-			if(!islist(points) || !islist(gases) || length(gases) > 128)
+			var/list/qcd = request["qcd"]
+			if(!islist(points) || !islist(gases) || length(gases) > 128 || !islist(qcd) || length(qcd) > 256)
 				result["reason"] = "invalid_telemetry"
 			else
 				var/valid = TRUE
@@ -208,6 +209,11 @@
 					if(!SSresearch.point_types[type] || !isnum(points[type]) || points[type] < 0 || points[type] > 10000000)
 						valid = FALSE
 						break
+				if(valid)
+					for(var/amount in qcd)
+						if(!isnum(amount) || amount < 0 || amount > 100000)
+							valid = FALSE
+							break
 				if(!valid)
 					result["reason"] = "invalid_telemetry"
 				else
@@ -215,6 +221,13 @@
 						web.discover_gas_synthesis(gas_id)
 					if(length(points))
 						web.add_point_list(points, FALSE)
+					for(var/amount in qcd)
+						var/old_high = web.largest_values[GAS_QCD] || 0
+						if(old_high <= amount)
+							web.add_point_type(TECHWEB_POINT_TYPE_DEFAULT, amount, FALSE)
+							web.largest_values[GAS_QCD] = amount
+						else
+							web.add_point_type(TECHWEB_POINT_TYPE_DEFAULT, amount / 100, FALSE)
 					result["ok"] = TRUE
 					result["reason"] = "recorded"
 		if("add_design")
