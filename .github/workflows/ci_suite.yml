@@ -20,6 +20,8 @@ permissions:
   contents: read
 
 env:
+  # Station compile/unit jobs don't package the separately reviewed Core context.
+  NETRUN_CORE_BUILD: '0'
   # Hermetic tests: worlds per runner. The number of runners is the matrix below.
   HERMETIC_WORLDS_PER_JOB: 2
   # Full-map tests: station maps per runner, all started at once.
@@ -57,6 +59,9 @@ jobs:
       - name: Check ticked file directories
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: bash tools/ci/check_filedirs.sh tgstation.dme
+      - name: Test NETRUN build and deployment tools
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: node --test tools/netrun/*.test.mjs
       - name: Check .dme include order
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: python3 tools/ci/check_dme_order.py tgstation.dme

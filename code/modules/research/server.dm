@@ -18,7 +18,9 @@
 
 	idle_power_usage = 500
 	var/datum/techweb/stored_research
-	var/network_id = RND_NETWORK_AUTO			//AUTO: станция — science_tech, иначе — сеть сервера рядом, без него автономная изолированная (дефолт)
+	/// Only mapped servers join their configured cluster automatically at bootstrap.
+	var/netrun_mapped_server = FALSE
+	var/network_id = RND_NETWORK_AUTO			//AUTO: станция — science_tech, иначе — автономная изолированная сеть (дефолт)
 	var/techweb_type = /datum/techweb/isolated	//Тип техвеба нестанционной сети (фракционные подтипы)
 	//Code for point mining here.
 	var/working = TRUE			//temperature should break it.
@@ -32,11 +34,9 @@
 	var/temp_tolerance_high = T20C
 	var/temp_penalty_coefficient = 0.5	//1 = -1 points per degree above high tolerance. 0.5 = -0.5 points per degree above high tolerance.
 	var/datum/looping_sound/server_alarm_small/alarmloop
-	/// Сеть AUTO-сервера, выбранная по запросу соседа до LateInitialize; сам сервер потом встаёт в неё же.
-	var/datum/techweb/early_network
-	var/resolving_network = FALSE
 
 /obj/machinery/rnd/server/Initialize(mapload)
+	netrun_mapped_server = mapload
 	. = ..()
 	GLOB.rndservers_list += src
 	SSresearch.servers |= src
@@ -49,10 +49,16 @@
 
 /obj/machinery/rnd/server/LateInitialize()
 	. = ..()
+	get_rnd_network()
 	AddComponent(/datum/component/techweb_holder)
 	RegisterSignal(src, COMSIG_ATOM_TECHWEB_CHANGED, PROC_REF(on_techweb_changed))
-	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, get_rnd_network())
-	early_network = null
+	SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, stored_research)
+	SSresearch.refresh_research_authorities()
+
+/obj/machinery/rnd/server/proc/research_network_id()
+	if(network_id == RND_NETWORK_AUTO)
+		return is_station_level(z) ? RND_NETWORK_STATION : REF(src)
+	return network_id
 
 /obj/machinery/rnd/server/process()
 	if(!(machine_stat & NOPOWER) && working)
@@ -65,6 +71,12 @@
 		if(!working)
 			working = TRUE
 			alarmloop.stop()
+	// Native NTnet settings and temperature recovery have no change signal.
+	// Compare scalar generations/state after updating working; actual startup
+	// candidate scans and merges remain in the common worker.
+	if(netrun_mapped_server)
+		var/datum/netrun_machine_service/research_server/service = netrun_machine_services?["research.server"]
+		service?.cluster_topology_changed()
 
 /obj/machinery/rnd/server/examine() // BLUEMOON ADD
 	. = ..()
@@ -80,9 +92,12 @@
 		. += span_notice("Исследовательская сеть: <b>[stored_research.organization]</b>. Мультитул с пустым буфером копирует её с сервера, после чего клик по консоли или машине РнД подключает их к этой сети.")
 
 /obj/machinery/rnd/server/Destroy()
-	early_network = null
 	SSresearch.servers -= src
 	GLOB.rndservers_list -= src
+	var/datum/techweb/memory = stored_research
+	stored_research = null
+	memory?.remove_research_owner(src)
+	SSresearch.refresh_research_authorities()
 	QDEL_NULL(alarmloop)
 	return ..()
 
@@ -99,53 +114,25 @@
 	SIGNAL_HANDLER
 
 	stored_research = new_web
+	refresh_research_service()
 
-/// Сеть сервера. До LateInitialize фракционная берётся по ID, AUTO выбирается сразу и запоминается: соседи при загрузке карты не зависят от порядка.
+/// Ранняя память принадлежит самому серверу и сохраняется при его LateInitialize.
+/// Поиск соседа не создаёт владельцу вторую, оторванную от физических машин базу.
 /obj/machinery/rnd/server/proc/get_rnd_network()
-	if(stored_research)
-		return stored_research
-	if(network_id)
-		return SSresearch.get_rnd_network(network_id, techweb_type)
-	if(!early_network && !resolving_network)
-		resolving_network = TRUE // два AUTO-сервера рядом иначе спрашивали бы друг друга по кругу
-		early_network = SSresearch.get_rnd_network_for(src, network_id, techweb_type)
-		resolving_network = FALSE
-	return early_network
+	if(QDELETED(stored_research))
+		var/memory_type = (network_id == RND_NETWORK_AUTO && is_station_level(z)) || network_id == RND_NETWORK_STATION ? /datum/techweb/science : techweb_type
+		stored_research = new memory_type
+		stored_research.add_research_owner(src)
+	return stored_research
 
-/// Сеть ближайшего РНД-сервера на любом этаже связки источника (сам источник не в счёт), либо null.
+/// Совместимая точка входа выбирает только достижимого владельца через C# route proof.
 /proc/find_nearest_rnd_techweb(atom/source, max_range = INFINITY)
-	var/turf/source_turf = get_turf(source)
-	if(!source_turf)
-		return null
-	var/list/levels = SSmapping.get_connected_levels(source_turf.z)
-	var/datum/techweb/nearest
-	var/best_dist = INFINITY
-	for(var/obj/machinery/rnd/server/S as anything in SSmachines.get_machines_by_type_and_subtypes(/obj/machinery/rnd/server))
-		if(S == source || QDELETED(S))
-			continue
-		var/turf/server_turf = get_turf(S)
-		if(!server_turf || !(server_turf.z in levels))
-			continue
-		var/dist = max(abs(server_turf.x - source_turf.x), abs(server_turf.y - source_turf.y)) + abs(server_turf.z - source_turf.z)
-		if(dist > max_range || dist > best_dist)
-			continue
-		var/datum/techweb/web = S.get_rnd_network()
-		if(!web)
-			continue
-		best_dist = dist
-		nearest = web
-	return nearest
+	return SSresearch.get_rnd_network_for(source, RND_NETWORK_AUTO)
 
 /// Авто-подключение устройства к сети: ближайший сервер на этажах связки,
 /// иначе на станции — глобальная научная сеть (как раньше), вне станции — null (подключается вручную).
 /proc/find_rnd_network_for_object(atom/source)
-	var/datum/techweb/nearest = find_nearest_rnd_techweb(source)
-	if(nearest)
-		return nearest
-	var/turf/source_turf = get_turf(source)
-	if(source_turf && is_station_level(source_turf.z))
-		return SSresearch.science_tech
-	return null
+	return SSresearch.get_rnd_network_for(source, RND_NETWORK_AUTO)
 //BLUEMOON ADD END
 
 /obj/machinery/rnd/server/attackby(obj/item/W, mob/user, params)
@@ -158,7 +145,10 @@
 		if(current_web == stored_research)
 			to_chat(user, span_notice("[W] уже подключён к [stored_research.organization]."))
 		else
-			W.vars["linked_techweb"] = stored_research
+			if(W.GetComponent(/datum/component/techweb_holder))
+				SEND_SIGNAL(W, COMSIG_ATOM_SET_TECHWEB, stored_research)
+			else
+				W.vars["linked_techweb"] = stored_research
 			to_chat(user, span_notice("Вы подключаете [W] к сети сервера [stored_research.organization]."))
 		return TRUE
 	return .
