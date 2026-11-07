@@ -176,6 +176,17 @@
 			else if(web.boost_with_path(node, item_path))
 				result["ok"] = TRUE
 				result["reason"] = "boosted"
+		if("relic_discovery")
+			var/obj/item/relic/relic = request["relic"]
+			var/obj/machinery/rnd/experimentor/experimentor = request["experimentor"]
+			if(!relic || QDELETED(relic) || !relic.revealed || relic.netdm_rewarded || relic.netdm_reward_source?.resolve() != experimentor)
+				result["reason"] = "relic_not_eligible"
+			else
+				relic.netdm_rewarded = TRUE
+				relic.netdm_reward_source = null
+				web.add_point_type(TECHWEB_POINT_TYPE_GENERIC, 5000, FALSE)
+				result["ok"] = TRUE
+				result["reason"] = "discovery_awarded"
 		if("add_design")
 			var/design_id = request["design_id"]
 			if(SSresearch.techweb_design_by_id(design_id))
@@ -237,6 +248,9 @@
 				if(!experimentor || QDELETED(experimentor) || experimentor.linked_console != console)
 					allowed = FALSE
 			request["console"] = console
+	else if(op == "relic_discovery")
+		if(!istype(client, /obj/machinery/rnd/experimentor) || request["experimentor"] != client)
+			allowed = FALSE
 	else if(op != "snapshot" && op != "download_tech")
 		allowed = FALSE
 	var/list/result = allowed ? netdm_cluster.execute(request) : list("ok" = FALSE, "reason" = "forbidden")

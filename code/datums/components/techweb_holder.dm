@@ -94,6 +94,11 @@
 	return netdm_request("boost", list("experimentor" = experimentor,
 		"node_id" = node_id, "item_path" = item_path))
 
+/datum/component/techweb_holder/proc/request_relic_discovery(obj/machinery/rnd/experimentor/experimentor, obj/item/relic/relic)
+	if(!experimentor || !relic)
+		return FALSE
+	return netdm_request("relic_discovery", list("experimentor" = experimentor, "relic" = relic))
+
 /datum/component/techweb_holder/proc/request_add_design(design_id)
 	if(!istext(design_id) || !SSresearch.techweb_design_by_id(design_id))
 		return FALSE

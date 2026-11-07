@@ -131,3 +131,5 @@ NetDM. The hub's refresh button asks the server for a new snapshot.
 All legacy networked device types can use techweb_holder.request_snapshot()
 and the typed request_* helpers without implementing their own pipe
 transport.
+
+Experimentor research boosts now call the console's server RPC. Physical relics carry a weak source reference and a one-time reward marker. Their 5000-point discovery award is issued by the server after a successful NetDM request, never by the experimentor itself.
