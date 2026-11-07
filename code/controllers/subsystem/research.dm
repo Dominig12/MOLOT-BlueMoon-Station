@@ -374,7 +374,9 @@ SUBSYSTEM_DEF(research)
 			var/list/bitcoins = techwebs_income[mining_web]
 			for(var/i in bitcoins)
 				bitcoins[i] *= income_time_difference / 10
-			mining_web.add_point_list(bitcoins)
+			var/datum/netdm_rnd_cluster/cluster = netdm_cluster_for(mining_web)
+			if(!cluster || !cluster.credit_server_income(bitcoins))
+				continue
 			var/list/income = mining_web.commit_income()
 			for(var/i in income)
 				var/old_weighted = mining_web.last_bitcoins[i] * (1 MINUTES - income_time_difference)
@@ -385,6 +387,8 @@ SUBSYSTEM_DEF(research)
 			var/list/last_tick = techwebs_income[mining_web]
 			mining_web.last_bitcoins = last_tick.Copy()
 	last_income = world.time
+	// Flush research telemetry through actual APC -> R&D server routes.
+	netdm_flush_station_telemetry()
 
 
 /datum/controller/subsystem/research/proc/is_core_available(core_type)

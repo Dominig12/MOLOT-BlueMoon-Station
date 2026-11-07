@@ -3801,6 +3801,7 @@
 #include "code\modules\netdm\component.dm"
 #include "code\modules\netdm\device_adapters.dm"
 #include "code\modules\netdm\techweb_service.dm"
+#include "code\modules\netdm\research_telemetry.dm"
 #include "code\modules\newscaster\_news.dm"
 #include "code\modules\newscaster\feed_channel.dm"
 #include "code\modules\newscaster\feed_comment.dm"
