@@ -125,7 +125,10 @@
 				last_result = "correct"
 			else
 				last_result = "incorrect"
-			if(consume_charges())
+			if(reward_type == "Science")
+				// One server transaction consumes the charge and settles points.
+				handle_reward(usr, reward_type, correct, current_difficulty)
+			else if(consume_charges())
 				handle_reward(usr, reward_type, correct, current_difficulty)
 			else
 				last_points = 0
@@ -487,14 +490,25 @@
 		playsound(src, 'sound/machines/buzz-sigh.ogg', 30, 1)
 		return
 
+	if(reward_type == "Science")
+		var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+		if(!holder?.request_solve_problem(correct, difficulty))
+			last_points = 0
+			last_message = "Нет связи с исследовательским сервером; задача не засчитана."
+			say("Research server unavailable.")
+			return
+		last_points = 0
+		last_message = "Ответ отправлен на проверку исследовательскому серверу."
+		if(!correct && difficulty == "Easy")
+			to_chat(user, span_warning("Вы чувствуете грусть, провалив такую простую задачу..."))
+			SEND_SIGNAL(LM, COMSIG_ADD_MOOD_EVENT, "failed_easy", /datum/mood_event/failed_easy)
+		return
+
 	if(!correct)
 		var/points_lost = points_awarded / 4
 		last_result = "incorrect"
 		last_points = points_lost
 		switch(reward_type)
-			if("Science")
-				last_message = "Исследовательские данные были повреждены. Утеряно [points_lost] очков исследования."
-				linked_techweb.remove_point_list(list(TECHWEB_POINT_TYPE_GENERIC = points_lost))
 			if("Cargo")
 				last_message = "Бюрократическая ошибка. Списано [points_lost] очков карго."
 				var/datum/bank_account/D = SSeconomy.get_dep_account(ACCOUNT_CAR)
@@ -509,9 +523,6 @@
 	last_result = "correct"
 	last_points = points_awarded
 	switch(reward_type)
-		if("Science")
-			last_message = "Данные корректны! Начислено [points_awarded] очков исследования."
-			linked_techweb.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = points_awarded))
 		if("Cargo")
 			last_message = "Данные корректны! Начислено [points_awarded] очков карго."
 			var/datum/bank_account/D = SSeconomy.get_dep_account(ACCOUNT_CAR)
@@ -585,35 +596,42 @@
 	ui_interact(user)
 
 /obj/item/computermath/science/process()
-	var/old_charge_count = charge_count
-	if(!linked_techweb) //BLUEMOON ADD: сеть — источник задач
-		charge_count = 0
-		if(!unlinked_notified)
-			unlinked_notified = TRUE
-			say("Нет подключения к исследовательской сети. Задачи недоступны.")
-		return
-	charge_count = linked_techweb.get_problem_computer_charges()
-	if(charge_count > old_charge_count)
+	var/old_count = charge_count
+	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+	holder?.request_snapshot()
+	charge_count = get_charges()
+	if(charge_count > old_count)
 		say("Для решения стали доступны новые задачи! На данный момент доступно [charge_count] задач.")
 
 /obj/item/computermath/science/check_charges()
-	if(!linked_techweb) //BLUEMOON ADD
-		return FALSE
-	if(linked_techweb.get_problem_computer_charges() > 0)
-		return TRUE
-	return FALSE
+	return get_charges() > 0
 
 /obj/item/computermath/science/consume_charges()
-	if(!linked_techweb) //BLUEMOON ADD
-		return FALSE
-	return linked_techweb.consume_problem_computer_charge()
+	// The server consumes the shared charge together with the reward.
+	return FALSE
 
 /obj/item/computermath/science/get_charges()
-	if(!linked_techweb) //BLUEMOON ADD
+	if(!SSnetdm.connected || !SSnetdm.synchronized)
 		return 0
-	return linked_techweb.get_problem_computer_charges()
+	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+	var/list/state = holder?.netdm_snapshot
+	return islist(state) ? (state["problem_charges"] || 0) : 0
 
 /obj/item/computermath/science/get_max_charges()
-	if(!linked_techweb) //BLUEMOON ADD
-		return 0
-	return linked_techweb.get_problem_computer_max_charges()
+	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+	var/list/state = holder?.netdm_snapshot
+	return islist(state) ? (state["problem_max_charges"] || 0) : 0
+
+/obj/item/computermath/science/proc/netdm_apply_problem_reply(list/reply)
+	if(!reply["ok"])
+		last_points = 0
+		last_message = "Исследовательский сервер: [reply["reason"]]."
+		say(last_message)
+		SStgui.update_uis(src)
+		return
+	var/amount = reply["amount"]
+	last_points = abs(amount)
+	last_result = amount >= 0 ? "correct" : "incorrect"
+	last_message = amount >= 0 ? "Начислено [amount] очков исследования." : "Списано [abs(amount)] очков исследования."
+	say(last_message)
+	SStgui.update_uis(src)

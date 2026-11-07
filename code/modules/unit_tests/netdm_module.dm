@@ -179,3 +179,23 @@
 	var/list/price = chosen.get_price(web)
 	TEST_ASSERT_EQUAL(price[TECHWEB_POINT_TYPE_GENERIC], initial_price - 1, "Boost must reduce the local price")
 	TEST_ASSERT_EQUAL(chosen.research_costs[TECHWEB_POINT_TYPE_GENERIC], initial_price, "Snapshot pricing must never mutate the shared global design")
+
+
+/// One networked problem answer consumes one shared charge and applies
+/// its reward exactly once, even if another server receives a retry.
+/datum/unit_test/netdm_problem_computer_atomic_charge/Run()
+	var/datum/techweb/isolated/web = new
+	allocated += web
+	var/datum/netdm_rnd_cluster/cluster = new(web)
+	allocated += cluster
+	var/old_charges = web.get_problem_computer_charges()
+	var/old_points = web.research_points[TECHWEB_POINT_TYPE_GENERIC] || 0
+	TEST_ASSERT(old_charges > 0, "Fresh research web must have problem charges")
+	var/list/request = list("op" = "solve_problem", "rpc_id" = "netdm-problem-once", "difficulty" = "Easy", "correct" = TRUE)
+	var/list/result = cluster.execute(request)
+	TEST_ASSERT(result["ok"], "Problem Computer answer accepted")
+	TEST_ASSERT_EQUAL(web.get_problem_computer_charges(), old_charges - 1, "One charge was consumed")
+	TEST_ASSERT_EQUAL(web.research_points[TECHWEB_POINT_TYPE_GENERIC], old_points + 750, "Server credited the correct reward")
+	cluster.execute(request)
+	TEST_ASSERT_EQUAL(web.get_problem_computer_charges(), old_charges - 1, "Retry must not consume another charge")
+	TEST_ASSERT_EQUAL(web.research_points[TECHWEB_POINT_TYPE_GENERIC], old_points + 750, "Retry must not credit again")

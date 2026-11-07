@@ -157,3 +157,6 @@ Other science point producers (including the research table) use
 techweb_holder.request_adjust_points() rather than modifying a
 techweb directly. The operating computer reads advanced surgery
 designs from a delivered research snapshot.
+
+
+Science Problem Computers now obtain shared research charge counts from server snapshots. A completed quiz is one `solve_problem` RPC: the server consumes a charge and awards or deducts the validated amount atomically. Handheld techweb-holder devices automatically receive a radio NetDM endpoint, and no science charge or point is changed locally.
