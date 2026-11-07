@@ -79,6 +79,8 @@
 	return
 
 /obj/machinery/nanite_program_hub/ui_interact(mob/user, datum/tgui/ui)
+	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+	holder?.request_snapshot()
 	ui = SStgui.try_update_ui(user, src, ui)
 	if(!ui)
 		ui = new(user, src, "NaniteProgramHub", name)
@@ -105,8 +107,12 @@
 /obj/machinery/nanite_program_hub/ui_static_data(mob/user)
 	var/list/data = list()
 	data["programs"] = list()
-	if(linked_techweb)
-		for(var/i in linked_techweb.researched_designs)
+	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+	holder?.request_snapshot()
+	var/list/state = holder?.netdm_snapshot
+	var/list/designs = islist(state) ? state["researched_designs"] : null
+	if(islist(designs))
+		for(var/i in designs)
 			var/datum/design/nanites/D = SSresearch.techweb_design_by_id(i)
 			if(!istype(D))
 				continue
@@ -134,7 +140,12 @@
 		if("download")
 			if(!disk)
 				return
-			var/datum/design/nanites/downloaded = linked_techweb.isDesignResearchedID(params["program_id"]) //check if it's a valid design
+			var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+			var/list/network_state = holder?.netdm_snapshot
+			var/list/known_designs = islist(network_state) ? network_state["researched_designs"] : null
+			if(!islist(known_designs) || !known_designs[params["program_id"]])
+				return
+			var/datum/design/nanites/downloaded = SSresearch.techweb_design_by_id(params["program_id"])
 			if(!istype(downloaded))
 				return
 			if(disk.program)
@@ -144,6 +155,8 @@
 			playsound(src, 'sound/machines/terminal_prompt.ogg', 25, FALSE)
 			. = TRUE
 		if("refresh")
+			var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+			holder?.request_snapshot(TRUE)
 			update_static_data(usr)
 			. = TRUE
 		if("toggle_details")

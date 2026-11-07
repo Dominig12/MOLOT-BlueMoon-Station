@@ -187,6 +187,9 @@ Class Procs:
 	RegisterSignal(src, COMSIG_ENTER_AREA, PROC_REF(on_enter_area))
 	RegisterSignal(src, COMSIG_EXIT_AREA, PROC_REF(on_exit_area))
 	register_power_change_area(get_area(src))
+	// NetDM assigns stationary machinery to the APC of its power area.
+	// No electricity-cable topology is imported into the network graph.
+	SSnetdm.attach_machinery(src)
 
 	if (occupant_typecache)
 		occupant_typecache = typecacheof(occupant_typecache)
@@ -235,6 +238,10 @@ Class Procs:
 /// у атмос-машинерии он живёт не в самой машине, а в списках area, и без этого
 /// венты/скрабберы навсегда оставались приписанными к зоне, из которой их вырезали.
 /obj/machinery/proc/on_area_swap(area/old_area, area/new_area)
+	if(istype(src, /obj/machinery/power/apc))
+		var/datum/component/netdm_node/endpoint = netdm_interface()
+		SSnetdm.invalidate_managed_edges(endpoint)
+		SSnetdm.mark_topology_dirty()
 	return
 
 ///Re-homes the subscription on an area move and resyncs: the new area's channels can differ from the old one's.

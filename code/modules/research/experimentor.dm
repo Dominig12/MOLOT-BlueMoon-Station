@@ -74,6 +74,16 @@
 	trackedIan = WEAKREF(locate(/mob/living/simple_animal/pet/dog/corgi/Ian) in GLOB.mob_living_list)
 	trackedRuntime = WEAKREF(locate(/mob/living/simple_animal/pet/cat/Runtime) in GLOB.mob_living_list)
 	SetTypeReactions()
+	netdm_bind_research()
+
+/obj/machinery/rnd/experimentor/proc/netdm_bind_research()
+	if(!GetComponent(/datum/component/techweb_holder))
+		AddComponent(/datum/component/techweb_holder)
+	var/datum/techweb/network = linked_console?.stored_research
+	if(!network)
+		network = find_rnd_network_for_object(src)
+	if(network)
+		SEND_SIGNAL(src, COMSIG_ATOM_SET_TECHWEB, network)
 
 /obj/machinery/rnd/experimentor/RefreshParts()
 	resetTime = 20 //17-> 5
@@ -202,7 +212,8 @@
 				if(picked && linked_console && !QDELETED(linked_console) && linked_console.stored_research)	//BLUEMOON ADD: !QDELETED — консоль могла быть уничтожена; && stored_research — консоль без подключённой сети
 					var/datum/techweb_node/boost_node = SSresearch.techweb_node_by_id(picked)
 					if(boost_node)
-						linked_console.stored_research.boost_with_path(boost_node, process.type)
+						var/datum/component/techweb_holder/holder = linked_console.GetComponent(/datum/component/techweb_holder)
+						holder?.request_boost(src, boost_node.id, process.type)
 	updateUsrDialog()
 
 /obj/machinery/rnd/experimentor/proc/matchReaction(matching,reaction)
@@ -462,11 +473,13 @@
 		visible_message("[src] сканирует [exp_on], раскрывая его истинную природу!")
 		playsound(src, 'sound/effects/supermatter.ogg', 50, 3, -1)
 		var/obj/item/relic/R = loaded_item
-		if(!R.revealed) //BLUEMOON ADD награда за изучение
-			var/datum/techweb/web = find_rnd_network_for_object(src)
-			if(web)
-				web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = pick(5000))) //BLUEMOON ADD END
-		R.reveal()
+		if(!R.revealed)
+			R.reveal()
+			// Physical discovery is permanent; awarding is an RPC to the server.
+			R.netdm_reward_source = WEAKREF(src)
+			netdm_bind_research()
+			var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+			holder?.request_relic_discovery(src, R)
 		investigate_log("Experimentor has revealed a relic with <span class='danger'>[R.realProc]</span> effect.", INVESTIGATE_EXPERIMENTOR)
 		ejectItem()
 
@@ -546,6 +559,9 @@
 //////////////////////////////////SPECIAL ITEMS////////////////////////////////////////
 
 /obj/item/relic
+	/// A particular physical relic can only earn one server-side reward.
+	var/netdm_rewarded = FALSE
+	var/datum/weakref/netdm_reward_source
 	name = "strange object"
 	desc = "Какие тайны это может хранить?"
 	icon = 'icons/obj/assemblies.dmi'

@@ -129,14 +129,32 @@
 	// Судить о "первом ли это синке" по снапшоту нельзя: свежий /datum/techweb
 	// исследует стартовые ноды прямо в New(), так что researched_designs непуст уже
 	// до первого пересбора - и инкрементальный путь навсегда терял базовые рецепты.
-	var/list/previously_known = designs_cache_built ? stored_research.researched_designs.Copy() : null
-	host_research?.copy_research_to(stored_research, TRUE)
-	if(previously_known)
-		update_designs_incremental(previously_known)
+	if(!designs_cache_built)
+		update_designs() // local starting designs before first server response
+	if(host_research)
+		var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+		holder?.request_snapshot()
+
+/// Apply only a snapshot actually delivered through the NetDM transport.
+/obj/machinery/rnd/production/proc/techweb_netdm_snapshot_changed(list/network_state)
+	if(!islist(network_state) || !stored_research)
+		return
+	var/list/old_designs = designs_cache_built ? stored_research.researched_designs.Copy() : null
+	var/list/remote_nodes = network_state["researched_nodes"]
+	var/list/remote_designs = network_state["researched_designs"]
+	if(!islist(remote_nodes) || !islist(remote_designs))
+		return
+	stored_research.researched_nodes = remote_nodes.Copy()
+	stored_research.researched_designs = remote_designs.Copy()
+	if(old_designs)
+		for(var/id in old_designs)
+			if(!stored_research.researched_designs[id])
+				update_designs()
+				return
+		update_designs_incremental(old_designs)
 	else
 		update_designs()
-	if(last_design_count == 0)
-		last_design_count = length(cached_designs)
+	last_design_count = length(cached_designs)
 
 /obj/machinery/rnd/production/proc/update_designs()
 	cached_designs.Cut()

@@ -416,6 +416,7 @@
 #include "multiz_ventcrawl.dm"
 #include "mod_suit_fixes.dm"
 #include "modular_map_loader.dm" //SPLURT EDIT
+#include "netdm_module.dm"
 #include "nightshift.dm"
 #include "northstar.dm"
 #include "ntnet_responses.dm"
