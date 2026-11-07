@@ -94,51 +94,40 @@ Note: Must be placed within 3 tiles of the R&D Console
 	return TRUE
 
 /obj/machinery/rnd/destructive_analyzer/proc/user_try_decon_id(id, mob/user)
-	if(!istype(loaded_item) || !istype(linked_console) || !linked_console.stored_research)	//BLUEMOON ADD: !stored_research — консоль без подключённой сети
+	if(!loaded_item || QDELETED(loaded_item) || !linked_console || QDELETED(linked_console))
 		return FALSE
-
-	if (id && id != RESEARCH_MATERIAL_RECLAMATION_ID)
-		var/datum/techweb_node/TN = SSresearch.techweb_node_by_id(id)
-		if(!istype(TN))
+	var/datum/component/techweb_holder/holder = linked_console.GetComponent(/datum/component/techweb_holder)
+	if(!holder?.linked_techweb)
+		return FALSE
+	var/obj/item/target = loaded_item
+	var/datum/techweb_node/node
+	if(id && id != RESEARCH_MATERIAL_RECLAMATION_ID)
+		node = SSresearch.techweb_node_by_id(id)
+		if(!node)
 			return FALSE
-		var/dpath = loaded_item.type
-		var/list/worths = TN.boost_item_paths[dpath]
-		var/list/differences = list()
-		var/list/already_boosted = linked_console.stored_research.boosted_nodes[TN.id]
-		for(var/i in worths)
-			var/used = already_boosted? already_boosted[i] : 0
-			var/value = min(worths[i], TN.research_costs[i]) - used
-			if(value > 0)
-				differences[i] = value
-		if(length(worths) && !length(differences))
-			return FALSE
-		var/choice = input("Are you sure you want to destroy [loaded_item] to [!length(worths) ? "reveal [TN.display_name]" : "boost [TN.display_name] by [json_encode(differences)] point\s"]?") in list("Proceed", "Cancel")
-		if(choice == "Cancel" || !choice)
-			return FALSE
-		if(QDELETED(loaded_item) || QDELETED(linked_console) || !user.Adjacent(linked_console) || QDELETED(src))
-			return FALSE
-		SSblackbox.record_feedback("nested tally", "item_deconstructed", 1, list("[TN.id]", "[loaded_item.type]"))
-		if(destroy_item(loaded_item))
-			linked_console.stored_research.boost_with_path(SSresearch.techweb_node_by_id(TN.id), dpath)
-
-	else
-		var/list/point_value = techweb_item_point_check(loaded_item)
-		if(linked_console.stored_research.deconstructed_items[loaded_item.type] && !istype(loaded_item, /obj/item/heretic_veil_crystal))
-			point_value = list()
-		var/user_mode_string = ""
-		if(length(point_value))
-			user_mode_string = " for [json_encode(point_value)] points"
-		else if(length(loaded_item.custom_materials))
-			user_mode_string = " for material reclamation"
-		var/choice = input("Are you sure you want to destroy [loaded_item][user_mode_string]?") in list("Proceed", "Cancel")
-		if(choice != "Proceed")
-			return FALSE
-		if(QDELETED(loaded_item) || QDELETED(linked_console) || !user.Adjacent(linked_console) || QDELETED(src))
-			return FALSE
-		var/loaded_type = loaded_item.type
-		if(destroy_item(loaded_item))
-			linked_console.stored_research.add_point_list(point_value)
-			linked_console.stored_research.deconstructed_items[loaded_type] = point_value
+		var/list/boost = node.boost_item_paths[target.type]
+		var/list/remote = holder.netdm_snapshot
+		var/list/all_boosts = islist(remote) ? remote["boosted_nodes"] : null
+		var/list/already = islist(all_boosts) ? all_boosts[node.id] : null
+		if(length(boost))
+			var/useful = FALSE
+			for(var/type in boost)
+				if(boost[type] > (already ? already[type] : 0))
+					useful = TRUE
+					break
+			if(!useful)
+				return FALSE
+	var/list/points = techweb_item_point_check(target)
+	var/subject = node ? "boost [node.display_name]" : "reclaim this item"
+	var/choice = input(user, "Send [target] to the R&D server to [subject]?", "Remote analysis") in list("Proceed", "Cancel")
+	if(choice != "Proceed")
+		return FALSE
+	if(QDELETED(src) || QDELETED(target) || target != loaded_item || QDELETED(linked_console) || !user.Adjacent(linked_console))
+		return FALSE
+	if(!holder.request_analyze(src, target, node?.id, user))
+		to_chat(user, span_warning("Research network unavailable; the item is still intact."))
+		return FALSE
+	// Physical destruction and credit both occur on the server upon delivery.
 	return TRUE
 
 /obj/machinery/rnd/destructive_analyzer/proc/unload_item()

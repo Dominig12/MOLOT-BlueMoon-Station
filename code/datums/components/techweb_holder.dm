@@ -81,6 +81,19 @@
 		return FALSE
 	return netdm_request("research", list("node_id" = node_id, "actor" = user ? "[user]" : "unknown"))
 
+/// The server validates and destroys the still-loaded item on receipt;
+/datum/component/techweb_holder/proc/request_analyze(obj/machinery/rnd/destructive_analyzer/analyzer, obj/item/target, node_id, mob/user)
+	if(!analyzer || !target || !user)
+		return FALSE
+	return netdm_request("analyze", list("analyzer" = analyzer,
+		"item" = target, "node_id" = node_id, "user" = user))
+
+/datum/component/techweb_holder/proc/request_boost(obj/machinery/rnd/experimentor/experimentor, node_id, item_path)
+	if(!experimentor || !ispath(item_path))
+		return FALSE
+	return netdm_request("boost", list("experimentor" = experimentor,
+		"node_id" = node_id, "item_path" = item_path))
+
 /datum/component/techweb_holder/proc/request_add_design(design_id)
 	if(!istext(design_id) || !SSresearch.techweb_design_by_id(design_id))
 		return FALSE

@@ -91,6 +91,8 @@
 		"points_last_tick" = web.last_bitcoins.Copy(),
 		"researched_nodes" = web.researched_nodes.Copy(),
 		"researched_designs" = web.researched_designs.Copy(),
+		"boosted_nodes" = web.boosted_nodes.Copy(),
+		"deconstructed_items" = web.deconstructed_items.Copy(),
 		"nodes" = visible)
 
 /// Safe request processing is serialized in the DM tick. Only one successful
@@ -125,6 +127,55 @@
 					SSresearch.on_node_researched(id, web)
 					SEND_GLOBAL_SIGNAL(COMSIG_GLOB_RESEARCH_NODE_UNLOCKED, id)
 					log_game("NetDM research [id] on techweb [web.id] by [request["actor"]].")
+		if("analyze")
+			var/obj/machinery/computer/rdconsole/console = request["console"]
+			var/obj/machinery/rnd/destructive_analyzer/analyzer = request["analyzer"]
+			var/obj/item/target = request["item"]
+			var/mob/user = request["user"]
+			if(!console || !analyzer || QDELETED(analyzer) || QDELETED(target) || !user || QDELETED(user) || console.linked_destroy != analyzer || analyzer.loaded_item != target || target.loc != analyzer || !user.Adjacent(console))
+				result["reason"] = "invalid_analyzer_state"
+			else
+				var/node_id = request["node_id"]
+				var/datum/techweb_node/node = node_id ? SSresearch.techweb_node_by_id(node_id) : null
+				var/valid = TRUE
+				if(node_id)
+					if(!node)
+						valid = FALSE
+					else
+						var/list/worth = node.boost_item_paths[target.type]
+						var/list/already = web.boosted_nodes[node.id]
+						if(length(worth))
+							valid = FALSE
+							for(var/type in worth)
+								if(worth[type] > (already ? already[type] : 0))
+									valid = TRUE
+									break
+				if(!valid)
+					result["reason"] = "already_analyzed"
+				else
+					var/item_type = target.type
+					var/list/points = techweb_item_point_check(target)
+					var/previously_processed = !!web.deconstructed_items[item_type]
+					if(analyzer.destroy_item(target))
+						if(node)
+							web.boost_with_path(node, item_type)
+						else if(!previously_processed || ispath(item_type, /obj/item/heretic_veil_crystal))
+							if(islist(points) && length(points))
+								web.add_point_list(points.Copy(), FALSE)
+							web.deconstructed_items[item_type] = islist(points) ? points.Copy() : list()
+						result["ok"] = TRUE
+						result["reason"] = "analyzed"
+					else
+						result["reason"] = "item_not_destroyed"
+		if("boost")
+			var/id = request["node_id"]
+			var/item_path = request["item_path"]
+			var/datum/techweb_node/node = SSresearch.techweb_node_by_id(id)
+			if(!node || !ispath(item_path) || !islist(node.boost_item_paths[item_path]))
+				result["reason"] = "invalid_boost"
+			else if(web.boost_with_path(node, item_path))
+				result["ok"] = TRUE
+				result["reason"] = "boosted"
 		if("add_design")
 			var/design_id = request["design_id"]
 			if(SSresearch.techweb_design_by_id(design_id))
@@ -169,16 +220,25 @@
 	var/datum/component/techweb_holder/client_holder = client?.GetComponent(/datum/component/techweb_holder)
 	if(!client_holder || !netdm_cluster || client_holder.linked_techweb != stored_research)
 		return
-	// Write operations require an actual unlocked R&D console.
+	// The actual packet sender is the device identity, not the payload.
 	var/op = request["op"]
 	var/allowed = TRUE
-	if(op == "research" || op == "add_design" || op == "upload_tech")
+	if(op == "research" || op == "add_design" || op == "upload_tech" || op == "analyze" || op == "boost")
 		if(!istype(client, /obj/machinery/computer/rdconsole))
 			allowed = FALSE
 		else
 			var/obj/machinery/computer/rdconsole/console = client
 			if(console.locked || (op == "research" && !console.research_control))
 				allowed = FALSE
+			if(op == "analyze" && console.linked_destroy != request["analyzer"])
+				allowed = FALSE
+			if(op == "boost")
+				var/obj/machinery/rnd/experimentor/experimentor = request["experimentor"]
+				if(!experimentor || QDELETED(experimentor) || experimentor.linked_console != console)
+					allowed = FALSE
+			request["console"] = console
+	else if(op != "snapshot" && op != "download_tech")
+		allowed = FALSE
 	var/list/result = allowed ? netdm_cluster.execute(request) : list("ok" = FALSE, "reason" = "forbidden")
 	var/list/research_snapshot = result["reason"] == "cluster_busy" ? null : netdm_cluster.snapshot()
 	var/list/reply = list("kind" = "techweb_reply",
