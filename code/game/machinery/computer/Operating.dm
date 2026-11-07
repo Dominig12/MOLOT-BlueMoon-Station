@@ -51,8 +51,12 @@
 	return ..()
 
 /obj/machinery/computer/operating/proc/sync_surgeries()
-	if(linked_techweb)
-		for(var/i in linked_techweb.researched_designs)
+	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+	holder?.request_snapshot()
+	var/list/network_state = holder?.netdm_snapshot
+	var/list/designs = islist(network_state) ? network_state["researched_designs"] : null
+	if(islist(designs))
+		for(var/i in designs)
 			var/datum/design/surgery/D = SSresearch.techweb_design_by_id(i)
 			if(!istype(D))
 				continue
@@ -69,6 +73,8 @@
 	return GLOB.not_incapacitated_state
 
 /obj/machinery/computer/operating/ui_interact(mob/user, datum/tgui/ui)
+	var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+	holder?.request_snapshot()
 	ui = SStgui.try_update_ui(user, src, ui)
 	if(!ui)
 		ui = new(user, src, "OperatingComputer", name)

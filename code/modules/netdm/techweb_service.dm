@@ -230,6 +230,33 @@
 							web.add_point_type(TECHWEB_POINT_TYPE_DEFAULT, amount / 100, FALSE)
 					result["ok"] = TRUE
 					result["reason"] = "recorded"
+		if("bomb_report")
+			var/gain = request["point_gain"]
+			if(!isnum(gain) || gain <= 0 || gain > 1000000)
+				result["reason"] = "invalid_explosion"
+			else
+				var/previous = web.largest_values[LARGEST_BOMB] || 0
+				if(gain <= previous)
+					result["reason"] = "already_recorded"
+				else
+					var/credit = gain - previous
+					web.largest_values[LARGEST_BOMB] = gain
+					web.add_point_type(TECHWEB_POINT_TYPE_DEFAULT, credit, FALSE)
+					var/datum/bank_account/account = SSeconomy.get_dep_account(ACCOUNT_SCI)
+					if(account)
+						account.adjust_money(credit)
+					result["ok"] = TRUE
+					result["reason"] = "explosion_recorded"
+					result["amount"] = credit
+		if("adjust_points")
+			var/amount = request["amount"]
+			if(!isnum(amount) || amount < -100000 || amount > 100000)
+				result["reason"] = "invalid_amount"
+			else
+				web.modify_point_type(TECHWEB_POINT_TYPE_GENERIC, amount, FALSE)
+				result["ok"] = TRUE
+				result["reason"] = "balance_updated"
+				result["amount"] = amount
 		if("add_design")
 			var/design_id = request["design_id"]
 			if(SSresearch.techweb_design_by_id(design_id))
@@ -300,13 +327,23 @@
 	else if(op == "relic_discovery")
 		if(!istype(client, /obj/machinery/rnd/experimentor) || request["experimentor"] != client)
 			allowed = FALSE
+	else if(op == "bomb_report")
+		if(!istype(client, /obj/machinery/doppler_array/research))
+			allowed = FALSE
+	else if(op == "adjust_points")
+		if(istype(client, /obj/machinery/research_table))
+			var/obj/machinery/research_table/table = client
+			if(table.point_type != "science" || !table.configured)
+				allowed = FALSE
+		else if(!istype(client, /obj/item/computermath/science))
+			allowed = FALSE
 	else if(op != "snapshot" && op != "download_tech" && op != "station_award")
 		allowed = FALSE
 	var/list/result = allowed ? netdm_cluster.execute(request) : list("ok" = FALSE, "reason" = "forbidden")
 	var/list/research_snapshot = telemetry || result["reason"] == "cluster_busy" ? null : netdm_cluster.snapshot()
 	var/list/reply = list("kind" = telemetry ? "techweb_telemetry_reply" : "techweb_reply",
 		"rpc_id" = request["rpc_id"], "web" = stored_research,
-		"ok" = result["ok"], "reason" = result["reason"],
+		"ok" = result["ok"], "reason" = result["reason"], "amount" = result["amount"],
 		"snapshot" = research_snapshot)
 	var/estimated_bytes = 256
 	if(research_snapshot)

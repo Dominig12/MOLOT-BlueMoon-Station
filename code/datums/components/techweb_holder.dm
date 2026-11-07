@@ -99,6 +99,16 @@
 		return FALSE
 	return netdm_request("relic_discovery", list("experimentor" = experimentor, "relic" = relic))
 
+/datum/component/techweb_holder/proc/request_bomb_report(point_gain)
+	if(!isnum(point_gain) || point_gain <= 0)
+		return FALSE
+	return netdm_request("bomb_report", list("point_gain" = point_gain))
+
+/datum/component/techweb_holder/proc/request_adjust_points(amount)
+	if(!isnum(amount) || !amount)
+		return FALSE
+	return netdm_request("adjust_points", list("amount" = amount))
+
 /datum/component/techweb_holder/proc/request_add_design(design_id)
 	if(!istext(design_id) || !SSresearch.techweb_design_by_id(design_id))
 		return FALSE
@@ -211,6 +221,10 @@
 		if(istype(parent, /obj/machinery/nanite_program_hub))
 			var/obj/machinery/nanite_program_hub/hub = parent
 			hub.update_static_data()
+		if(istype(parent, /obj/machinery/computer/operating))
+			var/obj/machinery/computer/operating/operating = parent
+			operating.sync_surgeries()
+			operating.ui_update()
 	if(entry["op"] == "download_tech" && message["ok"])
 		var/obj/item/disk/tech_disk/disk = entry["disk"]
 		if(disk && !QDELETED(disk) && disk.loc == parent && disk.stored_research && islist(snapshot))
@@ -224,4 +238,7 @@
 					disk.stored_research.add_design_by_id(design_id)
 	if(entry["op"] != "snapshot" && istype(parent, /obj/machinery))
 		var/obj/machinery/device = parent
-		device.say(message["ok"] ? "Research server: [message["reason"]]." : "Research server rejected request: [message["reason"]].")
+		if(entry["op"] == "bomb_report" && message["ok"])
+			device.say("Explosion research accepted: [message["amount"]] points credited.")
+		else
+			device.say(message["ok"] ? "Research server: [message["reason"]]." : "Research server rejected request: [message["reason"]].")

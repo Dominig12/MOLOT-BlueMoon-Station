@@ -148,3 +148,12 @@ retry, so response loss cannot double-credit the same event.
 Telemetry is disabled without a ready network and a station APC route.
 An unattributed first-synthesis event uses the APC local to an active
 station R&D server rather than inventing a direct connection.
+
+
+The research doppler array reports explosion yields over RPC. The
+server, not the array, owns the best recorded explosion value and
+awards both science points and science department bounty only once.
+Other science point producers (including the research table) use
+techweb_holder.request_adjust_points() rather than modifying a
+techweb directly. The operating computer reads advanced surgery
+designs from a delivered research snapshot.

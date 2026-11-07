@@ -153,6 +153,7 @@
 		return
 	users[buckled_mob.name] += 1
 	var/points_awarded = 0
+	var/science_queued = FALSE
 	for(var/obj/item/organ/genital/genital in buckled_mob.internal_organs)
 		if(istype(genital, /obj/item/organ/genital/breasts))
 			var/obj/item/organ/genital/breasts/breasts = genital
@@ -163,7 +164,10 @@
 	points_awarded *= CONFIG_GET(number/sex_table_multiplier)
 	switch(point_type)
 		if(POINT_TYPE_SCIENCE)
-			linked_techweb?.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = points_awarded))
+			var/datum/component/techweb_holder/holder = GetComponent(/datum/component/techweb_holder)
+			science_queued = holder?.request_adjust_points(points_awarded)
+			if(!science_queued)
+				say("Research network unavailable; data not credited.")
 		else
 			if(slaver_mode) // Slaver version generates money for the slavers instead.
 				GLOB.slavers_credits_balance += points_awarded
@@ -171,10 +175,12 @@
 				var/datum/bank_account/D = SSeconomy.get_dep_account(ACCOUNT_CAR)
 				if(D)
 					D.adjust_money(points_awarded)
-	if(points_awarded)
+	if(science_queued)
+		say("Research data submitted; waiting for the server to confirm [points_awarded] points.")
+	else if(points_awarded && point_type != POINT_TYPE_SCIENCE)
 		var/add_s = points_awarded == 1 ? "" : "s"
 		say("Obtained [points_awarded] [point_type == POINT_TYPE_SCIENCE ? "point" : "credit"][add_s] from the session.")
-	else
+	else if(!points_awarded)
 		say("Obtained no [point_type == POINT_TYPE_SCIENCE ? "points" : "credits"] from the session.") // Probably has no genitals at all
 	playsound(src, 'sound/machines/chime.ogg', 30, 1)
 
