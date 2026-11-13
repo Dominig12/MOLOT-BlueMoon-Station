@@ -190,6 +190,8 @@
 			adjust_shadow_weight(-Obj.shadow_weight)
 
 /turf/proc/change_area(var/area/old_area, var/area/new_area, skip_blend = FALSE, skip_machinery = FALSE, skip_lighting = FALSE)
+	if(old_area != new_area)
+		SSnetdm_observe?.mark_geometry_dirty()
 	// Handing a turf between areas (admin area editing, shuttle creation) never fires area
 	// Entered/Exited for what is standing on it, so machinery would go on listening to the area it
 	// left. Re-point it here - this is the only moment the swap is observable.

@@ -63,6 +63,7 @@
 		if(istype(storedarea, /area) && islist(storedarea.contents) && get_area(T) != storedarea)
 			log_admin("Build Mode: [key_name(c)] added [AREACOORD(T)] to [storedarea]")
 			storedarea.contents.Add(T)
+			SSnetdm_observe?.mark_geometry_dirty()
 		highlight_stored_area(T)
 	else if(right_click)
 		var/turf/T = get_turf(object)

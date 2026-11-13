@@ -395,6 +395,7 @@ GLOBAL_LIST_EMPTY(teleportlocs)
  * who am I to argue with old coders
  */
 /area/Destroy()
+	SSnetdm_observe?.mark_geometry_dirty()
 	if(GLOB.areas_by_type[type] == src)
 		GLOB.areas_by_type[type] = null
 	GLOB.all_areas -= src

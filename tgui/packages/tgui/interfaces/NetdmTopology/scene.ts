@@ -1,0 +1,461 @@
+/**
+ * PixiJS adapter of the netDM topology screen.
+ *
+ * One screen owns one Application for its whole life. Updates change display objects by ID;
+ * nothing is rebuilt and the viewport survives. Rendering happens on demand (no ticker loop).
+ * The renderer never decides reachability: it draws what the Host reported.
+ */
+// Named imports let the bundler drop the parts of PixiJS this screen does not use.
+import { Application, Container, Graphics, GraphicsContext } from 'pixi.js';
+
+import {
+  diffById,
+  fitView,
+  FLAG_DEVICE,
+  FLAG_RADIO,
+  isOffline,
+  kindOf,
+  nearestNode,
+  sameLink,
+  sameNode,
+  screenToWorld,
+  TILE,
+  toWorld,
+  View,
+  ViewLink,
+  ViewNode,
+  Viewport,
+  zoomAt,
+} from './model';
+
+export type SceneCallbacks = {
+  onSelect: (id: string | null) => void;
+  onFailure: (reason: string) => void;
+};
+
+export type SceneFilters = {
+  radio: boolean;
+  devices: boolean;
+};
+
+export interface TopologyScene {
+  /** Renderer backend the client actually got: 'webgl', 'webgpu' or 'canvas'. */
+  readonly backend: string;
+  /** Applies a snapshot as deltas; a new `levelKey` refits the viewport once. */
+  update(view: View, levelKey: string): void;
+  setSelection(id: string | null): void;
+  setFilters(filters: SceneFilters): void;
+  fit(): void;
+  destroy(): void;
+}
+
+export class SceneCancelled extends Error {
+  constructor() {
+    super('scene_cancelled');
+  }
+}
+
+type Style = 'apc' | 'wired' | 'radio' | 'node' | 'apcOffline' | 'nodeOffline';
+
+const COLORS = {
+  background: 0x101217,
+  apc: 0x4a9eff,
+  wired: 0x57c785,
+  radio: 0xf0a040,
+  node: 0x8b93a3,
+  offline: 0x4b5263,
+  wire: 0x6f7c99,
+  silent: 0x6f7c99,
+  air: 0xf0a040,
+  selection: 0xffffff,
+};
+
+/** Offline nodes keep their shape (square APC, round device) in a muted color. */
+const styleOf = (flags: number): Style => {
+  const kind = kindOf(flags);
+  if (isOffline(flags)) {
+    return kind === 'apc' ? 'apcOffline' : 'nodeOffline';
+  }
+  if (kind !== 'device') {
+    return kind;
+  }
+  return flags & FLAG_RADIO ? 'radio' : 'wired';
+};
+
+/** Screen pixels a node keeps at any zoom, so a fitted station stays readable. */
+const NODE_PIXELS = 5;
+/** Pointer travel in pixels up to which a press is a click (select), not a drag (pan). */
+const CLICK_TRAVEL = 4;
+
+class PixiTopologyScene implements TopologyScene {
+  private readonly nodes = new Map<string, { data: ViewNode; graphic: Graphics }>();
+  private readonly links = new Map<string, { data: ViewLink; graphic: Graphics }>();
+  private view: Viewport = { x: 0, y: 0, scale: 1 };
+  private levelKey: string | null = null;
+  private fitted = false;
+  /**
+   * The viewport follows "fit" until the user pans or zooms. A resize then refits: the canvas
+   * can start before the window layout settles, and a fit at that size would stick otherwise.
+   * Data updates never refit.
+   */
+  private autoFit = true;
+  private selected: string | null = null;
+  private filters: SceneFilters = { radio: true, devices: true };
+  private frame = 0;
+  private destroyed = false;
+  private drag: { x: number; y: number; travel: number } | null = null;
+  private readonly observer: ResizeObserver | null;
+  private readonly listeners: [string, EventListener, AddEventListenerOptions?][] = [];
+
+  constructor(
+    private readonly app: Application,
+    private readonly host: HTMLElement,
+    private readonly callbacks: SceneCallbacks,
+    private readonly world: Container,
+    private readonly linkLayer: Container,
+    private readonly nodeLayer: Container,
+    private readonly selection: Graphics,
+    private readonly contexts: Record<Style, GraphicsContext>,
+  ) {
+    const canvas = app.canvas as HTMLCanvasElement;
+    canvas.style.display = 'block';
+    canvas.style.touchAction = 'none';
+    host.appendChild(canvas);
+    this.listen('wheel', this.onWheel as EventListener, { passive: false });
+    this.listen('pointerdown', this.onPointerDown as EventListener);
+    this.listen('pointermove', this.onPointerMove as EventListener);
+    this.listen('pointerup', this.onPointerUp as EventListener);
+    this.listen('pointercancel', this.onPointerCancel as EventListener);
+    this.listen('webglcontextlost', this.onContextLost as EventListener);
+    this.observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => this.resize());
+    this.observer?.observe(host);
+  }
+
+  get backend() {
+    return this.app.renderer.name;
+  }
+
+  private listen(type: string, handler: EventListener, options?: AddEventListenerOptions) {
+    (this.app.canvas as HTMLCanvasElement).addEventListener(type, handler, options);
+    this.listeners.push([type, handler, options]);
+  }
+
+  update(view: View, levelKey: string) {
+    if (this.destroyed) {
+      return;
+    }
+    if (levelKey !== this.levelKey) {
+      this.levelKey = levelKey;
+      this.fitted = false;
+      this.autoFit = true;
+    }
+    const previousNodes = new Map([...this.nodes].map(([id, entry]) => [id, entry.data]));
+    const nodeDelta = diffById(previousNodes, view.nodes, sameNode);
+    const moved = new Set<string>();
+    for (const id of nodeDelta.removed) {
+      this.nodes.get(id)?.graphic.destroy();
+      this.nodes.delete(id);
+      if (this.selected === id) {
+        this.selected = null;
+        this.callbacks.onSelect(null);
+      }
+    }
+    for (const node of nodeDelta.added) {
+      const graphic = new Graphics(this.contexts[styleOf(node.flags)]);
+      this.nodeLayer.addChild(graphic);
+      this.nodes.set(node.id, { data: node, graphic });
+      this.placeNode(node, graphic);
+    }
+    for (const node of nodeDelta.changed) {
+      const entry = this.nodes.get(node.id)!;
+      if (entry.data.x !== node.x || entry.data.y !== node.y) {
+        moved.add(node.id);
+      }
+      if (styleOf(entry.data.flags) !== styleOf(node.flags)) {
+        entry.graphic.context = this.contexts[styleOf(node.flags)];
+      }
+      entry.data = node;
+      this.placeNode(node, entry.graphic);
+    }
+
+    const previousLinks = new Map([...this.links].map(([id, entry]) => [id, entry.data]));
+    const linkDelta = diffById(previousLinks, view.links, sameLink);
+    for (const id of linkDelta.removed) {
+      this.links.get(id)?.graphic.destroy();
+      this.links.delete(id);
+    }
+    for (const link of linkDelta.added) {
+      const graphic = new Graphics();
+      this.linkLayer.addChild(graphic);
+      this.links.set(link.id, { data: link, graphic });
+      this.drawLink(link, graphic);
+    }
+    for (const link of linkDelta.changed) {
+      const entry = this.links.get(link.id)!;
+      entry.data = link;
+      this.drawLink(link, entry.graphic);
+    }
+    if (moved.size) {
+      for (const entry of this.links.values()) {
+        if (moved.has(entry.data.a) || moved.has(entry.data.b)) {
+          this.drawLink(entry.data, entry.graphic);
+        }
+      }
+    }
+    if (!this.fitted && this.nodes.size) {
+      this.fit();
+    }
+    this.placeSelection();
+    this.requestRender();
+  }
+
+  setSelection(id: string | null) {
+    this.selected = id;
+    this.placeSelection();
+    this.requestRender();
+  }
+
+  setFilters(filters: SceneFilters) {
+    this.filters = filters;
+    for (const entry of this.nodes.values()) {
+      entry.graphic.visible = this.nodeVisible(entry.data);
+    }
+    for (const entry of this.links.values()) {
+      entry.graphic.visible = this.linkVisible(entry.data);
+    }
+    this.placeSelection();
+    this.requestRender();
+  }
+
+  fit() {
+    // The ResizeObserver may not have reported the current layout yet: fit to the element itself.
+    this.syncSize();
+    const { width, height } = this.app.screen;
+    this.view = fitView([...this.nodes.values()].map(entry => entry.data), width, height, this.view);
+    // A fit into a not-yet-laid-out element does not count; the next resize fits again.
+    this.fitted = this.nodes.size > 0 && width > 1 && height > 1;
+    this.autoFit = true;
+    this.applyView();
+  }
+
+  destroy() {
+    if (this.destroyed) {
+      return;
+    }
+    this.destroyed = true;
+    if (this.frame) {
+      cancelAnimationFrame(this.frame);
+    }
+    this.observer?.disconnect();
+    const canvas = this.app.canvas as HTMLCanvasElement;
+    for (const [type, handler, options] of this.listeners) {
+      canvas.removeEventListener(type, handler, options);
+    }
+    // Graphics destroy their own contexts; the shared node contexts go once, after their users.
+    for (const entry of this.nodes.values()) {
+      entry.graphic.destroy();
+    }
+    for (const entry of this.links.values()) {
+      entry.graphic.destroy();
+    }
+    this.nodes.clear();
+    this.links.clear();
+    this.selection.destroy();
+    for (const context of Object.values(this.contexts)) {
+      context.destroy();
+    }
+    this.world.destroy({ children: true });
+    this.app.destroy(true);
+  }
+
+  private nodeVisible(node: ViewNode) {
+    return this.filters.devices || !(node.flags & FLAG_DEVICE);
+  }
+
+  private linkVisible(link: ViewLink) {
+    if (link.radio && !this.filters.radio) {
+      return false;
+    }
+    const a = this.nodes.get(link.a)?.data;
+    const b = this.nodes.get(link.b)?.data;
+    return !!a && !!b && this.nodeVisible(a) && this.nodeVisible(b);
+  }
+
+  private placeNode(node: ViewNode, graphic: Graphics) {
+    const point = toWorld(node);
+    graphic.position.set(point.x, point.y);
+    graphic.scale.set(this.nodeScale());
+    graphic.visible = this.nodeVisible(node);
+  }
+
+  private drawLink(link: ViewLink, graphic: Graphics) {
+    const a = this.nodes.get(link.a)?.data;
+    const b = this.nodes.get(link.b)?.data;
+    graphic.clear();
+    if (!a || !b) {
+      graphic.visible = false;
+      return;
+    }
+    const from = toWorld(a);
+    const to = toWorld(b);
+    graphic
+      .moveTo(from.x, from.y)
+      .lineTo(to.x, to.y)
+      .stroke(link.radio
+        ? { width: 1, color: COLORS.air, alpha: 0.55 }
+        : link.down
+          ? { width: 1, color: COLORS.silent, alpha: 0.3 }
+          : { width: 1.5, color: COLORS.wire, alpha: 0.9 });
+    graphic.visible = this.linkVisible(link);
+  }
+
+  private placeSelection() {
+    const entry = this.selected ? this.nodes.get(this.selected) : undefined;
+    if (!entry || !entry.graphic.visible) {
+      this.selection.visible = false;
+      return;
+    }
+    this.selection.visible = true;
+    this.selection.position.copyFrom(entry.graphic.position);
+    this.selection.scale.set(this.nodeScale());
+  }
+
+  /** Node graphics are drawn at 1 world unit per pixel; this keeps them NODE_PIXELS wide on screen. */
+  private nodeScale() {
+    return Math.max(TILE * 0.5, NODE_PIXELS / this.view.scale) / (TILE * 0.5);
+  }
+
+  private applyView() {
+    this.world.position.set(this.view.x, this.view.y);
+    this.world.scale.set(this.view.scale);
+    const scale = this.nodeScale();
+    for (const entry of this.nodes.values()) {
+      entry.graphic.scale.set(scale);
+    }
+    this.placeSelection();
+    this.requestRender();
+  }
+
+  /** Matches the renderer to the host element; returns whether the size changed. */
+  private syncSize() {
+    const width = Math.max(1, this.host.clientWidth);
+    const height = Math.max(1, this.host.clientHeight);
+    if (width === this.app.screen.width && height === this.app.screen.height) {
+      return false;
+    }
+    this.app.renderer.resize(width, height);
+    return true;
+  }
+
+  private resize() {
+    if (this.destroyed || !this.syncSize()) {
+      return;
+    }
+    if (this.nodes.size && (!this.fitted || this.autoFit)) {
+      this.fit();
+    }
+    this.requestRender();
+  }
+
+  private requestRender() {
+    if (this.destroyed || this.frame) {
+      return;
+    }
+    this.frame = requestAnimationFrame(() => {
+      this.frame = 0;
+      if (!this.destroyed) {
+        this.app.render();
+      }
+    });
+  }
+
+  private onWheel = (event: WheelEvent) => {
+    event.preventDefault();
+    this.autoFit = false;
+    this.view = zoomAt(this.view, Math.exp(-event.deltaY * 0.0015), event.offsetX, event.offsetY);
+    this.applyView();
+  };
+
+  private onPointerDown = (event: PointerEvent) => {
+    (event.target as Element).setPointerCapture?.(event.pointerId);
+    this.drag = { x: event.offsetX, y: event.offsetY, travel: 0 };
+  };
+
+  private onPointerMove = (event: PointerEvent) => {
+    if (!this.drag) {
+      return;
+    }
+    const dx = event.offsetX - this.drag.x;
+    const dy = event.offsetY - this.drag.y;
+    this.drag = { x: event.offsetX, y: event.offsetY, travel: this.drag.travel + Math.abs(dx) + Math.abs(dy) };
+    if (this.drag.travel > CLICK_TRAVEL) {
+      this.autoFit = false;
+    }
+    this.view = { ...this.view, x: this.view.x + dx, y: this.view.y + dy };
+    this.applyView();
+  };
+
+  private onPointerUp = (event: PointerEvent) => {
+    const drag = this.drag;
+    this.drag = null;
+    if (!drag || drag.travel > CLICK_TRAVEL) {
+      return;
+    }
+    const point = screenToWorld(this.view, event.offsetX, event.offsetY);
+    const radius = (NODE_PIXELS * 2) / this.view.scale;
+    const visible = [...this.nodes.values()].filter(entry => entry.graphic.visible).map(entry => entry.data);
+    this.callbacks.onSelect(nearestNode(visible, point.x, point.y, radius)?.id ?? null);
+  };
+
+  private onPointerCancel = () => {
+    this.drag = null;
+  };
+
+  private onContextLost = (event: Event) => {
+    event.preventDefault();
+    this.callbacks.onFailure('context_lost');
+  };
+}
+
+/**
+ * Creates the renderer inside `host`. `isCancelled` covers a screen that closes during the
+ * asynchronous init: the half-made Application is destroyed and SceneCancelled is thrown.
+ */
+export const createScene = async (
+  host: HTMLElement,
+  callbacks: SceneCallbacks,
+  isCancelled: () => boolean,
+): Promise<TopologyScene> => {
+  const app = new Application();
+  await app.init({
+    width: Math.max(1, host.clientWidth),
+    height: Math.max(1, host.clientHeight),
+    preference: ['webgl', 'canvas'],
+    background: COLORS.background,
+    antialias: true,
+    autoStart: false,
+    autoDensity: true,
+    resolution: Math.min(window.devicePixelRatio || 1, 2),
+  });
+  if (isCancelled()) {
+    app.destroy(true);
+    throw new SceneCancelled();
+  }
+  const half = TILE * 0.5;
+  const contexts: Record<Style, GraphicsContext> = {
+    apc: new GraphicsContext().rect(-half, -half, half * 2, half * 2).fill(COLORS.apc),
+    wired: new GraphicsContext().circle(0, 0, half * 0.8).fill(COLORS.wired),
+    radio: new GraphicsContext().circle(0, 0, half * 0.8).fill(COLORS.radio),
+    node: new GraphicsContext().circle(0, 0, half * 0.6).fill(COLORS.node),
+    apcOffline: new GraphicsContext().rect(-half, -half, half * 2, half * 2).fill(COLORS.offline),
+    nodeOffline: new GraphicsContext().circle(0, 0, half * 0.8).fill(COLORS.offline),
+  };
+  const world = new Container();
+  const linkLayer = new Container();
+  const nodeLayer = new Container();
+  const selection = new Graphics().circle(0, 0, half * 1.6).stroke({ width: 1.5, color: COLORS.selection });
+  selection.visible = false;
+  world.addChild(linkLayer, nodeLayer, selection);
+  app.stage.addChild(world);
+  return new PixiTopologyScene(app, host, callbacks, world, linkLayer, nodeLayer, selection, contexts);
+};

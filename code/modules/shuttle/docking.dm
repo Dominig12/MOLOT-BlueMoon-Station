@@ -87,11 +87,13 @@
 	GLOB.lighting_defer_active = TRUE
 	GLOB.lighting_deferred_starlight.Cut()
 
+	SSnetdm_observe?.begin_shuttle_mutation()
 	takeoff(old_turfs, new_turfs, moved_atoms, rotation, movement_direction, old_dock, underlying_old_area)
 
 	CHECK_TICK
 
 	cleanup_runway(new_dock, old_turfs, new_turfs, areas_to_move, moved_atoms, rotation, movement_direction, underlying_old_area)
+	SSnetdm_observe?.end_shuttle_mutation()
 
 	GLOB.lighting_defer_active = FALSE
 

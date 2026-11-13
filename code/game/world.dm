@@ -326,6 +326,7 @@ GLOBAL_LIST(topic_status_cache)
 	// Таймеры сброса после ребута не фиерят - буферы одиночных префов сбрасываем здесь.
 	flush_pending_single_prefs()
 	if (reason || fast_track) //special reboot, do none of the normal stuff
+		SSnetdm_observe?.Shutdown()
 		if (usr)
 			log_admin("[key_name(usr)] Has requested an immediate world restart via client side debugging tools")
 			message_admins("[key_name_admin(usr)] Has requested an immediate world restart via client side debugging tools")
@@ -386,6 +387,7 @@ GLOBAL_LIST(topic_status_cache)
 	..()
 
 /world/Del()
+	SSnetdm_observe?.Shutdown()
 	if(Master)
 		Master.state_snapshot_frozen = TRUE
 	mc_state_mark_clean("world.Del")

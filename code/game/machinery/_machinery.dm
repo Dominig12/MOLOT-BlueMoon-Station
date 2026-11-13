@@ -282,6 +282,7 @@ Class Procs:
 	. = machine_stat
 	machine_stat = new_value
 	on_stat_update(.)
+	SEND_SIGNAL(src, COMSIG_MACHINERY_SET_MACHINE_STAT, .)
 
 ///Called when the value of `stat` changes, so we can react to it.
 /obj/machinery/proc/on_stat_update(old_value)

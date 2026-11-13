@@ -96,7 +96,10 @@
 	LAZYINITLIST(SSmapping.unused_turfs["[reserved.z]"])
 	SSmapping.unused_turfs["[reserved.z]"] += reserved
 	reserved.flags_1 |= UNUSED_RESERVATION_TURF_1
+	var/area/previous_area = reserved.loc
 	GLOB.areas_by_type[world.area].contents += reserved
+	if(reserved.loc != previous_area)
+		SSnetdm_observe?.mark_geometry_dirty()
 	reserved.ChangeTurf(turf_type, turf_type, changeturf_flags)
 
 /// Освобождает клетки по частям между тиками и удаляет резервацию, когда отдаст последнюю.

@@ -370,17 +370,23 @@
 		updateUsrDialog()
 
 /obj/machinery/power/apc/proc/register_area_apc()
+	SSnetdm_observe?.mark_geometry_dirty()
 	if(!area)
 		return
 	var/area/root_area = area.base_area ? area.base_area : area
 	root_area.power_apc = src
 
 /obj/machinery/power/apc/proc/unregister_area_apc()
+	SSnetdm_observe?.mark_geometry_dirty()
 	if(!area)
 		return
 	var/area/root_area = area.base_area ? area.base_area : area
 	if(root_area.power_apc == src)
 		root_area.power_apc = null
+
+/obj/machinery/power/apc/Moved(atom/OldLoc, Dir)
+	. = ..()
+	SSnetdm_observe?.mark_geometry_dirty()
 
 /obj/machinery/power/apc/proc/make_terminal()
 	// create a terminal object at the same position as original turf loc
@@ -845,6 +851,8 @@
 		return
 	else if(panel_open && !opened && is_wire_tool(W))
 		wires.interact(user)
+	else if(!panel_open && W.tool_behaviour == TOOL_MULTITOOL && SSnetdm_observe.diagnostics?.inspect(src, user))
+		return // netDM: a multitool on a closed APC asks its network module (network.diagnostics).
 	else
 		return ..()
 
@@ -1721,6 +1729,7 @@
 			if(!wires.is_cut(WIRE_AI))
 				aidisabled = FALSE
 		if(APC_RESET_EMP)
+			set_machine_stat(machine_stat & ~EMPED)
 			equipment = APC_CHANNEL_AUTO_ON
 			environ = APC_CHANNEL_AUTO_ON
 			update_appearance()
@@ -1736,6 +1745,8 @@
 			occupier.emp_act(severity)
 	if(. & EMP_PROTECT_SELF)
 		return
+	// Only netDM reads EMPED on an APC: the network module stays down until the EMP reset.
+	set_machine_stat(machine_stat | EMPED)
 	lighting = APC_CHANNEL_OFF
 	equipment = APC_CHANNEL_OFF
 	environ = APC_CHANNEL_OFF
@@ -1817,6 +1828,20 @@
 	apc_unpark() // the failure countdown runs in process()
 	update()
 	queue_icon_update()
+
+/**
+ * NETDM_STATE_* flags of the APC network module. The module runs on the APC's own supply, so
+ * closed equipment channels and parking do not stop it. The main breaker, cut power wires, a power
+ * failure and an empty supply cut its power; a broken, unboarded or EMP-hit APC does not work.
+ */
+/obj/machinery/power/apc/proc/netdm_state()
+	. = 0
+	if(!(machine_stat & (BROKEN|MAINT|EMPED)))
+		. |= NETDM_STATE_OPERATIONAL
+	if(!operating || shorted || failure_timer)
+		return
+	if(!area?.requires_power || main_status != APC_NO_POWER || cell?.charge > 0)
+		. |= NETDM_STATE_POWERED
 
 /obj/machinery/power/apc/proc/set_nightshift(on, level = 1, manual_override = FALSE)
 	var/quantized_level = on ? clamp(round(level, 0.05), 0, 1) : 0

@@ -523,6 +523,8 @@
 #define COMSIG_MACHINERY_POWER_RESTORED "machinery_power_restored"
 ///from /obj/machinery/obj_break(damage_flag): (damage_flag)
 #define COMSIG_MACHINERY_BROKEN "machinery_broken"
+///from /obj/machinery/proc/set_machine_stat(new_value): (old_value)
+#define COMSIG_MACHINERY_SET_MACHINE_STAT "machinery_set_machine_stat"
 ///from /obj/machinery/door/airlock/proc/unbolt(): ()
 #define COMSIG_AIRLOCK_UNBOLTED "airlock_unbolted"
 

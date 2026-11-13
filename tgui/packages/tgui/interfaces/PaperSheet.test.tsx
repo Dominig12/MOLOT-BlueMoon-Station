@@ -59,8 +59,9 @@ describe('PaperSheet PrimaryView', () => {
   let canvasContextSpy: jest.SpyInstance;
 
   beforeEach(() => {
-    canvasContextSpy = jest
-      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+    // @webgpu/types (via pixi.js) adds a 'webgpu' overload to getContext; the 2d context is meant here.
+    canvasContextSpy = (jest
+      .spyOn(HTMLCanvasElement.prototype, 'getContext') as jest.SpyInstance)
       .mockReturnValue({
         font: '',
         measureText: (text: string) => ({ width: text.length * 8 }),
