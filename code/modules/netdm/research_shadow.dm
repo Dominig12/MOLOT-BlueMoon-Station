@@ -86,7 +86,7 @@
 	var/list/counters = list("events" = 0, "confirmed" = 0, "rejected" = 0, "coalesced" = 0, "dropped" = 0,
 		"unmirrored" = 0, "purchases" = 0, "matched" = 0, "mismatched" = 0, "unanswered" = 0, "refused" = 0,
 		"legacy_refused" = 0, "aligned" = 0, "compares" = 0, "drifts" = 0, "knowledge_drifts" = 0, "treasuries" = 0,
-		"projected" = 0)
+		"projected" = 0, "server_queries" = 0, "server_by_query" = 0)
 	var/list/mismatch_reasons = list()
 	var/list/notes = list()
 	/// TRUE after the migration (P5 canary): the Host ledger decides research, the legacy web is its projection.
@@ -124,6 +124,8 @@
 	var/list/storage_domains = list()
 	/// "dest<-source" -> list("watermark", "next", "busy"): the knowledge sync between two peers.
 	var/list/sync_pairs = list()
+	/// Console weakref -> TRUE while its query for reachable research servers is in flight.
+	var/list/server_queries = list()
 	/// Disk operation key -> list("console", "disk", "action").
 	var/list/disk_ops = list()
 	/// storage -> last record of its knowledge log that its legacy web already holds (§13.6, §13.8).
@@ -178,6 +180,7 @@
 	// A page in flight is asked again; what the webs already hold stays (the log keeps its numbers).
 	knowledge_inflight = FALSE
 	next_knowledge = 0
+	server_queries.Cut()
 	// Bindings are confirmed again by a status round trip in the new session.
 	for(var/console_ref in bindings)
 		var/list/binding = bindings[console_ref]
@@ -743,8 +746,63 @@
 
 // ---- Console bindings -------------------------------------------------------------------------
 
-/// The console works with the nearest server of its web until a multitool binds another one.
+/**
+ * The console works with the nearest server of its web until a multitool binds another one. "Nearest" is
+ * what the network says (design 13.3, 14.5): the console asks the APC of its zone which research servers
+ * it reaches, and takes the one of its own web with the fewest hops. A server the network does not reach
+ * is not offered, however close it stands. Without an APC to ask, or without an answer, the console falls
+ * back to the distance on the map; the binding is confirmed by a status round trip either way.
+ * Returns a truthy value while a server is chosen or being looked for.
+ */
 /datum/netdm_research_shadow/proc/bind_nearest(obj/machinery/computer/rdconsole/console)
+	var/datum/weakref/console_ref = WEAKREF(console)
+	if(server_queries[console_ref])
+		return TRUE
+	var/datum/component/netdm_node/node = console.GetComponent(/datum/component/netdm_node)
+	var/area/zone = netdm_power_area(get_area(console))
+	var/obj/machinery/power/apc/apc = zone?.power_apc
+	if(node && apc && SSnetdm_observe.diagnostics?.query_services(node, apc, "research.server",
+		CALLBACK(src, PROC_REF(servers_found), console_ref), 16))
+		server_queries[console_ref] = TRUE
+		counters["server_queries"]++
+		return TRUE
+	return bind_by_distance(console)
+
+/// The network's answer: the reachable research servers. The choice applies only while the console still
+/// needs one; a binding made meanwhile (a multitool, a test) stays.
+/datum/netdm_research_shadow/proc/servers_found(datum/weakref/console_ref, list/page)
+	server_queries -= console_ref
+	var/obj/machinery/computer/rdconsole/console = console_ref.resolve()
+	if(QDELETED(console))
+		return
+	var/list/binding = bindings[console_ref]
+	if(binding && storages[binding["storage"]])
+		return
+	var/best
+	var/best_hops = INFINITY
+	for(var/list/row in page?["items"])
+		var/instance = row["instance"]
+		if(copytext(instance, 1, 10) != "research.")
+			continue
+		var/storage = copytext(instance, 10)
+		var/datum/weakref/server_ref = storages[storage]
+		var/obj/machinery/rnd/server/server = server_ref?.resolve()
+		if(!server || server.stored_research != console.stored_research)
+			continue
+		if(row["hops"] < best_hops)
+			best_hops = row["hops"]
+			best = storage
+	if(best)
+		counters["server_by_query"]++
+		bind_server(console, best)
+		return
+	// Nothing reachable, or the network did not answer: the map distance picks a candidate, and only a
+	// status answer over the network makes it usable.
+	if(!bind_by_distance(console) && binding)
+		binding["state"] = "no_server"
+		binding["bound"] = FALSE
+
+/datum/netdm_research_shadow/proc/bind_by_distance(obj/machinery/computer/rdconsole/console)
 	var/best
 	var/best_distance = INFINITY
 	for(var/datum/weakref/server_ref as anything in servers)

@@ -4,6 +4,8 @@
 #define NETDM_DIAGNOSTICS_PENDING 32
 /// APCs watched at once; the Host publishes for at most 64 watched devices.
 #define NETDM_DIAGNOSTICS_WATCHED 64
+/// Directories watched at once; the Host serves 16.
+#define NETDM_DIAGNOSTICS_DIRECTORIES 16
 
 /**
  * network.diagnostics (design 7.6, 14.1): an engineer's multitool asks an APC's network module about itself.
@@ -21,7 +23,7 @@
 	/// Operation ID -> idempotency key, for the answers.
 	var/list/operations = list()
 	var/serial = 0
-	var/list/counters = list("asked" = 0, "answered" = 0, "no_answer" = 0, "refused" = 0, "events" = 0, "queries" = 0, "pages" = 0)
+	var/list/counters = list("asked" = 0, "answered" = 0, "no_answer" = 0, "refused" = 0, "events" = 0, "queries" = 0, "pages" = 0, "directory_events" = 0)
 	/// Watched instance -> its last published link state: list("state", "wired", "wired_up", "radio", "devices", "neighbors", "at").
 	/// It is what reached a watcher over the network, so it may be old; "at" is the world time it arrived.
 	var/list/link_states = list()
@@ -29,6 +31,9 @@
 	var/list/queries = list()
 	/// Operation ID -> query key.
 	var/list/query_operations = list()
+	/// Watched query instance -> list("services", "digest", "partial", "at"): the last published state of the
+	/// directory that APC reaches. A changed digest means a query would answer differently now.
+	var/list/directory_states = list()
 	/// The last report: list("apc" = weakref, "state", "wired", "wired_up", "radio", "devices", "neighbors" = list(node ID -> state), "lines").
 	var/list/last_report
 
@@ -36,6 +41,7 @@
 	lane.dispatcher.allow_result("link_state", new /datum/netdm_effect_handler/network_link_state, "network.diagnostics")
 	lane.dispatcher.allow("network.link_state", new /datum/netdm_effect_handler/network_link_event)
 	lane.dispatcher.allow_result("services", new /datum/netdm_effect_handler/network_query_page, "network.query")
+	lane.dispatcher.allow("query.directory", new /datum/netdm_effect_handler/network_directory_event)
 
 /// A new Host session: the APC endpoints attach again and waiting requests are sent again.
 /datum/netdm_diagnostics/proc/reset_session()
@@ -132,7 +138,7 @@
 	if(!endpoint)
 		return FALSE
 	var/instance = "netquery.[endpoint.id]"
-	lane.offer(apc, instance, "network.query", "query.page", 1)
+	lane.offer(apc, instance, "network.query", "query.directory", 1)
 	var/list/arguments = list("limit" = clamp(round(limit), 1, 16))
 	if(service_type)
 		arguments["type"] = service_type
@@ -141,6 +147,39 @@
 	counters["queries"]++
 	queries["nq-[++serial]"] = list("asker" = WEAKREF(asker), "apc" = WEAKREF(apc), "instance" = instance, "arguments" = arguments,
 		"callback" = on_page, "deadline" = world.time + NETDM_DIAGNOSTICS_TIMEOUT, "sent" = FALSE)
+	return TRUE
+
+/**
+ * WatchQuery: a network node subscribes to the directory an APC reaches. A publication says only that the
+ * set of reachable services changed (their count and a digest); the watcher then asks query_services again.
+ * Returns the watched instance, or null. The Host serves 16 watched directories at once.
+ */
+/datum/netdm_diagnostics/proc/watch_services(datum/watcher, obj/machinery/power/apc/apc)
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	if(!lane || !SSnetdm_observe.apc_node_id(apc))
+		return null
+	var/datum/netdm_service_endpoint/endpoint = lane.endpoint_for(apc)
+	if(!endpoint)
+		return null
+	var/instance = "netquery.[endpoint.id]"
+	if(isnull(directory_states[instance]) && length(directory_states) >= NETDM_DIAGNOSTICS_DIRECTORIES)
+		return null
+	lane.offer(apc, instance, "network.query", "query.directory", 1)
+	if(!lane.want(watcher, "directory.[endpoint.id]", instance, "query.directory", 1, "full"))
+		return null
+	if(isnull(directory_states[instance]))
+		directory_states[instance] = list()
+	return instance
+
+/// A publication of a watched directory reached a watcher.
+/datum/netdm_diagnostics/proc/directory_event(list/item)
+	var/instance = item["instance"]
+	var/list/payload = item["payload"]
+	if(isnull(directory_states[instance]) || !islist(payload))
+		return "not_watched"
+	directory_states[instance] = list("services" = netdm_number(payload["services"]), "digest" = payload["digest"],
+		"partial" = !!payload["partial"], "at" = world.time)
+	counters["directory_events"]++
 	return TRUE
 
 /datum/netdm_diagnostics/proc/pump_queries(datum/netdm_service_lane/lane)
@@ -272,12 +311,15 @@
 /datum/netdm_diagnostics/proc/state()
 	return "diagnostics asked=[counters["asked"]] answered=[counters["answered"]] no_answer=[counters["no_answer"]] \
 		refused=[counters["refused"]] pending=[length(pending)] watched=[length(link_states)] events=[counters["events"]] \
-		queries=[counters["queries"]] pages=[counters["pages"]]"
+		queries=[counters["queries"]] pages=[counters["pages"]] directories=[length(directory_states)]/[counters["directory_events"]]"
 
 /datum/netdm_effect_handler/network_link_state/apply(datum/target, list/item)
 	if(!istype(target, /obj/machinery/power/apc) || !SSnetdm_observe.diagnostics)
 		return "not_an_apc"
 	return SSnetdm_observe.diagnostics.answered(target, item)
+
+/datum/netdm_effect_handler/network_directory_event/apply(datum/target, list/item)
+	return SSnetdm_observe.diagnostics ? SSnetdm_observe.diagnostics.directory_event(item) : "no_diagnostics"
 
 /datum/netdm_effect_handler/network_query_page/apply(datum/target, list/item)
 	return SSnetdm_observe.diagnostics ? SSnetdm_observe.diagnostics.query_answered(item) : "no_diagnostics"
@@ -286,5 +328,6 @@
 	return SSnetdm_observe.diagnostics ? SSnetdm_observe.diagnostics.link_event(item) : "no_diagnostics"
 
 #undef NETDM_DIAGNOSTICS_WATCHED
+#undef NETDM_DIAGNOSTICS_DIRECTORIES
 #undef NETDM_DIAGNOSTICS_TIMEOUT
 #undef NETDM_DIAGNOSTICS_PENDING

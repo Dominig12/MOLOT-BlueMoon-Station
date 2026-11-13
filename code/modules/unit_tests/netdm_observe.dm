@@ -492,6 +492,40 @@
 	TEST_ASSERT(wait_for_links(left.z, near_id, 2, TRUE), "The cable returns with the far APC.")
 	listed = query(watcher_node, near, "machine.control")
 	TEST_ASSERT(length(listed?["items"]) >= 2, "The repaired network lists the pumps again: [json_encode(listed)]")
+
+	// WatchQuery: the machine watches the directory its APC reaches. It hears that the set changed,
+	// without names, when a service appears and when the network stops reaching some.
+	var/watched = diagnostics.watch_services(watcher_node, near)
+	TEST_ASSERT(watched, "The machine must be able to watch the directory: [diagnostics.state()]")
+	var/list/directory
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline)
+		directory = diagnostics.directory_states[watched]
+		if(directory?["services"] >= 2)
+			break
+		sleep(5)
+	TEST_ASSERT(directory?["services"] >= 2 && length(directory["digest"]) == 16, "A watched directory publishes its state: [json_encode(directory)] [diagnostics.state()] [lane.state()]")
+	var/known_services = directory["services"]
+	var/known_digest = directory["digest"]
+	lane.offer(pump_node, "qtest.[pump_endpoint.id].c", "machine.control", "machine.power_state", 1)
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline)
+		directory = diagnostics.directory_states[watched]
+		if(directory["services"] == known_services + 1)
+			break
+		sleep(5)
+	TEST_ASSERT(directory["services"] == known_services + 1 && directory["digest"] != known_digest,
+		"A new service moves the watched digest: [json_encode(directory)] was [known_services]/[known_digest]")
+	far.operating = FALSE
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline)
+		directory = diagnostics.directory_states[watched]
+		if(directory["services"] <= known_services - 2)
+			break
+		sleep(5)
+	TEST_ASSERT(directory["services"] <= known_services - 2, "Services behind a dead APC leave the watched set: [json_encode(directory)] was [known_services]")
+	far.operating = TRUE
+	TEST_ASSERT(wait_for_links(left.z, near_id, 2, TRUE), "The cable returns with the far APC again.")
 	log_world("netDM network diagnostics: [diagnostics.state()]")
 
 /// Power, breakage, maintenance and EMP switch the links of a node off and back on.
@@ -1108,6 +1142,21 @@
 		sleep(5)
 	TEST_ASSERT(!length(shadow.knowledge_due) && shadow.knowledge_upto[outpost_storage] > 0,
 		"Every knowledge log must be read to its end: [json_encode(shadow.knowledge_due)] [json_encode(shadow.knowledge_upto)]")
+
+	// The console chooses its server by asking the network (design 13.3, 14.5): the APC of its zone lists
+	// the research servers it reaches, and the console takes one of its own web. The outpost server
+	// is reachable too, but serves another web and is never chosen.
+	var/chosen_by_query = shadow.counters["server_by_query"]
+	shadow.bindings -= WEAKREF(console)
+	TEST_ASSERT(shadow.bind_nearest(console), "The console must look for a server.")
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && !shadow.bindings[WEAKREF(console)])
+		sleep(2)
+	binding = shadow.bindings[WEAKREF(console)]
+	TEST_ASSERT(binding && (binding["storage"] == treasury || binding["storage"] == second_storage),
+		"The console must choose a server of its own web: [json_encode(binding)] [shadow.state()] [SSnetdm_observe.diagnostics.state()]")
+	TEST_ASSERT_EQUAL(shadow.counters["server_by_query"], chosen_by_query + 1, "The choice came from the network's answer, not from the map distance.")
+	TEST_ASSERT(wait_bound(shadow, console), "The chosen server must confirm the binding over the network.")
 	TEST_ASSERT_EQUAL(shadow.counters["rejected"] + shadow.counters["dropped"], 0, "Every ledger event must be accepted: [json_encode(shadow.notes)]")
 	log_world("netDM research P6: [shadow.state()] rows=[json_encode(after)]")
 
