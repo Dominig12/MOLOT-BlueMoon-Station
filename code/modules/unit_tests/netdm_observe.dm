@@ -362,6 +362,17 @@
 		sleep(2)
 	return page
 
+/datum/unit_test/netdm_observe/area_map/network_diagnostics/proc/query_instance(datum/asker, obj/machinery/power/apc/apc, instance, read_state = FALSE)
+	page = null
+	var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe.diagnostics
+	var/datum/callback/on_answer = CALLBACK(src, PROC_REF(take_page))
+	if(!(read_state ? diagnostics.query_state(asker, apc, instance, on_answer) : diagnostics.query_schema(asker, apc, instance, on_answer)))
+		return null
+	var/deadline = world.time + 15 SECONDS
+	while(world.time < deadline && !page)
+		sleep(2)
+	return page
+
 /datum/unit_test/netdm_observe/area_map/network_diagnostics/Run()
 	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
 		return
@@ -465,6 +476,16 @@
 	while(world.time < deadline && !(lane.ready(pump_node, pumps[1]) && lane.ready(pump_node, pumps[2])))
 		sleep(5)
 	TEST_ASSERT(lane.ready(pump_node, pumps[2]), "The pumps must be registered: [lane.state()]")
+	var/list/schema = query_instance(watcher_node, near, pumps[1])
+	TEST_ASSERT(schema?["status"] == "complete" && schema["schema"] == "machine.power_state" && schema["major"] == 1 && schema["commands"] == "set_power",
+		"The query returns the pump's registered contract: [json_encode(schema)]")
+	var/list/publication = query_instance(watcher_node, near, pumps[1], TRUE)
+	TEST_ASSERT(publication?["status"] == "complete" && publication["publication"] == "idle" && publication["sequence"] == "0",
+		"A reachable pump has not published yet: [json_encode(publication)]")
+	TEST_ASSERT(lane.publish(pump_node, pumps[1], list("on" = TRUE, "changed" = TRUE)), "The pump can publish a value.")
+	publication = query_instance(watcher_node, near, pumps[1], TRUE)
+	TEST_ASSERT(publication?["publication"] == "published" && publication["sequence"] == "1" && isnull(publication["on"]),
+		"The publication sequence is visible without exposing the value: [json_encode(publication)]")
 	var/list/listed = query(watcher_node, near, "machine.control")
 	var/list/names = list()
 	for(var/list/row in listed?["items"])
@@ -488,10 +509,16 @@
 		names += row["instance"]
 	TEST_ASSERT(listed && !(pumps[1] in names) && !(pumps[2] in names),
 		"Services behind a dead APC are absent from the answer: [json_encode(listed)]")
+	schema = query_instance(watcher_node, near, pumps[1])
+	TEST_ASSERT_EQUAL(schema?["status"], "empty", "A cut-off service no longer exposes its contract.")
+	publication = query_instance(watcher_node, near, pumps[1], TRUE)
+	TEST_ASSERT_EQUAL(publication?["status"], "empty", "A cut-off service no longer exposes its publication state.")
 	far.operating = TRUE
 	TEST_ASSERT(wait_for_links(left.z, near_id, 2, TRUE), "The cable returns with the far APC.")
 	listed = query(watcher_node, near, "machine.control")
 	TEST_ASSERT(length(listed?["items"]) >= 2, "The repaired network lists the pumps again: [json_encode(listed)]")
+	publication = query_instance(watcher_node, near, pumps[1], TRUE)
+	TEST_ASSERT_EQUAL(publication?["sequence"], "1", "Reconnecting the APC exposes the same service publication again.")
 
 	// WatchQuery: the machine watches the directory its APC reaches. It hears that the set changed,
 	// without names, when a service appears and when the network stops reaching some.
@@ -1146,6 +1173,29 @@
 	// The console chooses its server by asking the network (design 13.3, 14.5): the APC of its zone lists
 	// the research servers it reaches, and the console takes one of its own web. The outpost server
 	// is reachable too, but serves another web and is never chosen.
+	var/list/fillers = list()
+	for(var/index in 1 to 3)
+		var/obj/machinery/netdm_test_machine/device = allocate(/obj/machinery/netdm_test_machine, get_turf(console))
+		var/datum/component/netdm_node/device_node = netdm_make_node(device, NETDM_MOUNT_FIXED, 3)
+		for(var/slot in 1 to 8)
+			var/instance = "research.0-p10.[index].[slot]"
+			lane.offer(device_node, instance, "research.server", "research.status", 1)
+			fillers[instance] = device_node
+	deadline = world.time + 30 SECONDS
+	var/ready_fillers = 0
+	while(world.time < deadline)
+		ready_fillers = 0
+		for(var/instance in fillers)
+			ready_fillers += !!lane.ready(fillers[instance], instance)
+		if(ready_fillers == length(fillers))
+			break
+		sleep(2)
+	TEST_ASSERT_EQUAL(ready_fillers, length(fillers), "The first page must be filled with services that have no eligible R&D storage.")
+	var/list/selection = list("best_hops" = INFINITY)
+	shadow.consider_server_page(selection, list("items" = list(list("instance" = "research.[treasury]", "hops" = 4))), web)
+	shadow.consider_server_page(selection, list("items" = list(list("instance" = "research.[second_storage]", "hops" = 2))), web)
+	TEST_ASSERT_EQUAL(selection["best"], second_storage, "A nearer server on a later page replaces the current candidate.")
+	var/pages_before = SSnetdm_observe.diagnostics.counters["pages"]
 	var/chosen_by_query = shadow.counters["server_by_query"]
 	shadow.bindings -= WEAKREF(console)
 	TEST_ASSERT(shadow.bind_nearest(console), "The console must look for a server.")
@@ -1156,6 +1206,7 @@
 	TEST_ASSERT(binding && (binding["storage"] == treasury || binding["storage"] == second_storage),
 		"The console must choose a server of its own web: [json_encode(binding)] [shadow.state()] [SSnetdm_observe.diagnostics.state()]")
 	TEST_ASSERT_EQUAL(shadow.counters["server_by_query"], chosen_by_query + 1, "The choice came from the network's answer, not from the map distance.")
+	TEST_ASSERT(SSnetdm_observe.diagnostics.counters["pages"] >= pages_before + 2, "R&D must read past the first page.")
 	TEST_ASSERT(wait_bound(shadow, console), "The chosen server must confirm the binding over the network.")
 	TEST_ASSERT_EQUAL(shadow.counters["rejected"] + shadow.counters["dropped"], 0, "Every ledger event must be accepted: [json_encode(shadow.notes)]")
 	log_world("netDM research P6: [shadow.state()] rows=[json_encode(after)]")
@@ -2839,3 +2890,207 @@
 	TEST_ASSERT_EQUAL(delta["compared"], 2 * total, "Every door of every press is compared: [json_encode(report)]")
 	TEST_ASSERT(delta["reached"] > 0, "The network reaches the station's doors: [json_encode(report)]")
 	TEST_ASSERT_EQUAL(unexplained, 0, "Every miss needs a Host reason: [json_encode(reason_deltas)]")
+
+/// The terminal of an APC's network module (network.shell): lines typed at the APC run as pipelines on its
+/// module, the records come back over the network, and invoke sends ordinary commands as the APC.
+/datum/unit_test/netdm_observe/area_map/network_terminal
+
+/// Sends a line and waits for its entry to be answered.
+/datum/unit_test/netdm_observe/area_map/network_terminal/proc/type_line(datum/netdm_terminal/terminal, line, script = FALSE)
+	if(!terminal.submit(line, script))
+		return null
+	var/list/entry = terminal.entries[length(terminal.entries)]
+	var/deadline = world.time + 30 SECONDS
+	while(world.time < deadline && entry["pending"])
+		sleep(2)
+	return entry
+
+/// The value of a field in a record of an answered entry.
+/datum/unit_test/netdm_observe/area_map/network_terminal/proc/field(list/record, name)
+	for(var/list/pair in record)
+		if(pair["name"] == name)
+			return pair["value"]
+	return null
+
+/datum/unit_test/netdm_observe/area_map/network_terminal/Run()
+	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+		return
+	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
+	TEST_ASSERT(length(http_base), "NETDM_TEST_HTTP must point to the test Host.")
+	TEST_ASSERT(wait_until_live(), "Observe must publish the initial map ([SSnetdm_observe.observe_state()]).")
+	var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe.diagnostics
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	var/turf/left = run_loc_floor_bottom_left
+	var/turf/right = get_step(left, EAST)
+	TEST_ASSERT_NOTNULL(right, "Expected two adjacent test cells.")
+	assign_area(left, test_zone(/area/netdm_test/first))
+	assign_area(right, test_zone(/area/netdm_test/second))
+	var/obj/machinery/power/apc/near = allocate(/obj/machinery/power/apc, left)
+	var/obj/machinery/power/apc/far = allocate(/obj/machinery/power/apc, right)
+	var/list/near_fact = wait_for_fact(WEAKREF(near), left)
+	var/list/far_fact = wait_for_fact(WEAKREF(far), right)
+	TEST_ASSERT(near_fact && far_fact, "Expected both APCs to be published.")
+	var/near_id = near_fact["a"]
+	var/far_id = far_fact["a"]
+	TEST_ASSERT(wait_for_links(left.z, near_id, 1, TRUE), "The two zones must be wired together.")
+
+	// Opening the terminal shows what the multitool used to print: the module and its ports.
+	var/datum/netdm_terminal/terminal = allocate(/datum/netdm_terminal, near)
+	TEST_ASSERT_EQUAL(length(terminal.entries), 2, "A new terminal asks for the module and its ports.")
+	var/deadline = world.time + 30 SECONDS
+	while(world.time < deadline && (terminal.entries[1]["pending"] || terminal.entries[2]["pending"]))
+		sleep(2)
+	var/list/own = terminal.entries[1]
+	var/list/ports = terminal.entries[2]
+	TEST_ASSERT(own["status"] == "ok" && length(own["records"]) == 1 && field(own["records"][1], "state") == "active" && field(own["records"][1], "wired") == "1",
+		"The module describes itself: [json_encode(own)] [diagnostics.state()] [lane.state()]")
+	TEST_ASSERT(ports["status"] == "ok" && length(ports["records"]) == 1 && field(ports["records"][1], "node") == far_id && field(ports["records"][1], "state") == "up",
+		"The module lists its port to the neighbour: [json_encode(ports)]")
+
+	var/list/counted = type_line(terminal, "links | where state -eq up | count")
+	TEST_ASSERT(counted?["status"] == "ok" && field(counted["records"][1], "count") == "1" && counted["fuel"] > 0, "A pipeline runs on the module: [json_encode(counted)]")
+	var/list/wrong = type_line(terminal, "links | explode")
+	TEST_ASSERT(wrong?["status"] == "unknown_command" && wrong["position"] == 8 && !length(wrong["records"]),
+		"A wrong line is answered with its place: [json_encode(wrong)]")
+	TEST_ASSERT(!terminal.submit("") && !terminal.submit(jointext(new /list(1100), "a")), "An empty or oversized line is not sent.")
+
+	// A device with a service behind the far APC: the terminal finds it and sends it a command.
+	var/obj/machinery/netdm_test_machine/pump = allocate(/obj/machinery/netdm_test_machine, right)
+	var/datum/component/netdm_node/pump_node = netdm_make_node(pump, NETDM_MOUNT_FIXED, 3)
+	TEST_ASSERT(wait_for_node(pump_node, right, TRUE), "The pump must reach the Host.")
+	var/datum/netdm_service_endpoint/pump_endpoint = lane.endpoint_for(pump_node)
+	var/pump_instance = "tterm.[pump_endpoint.id]"
+	lane.offer(pump_node, pump_instance, "machine.control", "machine.power_state", 1)
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && !lane.ready(pump_node, pump_instance))
+		sleep(5)
+	TEST_ASSERT(lane.ready(pump_node, pump_instance), "The pump service must be registered: [lane.state()]")
+	var/list/found = type_line(terminal, "services -type machine.control | where instance -eq [pump_instance] | select instance hops")
+	TEST_ASSERT(found?["status"] == "ok" && length(found["records"]) == 1 && field(found["records"][1], "hops") == "2",
+		"The terminal finds the service two hops away: [json_encode(found)]")
+	var/list/sent = type_line(terminal, "services -type machine.control | where instance -eq [pump_instance] | invoke set_power on=true")
+	TEST_ASSERT(sent?["status"] == "ok" && length(sent["records"]) == 1 && field(sent["records"][1], "status") == "sent" && length(field(sent["records"][1], "operation")),
+		"The terminal sends a command to what it found: [json_encode(sent)]")
+	var/list/refused = type_line(terminal, "invoke [pump_instance] set_power on=maybe")
+	TEST_ASSERT(refused?["status"] == "ok" && field(refused["records"][1], "status") != "sent", "A command outside its schema is not sent: [json_encode(refused)]")
+	var/list/scripted = type_line(terminal, "if links | where state -eq up\n  services -type machine.control | where instance -eq [pump_instance] | invoke set_power on=true\nend", TRUE)
+	TEST_ASSERT(scripted?["status"] == "ok" && length(scripted["records"]) == 1 && field(scripted["records"][1], "status") == "sent",
+		"A script sends a command when the port is up: [json_encode(scripted)]")
+
+	// Carry a standard data disk to another terminal. Reading it only copies text into the editor.
+	var/mob/living/carbon/human/test_user = allocate(/mob/living/carbon/human, left)
+	var/obj/item/computer_hardware/hard_drive/portable/disk = allocate(/obj/item/computer_hardware/hard_drive/portable, left)
+	var/obj/item/multitool/tool = allocate(/obj/item/multitool, left)
+	TEST_ASSERT(test_user.put_in_active_hand(tool) && test_user.put_in_hands(disk), "The operator can hold a multitool and data disk.")
+	var/disk_id = REF(disk)
+	var/script_source = "if self | where state -eq active\n  self | select node\nend"
+	terminal.script_disk_action(test_user, "save_disk", disk_id, "", script_source)
+	var/datum/computer_file/data/netdm_script/file = terminal.script_file(disk)
+	TEST_ASSERT(file && file.stored_data == script_source && disk.used_capacity == file.size, "The script is stored as a file on the disk.")
+	var/file_id = REF(file)
+	disk.max_capacity = file.size
+	terminal.script_disk_action(test_user, "save_disk", disk_id, file_id, jointext(new /list(400), "self"))
+	TEST_ASSERT(file.stored_data == script_source && disk.used_capacity == file.size, "A failed overwrite leaves the file intact.")
+
+	test_user.forceMove(right)
+	var/datum/netdm_terminal/other_terminal = allocate(/datum/netdm_terminal, far)
+	var/entries_before = length(other_terminal.entries)
+	var/lines_before = diagnostics.counters["lines"]
+	other_terminal.script_disk_action(test_user, "load_disk", disk_id, file_id)
+	TEST_ASSERT_EQUAL(other_terminal.loaded_script?["source"], script_source, "The next terminal can read the same file.")
+	TEST_ASSERT(length(other_terminal.entries) == entries_before && diagnostics.counters["lines"] == lines_before, "Loading the file does not submit a script.")
+	TEST_ASSERT(test_user.dropItemToGround(disk), "The operator can drop the disk.")
+	other_terminal.script_disk_action(test_user, "run_disk", disk_id, file_id)
+	TEST_ASSERT_EQUAL(length(other_terminal.entries), entries_before, "A stale disk action cannot run a file outside the operator's hands.")
+	TEST_ASSERT(test_user.put_in_hands(disk), "The operator can pick the disk up again.")
+	other_terminal.script_disk_action(test_user, "run_disk", disk_id, file_id)
+	TEST_ASSERT_EQUAL(length(other_terminal.entries), entries_before + 1, "Running from the disk submits one script.")
+	var/list/disk_result = other_terminal.entries[length(other_terminal.entries)]
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && disk_result["pending"])
+		sleep(2)
+	TEST_ASSERT(disk_result["status"] == "ok" && length(disk_result["records"]) == 1 && field(disk_result["records"][1], "node") == far_id,
+		"The script runs from the receiving APC: [json_encode(disk_result)]")
+
+	// The neighbour dies: its port says why, and what stood behind it is gone from the answers.
+	far.operating = FALSE
+	TEST_ASSERT(wait_for_links(left.z, near_id, 0, TRUE), "The cable to a dead APC carries nothing.")
+	var/list/dead = type_line(terminal, "links | where state -ne up | select node state")
+	TEST_ASSERT(dead?["status"] == "ok" && length(dead["records"]) == 1 && field(dead["records"][1], "node") == far_id && field(dead["records"][1], "state") == "unpowered",
+		"The dead port is named with its cause: [json_encode(dead)]")
+	var/list/gone = type_line(terminal, "services -type machine.control | where instance -eq [pump_instance] | count")
+	TEST_ASSERT(gone?["status"] == "ok" && field(gone["records"][1], "count") == "0", "A service behind a dead APC is not listed: [json_encode(gone)]")
+	var/list/skipped = type_line(terminal, "if links | where state -eq up\n  invoke [pump_instance] set_power on=true\nend", TRUE)
+	TEST_ASSERT(skipped?["status"] == "ok" && !length(skipped["records"]), "A script skips its action when the port is down: [json_encode(skipped)]")
+	far.operating = TRUE
+	TEST_ASSERT(wait_for_links(left.z, near_id, 1, TRUE), "Closing the breaker restores the cable.")
+
+	// A PDA runs the same shell locally and its commands reach the pump over radio and wire.
+	TEST_ASSERT(test_user.dropItemToGround(tool), "Free a hand for the PDA while keeping the script disk.")
+	var/obj/item/modular_computer/pda/pda = allocate(/obj/item/modular_computer/pda, right)
+	TEST_ASSERT(test_user.put_in_hands(pda) && pda.turn_on(test_user, FALSE), "The operator can hold and power on a PDA.")
+	var/datum/component/netdm_node/pda_node = pda.GetComponent(/datum/component/netdm_node)
+	TEST_ASSERT(pda_node, "The PDA already has a network node for its messenger.")
+	var/list/pda_fact = wait_for_node(pda_node, right, FALSE)
+	TEST_ASSERT(pda_fact, "The carried PDA must be published as a mobile node.")
+	var/datum/netdm_terminal/local/pda/mobile = allocate(/datum/netdm_terminal/local/pda, pda, pda_node, test_user)
+	var/list/mobile_self = type_line(mobile, "self | select node radio")
+	TEST_ASSERT(mobile_self?["status"] == "ok" && length(mobile_self["records"]) == 1 && field(mobile_self["records"][1], "node") == pda_fact["a"] && field(mobile_self["records"][1], "radio") == "true",
+		"The PDA shell reads its own mobile node: [json_encode(mobile_self)]")
+	var/pda_endpoint_id = lane.endpoint_for(pda_node).id
+	var/list/private_shell = type_line(terminal, "services -type network.shell | where instance -eq netshell.[pda_endpoint_id] | count")
+	TEST_ASSERT(private_shell?["status"] == "ok" && field(private_shell["records"][1], "count") == "0", "Another device cannot discover the PDA's local shell.")
+	var/list/mobile_sent = type_line(mobile, "services -type machine.control | where instance -eq [pump_instance] | invoke set_power on=true", TRUE)
+	TEST_ASSERT(mobile_sent?["status"] == "ok" && length(mobile_sent["records"]) == 1 && field(mobile_sent["records"][1], "status") == "sent",
+		"The PDA finds and sends a command to a wired service via radio: [json_encode(mobile_sent)]")
+	var/turf/out_of_range = isolated_turf()
+	TEST_ASSERT(out_of_range, "The test map has a spot outside APC radio coverage.")
+	test_user.forceMove(out_of_range)
+	TEST_ASSERT(wait_for_node(pda_node, out_of_range, FALSE), "The PDA follows the operator out of range.")
+	var/list/lost = type_line(mobile, "trace [far_id] | select state")
+	TEST_ASSERT(lost?["status"] == "ok" && field(lost["records"][1], "state") == "unreachable",
+		"The PDA shell runs locally, but can no longer reach the far APC: [json_encode(lost)]")
+	pda.shutdown_computer()
+	TEST_ASSERT(!mobile.submit("self"), "A powered-off PDA cannot submit commands.")
+	TEST_ASSERT(pda.turn_on(test_user, FALSE) && test_user.dropItemToGround(pda), "The operator can put the PDA down.")
+	TEST_ASSERT(!mobile.submit("self"), "The previous operator cannot submit after dropping the PDA.")
+
+	test_user.forceMove(right)
+	var/obj/item/implant/netdm_terminal/implant = allocate(/obj/item/implant/netdm_terminal, right)
+	TEST_ASSERT(implant.implant(test_user, test_user, TRUE) && implant.node, "Installing the implant creates its own network component.")
+	var/list/implant_fact = wait_for_node(implant.node, right, FALSE)
+	TEST_ASSERT(implant_fact && implant_fact["a"] != pda_fact["a"] && !implant.loc, "The implant has a separate node at its wearer even though the item is in nullspace.")
+	var/datum/netdm_terminal/local/implant/implanted = allocate(/datum/netdm_terminal/local/implant, implant, implant.node, test_user)
+	var/list/implant_self = type_line(implanted, "if self | where radio -eq true\n  self | select node\nend", TRUE)
+	TEST_ASSERT(implant_self?["status"] == "ok" && length(implant_self["records"]) == 1 && field(implant_self["records"][1], "node") == implant_fact["a"],
+		"The implant runs a script from its own radio node: [json_encode(implant_self)]")
+	var/list/implant_sent = type_line(implanted, "services -type machine.control | where instance -eq [pump_instance] | invoke set_power on=true", TRUE)
+	TEST_ASSERT(implant_sent?["status"] == "ok" && length(implant_sent["records"]) == 1 && field(implant_sent["records"][1], "status") == "sent",
+		"The implant sends commands to services within radio reach: [json_encode(implant_sent)]")
+	test_user.forceMove(left)
+	TEST_ASSERT(wait_for_node(implant.node, left, FALSE)?["a"] == implant_fact["a"], "The implant keeps its node as its wearer moves.")
+	var/datum/component/netdm_node/extracted_node = implant.node
+	TEST_ASSERT(implant.removed(test_user, TRUE) && QDELETED(extracted_node) && !implanted.submit("self"), "Removing the implant retires its node and closes the execution path.")
+
+	var/obj/item/netdm_adapter/adapter = allocate(/obj/item/netdm_adapter, left)
+	TEST_ASSERT(test_user.put_in_hands(adapter), "The operator can hold the adapter and data disk.")
+	TEST_ASSERT(!adapter.connect_to(pump, test_user), "The adapter cannot connect through a closed service panel.")
+	pump.panel_open = TRUE
+	TEST_ASSERT(adapter.connect_to(pump, test_user) && adapter.connected(), "The adapter physically docks to a networked machine.")
+	var/list/adapter_fact = wait_for_node(adapter.node, right, TRUE)
+	TEST_ASSERT(adapter_fact && adapter_fact["a"] != far_id && adapter_fact["a"] != SSnetdm_observe.node_ids[pump_node] && has_edge(right.z, adapter_fact["a"], far_id),
+		"The adapter has its own wired port to the local APC.")
+	var/datum/netdm_terminal/local/adapter/docked = allocate(/datum/netdm_terminal/local/adapter, adapter, adapter.node, test_user)
+	var/list/adapter_self = type_line(docked, "self | select node devices radio", TRUE)
+	TEST_ASSERT(adapter_self?["status"] == "ok" && length(adapter_self["records"]) == 1 && field(adapter_self["records"][1], "node") == adapter_fact["a"] && field(adapter_self["records"][1], "devices") == "1" && field(adapter_self["records"][1], "radio") == "false",
+		"The docked adapter executes on its own wired node: [json_encode(adapter_self)]")
+	var/datum/component/netdm_node/docked_node = adapter.node
+	pump.forceMove(left)
+	TEST_ASSERT(!adapter.connected() && QDELETED(docked_node) && !docked.submit("self"), "Moving the machine disconnects the adapter and invalidates its terminal.")
+	TEST_ASSERT(test_user.put_in_hands(adapter) && adapter.connect_to(near, test_user), "The adapter can also connect directly to an APC.")
+	adapter.disconnect()
+	TEST_ASSERT(!adapter.connected() && !adapter.anchored, "The detached adapter is portable again.")
+
+	// A terminal at a dead module is not opened.
+	TEST_ASSERT(!diagnostics.open_terminal(near, null), "A terminal needs someone to open it.")
+	log_world("netDM network terminal: lines=[diagnostics.counters["lines"]] [diagnostics.state()]")

@@ -41,7 +41,7 @@
 	description = "Study into networks of processing units that mimic our brains."
 	informing_radio_channels = list(RADIO_CHANNEL_SCIENCE, RADIO_CHANNEL_MEDICAL)
 	prereq_ids = list("biotech", "datatheory")
-	design_ids = list("Implanter", "implantcase", "impant_radio", "implant_chem", "implant_tracking", "locator", "c38_trac", "implant_gfluid", "implant_slave", "implant_hide_backpack")
+	design_ids = list("Implanter", "implantcase", "impant_radio", "implant_chem", "implant_tracking", "locator", "c38_trac", "implant_gfluid", "implant_slave", "implant_hide_backpack", "netdm_terminal_implant")
 	research_costs = list(TECHWEB_POINT_TYPE_GENERIC = 2500)
 
 /datum/techweb_node/posibrain

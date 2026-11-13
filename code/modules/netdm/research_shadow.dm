@@ -24,6 +24,8 @@
 #define NETDM_RESEARCH_SETTLE_BATCH 32
 /// Records of a server's knowledge log asked in one request (the Host gives at most 64).
 #define NETDM_RESEARCH_KNOWLEDGE_PAGE 64
+/// A catalogue search can restart once if the Host invalidates its cursor.
+#define NETDM_RESEARCH_SERVER_SEARCH_TIMEOUT (2 MINUTES)
 
 /**
  * research.server pilot in Shadow mode (P5).
@@ -761,25 +763,74 @@
 	var/datum/component/netdm_node/node = console.GetComponent(/datum/component/netdm_node)
 	var/area/zone = netdm_power_area(get_area(console))
 	var/obj/machinery/power/apc/apc = zone?.power_apc
-	if(node && apc && SSnetdm_observe.diagnostics?.query_services(node, apc, "research.server",
-		CALLBACK(src, PROC_REF(servers_found), console_ref), 16))
-		server_queries[console_ref] = TRUE
-		counters["server_queries"]++
-		return TRUE
+	if(node && apc && console.stored_research)
+		var/list/search = list("node" = WEAKREF(node), "apc" = WEAKREF(apc), "web" = WEAKREF(console.stored_research),
+			"best_hops" = INFINITY, "started" = world.realtime)
+		if(request_server_page(console_ref, search, node, apc))
+			server_queries[console_ref] = search
+			counters["server_queries"]++
+			return TRUE
 	return bind_by_distance(console)
 
-/// The network's answer: the reachable research servers. The choice applies only while the console still
-/// needs one; a binding made meanwhile (a multitool, a test) stays.
-/datum/netdm_research_shadow/proc/servers_found(datum/weakref/console_ref, list/page)
-	server_queries -= console_ref
+/datum/netdm_research_shadow/proc/request_server_page(datum/weakref/console_ref, list/search, datum/component/netdm_node/node, obj/machinery/power/apc/apc, cursor)
+	return SSnetdm_observe.diagnostics?.query_services(node, apc, "research.server",
+		CALLBACK(src, PROC_REF(servers_found), console_ref, search), 16, cursor)
+
+/// Keep the closest eligible server until the last page. A manual binding or a newer search takes precedence.
+/datum/netdm_research_shadow/proc/servers_found(datum/weakref/console_ref, list/search, list/page)
+	if(server_queries[console_ref] != search)
+		return
 	var/obj/machinery/computer/rdconsole/console = console_ref.resolve()
 	if(QDELETED(console))
+		server_queries -= console_ref
 		return
 	var/list/binding = bindings[console_ref]
 	if(binding && storages[binding["storage"]])
+		server_queries -= console_ref
 		return
-	var/best
-	var/best_hops = INFINITY
+	var/datum/weakref/node_ref = search["node"]
+	var/datum/weakref/apc_ref = search["apc"]
+	var/datum/weakref/web_ref = search["web"]
+	var/datum/component/netdm_node/node = node_ref.resolve()
+	var/obj/machinery/power/apc/apc = apc_ref.resolve()
+	var/area/zone = netdm_power_area(get_area(console))
+	if(!node || node != console.GetComponent(/datum/component/netdm_node) || !apc || apc != zone?.power_apc || web_ref.resolve() != console.stored_research)
+		server_queries -= console_ref
+		bind_nearest(console)
+		return
+	var/status = page?["status"]
+	if(world.realtime - search["started"] < NETDM_RESEARCH_SERVER_SEARCH_TIMEOUT)
+		if(status == "partial" || status == "complete" || status == "empty")
+			consider_server_page(search, page, console.stored_research)
+		if(status == "partial" && page["cursor"] && page["cursor"] != search["cursor"])
+			search["cursor"] = page["cursor"]
+			if(request_server_page(console_ref, search, node, apc, page["cursor"]))
+				return
+		if((status == "snapshot_expired" || status == "invalid_cursor") && !search["restarted"])
+			search["restarted"] = TRUE
+			search["best"] = null
+			search["best_hops"] = INFINITY
+			search["cursor"] = null
+			if(request_server_page(console_ref, search, node, apc))
+				return
+		if(status == "complete" || status == "empty")
+			server_queries -= console_ref
+			var/best = search["best"]
+			var/datum/weakref/server_ref = storages[best]
+			var/obj/machinery/rnd/server/server = server_ref?.resolve()
+			if(server && server.stored_research == console.stored_research)
+				counters["server_by_query"]++
+				bind_server(console, best)
+				return
+			// An answered search found no usable server. It can be retried when the network changes.
+			mark_no_server(console_ref, binding)
+			return
+	server_queries -= console_ref
+	// The directory did not answer completely. Keep the existing distance fallback and require a status round trip.
+	if(!bind_by_distance(console))
+		mark_no_server(console_ref, binding)
+
+/datum/netdm_research_shadow/proc/consider_server_page(list/search, list/page, datum/techweb/web)
 	for(var/list/row in page?["items"])
 		var/instance = row["instance"]
 		if(copytext(instance, 1, 10) != "research.")
@@ -787,20 +838,19 @@
 		var/storage = copytext(instance, 10)
 		var/datum/weakref/server_ref = storages[storage]
 		var/obj/machinery/rnd/server/server = server_ref?.resolve()
-		if(!server || server.stored_research != console.stored_research)
+		if(!server || server.stored_research != web)
 			continue
-		if(row["hops"] < best_hops)
-			best_hops = row["hops"]
-			best = storage
-	if(best)
-		counters["server_by_query"]++
-		bind_server(console, best)
-		return
-	// Nothing reachable, or the network did not answer: the map distance picks a candidate, and only a
-	// status answer over the network makes it usable.
-	if(!bind_by_distance(console) && binding)
-		binding["state"] = "no_server"
-		binding["bound"] = FALSE
+		if(row["hops"] < search["best_hops"])
+			search["best_hops"] = row["hops"]
+			search["best"] = storage
+
+/datum/netdm_research_shadow/proc/mark_no_server(datum/weakref/console_ref, list/binding)
+	if(!binding)
+		binding = list()
+		bindings[console_ref] = binding
+	binding["state"] = "no_server"
+	binding["bound"] = FALSE
+	binding["next_status"] = world.time + 3 SECONDS
 
 /datum/netdm_research_shadow/proc/bind_by_distance(obj/machinery/computer/rdconsole/console)
 	var/best
@@ -833,13 +883,12 @@
 		if(QDELETED(console))
 			bindings -= console_ref
 			continue
+		if(world.time < binding["next_status"])
+			continue
 		if(!storages[binding["storage"]])
 			// The server is gone: its wallet is lost, the console looks for another server of its web.
 			if(!bind_nearest(console))
-				binding["state"] = "no_server"
-				binding["bound"] = FALSE
-			continue
-		if(world.time < binding["next_status"])
+				mark_no_server(console_ref, binding)
 			continue
 		binding["next_status"] = world.time + (binding["bound"] ? NETDM_RESEARCH_STATUS : 3 SECONDS)
 		if(!isnull(binding["updated"]) && world.time > binding["updated"] + 3 * NETDM_RESEARCH_STATUS)
@@ -1502,4 +1551,5 @@
 #undef NETDM_RESEARCH_UNANSWERED
 #undef NETDM_RESEARCH_SETTLE_BATCH
 #undef NETDM_RESEARCH_KNOWLEDGE_PAGE
+#undef NETDM_RESEARCH_SERVER_SEARCH_TIMEOUT
 #undef NETDM_RESEARCH_SYNC

@@ -44,7 +44,7 @@ const rendererReports = () => (global as any).Byond.topic.mock.calls.map(([messa
   .map(message => JSON.parse(message.payload));
 
 const setup = (initial: Record<string, unknown> = {}) => {
-  (global as any).Byond = { winset: () => {}, topic: jest.fn() };
+  (global as any).Byond = { winset: () => {}, winget: () => Promise.resolve(null), topic: jest.fn() };
   const store = createStore(combineReducers({ backend: backendReducer, debug: debugReducer }));
   setGlobalStore(store);
   store.dispatch(backendUpdate({ config: { interface: 'NetdmTopology' }, data: { ...baseData, ...initial } }));

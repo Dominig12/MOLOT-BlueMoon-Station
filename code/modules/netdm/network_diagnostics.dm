@@ -27,7 +27,7 @@
 	/// Watched instance -> its last published link state: list("state", "wired", "wired_up", "radio", "devices", "neighbors", "at").
 	/// It is what reached a watcher over the network, so it may be old; "at" is the world time it arrived.
 	var/list/link_states = list()
-	/// Directory queries waiting for their page: key -> list("asker", "apc", "instance", "arguments", "callback", "deadline", "sent").
+	/// Queries waiting for their reply, indexed by request key.
 	var/list/queries = list()
 	/// Operation ID -> query key.
 	var/list/query_operations = list()
@@ -41,18 +41,26 @@
 	lane.dispatcher.allow_result("link_state", new /datum/netdm_effect_handler/network_link_state, "network.diagnostics")
 	lane.dispatcher.allow("network.link_state", new /datum/netdm_effect_handler/network_link_event)
 	lane.dispatcher.allow_result("services", new /datum/netdm_effect_handler/network_query_page, "network.query")
+	lane.dispatcher.allow_result("schema", new /datum/netdm_effect_handler/network_query_page, "network.query")
+	lane.dispatcher.allow_result("state", new /datum/netdm_effect_handler/network_query_page, "network.query")
+	lane.dispatcher.allow_result("run", new /datum/netdm_effect_handler/network_query_page, "network.shell")
+	lane.dispatcher.allow_result("run_script", new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow("query.directory", new /datum/netdm_effect_handler/network_directory_event)
 
-/// A new Host session: the APC endpoints attach again and waiting requests are sent again.
+/// A new Host session: retry reads, but don't replay shell requests that may already have sent commands.
 /datum/netdm_diagnostics/proc/reset_session()
 	operations.Cut()
 	query_operations.Cut()
 	for(var/key in pending)
 		var/list/request = pending[key]
 		request["sent"] = FALSE
-	for(var/key in queries)
+	for(var/key in queries.Copy())
 		var/list/query = queries[key]
+		if(query["sent"] && query["may_act"])
+			finish_query(key, list("status" = "no_answer"))
+			continue
 		query["sent"] = FALSE
+		query["operation"] = null
 
 /// Asks the APC's network module. Returns TRUE when the click was taken, also when it only tells why not.
 /datum/netdm_diagnostics/proc/inspect(obj/machinery/power/apc/apc, mob/user)
@@ -131,22 +139,33 @@
  * Returns FALSE when the query cannot even be queued.
  */
 /datum/netdm_diagnostics/proc/query_services(datum/asker, obj/machinery/power/apc/apc, service_type, datum/callback/on_page, limit = 8, cursor)
+	var/list/arguments = list("limit" = clamp(round(limit), 1, 16))
+	if(service_type)
+		arguments["type"] = service_type
+	if(cursor)
+		arguments["cursor"] = cursor
+	return queue_query(asker, apc, "services", arguments, on_page)
+
+/// Reads the registered message contract of one service the APC can reach.
+/datum/netdm_diagnostics/proc/query_schema(datum/asker, obj/machinery/power/apc/apc, service_instance, datum/callback/on_answer)
+	return queue_query(asker, apc, "schema", list("instance" = service_instance), on_answer)
+
+/// Reads publication metadata under the service's subscription policy.
+/datum/netdm_diagnostics/proc/query_state(datum/asker, obj/machinery/power/apc/apc, service_instance, datum/callback/on_answer)
+	return queue_query(asker, apc, "state", list("instance" = service_instance), on_answer)
+
+/datum/netdm_diagnostics/proc/queue_query(datum/asker, obj/machinery/power/apc/apc, command, list/arguments, datum/callback/on_answer)
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
-	if(!lane || !on_page || !SSnetdm_observe.apc_node_id(apc) || length(queries) >= NETDM_DIAGNOSTICS_PENDING)
+	if(!lane || QDELETED(asker) || !on_answer || !SSnetdm_observe.apc_node_id(apc) || length(queries) >= NETDM_DIAGNOSTICS_PENDING)
 		return FALSE
 	var/datum/netdm_service_endpoint/endpoint = lane.endpoint_for(apc)
 	if(!endpoint)
 		return FALSE
 	var/instance = "netquery.[endpoint.id]"
 	lane.offer(apc, instance, "network.query", "query.directory", 1)
-	var/list/arguments = list("limit" = clamp(round(limit), 1, 16))
-	if(service_type)
-		arguments["type"] = service_type
-	if(cursor)
-		arguments["cursor"] = cursor
 	counters["queries"]++
-	queries["nq-[++serial]"] = list("asker" = WEAKREF(asker), "apc" = WEAKREF(apc), "instance" = instance, "arguments" = arguments,
-		"callback" = on_page, "deadline" = world.time + NETDM_DIAGNOSTICS_TIMEOUT, "sent" = FALSE)
+	queries["nq-[++serial]"] = list("asker" = WEAKREF(asker), "provider" = WEAKREF(apc), "instance" = instance, "command" = command,
+		"arguments" = arguments, "callback" = on_answer, "deadline" = world.time + NETDM_DIAGNOSTICS_TIMEOUT, "sent" = FALSE)
 	return TRUE
 
 /**
@@ -186,33 +205,45 @@
 	for(var/key in queries.Copy())
 		var/list/query = queries[key]
 		var/datum/weakref/asker_ref = query["asker"]
-		var/datum/weakref/apc_ref = query["apc"]
+		var/datum/weakref/provider_ref = query["provider"]
 		var/datum/asker = asker_ref.resolve()
-		var/obj/machinery/power/apc/apc = apc_ref.resolve()
-		if(QDELETED(asker) || QDELETED(apc) || world.time > query["deadline"])
+		var/datum/provider = provider_ref.resolve()
+		if(QDELETED(asker) || QDELETED(provider) || world.time > query["deadline"])
 			finish_query(key, list("status" = "no_answer", "items" = list()))
 			continue
-		if(query["sent"] || !lane?.ready(apc, query["instance"]))
+		if(query["sent"])
 			continue
-		if(lane.invoke(asker, query["instance"], "services", key, query["arguments"], CALLBACK(src, PROC_REF(query_accepted), key)))
+		var/datum/callback/can_send = query["can_send"]
+		if(can_send && !can_send.Invoke())
+			finish_query(key, list("status" = "refused", "reason" = "Устройство недоступно."))
+			continue
+		if(!lane?.ready(provider, query["instance"]))
+			continue
+		if(lane.invoke(asker, query["instance"], query["command"], key, query["arguments"], CALLBACK(src, PROC_REF(query_accepted), key)))
 			query["sent"] = TRUE
 
 /datum/netdm_diagnostics/proc/query_accepted(key, list/entry, list/reply)
-	if(!queries[key])
+	var/list/query = queries[key]
+	if(!query)
 		return
 	var/list/result = reply["result"]
 	var/list/value = islist(result) ? result["value"] : null
 	if(reply["ok"] && islist(value) && !isnull(value["operationId"]))
-		query_operations["[value["operationId"]]"] = key
+		var/operation = "[value["operationId"]]"
+		query["operation"] = operation
+		query_operations[operation] = key
 		return
 	finish_query(key, list("status" = "refused", "reason" = reply["error"], "items" = list()))
 
-/// The page came back to the asker over the network.
+/// The reply came back to the asker over the network.
 /datum/netdm_diagnostics/proc/query_answered(list/item)
 	var/key = query_operations["[item["operationId"]]"]
-	query_operations -= "[item["operationId"]]"
+	var/list/query = queries[key]
 	var/list/payload = item["payload"]
-	if(!key || !queries[key] || !islist(payload))
+	if(!query || query["command"] != item["command"] || query["instance"] != item["instance"] || !islist(payload))
+		return TRUE
+	if(query["command"] != "services")
+		finish_query(key, payload)
 		return TRUE
 	var/list/items = list()
 	for(var/row in splittext("[payload["items"]]", ","))
@@ -225,6 +256,8 @@
 
 /datum/netdm_diagnostics/proc/finish_query(key, list/page)
 	var/list/query = queries[key]
+	if(query?["operation"])
+		query_operations -= query["operation"]
 	queries -= key
 	var/datum/callback/on_page = query?["callback"]
 	on_page?.Invoke(page)

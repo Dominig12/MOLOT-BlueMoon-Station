@@ -851,8 +851,8 @@
 		return
 	else if(panel_open && !opened && is_wire_tool(W))
 		wires.interact(user)
-	else if(!panel_open && W.tool_behaviour == TOOL_MULTITOOL && SSnetdm_observe.diagnostics?.inspect(src, user))
-		return // netDM: a multitool on a closed APC asks its network module (network.diagnostics).
+	else if(!panel_open && W.tool_behaviour == TOOL_MULTITOOL && SSnetdm_observe.diagnostics?.open_terminal(src, user))
+		return // netDM: a multitool on a closed APC opens the terminal of its network module (network.shell).
 	else
 		return ..()
 

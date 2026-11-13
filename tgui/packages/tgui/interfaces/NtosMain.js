@@ -7,6 +7,7 @@ export const NtosMain = (props) => {
   const {
     device_theme,
     programs = [],
+    netdm_terminal,
     has_light,
     light_on,
     removable_media = [],
@@ -107,6 +108,17 @@ export const NtosMain = (props) => {
               fill
               style={{ margin: '8px 10px' }}>
               <Stack vertical>
+                {!!netdm_terminal && (
+                  <Stack.Item>
+                    <Button
+                      fluid
+                      color="transparent"
+                      icon="terminal"
+                      content="Сетевой терминал"
+                      onClick={() => act('open_netdm_terminal')}
+                    />
+                  </Stack.Item>
+                )}
                 {programs.map(program => (
                   <Stack.Item key={program.name}>
                     <Button

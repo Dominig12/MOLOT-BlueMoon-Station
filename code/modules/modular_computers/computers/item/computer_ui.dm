@@ -96,6 +96,7 @@
 		data["removable_media"] += "secondary RFID card"
 
 	data["programs"] = list()
+	data["netdm_terminal"] = istype(src, /obj/item/modular_computer/pda) && user?.is_holding(src) && !!SSnetdm_observe?.services
 	var/list/all_files = get_all_files()
 	for(var/datum/computer_file/program/P in all_files)
 		var/running = FALSE
@@ -132,6 +133,9 @@
 		return
 
 	switch(action)
+		if("open_netdm_terminal")
+			var/obj/item/modular_computer/pda/pda = src
+			return istype(pda) && pda.open_netdm_terminal(usr)
 		if("PC_exit")
 			playsound(src, 'sound/machines/terminal_eject_disc.ogg', 25, TRUE)
 			kill_program()

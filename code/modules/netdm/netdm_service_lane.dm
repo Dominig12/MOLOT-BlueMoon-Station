@@ -116,10 +116,10 @@
 	return istype(component) ? component.parent : node
 
 /// Declares a service instance offered by the node.
-/datum/netdm_service_lane/proc/offer(datum/component/netdm_node/node, instance, service_type, schema, major, minor = 0)
+/datum/netdm_service_lane/proc/offer(datum/component/netdm_node/node, instance, service_type, schema, major, minor = 0, scope = "domain")
 	var/datum/netdm_service_endpoint/endpoint = endpoint_for(node)
 	if(endpoint)
-		endpoint.services[instance] = list("type" = service_type, "schema" = schema, "major" = major, "minor" = minor)
+		endpoint.services[instance] = list("type" = service_type, "schema" = schema, "major" = major, "minor" = minor, "scope" = scope)
 		unsettled[endpoint.id] = TRUE
 	return endpoint
 
@@ -396,8 +396,10 @@
 		if(endpoint.registered[instance] || endpoint.refused[instance])
 			continue
 		var/list/service = endpoint.services[instance]
+		var/scope = service["scope"]
 		return send(bridge.service_register(endpoint.id, endpoint.generation, instance, service["type"], service["schema"],
-			service["major"], service["minor"]), list("op" = "register", "endpoint" = endpoint, "instance" = instance)) ? NETDM_LANE_SENT : NETDM_LANE_WAIT
+			service["major"], service["minor"], scope, scope, scope),
+			list("op" = "register", "endpoint" = endpoint, "instance" = instance)) ? NETDM_LANE_SENT : NETDM_LANE_WAIT
 	. = NETDM_LANE_SETTLED
 	for(var/key in endpoint.subscriptions)
 		if(endpoint.subscribed[key] || endpoint.refused[key])

@@ -43,7 +43,8 @@
 /// Follows the holder chain so a carried node reports the turf it is actually on.
 /datum/component/netdm_node/proc/watch_containers()
 	var/atom/movable/body = parent
-	var/atom/holder = body.loc
+	var/atom/movable/position_anchor = position_source()
+	var/atom/holder = position_anchor == body ? body.loc : position_anchor
 	while(istype(holder, /atom/movable) && length(containers) < 16)
 		LAZYADD(containers, holder)
 		RegisterSignal(holder, COMSIG_MOVABLE_MOVED, PROC_REF(on_container_moved))
@@ -88,10 +89,17 @@
 	if(!(machine.machine_stat & (BROKEN|MAINT|EMPED)))
 		. |= NETDM_STATE_OPERATIONAL
 
+/datum/component/netdm_node/proc/position_source()
+	return parent
+
+/datum/component/netdm_node/implant/position_source()
+	var/obj/item/implant/netdm_terminal/implant = parent
+	return implant.imp_in
+
 /// The wire fact for this node under `node_id`, or null while the object is in nullspace.
 /datum/component/netdm_node/proc/fact(node_id)
 	var/atom/movable/body = parent
-	var/turf/position = get_turf(body)
+	var/turf/position = get_turf(position_source())
 	if(!position)
 		return null
 	// Only an object standing on its turf is mounted; anything carried or stored is loose.
