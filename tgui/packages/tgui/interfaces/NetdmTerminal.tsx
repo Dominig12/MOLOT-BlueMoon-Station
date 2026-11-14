@@ -148,7 +148,7 @@ export const NetdmTerminal = () => {
             >
               {data.entries.length === 0 && (
                 <Box color="label">
-                  Команды: services, links, self, trace, затем where, select, sort, first, last, count; действие — invoke.
+                  Команды: services, links, self, trace, route, jobs, programs, затем where, select, sort, first, last, count; действие — invoke.
                 </Box>
               )}
               {data.entries.map((entry) => (

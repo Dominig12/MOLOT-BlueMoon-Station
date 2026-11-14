@@ -19,7 +19,7 @@
 /**
  * network.shell (design 14.6): one line of the network shell, run by an APC for a network node.
  *
- * The line is a pipeline over typed records (services, links, self, trace, then where, select, sort, first,
+ * The line is a pipeline over typed records (services, links, self, trace, route, jobs, programs, then where, select, sort, first,
  * last, count) and may end in invoke. It travels to the APC as a network command and the records come back
  * over the network; invoke sends ordinary commands as the asker. on_output receives the shell.output DTO
  * with "records" parsed into a list of field lists, or the status "no_answer" or "refused".
