@@ -136,6 +136,13 @@
 	var/list/knowledge_due = list()
 	var/knowledge_inflight = FALSE
 	var/next_knowledge = 0
+	/// ResearchEvidence: power zone ref -> list("storage", "web", "until") of the server it reaches closest.
+	var/list/evidence_zones = list()
+	/// Zone ref -> TRUE while its query for reachable servers is in flight.
+	var/list/evidence_queries = list()
+	/// storage -> points from frequent sources (coils, collectors) waiting for the next grant.
+	var/list/evidence_pending = list()
+	var/next_evidence = 0
 
 /datum/netdm_research_shadow/proc/setup(datum/netdm_service_lane/lane)
 	lane.dispatcher.allow_result("research", new /datum/netdm_effect_handler/research_answer)
@@ -500,6 +507,7 @@
 		refresh_bindings()
 		schedule_sync()
 		pump_knowledge(lane)
+		flush_evidence()
 	pump_effects(lane)
 	if(sending || world.time < next_send || catalog_error)
 		return
@@ -675,12 +683,88 @@
 	for(var/id in web.boosted_nodes)
 		send_boost(storage, id, "[source]-[id]", whole_points(web.boosted_nodes[id]), "migration")
 
-/// Points from any legacy source under the ledger: they reach the coordinator, the legacy balance stays.
-/datum/netdm_research_shadow/proc/ledger_points(datum/techweb/web, list/pointlist)
+/**
+ * Points from any legacy source under the ledger; the legacy balance stays. With a source (ResearchEvidence,
+ * decision of 14.11.2026) they go to the source's server: the server its console is bound to, or the
+ * server of the same web its zone reaches closest over the network. Without a source, or before that
+ * server is known, the web's coordinator gets them as before.
+ */
+/datum/netdm_research_shadow/proc/ledger_points(datum/techweb/web, list/pointlist, atom/source)
 	var/list/points = milli_points(pointlist)
-	if(length(points))
-		enqueue(list("op" = "research_grant", "payload" = list("storage" = treasury_of(web), "generation" = 1,
-			"source" = "lp-[++serial]", "kind" = "legacy", "points" = points), "what" = "grant"))
+	if(!length(points))
+		return
+	var/storage = source ? source_storage(web, source) : null
+	counters[storage ? "evidence_server" : "evidence_coordinator"]++
+	enqueue(list("op" = "research_grant", "payload" = list("storage" = storage || treasury_of(web), "generation" = 1,
+		"source" = "[storage ? "ev" : "lp"]-[++serial]", "kind" = storage ? "evidence" : "legacy", "points" = points), "what" = "grant"))
+
+/// Frequent sources (coils, collectors, the doppler array): gathered per server and sent by flush_evidence.
+/datum/netdm_research_shadow/proc/evidence_points(datum/techweb/web, list/pointlist, atom/source)
+	var/storage = source_storage(web, source) || treasury_of(web)
+	if(!storage)
+		return
+	var/list/pending = evidence_pending[storage]
+	if(!pending)
+		pending = evidence_pending[storage] = list()
+	for(var/type in pointlist)
+		pending[type] = (pending[type] || 0) + pointlist[type]
+
+/datum/netdm_research_shadow/proc/flush_evidence()
+	if(world.time < next_evidence || !length(evidence_pending))
+		return
+	next_evidence = world.time + 5 SECONDS
+	for(var/storage in evidence_pending)
+		var/list/points = milli_points(evidence_pending[storage])
+		if(length(points) && storages[storage])
+			counters["evidence_grants"]++
+			enqueue(list("op" = "research_grant", "payload" = list("storage" = storage, "generation" = 1,
+				"source" = "eg-[++serial]", "kind" = "evidence", "points" = points), "what" = "grant"))
+	evidence_pending.Cut()
+
+/// The research server a source of points belongs to, or null while it is not known.
+/datum/netdm_research_shadow/proc/source_storage(datum/techweb/web, atom/source)
+	if(QDELETED(source) || !web)
+		return null
+	var/obj/machinery/computer/rdconsole/console
+	if(istype(source, /obj/machinery/rnd/destructive_analyzer))
+		var/obj/machinery/rnd/destructive_analyzer/analyzer = source
+		console = analyzer.linked_console
+	else if(istype(source, /obj/machinery/rnd/experimentor))
+		var/obj/machinery/rnd/experimentor/experimentor = source
+		console = experimentor.linked_console
+	var/list/binding = console ? bindings[WEAKREF(console)] : null
+	if(binding?["bound"] && server_of_web(binding["storage"], web))
+		return binding["storage"]
+	var/area/zone = netdm_power_area(get_area(source))
+	if(!zone)
+		return null
+	var/zone_key = REF(zone)
+	var/list/known = evidence_zones[zone_key]
+	if(known && known["web"] == REF(web) && world.time < known["until"] && server_of_web(known["storage"], web))
+		return known["storage"]
+	var/obj/machinery/power/apc/apc = zone.power_apc
+	if(!evidence_queries[zone_key] && apc && SSnetdm_observe.diagnostics?.query_services(apc, apc, "research.server",
+		CALLBACK(src, PROC_REF(evidence_servers_found), zone_key, WEAKREF(web)), 16))
+		evidence_queries[zone_key] = TRUE
+	return null
+
+/datum/netdm_research_shadow/proc/server_of_web(storage, datum/techweb/web)
+	var/datum/weakref/server_ref = storages[storage]
+	var/obj/machinery/rnd/server/server = server_ref?.resolve()
+	return server && server.stored_research == web
+
+/// The closest server of the web that the zone's APC reaches; kept for a minute. Only the first page is read.
+/datum/netdm_research_shadow/proc/evidence_servers_found(zone_key, datum/weakref/web_ref, list/page)
+	evidence_queries -= zone_key
+	var/datum/techweb/web = web_ref.resolve()
+	if(!web)
+		return
+	var/list/search = list("best_hops" = INFINITY)
+	consider_server_page(search, page, web)
+	if(search["best"])
+		evidence_zones[zone_key] = list("storage" = search["best"], "web" = REF(web), "until" = world.time + 60 SECONDS)
+	else
+		evidence_zones -= zone_key
 
 /// remove_point_list (all amounts taken) or modify_point_list (signed amounts) under the ledger.
 /datum/netdm_research_shadow/proc/ledger_change(datum/techweb/web, list/pointlist, removing)
@@ -1355,8 +1439,18 @@
  * Disk buttons of a console under the ledger. "loadTech" writes the bound server's knowledge to the
  * inserted disk; "uploadDisk" restores a written disk into the bound server, without points or bounty.
  * A disk never written by a server (loot, legacy) keeps the legacy path.
+ *
+ * What a written disk holds is what the ledger wrote on it (decision of 14.11.2026): its legacy copy is not
+ * written and not read. A restore teaches the server those nodes, and the web its machines read learns
+ * them from the server's knowledge log. A console outside the ledger cannot read such a disk.
  */
 /datum/netdm_research_shadow/proc/console_disk(obj/machinery/computer/rdconsole/console, action, list/params)
+	if(action == "uploadDisk" && params?["type"] == "tech" && !owns(console.stored_research))
+		var/obj/item/disk/tech_disk/foreign_disk = console.t_disk
+		if(istype(foreign_disk) && foreign_disk.netdm_disk)
+			console.say("Диск записан R&D-сервером сети: загрузить его можно только через сервер сети.")
+			return TRUE
+		return FALSE
 	if(!owns(console.stored_research) || (action != "loadTech" && !(action == "uploadDisk" && params?["type"] == "tech")))
 		return FALSE
 	var/obj/item/disk/tech_disk/disk = console.t_disk
@@ -1387,25 +1481,22 @@
 	if(!op)
 		return TRUE
 	disk_ops -= "[payload["disk"]]/[item["command"]]"
-	var/datum/weakref/disk_ref = op["disk"]
-	var/obj/item/disk/tech_disk/disk = disk_ref?.resolve()
 	var/state = payload["state"]
 	counters["disk_[state]"]++
 	switch(state)
 		if("written", "unchanged")
 			if(item["command"] == "backup")
-				// The legacy copy keeps disks readable by machines that still read techwebs.
-				if(disk && console.stored_research)
-					console.stored_research.copy_research_to(disk.stored_research)
+				// The ledger holds what is on the disk; a legacy copy would carry the whole web's knowledge.
 				console.say("Знания сервера записаны на диск ([netdm_number(payload["nodes"])] узлов).")
 			else
 				console.say("Диск уже загружен на этот сервер.")
 		if("restored")
-			// The node list stays in the ledger; the legacy web learns the disk's nodes without a bounty.
-			if(disk && console.stored_research)
-				applying_projection++
-				disk.stored_research.copy_research_to(console.stored_research)
-				applying_projection--
+			// The legacy web learns exactly the disk's nodes the ledger restored, from the server's knowledge log.
+			var/list/binding = bindings[WEAKREF(console)]
+			var/storage = binding?["storage"]
+			if(storage && storages[storage])
+				knowledge_due |= storage
+				next_knowledge = world.time
 			console.say("Диск загружен на сервер: новых узлов [netdm_number(payload["nodes"])].")
 		else
 			console.say("Сервер отклонил операцию с диском ([payload["reason"] || state]).")

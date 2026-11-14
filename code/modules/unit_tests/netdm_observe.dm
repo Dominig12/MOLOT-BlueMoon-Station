@@ -1102,6 +1102,14 @@
 	shadow.bind_server(console, second_storage)
 	TEST_ASSERT(wait_bound(shadow, console), "The console must reach the second server again.")
 	before = host_rows()
+	// The disk's legacy copy is not what it holds: a node put there by hand must not reach the web.
+	var/leak
+	for(var/id in shadow.catalog_costs)
+		if(!console.stored_research.researched_nodes[id] && !console.stored_research.hidden_nodes[id] && !SSresearch.techweb_nodes_starting[id] && SSresearch.techweb_node_by_id(id))
+			leak = id
+			break
+	TEST_ASSERT(leak, "The catalog needs a node the console's web has not researched.")
+	console.t_disk.stored_research.research_node_id(leak, TRUE, FALSE)
 	TEST_ASSERT(shadow.console_disk(console, "uploadDisk", list("type" = "tech")), "The console must restore the disk through its server.")
 	deadline = world.time + 30 SECONDS
 	while(world.time < deadline && length(shadow.disk_ops))
@@ -1109,6 +1117,22 @@
 	TEST_ASSERT(shadow.counters["disk_restored"] || shadow.counters["disk_unchanged"], "The server must answer the restore: [shadow.state()]")
 	after = host_rows()
 	TEST_ASSERT(after[second_storage]["available"] - before[second_storage]["available"] < 100, "A restore brings no points: [json_encode(after)]")
+	sleep(3 SECONDS) // The knowledge log is read after the answer.
+	TEST_ASSERT(!console.stored_research.researched_nodes[leak], "A restore loads what the ledger wrote, not the disk's legacy copy.")
+
+	// ResearchEvidence: points from an analyzer go to the server its console is bound to, not to the coordinator.
+	var/obj/machinery/rnd/destructive_analyzer/analyzer = allocate(/obj/machinery/rnd/destructive_analyzer, get_turf(console))
+	analyzer.linked_console = console
+	before = host_rows()
+	web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = 100000), source = analyzer)
+	deadline = world.time + 30 SECONDS
+	after = before
+	while(world.time < deadline && after[second_storage]["available"] - before[second_storage]["available"] < 100000)
+		sleep(1 SECONDS)
+		after = host_rows()
+	TEST_ASSERT(after[second_storage]["available"] - before[second_storage]["available"] >= 100000 && after[treasury]["available"] - before[treasury]["available"] < 100000,
+		"Evidence points reach the analyzer's server, not the coordinator: [json_encode(before)] -> [json_encode(after)] [shadow.state()]")
+	analyzer.linked_console = null
 
 	// A disk restored into a server of another web while the answer to the console is lost (§13.6, §13.8).
 	// The world learns what a server knows from the server's own log, so the node still reaches the web
@@ -2790,6 +2814,37 @@
 	loose.id = "[tag]-none"
 	loose.activate()
 	TEST_ASSERT(shadow.exceptions["not_button"] == not_button + 1, "A controller outside a button is an exception: [shadow.state()]")
+
+	// Authoritative: the press moves nothing itself; each door moves when its command arrives over the network,
+	// and the door the network does not reach stays as it was.
+	shadow.set_authoritative(TRUE)
+	sleep(11) // The buttons' cooldown from the presses above.
+	TEST_ASSERT(first.density && second.density && away.density, "The blast doors start closed.")
+	before = shadow.counters.Copy()
+	blast_control.activate()
+	TEST_ASSERT(first.density && second.density, "Under authority a press does not move the doors itself.")
+	deadline = world.time + 10 SECONDS
+	while(world.time < deadline && (first.density || second.density))
+		sleep(1)
+	TEST_ASSERT(!first.density && !second.density, "The doors open when the command reaches them: [shadow.state()] [json_encode(shadow.notes)]")
+	TEST_ASSERT(away.density, "A door the network does not reach stays closed.")
+	TEST_ASSERT(wait_compared(shadow, before["compared"] + 3), "The authoritative press is compared: [shadow.state()]")
+	TEST_ASSERT_EQUAL(shadow.counters["kept"] - before["kept"], 2, "Both reached doors ended where the press put them: [json_encode(shadow.notes)]")
+	var/safe_before = airlock.safe
+	var/airlock_closed = airlock.density
+	before = shadow.counters.Copy()
+	airlock_control.activate()
+	press = last_press(shadow)
+	TEST_ASSERT(airlock.safe == safe_before && airlock.density == airlock_closed, "The airlock waits for its command.")
+	TEST_ASSERT(press?["wanted"][airlock_instance]["safety"] == !safe_before, "The command carries where the safety toggle leads: [json_encode(press?["wanted"])]")
+	deadline = world.time + 10 SECONDS
+	while(world.time < deadline && airlock.safe == safe_before)
+		sleep(1)
+	TEST_ASSERT(airlock.safe == !safe_before, "The airlock takes its safety from the command.")
+	var/list/repeated = shadow.received(airlock, list("payload" = list("press" = press["id"], "safety" = safe_before), "instance" = airlock_instance))
+	TEST_ASSERT(repeated?["result"]["reason"] == "duplicate" && airlock.safe == !safe_before, "A repeated command does not apply twice.")
+	TEST_ASSERT(wait_compared(shadow, before["compared"] + 1), "The authoritative airlock press is compared: [shadow.state()]")
+	shadow.set_authoritative(FALSE)
 	log_world("netDM door shadow: [shadow.state()] notes=[json_encode(shadow.notes)]")
 
 /// P9.1 on the station: map buttons pressed there and back; every door they control is reached over the
@@ -3196,4 +3251,17 @@
 
 	// A terminal at a dead module is not opened.
 	TEST_ASSERT(!diagnostics.open_terminal(near, null), "A terminal needs someone to open it.")
+	// The APC terminal opens like the APC interface: access, or an unlocked or emagged interface.
+	var/was_locked = near.locked
+	near.locked = TRUE
+	TEST_ASSERT(!diagnostics.terminal_access(near, test_user), "Without engineering access a locked APC keeps its terminal closed.")
+	near.locked = FALSE
+	TEST_ASSERT(diagnostics.terminal_access(near, test_user), "An unlocked APC interface opens its terminal.")
+	near.locked = TRUE
+	var/obj/item/card/id/engineer_id = allocate(/obj/item/card/id, left)
+	engineer_id.access = list(ACCESS_ENGINE_EQUIP)
+	test_user.drop_all_held_items()
+	TEST_ASSERT(test_user.put_in_active_hand(engineer_id) && diagnostics.terminal_access(near, test_user),
+		"Engineering access opens the terminal of a locked APC.")
+	near.locked = was_locked
 	log_world("netDM network terminal: lines=[diagnostics.counters["lines"]] [diagnostics.state()]")

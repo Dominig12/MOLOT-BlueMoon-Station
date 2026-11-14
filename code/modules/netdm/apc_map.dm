@@ -10,9 +10,17 @@
 /proc/netdm_power_area(area/physical)
 	return physical?.base_area || physical
 
+/// Area IDs of zones without an APC start here: far above any APC node ID (at most 16 million).
+#define NETDM_APC_MAP_DUCT_PREFIX "9900000000"
+
 /datum/netdm_apc_zone
+	/// The zone's primary APC; null for a zone without an APC, which is a passive cable duct (14.11.2026).
 	var/list/apc
+	/// Every APC of the zone. The others serve the part of the zone nearest to them (decided 14.11.2026).
+	var/list/apcs = list()
 	var/list/anchors = list()
+	/// Area ID of a duct zone.
+	var/duct_id
 
 /// A temporary export of the current APC inventory. Only the wire facts leave this datum.
 /datum/netdm_apc_map_export
@@ -29,6 +37,7 @@
 	var/cells_visited = 0
 	var/datum/netdm_apc_zone/run_zone
 	var/run_start
+	var/ducts = 0
 
 /datum/netdm_apc_map_export/New(list/sample)
 	inventory = sample
@@ -85,6 +94,7 @@
 		zones[root] = zone
 	else if(fact["primary"] || (!zone.apc["primary"] && text2num(fact["a"]) < text2num(zone.apc["a"])))
 		zone.apc = fact
+	zone.apcs += list(fact)
 
 /// Whole rows of every walked level. A zone reaching a level without any of its APCs is not seen there.
 /datum/netdm_apc_map_export/proc/plan_rows()
@@ -103,7 +113,13 @@
 	var/row_y = row["y"]
 	var/row_z = row["z"]
 	var/turf/tile = locate(offset, row_y, row_z)
-	var/datum/netdm_apc_zone/zone = zones[netdm_power_area(tile?.loc)]
+	var/area/tile_zone = netdm_power_area(tile?.loc)
+	var/datum/netdm_apc_zone/zone = zones[tile_zone]
+	if(!zone && tile_zone && !istype(tile_zone, /area/space))
+		// A zone without an APC is exported as a duct: the Host joins the APCs that touch it.
+		zone = new
+		zone.duct_id = "[NETDM_APC_MAP_DUCT_PREFIX][++ducts]"
+		zones[tile_zone] = zone
 	cells_visited++
 	if(zone != run_zone)
 		if(run_zone)
@@ -120,8 +136,10 @@
 		offset++
 
 /datum/netdm_apc_map_export/proc/add_span(datum/netdm_apc_zone/zone, first, last, row_y, row_z)
-	var/area_id = zone.apc["a"]
+	var/area_id = zone.apc ? zone.apc["a"] : zone.duct_id
 	facts += list(list("op" = "area_span", "area" = area_id, "x" = first, "endX" = last, "y" = row_y, "z" = row_z))
+	if(!zone.apc)
+		return
 	var/level = "[row_z]"
 	var/list/anchor = zone.anchors[level]
 	var/body_x = zone.apc["x"]
@@ -130,6 +148,8 @@
 		zone.anchors[level] = list("x" = body_here ? body_x : first, "y" = row_y, "z" = row_z, "body" = body_here)
 
 /datum/netdm_apc_map_export/proc/add_bindings(datum/netdm_apc_zone/zone)
+	if(!zone.apc)
+		return
 	var/node = zone.apc["a"]
 	var/body_z = zone.apc["z"]
 	if(!zone.anchors["[body_z]"])
@@ -137,9 +157,21 @@
 	for(var/level in zone.anchors)
 		var/list/anchor = zone.anchors[level]
 		facts += list(list("op" = "area_apc", "a" = node, "area" = node, "x" = anchor["x"], "y" = anchor["y"], "z" = anchor["z"]))
+	// Another APC of the zone serves the part nearest to it, from its own cell when that cell is in the zone.
+	// One standing on a wall of another zone stays a node without a segment, as before.
+	var/datum/weakref/root_ref = zone.apc["root"]
+	var/area/root = root_ref?.resolve()
+	for(var/list/extra in zone.apcs)
+		if(extra == zone.apc)
+			continue
+		var/turf/cell = locate(extra["x"], extra["y"], extra["z"])
+		if(!cell || netdm_power_area(cell.loc) != root)
+			continue
+		facts += list(list("op" = "area_apc", "a" = extra["a"], "area" = node, "x" = extra["x"], "y" = extra["y"], "z" = extra["z"]))
 
 #undef NETDM_APC_MAP_FACTS
 #undef NETDM_APC_MAP_WORK
 #undef NETDM_APC_MAP_WORK_SLICE
 #undef NETDM_APC_MAP_CELL_BUDGET
 #undef NETDM_APC_MAP_TICK_SHARE
+#undef NETDM_APC_MAP_DUCT_PREFIX

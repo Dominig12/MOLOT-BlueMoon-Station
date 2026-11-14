@@ -137,7 +137,7 @@ Note: Must be placed within 3 tiles of the R&D Console
 			return FALSE
 		var/loaded_type = loaded_item.type
 		if(destroy_item(loaded_item))
-			linked_console.stored_research.add_point_list(point_value)
+			linked_console.stored_research.add_point_list(point_value, source = src)
 			linked_console.stored_research.deconstructed_items[loaded_type] = point_value
 	return TRUE
 

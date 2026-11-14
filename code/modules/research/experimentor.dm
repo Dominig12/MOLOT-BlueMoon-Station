@@ -465,7 +465,7 @@
 		if(!R.revealed) //BLUEMOON ADD награда за изучение
 			var/datum/techweb/web = find_rnd_network_for_object(src)
 			if(web)
-				web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = pick(5000))) //BLUEMOON ADD END
+				web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = pick(5000)), source = src) //BLUEMOON ADD END
 		R.reveal()
 		investigate_log("Experimentor has revealed a relic with <span class='danger'>[R.realProc]</span> effect.", INVESTIGATE_EXPERIMENTOR)
 		ejectItem()

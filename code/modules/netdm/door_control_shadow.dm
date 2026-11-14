@@ -25,11 +25,19 @@
  * reason "shadow". Each (press, door) is then compared: reached over the network, or missed with the Host's
  * reason; and whether the legacy door ended where the press put it.
  *
+ * Authoritative mode (NETDM_DOOR_MODE=authoritative, or set_authoritative()): the press no longer moves its doors
+ * itself. It plans the absolute state each door should take (open or closed, and for an airlock controller where
+ * its toggles of bolts, scanner, shock and safety lead), and a door takes it when the command reaches it over the
+ * network. A door the network does not reach stays as it was; a door that cannot do part of it (cut bolt wires,
+ * no power) answers with the reason. Presses that are compatibility exceptions keep the legacy path in both modes.
+ *
  * Compatibility exceptions, counted but not mirrored: a controller outside a button (in an assembly or a hand),
  * an airlock controller without functions, a press of more than NETDM_DOORS_FANOUT doors. Mass drivers,
  * igniters, flashers and the other controllers keep the legacy path without a mirror.
  */
 /datum/netdm_door_shadow
+	/// NETDM_DOOR_MODE=authoritative, or set_authoritative() at runtime: doors move only by network command.
+	var/authoritative = FALSE
 	/// Door weakref -> its instance door.<endpoint>, and back.
 	var/list/instances = list()
 	var/list/by_instance = list()
@@ -54,6 +62,12 @@
 /datum/netdm_door_shadow/proc/setup(datum/netdm_service_lane/lane)
 	lane.dispatcher.allow_command("machine.door", "set_state", new /datum/netdm_command_handler/door_set_state)
 	lane.dispatcher.allow_result("set_state", new /datum/netdm_effect_handler/door_state, "machine.door")
+	if(world.GetConfig("env", "NETDM_DOOR_MODE") == "authoritative")
+		set_authoritative(TRUE)
+
+/// Switches who moves the doors. A command keeps the mode of the press that sent it.
+/datum/netdm_door_shadow/proc/set_authoritative(enabled)
+	authoritative = !!enabled
 
 /datum/netdm_door_shadow/proc/reset_session()
 	// Receipts of the old session never arrive; those presses are compared with what arrived so far.
@@ -119,6 +133,16 @@
 				doors[door] = list()
 				if((functions & OPEN) && !door.density)
 					close = TRUE
+				if(authoritative)
+					// The legacy press toggles these; the command carries where each toggle leads, as absolute values.
+					if(functions & BOLTS)
+						doors[door]["bolted"] = door.locked ? FALSE : TRUE
+					if(functions & IDSCAN)
+						doors[door]["id_scan"] = door.aiDisabledIdScanner ? TRUE : FALSE
+					if(functions & SHOCK)
+						doors[door]["shocked"] = door.secondsElectrified ? FALSE : TRUE
+					if(functions & SAFE)
+						doors[door]["safety"] = door.safe ? FALSE : TRUE
 		if(functions & OPEN)
 			for(var/door in doors)
 				doors[door]["state"] = close ? "closed" : "open"
@@ -149,7 +173,8 @@
 		return
 	var/id = "d-[++serial]-[copytext(md5("[world.time][rand()]"), 1, 7)]"
 	var/list/record = list("id" = id, "created" = world.time, "created_us" = netdm_now_us(), "button" = WEAKREF(button),
-		"targets" = list(), "wanted" = list(), "arrived" = list(), "states" = list(), "ops" = list())
+		"targets" = list(), "wanted" = list(), "arrived" = list(), "states" = list(), "ops" = list(),
+		"authoritative" = authoritative, "user" = usr ? WEAKREF(usr) : null)
 	presses[id] = record
 	if(length(presses) > NETDM_DOORS_PRESSES)
 		compare(presses[presses[1]])
@@ -163,7 +188,7 @@
 		if(QDELETED(door))
 			continue
 		var/list/wanted = doors[door]
-		if(functions)
+		if(functions && !authoritative)
 			var/obj/machinery/door/airlock/airlock = door
 			if(functions & BOLTS)
 				wanted["bolted"] = airlock.locked ? TRUE : FALSE
@@ -239,12 +264,56 @@
 	if(!istext(press))
 		return "invalid_press"
 	var/list/record = presses[press]
+	var/first = TRUE
 	if(record)
 		if(isnull(record["arrived"][instance]))
 			record["arrived"][instance] = netdm_now_us() - record["created_us"]
 		else
 			counters["duplicates"]++
-	return list("result" = door_state(door, press, FALSE, "shadow"))
+			first = FALSE
+	if(!(record ? record["authoritative"] : authoritative))
+		return list("result" = door_state(door, press, FALSE, "shadow"))
+	if(!first)
+		return list("result" = door_state(door, press, FALSE, "duplicate")) // The first arrival already applied it.
+	var/datum/weakref/user_ref = record?["user"]
+	return list("result" = apply(door, payload, user_ref?.resolve(), press))
+
+/// Authoritative: the door takes the absolute state the command carries. What it cannot do is named in the reason.
+/datum/netdm_door_shadow/proc/apply(obj/machinery/door/door, list/payload, mob/user, press)
+	var/list/refused = list()
+	var/changed = FALSE
+	if(istype(door, /obj/machinery/door/airlock))
+		var/obj/machinery/door/airlock/airlock = door
+		if(!isnull(payload["bolted"]) && airlock.locked != !!payload["bolted"])
+			if(airlock.wires.is_cut(WIRE_BOLTS) || !airlock.hasPower())
+				refused += "bolts"
+			else
+				airlock.locked = !!payload["bolted"]
+				airlock.update_icon()
+				changed = TRUE
+				if(user)
+					airlock.log_remote_use(user, airlock.locked ? "bolted" : "unbolted", "network button")
+		if(!isnull(payload["id_scan"]) && airlock.aiDisabledIdScanner != !payload["id_scan"])
+			airlock.aiDisabledIdScanner = !payload["id_scan"]
+			changed = TRUE
+		if(!isnull(payload["shocked"]) && !!airlock.secondsElectrified != !!payload["shocked"])
+			airlock.secondsElectrified = payload["shocked"] ? -1 : 0
+			changed = TRUE
+			if(payload["shocked"] && user)
+				log_combat(user, airlock, "electrified")
+		if(!isnull(payload["safety"]) && airlock.safe != !!payload["safety"])
+			airlock.safe = !!payload["safety"]
+			changed = TRUE
+	var/wanted_state = payload["state"]
+	if(wanted_state == "open" && door.density)
+		INVOKE_ASYNC(door, TYPE_PROC_REF(/obj/machinery/door, open))
+		changed = TRUE
+	else if(wanted_state == "closed" && !door.density)
+		INVOKE_ASYNC(door, TYPE_PROC_REF(/obj/machinery/door, close))
+		changed = TRUE
+	if(user && wanted_state)
+		door.log_remote_use(user, wanted_state == "open" ? "opened" : "closed", "network button")
+	return door_state(door, press, changed, length(refused) ? "refused_[jointext(refused, "+")]" : null)
 
 /datum/netdm_door_shadow/proc/door_state(obj/machinery/door/door, press, changed, reason)
 	var/list/state = list("press" = press, "state" = door.density ? "closed" : "open", "changed" = changed ? TRUE : FALSE)
@@ -420,6 +489,12 @@
 /obj/item/assembly/control/activate()
 	var/datum/netdm_door_shadow/shadow = SSnetdm_observe.doors
 	var/list/plan = shadow?.plan(src)
+	if(plan && shadow.authoritative)
+		// The doors move when the commands reach them; the button only keeps its cooldown.
+		cooldown = TRUE
+		addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
+		shadow.mirror(plan)
+		return
 	. = ..()
 	if(plan)
 		shadow.mirror(plan)
@@ -427,6 +502,11 @@
 /obj/item/assembly/control/airlock/activate()
 	var/datum/netdm_door_shadow/shadow = SSnetdm_observe.doors
 	var/list/plan = shadow?.plan(src)
+	if(plan && shadow.authoritative)
+		cooldown = TRUE
+		addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
+		shadow.mirror(plan)
+		return
 	. = ..()
 	if(plan)
 		shadow.mirror(plan)

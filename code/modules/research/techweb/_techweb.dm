@@ -180,7 +180,8 @@
 		var/obj/machinery/computer/rdconsole/V = v
 		V.ui_update()
 
-/datum/techweb/proc/add_point_list(list/pointlist, income = TRUE)
+/// source: the machine or body that produced the points; netDM credits its research server (ResearchEvidence).
+/datum/techweb/proc/add_point_list(list/pointlist, income = TRUE, atom/source)
 	if(income) // i DO NOT TRUST byond to optimize this way properly
 		for(var/i in pointlist)
 			if(SSresearch.point_types[i] && pointlist[i] > 0)
@@ -263,7 +264,7 @@
 /datum/techweb/proc/get_researched_nodes()
 	return researched_nodes - hidden_nodes
 
-/datum/techweb/proc/add_point_type(type, amount, income = TRUE)
+/datum/techweb/proc/add_point_type(type, amount, income = TRUE, atom/source)
 	if(!SSresearch.point_types[type] || (amount <= 0))
 		return FALSE
 	if(income)

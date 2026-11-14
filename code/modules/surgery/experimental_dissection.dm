@@ -88,7 +88,7 @@
 	else
 		web = find_rnd_network_for_object(src)
 	if(web)
-		web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = points_earned))
+		web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = points_earned), source = target)
 		var/obj/item/bodypart/L = target.get_bodypart(BODY_ZONE_CHEST)
 		target.apply_damage(80, BRUTE, L, wound_bonus=CANT_WOUND)
 		ADD_TRAIT(target, TRAIT_DISSECTED, "[surgery.name]")
@@ -108,7 +108,7 @@
 	else
 		web = find_rnd_network_for_object(src)
 	if(web)
-		web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = (round(check_value(target, surgery) * 0.01))))
+		web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = (round(check_value(target, surgery) * 0.01))), source = target)
 		var/obj/item/bodypart/L = target.get_bodypart(BODY_ZONE_CHEST)
 		target.apply_damage(80, BRUTE, L, wound_bonus=CANT_WOUND)
 

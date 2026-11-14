@@ -87,9 +87,20 @@
 	if(apc.netdm_state() != NETDM_STATE_UP)
 		tell(user, span_warning("Сетевой модуль АПЦ не отвечает: нет питания или неисправен."))
 		return TRUE
+	if(!terminal_access(apc, user))
+		tell(user, span_warning("Доступ запрещён: нужен инженерный доступ или разблокированный интерфейс АПЦ."))
+		return TRUE
 	var/datum/netdm_terminal/terminal = new(apc)
 	terminal.ui_interact(user)
 	return TRUE
+
+/// The APC terminal opens like the APC's own interface: an ID with its access (silicons included), or an
+/// interface that is unlocked or emagged. PDA, implant and adapter terminals have no such gate; what any
+/// terminal may see and call is decided by the service policies in the network.
+/datum/netdm_diagnostics/proc/terminal_access(obj/machinery/power/apc/apc, mob/user)
+	if(!istype(apc) || !user)
+		return FALSE
+	return !apc.locked || (apc.obj_flags & EMAGGED) || apc.allowed(user)
 
 /// A terminal runs lines and scripts at its own endpoint. The UI host is the device the user operates.
 /datum/netdm_terminal

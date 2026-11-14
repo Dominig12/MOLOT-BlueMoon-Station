@@ -89,14 +89,25 @@
 	shadow.committing--
 	shadow.legacy_income(src, .)
 
-/datum/techweb/add_point_list(list/pointlist, income = TRUE)
+/datum/techweb/add_point_list(list/pointlist, income = TRUE, atom/source)
 	var/datum/netdm_research_shadow/shadow = SSnetdm_observe.research
 	if(shadow?.owns(src))
-		shadow.ledger_points(src, pointlist)
+		shadow.ledger_points(src, pointlist, source)
 		return
 	. = ..()
 	if(!income)
 		shadow?.legacy_points(src, pointlist)
+
+/// Under the ledger points with a source go to the source's server, gathered and sent every few seconds;
+/// points without one keep the legacy path (next_income, then the coordinator).
+/datum/techweb/add_point_type(type, amount, income = TRUE, atom/source)
+	var/datum/netdm_research_shadow/shadow = SSnetdm_observe.research
+	if(source && shadow?.owns(src) && SSresearch.point_types[type] && amount > 0)
+		var/list/points = list()
+		points[type] = amount
+		shadow.evidence_points(src, points, source)
+		return TRUE
+	return ..()
 
 /datum/techweb/remove_point_list(list/pointlist)
 	var/datum/netdm_research_shadow/shadow = SSnetdm_observe.research
