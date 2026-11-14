@@ -140,12 +140,21 @@
  * start over), "invalid_cursor", or "no_answer" when the network returned nothing in time.
  * Returns FALSE when the query cannot even be queued.
  */
-/datum/netdm_diagnostics/proc/query_services(datum/asker, obj/machinery/power/apc/apc, service_type, datum/callback/on_page, limit = 8, cursor)
+/// prefix keeps instances that start with it, max_hops those at most that many hops from the APC, and
+/// projection picks the item parts: "full" (instance|type|hops), "instance_type" or "instance". A cursor
+/// continues only the query with the same filters.
+/datum/netdm_diagnostics/proc/query_services(datum/asker, obj/machinery/power/apc/apc, service_type, datum/callback/on_page, limit = 8, cursor, prefix, max_hops, projection)
 	var/list/arguments = list("limit" = clamp(round(limit), 1, 16))
 	if(service_type)
 		arguments["type"] = service_type
 	if(cursor)
 		arguments["cursor"] = cursor
+	if(istext(prefix) && length(prefix))
+		arguments["prefix"] = prefix
+	if(isnum(max_hops))
+		arguments["maxHops"] = clamp(round(max_hops), 0, 64)
+	if(projection in list("full", "instance", "instance_type"))
+		arguments["projection"] = projection
 	return queue_query(asker, apc, "services", arguments, on_page)
 
 /// Reads the registered message contract of one service the APC can reach.
@@ -249,9 +258,10 @@
 		return TRUE
 	var/list/items = list()
 	for(var/row in splittext("[payload["items"]]", ","))
+		// A projection leaves out the trailing parts: an absent part stays null.
 		var/list/parts = splittext(row, "|")
-		if(length(parts) == 3)
-			items += list(list("instance" = parts[1], "type" = parts[2], "hops" = text2num(parts[3])))
+		if(length(parts) >= 1 && length(parts) <= 3 && length(parts[1]))
+			items += list(list("instance" = parts[1], "type" = length(parts) >= 2 ? parts[2] : null, "hops" = length(parts) == 3 ? text2num(parts[3]) : null))
 	counters["pages"]++
 	finish_query(key, list("status" = payload["status"], "revision" = netdm_number(payload["revision"]), "cursor" = payload["cursor"], "items" = items))
 	return TRUE

@@ -353,9 +353,9 @@
 	page = answer
 
 /// One page of the service directory as `asker` gets it from `apc`.
-/datum/unit_test/netdm_observe/area_map/network_diagnostics/proc/query(datum/asker, obj/machinery/power/apc/apc, service_type, limit = 8, cursor)
+/datum/unit_test/netdm_observe/area_map/network_diagnostics/proc/query(datum/asker, obj/machinery/power/apc/apc, service_type, limit = 8, cursor, prefix, max_hops, projection)
 	page = null
-	if(!SSnetdm_observe.diagnostics.query_services(asker, apc, service_type, CALLBACK(src, PROC_REF(take_page)), limit, cursor))
+	if(!SSnetdm_observe.diagnostics.query_services(asker, apc, service_type, CALLBACK(src, PROC_REF(take_page)), limit, cursor, prefix, max_hops, projection))
 		return null
 	var/deadline = world.time + 30 SECONDS
 	while(world.time < deadline && !page)
@@ -501,6 +501,14 @@
 	var/list/second_page = query(watcher_node, near, "machine.control", 1, first_page["cursor"])
 	TEST_ASSERT(length(second_page?["items"]) == 1 && second_page["items"][1]["instance"] != first_page["items"][1]["instance"],
 		"The cursor continues after the first page: [json_encode(second_page)]")
+	var/list/near_only = query(watcher_node, near, "machine.control", max_hops = 1, projection = "instance")
+	var/list/far_named = query(watcher_node, near, null, prefix = pumps[1], projection = "instance_type")
+	var/pumps_near = 0
+	for(var/list/row in near_only?["items"])
+		if(row["instance"] in pumps)
+			pumps_near++
+	TEST_ASSERT(near_only?["status"] && near_only["status"] != "invalid_cursor" && !pumps_near && length(far_named?["items"]) == 1 && far_named["items"][1]["instance"] == pumps[1] && far_named["items"][1]["type"] == "machine.control" && isnull(far_named["items"][1]["hops"]),
+		"Hops, prefix and projection narrow the page: [json_encode(near_only)] [json_encode(far_named)]")
 	far.operating = FALSE
 	TEST_ASSERT(wait_for_links(left.z, near_id, 1, TRUE), "The near APC keeps only its machine while the far one is dead.")
 	listed = query(watcher_node, near, "machine.control")
