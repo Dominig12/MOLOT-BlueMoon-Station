@@ -153,7 +153,12 @@
 		return
 	switch(action)
 		if("run")
-			return submit(trim("[params["line"]]"))
+			var/line = trim("[params["line"]]")
+			// "migrate <program> <shell instance>" moves the asker's program to another device (NetEntity).
+			var/list/words = splittext(line, " ")
+			if(length(words) == 3 && words[1] == "migrate")
+				return migrate_program(words[2], words[3])
+			return submit(line)
 		if("run_script")
 			return submit(params["source"], TRUE)
 		if("start_program")
@@ -251,6 +256,13 @@
 
 /datum/netdm_terminal/proc/supports_programs()
 	return TRUE
+
+/// Moves the asker's program to another device's shell; the program keeps its identity and state.
+/datum/netdm_terminal/proc/migrate_program(program, target)
+	var/id = istext(program) ? text2num(program) : program
+	if(!supports_programs() || !isnum(id) || id < 1 || id > 1000000000 || round(id) != id || !istext(target) || !length(target) || length(target) > 64)
+		return FALSE
+	return submit_request("migrate [id] [target]", "migrate", list("program" = id, "to" = target))
 
 /datum/netdm_terminal/proc/stop_program(program)
 	var/id = istext(program) ? text2num(program) : program
@@ -550,7 +562,11 @@
 		var/name = entry["name"]
 		var/source = entry["source"]
 		if(istext(name) && length(name) && length_char(name) <= 32 && istext(source) && length(source) && length_char(source) <= NETDM_TERMINAL_SCRIPT_LENGTH)
-			valid += list(list("name" = name, "source" = source))
+			var/list/kept = list("name" = name, "source" = source)
+			// The entity the Host knows it as: a copy of an entity that moved elsewhere is not started again.
+			if(isnum(entry["program"]) && entry["program"] >= 1 && entry["program"] <= 1000000000 && round(entry["program"]) == entry["program"])
+				kept["program"] = entry["program"]
+			valid += list(kept)
 	return valid
 
 /// Writes the kept programs back. FALSE when the device has no media or the media refuses the write.
@@ -609,6 +625,8 @@
 	var/datum/weakref/device_ref = WEAKREF(device)
 	for(var/list/entry in kept)
 		var/list/arguments = list("name" = entry["name"], "source" = entry["source"], "ensure" = TRUE)
+		if(entry["program"])
+			arguments["entity"] = entry["program"]
 		if(!queue_shell_request(node, node, "start", arguments, CALLBACK(src, PROC_REF(kept_answered), device_ref, entry["name"]),
 			CALLBACK(src, PROC_REF(kept_device_present), device_ref)))
 			SSnetdm_observe.log_issue("kept program [entry["name"]] of [device] not queued")
@@ -620,10 +638,31 @@
 
 /datum/netdm_diagnostics/proc/kept_answered(datum/weakref/device_ref, name, list/output)
 	var/status = output?["status"]
-	if(status == "started" || status == "running")
-		return
 	var/atom/device = device_ref?.resolve()
+	if(status == "started" || status == "running" || status == "moved")
+		if(device)
+			remember_entity(device, name, status == "moved" ? null : output["program"])
+		if(status == "moved")
+			SSnetdm_observe.log_issue("kept program [name] of [device] moved to [output["to"]]: taken off the media")
+		return
 	SSnetdm_observe.log_issue("kept program [name] of [device || "a gone device"]: [status || "no answer"] [output?["error"]]")
+
+/// The media learns the entity a kept program runs as; an entity that moved away leaves the media.
+/datum/netdm_diagnostics/proc/remember_entity(atom/device, name, program)
+	var/list/kept = netdm_kept_programs(device)
+	if(!islist(kept))
+		return
+	for(var/list/entry in kept.Copy())
+		if(entry["name"] != name)
+			continue
+		if(isnull(program))
+			kept -= list(entry)
+		else if(entry["program"] == program)
+			return
+		else
+			entry["program"] = program
+		netdm_store_kept(device, kept)
+		return
 
 /// Keeps a program on the terminal's device, replacing one of the same name. Returns an error text or null.
 /datum/netdm_terminal/proc/keep_program(name, source)

@@ -3301,16 +3301,32 @@
 		sleep(5)
 	TEST_ASSERT(kept_listed?["status"] == "ok" && length(kept_listed["records"]) == 1 && field(kept_listed["records"][1], "name") == "kept",
 		"The reinstalled implant starts its kept rule on attach: [json_encode(kept_listed)]")
-	TEST_ASSERT(reinstalled.forget_program("kept") && !length(implant.netdm_programs) && !length(reinstalled.kept_names()), "The rule can be taken off the media.")
-	var/list/kept_stop = null
-	if(reinstalled.stop_program(field(kept_listed["records"][1], "program")))
-		kept_stop = reinstalled.entries[length(reinstalled.entries)]
+	var/kept_id = text2num(field(kept_listed["records"][1], "program"))
+	deadline = world.time + 10 SECONDS
+	while(world.time < deadline && !(length(implant.netdm_programs) && implant.netdm_programs[1]["program"] == kept_id))
+		sleep(2)
+	var/media_record = json_encode(implant.netdm_programs)
+	TEST_ASSERT(length(implant.netdm_programs) && implant.netdm_programs[1]["program"] == kept_id, "The implant's media learns the entity's number: [media_record]")
+	// NetEntity: the rule moves to the APC's shell, while the implant's media still names it.
+	var/datum/netdm_service_endpoint/apc_endpoint = SSnetdm_observe.services.endpoint_for(near)
+	var/list/moved_entry = null
+	if(apc_endpoint && reinstalled.migrate_program(kept_id, "netshell.[apc_endpoint.id]"))
+		moved_entry = reinstalled.entries[length(reinstalled.entries)]
 		deadline = world.time + 20 SECONDS
-		while(kept_stop["pending"] && world.time < deadline)
+		while(moved_entry["pending"] && world.time < deadline)
 			sleep(2)
-	TEST_ASSERT_EQUAL(kept_stop?["status"], "stopped", "The restarted rule is stopped by its device.")
+	TEST_ASSERT_EQUAL(moved_entry?["status"], "migrated", "The implant moves its rule to the APC: [json_encode(moved_entry)]")
 	extracted_node = implant.node
 	TEST_ASSERT(implant.removed(test_user, TRUE) && QDELETED(extracted_node), "The implant is removed again.")
+	// Installed once more, the implant asks for the copy its media names and learns it moved: no second copy runs.
+	TEST_ASSERT(implant.implant(test_user, test_user, TRUE) && implant.node, "The implant goes in a third time.")
+	deadline = world.time + 40 SECONDS
+	while(world.time < deadline && length(implant.netdm_programs))
+		sleep(5)
+	media_record = json_encode(implant.netdm_programs)
+	TEST_ASSERT(!length(implant.netdm_programs), "A moved entity leaves the media instead of starting twice: [media_record]")
+	extracted_node = implant.node
+	TEST_ASSERT(implant.removed(test_user, TRUE) && QDELETED(extracted_node), "The implant is removed for the rest of the test.")
 
 	var/obj/item/netdm_adapter/adapter = allocate(/obj/item/netdm_adapter, left)
 	TEST_ASSERT(test_user.put_in_hands(adapter), "The operator can hold the adapter and data disk.")

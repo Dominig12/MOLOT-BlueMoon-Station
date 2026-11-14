@@ -36,6 +36,10 @@
 		RegisterSignal(parent, list(COMSIG_MODULAR_COMPUTER_TURNED_ON, COMSIG_MODULAR_COMPUTER_SHUT_DOWN), PROC_REF(on_power_changed))
 	watch_containers()
 	SSnetdm_observe.add_node(src)
+	// A device that keeps programs on its media needs its endpoint at once: its attach starts them again,
+	// even if nobody uses the device afterwards (a reinstalled implant, a reconnected adapter).
+	if(length(netdm_kept_programs(parent)))
+		SSnetdm_observe.services?.endpoint_for(src)
 
 /datum/component/netdm_node/UnregisterFromParent()
 	UnregisterSignal(parent, list(COMSIG_MOVABLE_MOVED, COMSIG_OBJ_SETANCHORED, COMSIG_MACHINERY_SET_MACHINE_STAT,
