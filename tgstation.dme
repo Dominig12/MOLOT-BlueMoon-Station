@@ -3841,6 +3841,7 @@
 #include "code\modules\netdm\network_diagnostics.dm"
 #include "code\modules\netdm\network_terminal.dm"
 #include "code\modules\netdm\network_space.dm"
+#include "code\modules\netdm\camera_access.dm"
 #include "code\modules\netdm\radio_shadow.dm"
 #include "code\modules\netdm\radio_uplink.dm"
 #include "code\modules\netdm\research_shadow.dm"

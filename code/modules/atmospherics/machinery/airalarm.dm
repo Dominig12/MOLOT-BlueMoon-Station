@@ -544,7 +544,8 @@ GLOBAL_LIST_INIT(air_alarm_modes, init_air_alarm_modes())
 	ui = SStgui.try_update_ui(user, src, ui)
 	if(!ui)
 		ui = new(user, src, "AirAlarm", name)
-		ui.open()
+		if(ui.open() && isliving(user) && user.Adjacent(src) && !is_antag_training_atom(user))
+			SSnetdm_observe?.telemetry?.add_alarm(src)
 
 /obj/machinery/airalarm/ui_data(mob/user)
 	var/data = list(

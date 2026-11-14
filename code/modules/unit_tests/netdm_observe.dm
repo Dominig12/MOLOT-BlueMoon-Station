@@ -3036,6 +3036,97 @@
 	TEST_ASSERT(delta["reached"] > 0, "The network reaches the station's doors: [json_encode(report)]")
 	TEST_ASSERT_EQUAL(unexplained, 0, "Every miss needs a Host reason: [json_encode(reason_deltas)]")
 
+/datum/unit_test/netdm_observe/area_map/network_cameras
+
+/datum/unit_test/netdm_observe/area_map/network_cameras/proc/wait_feed(obj/machinery/computer/security/console, obj/machinery/camera/expected, status)
+	var/deadline = world.time + 20 SECONDS
+	while(world.time < deadline)
+		if(console.active_camera == expected && console.netdm_camera_status == status)
+			return TRUE
+		sleep(2)
+	return FALSE
+
+/datum/unit_test/netdm_observe/area_map/network_cameras/Run()
+	if(world.GetConfig("env", "NETDM_CAMERA_MODE") != "authoritative")
+		return
+	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
+	TEST_ASSERT(wait_until_live(), "Observe must publish the map.")
+	var/turf/left = run_loc_floor_bottom_left
+	var/turf/right = get_step(left, EAST)
+	assign_area(left, test_zone(/area/netdm_test/first))
+	assign_area(right, test_zone(/area/netdm_test/second))
+	var/obj/machinery/power/apc/near = allocate(/obj/machinery/power/apc, left)
+	var/obj/machinery/power/apc/far = allocate(/obj/machinery/power/apc, right)
+	var/list/near_fact = wait_for_fact(WEAKREF(near), left)
+	TEST_ASSERT(near_fact && wait_for_fact(WEAKREF(far), right), "Both APCs are published.")
+	TEST_ASSERT(wait_for_links(left.z, near_fact["a"], 1, TRUE), "The two APCs are linked.")
+	var/obj/machinery/computer/security/console = allocate(/obj/machinery/computer/security, left)
+	var/obj/machinery/camera/camera = allocate(/obj/machinery/camera, right)
+	var/obj/machinery/camera/private_camera = allocate(/obj/machinery/camera, right)
+	private_camera.network = list("private-test")
+	console.set_machine_stat(console.machine_stat & ~(NOPOWER|BROKEN|EMPED))
+	camera.set_machine_stat(camera.machine_stat & ~(NOPOWER|BROKEN|EMPED))
+	camera.status = TRUE
+	TEST_ASSERT(!console.netdm_camera_select(private_camera), "A camera from another network is denied.")
+	TEST_ASSERT(console.netdm_camera_select(camera) && !console.active_camera, "Selection waits for the network result.")
+	TEST_ASSERT(wait_feed(console, camera, "ready"), "The camera is only shown after the round trip.")
+	var/datum/component/netdm_node/camera_node = camera.GetComponent(/datum/component/netdm_node)
+	var/list/camera_fact = wait_for_node(camera_node, right, TRUE)
+	TEST_ASSERT(camera_fact && wait_for_links(right.z, camera_fact["a"], 1, FALSE), "The camera is wired to the far APC.")
+	var/obj/machinery/computer/security/second_console = allocate(/obj/machinery/computer/security, left)
+	second_console.set_machine_stat(second_console.machine_stat & ~(NOPOWER|BROKEN|EMPED))
+	TEST_ASSERT(second_console.netdm_camera_select(camera), "A second console can request the same camera.")
+	TEST_ASSERT(wait_feed(second_console, camera, "ready"), "Each console receives its own confirmation for the same camera.")
+	far.operating = FALSE
+	TEST_ASSERT(wait_for_links(right.z, camera_fact["a"], 0, FALSE), "Cut the camera's wired route.")
+	TEST_ASSERT(wait_feed(console, null, "offline"), "A broken route expires the feed.")
+	far.operating = TRUE
+	TEST_ASSERT(wait_feed(console, camera, "ready"), "Restoring the route renews the feed.")
+	console.network = list("private-test")
+	TEST_ASSERT(wait_feed(console, null, "denied"), "Changing the console's camera network revokes its feed.")
+
+/datum/unit_test/netdm_observe/area_map/network_air_alarm/Run()
+	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+		return
+	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
+	TEST_ASSERT(wait_until_live(), "Observe must publish the station map.")
+	var/obj/machinery/power/apc/station_apc
+	for(var/obj/machinery/power/apc/apc as anything in GLOB.apcs_list)
+		if(is_station_level(apc.z) && apc.netdm_state() == NETDM_STATE_UP && !is_antag_training_atom(apc))
+			station_apc = apc
+			break
+	TEST_ASSERT(station_apc, "The station has a powered network access point.")
+	var/obj/machinery/airalarm/alarm = allocate(/obj/machinery/airalarm, get_turf(station_apc))
+	alarm.set_machine_stat(alarm.machine_stat & ~(NOPOWER|BROKEN|MAINT|EMPED))
+	SSnetdm_observe.telemetry.add_alarm(alarm)
+	var/datum/component/netdm_node/node = alarm.GetComponent(/datum/component/netdm_node)
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	var/datum/netdm_service_endpoint/endpoint = lane.by_node[node]
+	TEST_ASSERT(endpoint, "A station air alarm can be registered after local interaction.")
+	var/instance = "atmos.alarm.[endpoint.id]"
+	var/deadline = world.time + 30 SECONDS
+	while(world.time < deadline && !lane.ready(node, instance))
+		sleep(2)
+	TEST_ASSERT(lane.ready(node, instance), "The air alarm registers a service.")
+	var/datum/netdm_terminal/terminal = allocate(/datum/netdm_terminal, station_apc)
+	var/datum/netdm_space/space = new(terminal)
+	TEST_ASSERT(space.enter(), "Open a presence at the station APC.")
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && space.presence?["state"] != "active")
+		sleep(2)
+	TEST_ASSERT(space.presence?["state"] == "active" && space.scan(3), "An active presence scans for the alarm.")
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && !space.items["s|[instance]"])
+		space.refresh()
+		sleep(5)
+	TEST_ASSERT(space.read_alarm(instance), "The map requests a sample from the known alarm.")
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && !findtext(jointext(space.log, " | "), "кПа"))
+		space.check_alarm()
+		sleep(2)
+	TEST_ASSERT(findtext(jointext(space.log, " | "), "[instance] ·") && findtext(jointext(space.log, " | "), "кПа"),
+		"The result returns to the network window: [json_encode(space.log)].")
+
 /// The terminal of an APC's network module (network.shell): lines typed at the APC run as pipelines on its
 /// module, the records come back over the network, and invoke sends ordinary commands as the APC.
 /datum/unit_test/netdm_observe/area_map/network_terminal

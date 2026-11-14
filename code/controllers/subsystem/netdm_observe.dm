@@ -129,6 +129,8 @@ SUBSYSTEM_DEF(netdm_observe)
 		doors.setup(services)
 		diagnostics = new
 		diagnostics.setup(services)
+		services.dispatcher.allow_command("camera.access", "acquire", new /datum/netdm_command_handler/camera_acquire)
+		services.dispatcher.allow_result("acquire", new /datum/netdm_effect_handler/camera_acquired, "camera.access")
 
 /datum/controller/subsystem/netdm_observe/Initialize(start_timeofday)
 	if(flags & SS_NO_FIRE)

@@ -4,6 +4,11 @@
 #define NETDM_TELEMETRY_REPORTS 256
 /// Latency samples kept for percentiles.
 #define NETDM_TELEMETRY_SAMPLES 512
+/// Only a limited number of locally visited air alarms advertise on the live network.
+#define NETDM_ATMOS_ALARMS 32
+/// A result can arrive before the window learns the operation ID from the shell.
+#define NETDM_ATMOS_ALARM_RESULTS 64
+#define NETDM_ATMOS_ALARM_RESULT_AGE (15 SECONDS)
 
 /**
  * atmos.telemetry pilot in Shadow mode (P4).
@@ -33,6 +38,10 @@
 	/// Sensors with a node: sensor weakref -> TRUE; instances they offer -> TRUE.
 	var/list/sensors = list()
 	var/list/sensor_instances = list()
+	/// A locally visited alarm's weakref -> weakref of the node added to advertise its reading.
+	var/list/air_alarms = list()
+	/// Operation ID -> recent, unclaimed result, in delivery order.
+	var/list/air_alarm_results = list()
 	/// Console endpoint ID -> list("matched", "radio_only", reason -> count), for station reports.
 	var/list/per_console = list()
 	/// "console/instance" -> list(reason, world.time until it is trusted): a console that the network
@@ -49,6 +58,8 @@
 	lane.dispatcher.allow("atmos.sample", new /datum/netdm_effect_handler/atmos_shadow)
 	lane.dispatcher.allow_command("atmos.telemetry", "sample", new /datum/netdm_command_handler/atmos_sample)
 	lane.dispatcher.allow_result("sample", new /datum/netdm_effect_handler/atmos_snapshot)
+	lane.dispatcher.allow_command("atmos.alarm", "read", new /datum/netdm_command_handler/atmos_alarm)
+	lane.dispatcher.allow_result("read", new /datum/netdm_effect_handler/atmos_alarm_state, "atmos.alarm")
 
 /datum/netdm_telemetry_shadow/proc/reset_session()
 	// Deliveries of the old session will never arrive: those reports are not compared.
@@ -56,6 +67,7 @@
 	reason_cache.Cut()
 	snapshots_requested.Cut()
 	snapshot_started.Cut()
+	air_alarm_results.Cut()
 
 /datum/netdm_telemetry_shadow/proc/add_sensor(obj/machinery/air_sensor/sensor, datum/component/netdm_node/node)
 	var/instance = netdm_atmos_instance(sensor.frequency, sensor.id_tag)
@@ -63,6 +75,45 @@
 		SSnetdm_observe.services.offer(node, instance, "atmos.telemetry", "atmos.sample", 1)
 		sensors[WEAKREF(sensor)] = TRUE
 		sensor_instances[instance] = TRUE
+
+/datum/netdm_telemetry_shadow/proc/add_alarm(obj/machinery/airalarm/alarm)
+	var/datum/weakref/alarm_ref = WEAKREF(alarm)
+	if(!netdm_station_air_alarm(alarm))
+		return
+	for(var/datum/weakref/registered as anything in air_alarms)
+		var/datum/weakref/node_ref = air_alarms[registered]
+		if(!registered.resolve() || !node_ref.resolve())
+			air_alarms -= registered
+	if(length(air_alarms) >= NETDM_ATMOS_ALARMS || alarm.GetComponent(/datum/component/netdm_node))
+		return
+	var/datum/component/netdm_node/node = netdm_make_node(alarm)
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	var/datum/netdm_service_endpoint/endpoint = node && SSnetdm_observe.nodes[node] ? lane.endpoint_for(node) : null
+	if(!endpoint)
+		qdel(node)
+		return
+	lane.offer(node, "atmos.alarm.[endpoint.id]", "atmos.alarm", "atmos.alarm_state", 1)
+	air_alarms[alarm_ref] = WEAKREF(node)
+	RegisterSignal(alarm, list(COMSIG_MOVABLE_MOVED, COMSIG_OBJ_SETANCHORED), PROC_REF(alarm_moved))
+
+/datum/netdm_telemetry_shadow/proc/alarm_moved(obj/machinery/airalarm/alarm)
+	SIGNAL_HANDLER
+	if(netdm_station_air_alarm(alarm))
+		return
+	var/datum/weakref/alarm_ref = WEAKREF(alarm)
+	var/datum/weakref/node_ref = air_alarms[alarm_ref]
+	var/datum/component/netdm_node/node = node_ref?.resolve()
+	air_alarms -= alarm_ref
+	UnregisterSignal(alarm, list(COMSIG_MOVABLE_MOVED, COMSIG_OBJ_SETANCHORED))
+	if(!QDELETED(node))
+		qdel(node)
+
+/datum/netdm_telemetry_shadow/proc/take_alarm_result(operation, instance, recipient, generation)
+	var/list/reply = air_alarm_results[operation]
+	if(!reply || reply["instance"] != instance || reply["recipient"] != recipient || reply["recipientGeneration"] != generation)
+		return null
+	air_alarm_results -= operation
+	return world.time - reply["received"] < NETDM_ATMOS_ALARM_RESULT_AGE ? reply["payload"] : null
 
 /datum/netdm_telemetry_shadow/proc/add_console(obj/machinery/computer/atmos_control/console, datum/component/netdm_node/node)
 	if(!node)
@@ -353,6 +404,47 @@
 	var/list/sample = SSnetdm_observe.telemetry.sample_of(sensor)
 	return sample ? list("result" = sample) : "no_sample"
 
+/proc/netdm_station_air_alarm(obj/machinery/airalarm/alarm)
+	return istype(alarm) && !QDELETED(alarm) && alarm.anchored && isturf(alarm.loc) && is_station_level(alarm.z) && !is_antag_training_atom(alarm)
+
+/// A live, read-only snapshot of what the wall panel is measuring.
+/datum/netdm_command_handler/atmos_alarm/execute(datum/target, list/item)
+	var/obj/machinery/airalarm/alarm = target
+	var/atom/source = SSnetdm_observe.services.registry.resolve(item["producer"], item["producerGeneration"])
+	if(!netdm_station_air_alarm(alarm) || !isatom(source) || is_antag_training_atom(source))
+		return "alarm_outside_station"
+	var/datum/component/netdm_node/node = source.GetComponent(/datum/component/netdm_node)
+	var/atom/position_source = node ? node.position_source() : source
+	var/turf/origin = position_source ? get_turf(position_source) : null
+	if(!origin || !is_station_level(origin.z) || is_antag_training_atom(position_source))
+		return "alarm_outside_station"
+	if(alarm.machine_stat & (NOPOWER|BROKEN|MAINT|EMPED) || alarm.shorted || alarm.buildstage != 2)
+		return "alarm_offline"
+	var/turf/location = get_turf(alarm)
+	var/datum/gas_mixture/air = location?.return_air()
+	var/area/zone = get_base_area(alarm)
+	if(!air || !zone)
+		return "no_sample"
+	return list("result" = list(
+		"pressureKPa" = clamp(round(air.return_pressure(), 0.01), 0, 1000000),
+		"temperatureK" = clamp(round(air.temperature, 0.01), 0, 1000000),
+		"danger" = alarm.danger_level,
+		"alarm" = !!zone.active_alarms[ALARM_ATMOS],
+	))
+
+/datum/netdm_effect_handler/atmos_alarm_state/apply(datum/target, list/item)
+	var/datum/netdm_telemetry_shadow/telemetry = SSnetdm_observe.telemetry
+	var/list/payload = item["payload"]
+	if(!telemetry || !islist(payload))
+		return "invalid_alarm_result"
+	var/list/results = telemetry.air_alarm_results
+	var/operation = "[item["operationId"]]"
+	results[operation] = list("instance" = item["instance"], "recipient" = item["recipient"],
+		"recipientGeneration" = "[item["recipientGeneration"]]", "received" = world.time, "payload" = payload)
+	if(length(results) > NETDM_ATMOS_ALARM_RESULTS)
+		results.Cut(1, 2)
+	return TRUE
+
 // The pilot devices. Without Observe nothing below adds a component or a call.
 /obj/machinery/air_sensor/Initialize(mapload)
 	. = ..()
@@ -385,3 +477,6 @@
 #undef NETDM_TELEMETRY_SETTLE
 #undef NETDM_TELEMETRY_REPORTS
 #undef NETDM_TELEMETRY_SAMPLES
+#undef NETDM_ATMOS_ALARMS
+#undef NETDM_ATMOS_ALARM_RESULTS
+#undef NETDM_ATMOS_ALARM_RESULT_AGE

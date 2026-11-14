@@ -67,6 +67,7 @@ type CanvasProps = {
   view: View;
   levelKey: string;
   selected: string | null;
+  presenceNode?: string | null;
   filters: SceneFilters;
   fitRequest: number;
   onSelect: (id: string | null) => void;
@@ -155,6 +156,7 @@ export const TopologyCanvas = (props: CanvasProps) => {
         handlers.current.onReport(report(started, current.view.nodes.size, { backend: created.backend }));
         apply(created, current.view, current.levelKey);
         created.setSelection(current.selected);
+        created.setPresence(current.presenceNode ?? null);
       })
       .catch(error => {
         if (!cancelled && !(error instanceof SceneCancelled)) {
@@ -178,6 +180,9 @@ export const TopologyCanvas = (props: CanvasProps) => {
   useEffect(() => {
     scene.current?.setSelection(props.selected);
   }, [props.selected]);
+  useEffect(() => {
+    scene.current?.setPresence(props.presenceNode ?? null);
+  }, [props.presenceNode]);
   useEffect(() => {
     scene.current?.setFilters(props.filters);
   }, [props.filters]);

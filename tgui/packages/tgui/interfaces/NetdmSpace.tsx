@@ -34,6 +34,7 @@ type Data = {
   hostNode: string | null;
   log: string[];
   revision: number;
+  alarmPending: BooleanLike;
 };
 
 const FILTERS: SceneFilters = { radio: true, devices: true };
@@ -60,29 +61,52 @@ const REASON_TEXT: Record<string, string> = {
 
 /** What the operator knows of one node: its kind, freshness and the services seen there. */
 const NodePanel = (props: { view: View; id: string | null; services: Service[]; presenceHost: string | null;
-  onMove: (instance: string) => void }) => {
-  const { id, view, services, presenceHost, onMove } = props;
+  active: boolean; alarmPending: boolean; onMove: (instance: string) => void; onTrace: (id: string) => void;
+  onReadAlarm: (instance: string) => void }) => {
+  const { id, view, services, presenceHost, active, alarmPending, onMove, onTrace, onReadAlarm } = props;
   const node = id ? view.nodes.get(id) : undefined;
   if (!id || !node) {
     return <Section title="Узел">Выберите узел на карте.</Section>;
   }
   const here = services.filter(service => service.node === id);
+  const stale = !!(node.flags & FLAG_UNPOWERED);
   return (
-    <Section title={`Узел ${id}`}>
+    <Section
+      title={`Узел ${id}`}
+      buttons={(
+        <Button icon="route" disabled={!active} onClick={() => onTrace(id)}>
+          Проверить маршрут
+        </Button>
+      )}>
       <LabeledList>
         <LabeledList.Item label="Тип">{node.flags & FLAG_APC ? 'ретранслятор (АПЦ)' : 'устройство'}</LabeledList.Item>
-        <LabeledList.Item label="Сведения">{node.flags & FLAG_UNPOWERED ? 'устарели' : 'свежие'}</LabeledList.Item>
+        <LabeledList.Item label="Сведения">{stale ? 'устарели' : 'свежие'}</LabeledList.Item>
         <LabeledList.Item label="Клетка">{node.x}, {node.y}</LabeledList.Item>
       </LabeledList>
       {here.length === 0 && <Box color="label" mt={0.5}>Известных сервисов нет.</Box>}
       {here.map(service => (
         <Stack key={service.instance} mt={0.5} align="center">
           <Stack.Item grow color={service.stale ? 'label' : undefined}>
-            {service.instance} · {service.type}
+            {service.type === 'atmos.alarm' ? 'Датчик атмосферы' : `${service.instance} · ${service.type}`}
           </Stack.Item>
+          {service.type === 'atmos.alarm' && (
+            <Stack.Item>
+              <Button
+                icon="tachometer-alt"
+                disabled={!active || stale || !!service.stale || alarmPending}
+                onClick={() => onReadAlarm(service.instance)}>
+                {alarmPending ? 'Ожидание ответа' : 'Снять показания'}
+              </Button>
+            </Stack.Item>
+          )}
           {service.type === 'network.shell' && service.instance !== presenceHost && (
             <Stack.Item>
-              <Button icon="route" onClick={() => onMove(service.instance)}>Перейти</Button>
+              <Button
+                icon="sign-in-alt"
+                disabled={!active || stale || !!service.stale}
+                onClick={() => onMove(service.instance)}>
+                Перейти
+              </Button>
             </Stack.Item>
           )}
         </Stack>
@@ -93,7 +117,7 @@ const NodePanel = (props: { view: View; id: string | null; services: Service[]; 
 
 /** A shell line the presence runs where it stands. */
 const ActionBox = (props: { line: string; enabled: boolean; onLine: (value: string) => void; onSend: () => void }) => (
-  <Section title="Действие присутствия">
+  <Section title="Командная строка">
     <Stack>
       <Stack.Item grow>
         <Input
@@ -105,7 +129,9 @@ const ActionBox = (props: { line: string; enabled: boolean; onLine: (value: stri
           onEnter={() => props.onSend()} />
       </Stack.Item>
       <Stack.Item>
-        <Button icon="play" disabled={!props.enabled} onClick={() => props.onSend()} />
+        <Button icon="play" disabled={!props.enabled || !props.line.trim()} onClick={() => props.onSend()}>
+          Выполнить
+        </Button>
       </Stack.Item>
     </Stack>
   </Section>
@@ -144,16 +170,26 @@ export const NetdmSpace = () => {
   const [selected, setSelected] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [radius, setRadius] = useState(3);
+  const [fitRequest, setFitRequest] = useState(0);
   const [line, setLine] = useState('');
+  const [advanced, setAdvanced] = useState(false);
   const presence = data.presence;
-  const inside = !!presence?.presence && presence.state !== 'ended' && presence.status !== 'none';
+  const inside = !!presence?.presence && presence.state !== 'ended';
+  const active = inside && presence.state === 'active';
+  const canResume = inside && presence.state === 'suspended' && presence.reason === 'operator_away';
+  const canScan = !inside || active;
   const shown = selected ?? data.hostNode ?? null;
   const reason = presence?.reason ? REASON_TEXT[presence.reason] ?? presence.reason : null;
   const send = () => {
     const trimmed = line.trim();
-    if (trimmed.length > 0 && trimmed.length <= 1024) {
+    if (active && trimmed.length > 0 && trimmed.length <= 1024) {
       act('act', { line: trimmed });
       setLine('');
+    }
+  };
+  const trace = (id: string) => {
+    if (active && view.nodes.has(id) && /^\d{1,20}$/.test(id)) {
+      act('act', { line: `trace ${id} | select state hops radioHops ticks` });
     }
   };
 
@@ -171,7 +207,10 @@ export const NetdmSpace = () => {
                       {presence!.state === 'moving'
                         ? ` → ${presence!.to}, ещё ${presence!.arriveIn ?? 0} с`
                         : ` на ${presence!.host}`}
-                      {` · поколение ${presence!.generation ?? 1}`}
+                      {inside && presence?.state !== 'moving' && view.nodes.has(data.hostNode ?? '') && (
+                        <Box inline ml={0.5} color="#55e7d0" title="Ваше присутствие на карте">○</Box>
+                      )}
+                      {advanced && ` · поколение ${presence!.generation ?? 1}`}
                       {reason && ` · ${reason}`}
                     </Box>
                   ) : (
@@ -180,6 +219,11 @@ export const NetdmSpace = () => {
                     </Box>
                   )}
                 </Stack.Item>
+                {canResume && (
+                  <Stack.Item>
+                    <Button icon="play" onClick={() => act('enter')}>Продолжить</Button>
+                  </Stack.Item>
+                )}
                 <Stack.Item>
                   {inside ? (
                     <Button.Confirm icon="sign-out-alt" content="Выйти" confirmContent="Завершить присутствие?" onClick={() => act('leave')} />
@@ -195,7 +239,7 @@ export const NetdmSpace = () => {
                     onSelected={(value: number) => setRadius(value)} />
                 </Stack.Item>
                 <Stack.Item>
-                  <Button icon="satellite-dish" onClick={() => act('scan', { radius })}>Сканировать</Button>
+                  <Button icon="satellite-dish" disabled={!canScan} onClick={() => act('scan', { radius })}>Сканировать</Button>
                 </Stack.Item>
                 {data.levels.length > 1 && (
                   <Stack.Item>
@@ -207,6 +251,11 @@ export const NetdmSpace = () => {
                         setSelected(null);
                         act('level', { z: value });
                       }} />
+                  </Stack.Item>
+                )}
+                {!failure && view.nodes.size > 0 && (
+                  <Stack.Item>
+                    <Button icon="expand" onClick={() => setFitRequest(current => current + 1)}>Вписать карту</Button>
                   </Stack.Item>
                 )}
               </Stack>
@@ -225,9 +274,10 @@ export const NetdmSpace = () => {
                   <TopologyCanvas
                     view={view}
                     levelKey={String(data.z)}
-                    selected={shown}
+                    selected={selected}
+                    presenceNode={inside && presence?.state !== 'moving' ? data.hostNode : null}
                     filters={FILTERS}
-                    fitRequest={0}
+                    fitRequest={fitRequest}
                     onSelect={setSelected}
                     onFailure={setFailure}
                     onReport={() => undefined} />
@@ -241,19 +291,29 @@ export const NetdmSpace = () => {
                       id={shown}
                       services={data.services}
                       presenceHost={inside ? presence!.host ?? null : null}
-                      onMove={instance => act('move', { to: instance })} />
-                  </Stack.Item>
-                  <Stack.Item>
-                    <ActionBox line={line} enabled={inside} onLine={setLine} onSend={send} />
+                      active={active}
+                      alarmPending={!!data.alarmPending}
+                      onMove={instance => act('move', { to: instance })}
+                      onReadAlarm={instance => act('read_alarm', { instance })}
+                      onTrace={trace} />
                   </Stack.Item>
                   <Stack.Item grow>
-                    <Section fill scrollable title="Журнал">
+                    <Section
+                      fill
+                      scrollable
+                      title="Журнал"
+                      buttons={<Button icon="terminal" selected={advanced} onClick={() => setAdvanced(current => !current)}>Команды</Button>}>
                       {data.log.length === 0 && <Box color="label">Пусто.</Box>}
                       {[...data.log].reverse().map((entry, index) => (
                         <Box key={index}>{entry}</Box>
                       ))}
                     </Section>
                   </Stack.Item>
+                  {advanced && (
+                    <Stack.Item>
+                      <ActionBox line={line} enabled={active} onLine={setLine} onSend={send} />
+                    </Stack.Item>
+                  )}
                 </Stack>
               </Stack.Item>
             </Stack>

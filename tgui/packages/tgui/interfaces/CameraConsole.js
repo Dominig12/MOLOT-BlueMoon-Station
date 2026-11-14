@@ -11,6 +11,11 @@ import { StationMap } from './common/StationMap';
 
 // Старые источники списка не передают состояние камеры.
 const isCameraAvailable = camera => camera.status === undefined || !!camera.status;
+const networkStatusText = {
+  connecting: 'Устанавливается связь',
+  offline: 'Камера недоступна по сети',
+  denied: 'Нет доступа к камере',
+};
 
 // Ищем ближайшие доступные камеры по обе стороны от выбранной, без перехода через край списка.
 export const prevNextCamera = (cameras, activeCamera) => {
@@ -59,7 +64,7 @@ export const selectCameras = (cameras, searchText = '') => {
 
 export const CameraConsole = (props) => {
   const { act, data } = useBackend();
-  const { mapRef, activeCamera } = data;
+  const { mapRef, activeCamera, networkStatus, networkTarget } = data;
   const [tab, setTab] = useLocalState('cameraTab', 'list');
   const hasMap = Array.isArray(data.maps);
   const showMap = hasMap && tab === 'map';
@@ -68,7 +73,8 @@ export const CameraConsole = (props) => {
   const [
     prevCameraName,
     nextCameraName,
-  ] = prevNextCamera(cameras, activeCamera);
+  ] = prevNextCamera(cameras, activeCamera || (networkTarget && { name: networkTarget }));
+  const cameraName = activeCamera?.name || networkTarget;
   return (
     <CameraWindow
       canMaximize
@@ -103,10 +109,11 @@ export const CameraConsole = (props) => {
                 {showMap ? <CameraMap /> : <CameraConsoleContent />}
               </div>
               <div className="CameraConsole__right">
-                <div className="CameraConsole__toolbar" title={activeCamera?.name}>
+                <div className="CameraConsole__toolbar" title={cameraName}>
                   <b>Камера: </b>
-                  {activeCamera?.name || '—'}
+                  {cameraName || '—'}
                   {activeCamera && !activeCamera.status && ' — нет сигнала'}
+                  {networkStatusText[networkStatus] && ` · ${networkStatusText[networkStatus]}`}
                 </div>
                 <div className="CameraConsole__toolbarRight">
                   <Button
@@ -162,7 +169,7 @@ const CameraMap = () => {
                 && camera.x >= floor.min_x && camera.x <= floor.max_x
                 && camera.y >= floor.min_y && camera.y <= floor.max_y)
               .map(camera => {
-                const selected = camera.name === data.activeCamera?.name;
+                const selected = camera.name === (data.activeCamera?.name || data.networkTarget);
                 const color = selected ? '#ffd700' : camera.status ? '#66dd77' : '#ff5c5c';
                 const label = `${camera.name} — ${camera.status ? 'работает' : 'нет сигнала'}`;
                 return (
@@ -198,7 +205,7 @@ export const CameraConsoleContent = (props) => {
     searchText,
     setSearchText,
   ] = useState('');
-  const { activeCamera } = data;
+  const selectedName = data.activeCamera?.name || data.networkTarget;
   const cameras = selectCameras(data.cameras, searchText);
   return (
     <Flex
@@ -229,9 +236,7 @@ export const CameraConsoleContent = (props) => {
                 'Button--color--transparent',
                 'Button--ellipsis',
                 !isCameraAvailable(camera) && 'CameraConsole__unavailableCamera',
-                activeCamera
-                && camera.name === activeCamera.name
-                && 'Button--selected',
+                camera.name === selectedName && 'Button--selected',
               ])}
               onClick={() => act('switch_camera', {
                 name: camera.name,

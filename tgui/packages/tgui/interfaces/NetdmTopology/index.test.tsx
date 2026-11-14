@@ -18,6 +18,7 @@ const fakeScene = (): jest.Mocked<TopologyScene> => ({
   backend: 'webgl',
   update: jest.fn(),
   setSelection: jest.fn(),
+  setPresence: jest.fn(),
   setFilters: jest.fn(),
   fit: jest.fn(),
   destroy: jest.fn(),

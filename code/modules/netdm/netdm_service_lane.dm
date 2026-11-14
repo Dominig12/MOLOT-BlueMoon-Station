@@ -23,6 +23,7 @@
 /// One service endpoint of a netDM node. The ID lives for the round; what the Host acknowledged
 /// lives for one session and is rebuilt after every new snapshot.
 /datum/netdm_service_endpoint
+	var/domain = "station"
 	var/id
 	var/generation = 1
 	var/datum/component/netdm_node/node
@@ -95,14 +96,16 @@
 	var/max_reply_us = 0
 	var/max_reply_op
 
-/datum/netdm_service_lane/proc/endpoint_for(datum/component/netdm_node/node)
+/datum/netdm_service_lane/proc/endpoint_for(datum/component/netdm_node/node, domain)
 	var/datum/netdm_service_endpoint/endpoint = by_node[node]
 	if(endpoint)
-		return endpoint
+		return !domain || endpoint.domain == domain ? endpoint : null
 	var/id = registry.register(owner_of(node))
 	if(!id)
 		return null
 	endpoint = new
+	if(domain)
+		endpoint.domain = domain
 	endpoint.id = id
 	endpoint.node = node
 	endpoints[id] = endpoint
@@ -390,7 +393,7 @@
 	if(!current)
 		return NETDM_LANE_SETTLED
 	if(!endpoint.attached_node)
-		return send(bridge.endpoint_attach(endpoint.id, endpoint.generation, current),
+		return send(bridge.endpoint_attach(endpoint.id, endpoint.generation, current, endpoint.domain),
 			list("op" = "attach", "endpoint" = endpoint, "node" = current)) ? NETDM_LANE_SENT : NETDM_LANE_WAIT
 	for(var/instance in endpoint.services)
 		if(endpoint.registered[instance] || endpoint.refused[instance])

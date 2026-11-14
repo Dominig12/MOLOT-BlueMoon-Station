@@ -44,6 +44,7 @@ export interface TopologyScene {
   /** Applies a snapshot as deltas; a new `levelKey` refits the viewport once. */
   update(view: View, levelKey: string): void;
   setSelection(id: string | null): void;
+  setPresence(id: string | null): void;
   setFilters(filters: SceneFilters): void;
   fit(): void;
   destroy(): void;
@@ -68,6 +69,7 @@ const COLORS = {
   silent: 0x6f7c99,
   air: 0xf0a040,
   selection: 0xffffff,
+  presence: 0x55e7d0,
 };
 
 /** Offline nodes keep their shape (square APC, round device) in a muted color. */
@@ -100,6 +102,7 @@ class PixiTopologyScene implements TopologyScene {
    */
   private autoFit = true;
   private selected: string | null = null;
+  private presenceNode: string | null = null;
   private filters: SceneFilters = { radio: true, devices: true };
   private frame = 0;
   private destroyed = false;
@@ -115,6 +118,7 @@ class PixiTopologyScene implements TopologyScene {
     private readonly linkLayer: Container,
     private readonly nodeLayer: Container,
     private readonly selection: Graphics,
+    private readonly presence: Graphics,
     private readonly contexts: Record<Style, GraphicsContext>,
   ) {
     const canvas = app.canvas as HTMLCanvasElement;
@@ -205,13 +209,19 @@ class PixiTopologyScene implements TopologyScene {
     if (!this.fitted && this.nodes.size) {
       this.fit();
     }
-    this.placeSelection();
+    this.placeMarkers();
     this.requestRender();
   }
 
   setSelection(id: string | null) {
     this.selected = id;
-    this.placeSelection();
+    this.placeMarkers();
+    this.requestRender();
+  }
+
+  setPresence(id: string | null) {
+    this.presenceNode = id;
+    this.placeMarkers();
     this.requestRender();
   }
 
@@ -223,7 +233,7 @@ class PixiTopologyScene implements TopologyScene {
     for (const entry of this.links.values()) {
       entry.graphic.visible = this.linkVisible(entry.data);
     }
-    this.placeSelection();
+    this.placeMarkers();
     this.requestRender();
   }
 
@@ -261,6 +271,7 @@ class PixiTopologyScene implements TopologyScene {
     this.nodes.clear();
     this.links.clear();
     this.selection.destroy();
+    this.presence.destroy();
     for (const context of Object.values(this.contexts)) {
       context.destroy();
     }
@@ -309,15 +320,20 @@ class PixiTopologyScene implements TopologyScene {
     graphic.visible = this.linkVisible(link);
   }
 
-  private placeSelection() {
-    const entry = this.selected ? this.nodes.get(this.selected) : undefined;
+  private placeMarkers() {
+    this.placeMarker(this.selection, this.selected);
+    this.placeMarker(this.presence, this.presenceNode);
+  }
+
+  private placeMarker(marker: Graphics, node: string | null) {
+    const entry = node ? this.nodes.get(node) : undefined;
     if (!entry || !entry.graphic.visible) {
-      this.selection.visible = false;
+      marker.visible = false;
       return;
     }
-    this.selection.visible = true;
-    this.selection.position.copyFrom(entry.graphic.position);
-    this.selection.scale.set(this.nodeScale());
+    marker.visible = true;
+    marker.position.copyFrom(entry.graphic.position);
+    marker.scale.set(this.nodeScale());
   }
 
   /** Node graphics are drawn at 1 world unit per pixel; this keeps them NODE_PIXELS wide on screen. */
@@ -332,7 +348,7 @@ class PixiTopologyScene implements TopologyScene {
     for (const entry of this.nodes.values()) {
       entry.graphic.scale.set(scale);
     }
-    this.placeSelection();
+    this.placeMarkers();
     this.requestRender();
   }
 
@@ -455,7 +471,9 @@ export const createScene = async (
   const nodeLayer = new Container();
   const selection = new Graphics().circle(0, 0, half * 1.6).stroke({ width: 1.5, color: COLORS.selection });
   selection.visible = false;
-  world.addChild(linkLayer, nodeLayer, selection);
+  const presence = new Graphics().circle(0, 0, half * 2.2).stroke({ width: 2, color: COLORS.presence });
+  presence.visible = false;
+  world.addChild(linkLayer, nodeLayer, selection, presence);
   app.stage.addChild(world);
-  return new PixiTopologyScene(app, host, callbacks, world, linkLayer, nodeLayer, selection, contexts);
+  return new PixiTopologyScene(app, host, callbacks, world, linkLayer, nodeLayer, selection, presence, contexts);
 };

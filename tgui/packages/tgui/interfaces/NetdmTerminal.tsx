@@ -44,6 +44,9 @@ const STATUS_TEXT: Record<string, string> = {
   unknown_program: 'программа недоступна',
 };
 
+const SCRIPT_EXAMPLE = 'if links | where state -eq up\n  services -type atmos.alarm | sort hops | first 1 | invoke read reason=inspect\nend';
+const HISTORY_LIMIT = 32;
+
 /** Column names in the order the records first name them. */
 export const columnsOf = (records: Field[][]): string[] => {
   const names: string[] = [];
@@ -109,6 +112,9 @@ const EntryView = (props: { entry: Entry; onStop: (id: string) => void }) => {
 export const NetdmTerminal = () => {
   const { act, data } = useBackend<Data>();
   const [line, setLine] = useState('');
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+  const [draft, setDraft] = useState('');
   const [script, setScript] = useState('');
   const [programName, setProgramName] = useState('');
   const [keepProgram, setKeepProgram] = useState(false);
@@ -122,10 +128,21 @@ export const NetdmTerminal = () => {
     }
   }, [loadedId, loadedSource]);
   const canRun = !!script.trim() && script.length <= data.scriptLimit;
+  const recall = (index: number) => {
+    if (historyIndex === history.length) {
+      setDraft(line);
+    }
+    setHistoryIndex(index);
+    setLine(history[index] ?? draft);
+  };
   const send = (text: string) => {
     const trimmed = text.trim();
     if (trimmed.length > 0 && trimmed.length <= data.limit) {
       act('run', { line: trimmed });
+      const next = [...history.filter(entry => entry !== trimmed), trimmed].slice(-HISTORY_LIMIT);
+      setHistory(next);
+      setHistoryIndex(next.length);
+      setDraft('');
       setLine('');
     }
   };
@@ -162,12 +179,20 @@ export const NetdmTerminal = () => {
               <Section
                 title="Скрипт"
                 buttons={
-                  <Button
-                    icon="play"
-                    content="Запустить"
-                    disabled={!canRun}
-                    onClick={() => act('run_script', { source: script })}
-                  />
+                  <>
+                    <Button
+                      icon="file-code"
+                      content="Пример"
+                      disabled={!!script.trim()}
+                      onClick={() => setScript(SCRIPT_EXAMPLE)}
+                    />
+                    <Button
+                      icon="play"
+                      content="Запустить"
+                      disabled={!canRun}
+                      onClick={() => act('run_script', { source: script })}
+                    />
+                  </>
                 }
               >
                 <Box color="label" mb={0.5}>Условие if выполняет блок, если конвейер вернул хотя бы одну запись. Закройте блок командой end.</Box>
@@ -177,7 +202,7 @@ export const NetdmTerminal = () => {
                   scrollbar
                   height={7}
                   maxLength={data.scriptLimit}
-                  placeholder={'if links | where state -eq up\n  services -type research.server | sort hops | first 1\nend'}
+                  placeholder={'if links | where state -eq up\n  services | first 1\nend'}
                   value={script}
                   onInput={(_event: unknown, value: string) => setScript(value)}
                   onChange={(_event: unknown, value: string) => setScript(value)}
@@ -281,7 +306,19 @@ export const NetdmTerminal = () => {
                   />
                 </Stack.Item>
                 <Stack.Item>
-                  <Button icon="play" content="Выполнить" onClick={() => send(line)} />
+                  <Button
+                    icon="chevron-up"
+                    tooltip="Предыдущая команда"
+                    disabled={historyIndex === 0}
+                    onClick={() => recall(historyIndex - 1)}
+                  />
+                  <Button
+                    icon="chevron-down"
+                    tooltip="Следующая команда или черновик"
+                    disabled={historyIndex === history.length}
+                    onClick={() => recall(historyIndex + 1)}
+                  />
+                  <Button icon="play" content="Выполнить" disabled={!line.trim()} onClick={() => send(line)} />
                 </Stack.Item>
               </Stack>
             </Stack.Item>

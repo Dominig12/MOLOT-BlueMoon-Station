@@ -48,6 +48,7 @@
 	cam_background.del_on_map_removal = FALSE
 
 /obj/machinery/computer/security/Destroy()
+	netdm_camera_clear()
 	if(cam_screen)
 		cam_screen.screen_loc = null
 		qdel(cam_screen)
@@ -84,11 +85,16 @@
 /obj/machinery/computer/security/ui_interact(mob/user, datum/tgui/ui)
 	// Update UI
 	ui = SStgui.try_update_ui(user, src, ui)
+	var/network_cameras = netdm_cameras_enabled()
 
-	if(!ui && !length(concurrent_users))
-		active_camera = camera_console_initial_camera(get_available_cameras(), last_camera)
-		last_camera = active_camera ? WEAKREF(active_camera) : null
-		last_camera_turf = null
+	if(!ui && !(network_cameras ? length(netdm_camera_viewers) : length(concurrent_users)))
+		var/obj/machinery/camera/initial_camera = camera_console_initial_camera(get_available_cameras(), last_camera)
+		if(network_cameras)
+			netdm_camera_select(initial_camera)
+		else
+			active_camera = initial_camera
+			last_camera = active_camera ? WEAKREF(active_camera) : null
+			last_camera_turf = null
 
 	// Update the camera, showing static if necessary and updating data if the location has moved.
 	update_active_camera_screen()
@@ -96,6 +102,8 @@
 	if(!ui)
 		send_camera_console_map_assets(user, z)
 		var/user_ref = REF(user)
+		if(network_cameras)
+			LAZYADD(netdm_camera_viewers, user_ref)
 		var/is_living = isliving(user)
 		// Ghosts shouldn't count towards concurrent users, which produces
 		// an audible terminal_on click.
@@ -117,7 +125,10 @@
 		user.client.register_map_obj(cam_background)
 		// Open UI
 		ui = new(user, src, "CameraConsole", name)
-		ui.open()
+		if(!ui.open() && network_cameras && !QDELETED(ui))
+			if(user_ref in netdm_camera_viewers)
+				ui_close(user)
+			qdel(ui)
 
 /obj/machinery/computer/security/ui_data()
 	var/list/data = list()
@@ -128,6 +139,9 @@
 		camera_map_updated_at = world.time
 		camera_map_data = camera_console_camera_data(get_available_cameras())
 	data["cameras"] = camera_map_data
+	data["networkStatus"] = netdm_cameras_enabled() ? netdm_camera_status : null
+	var/obj/machinery/camera/target = netdm_camera_target?.resolve()
+	data["networkTarget"] = netdm_camera_allowed(target) ? target.c_tag : null
 	data["activeCamera"] = null
 	if(!QDELETED(active_camera))
 		data["activeCamera"] = list(
@@ -165,6 +179,10 @@
 			selected_camera = null //фильтр away-уровней, как в get_available_cameras
 		if(selected_camera && !antag_training_camera_visible(selected_camera, src))
 			selected_camera = null
+		if(netdm_cameras_enabled())
+			if(netdm_camera_select(selected_camera))
+				playsound(src, get_sfx("terminal_type"), 25, FALSE)
+			return TRUE
 		active_camera = selected_camera
 		last_camera = selected_camera ? WEAKREF(selected_camera) : null
 		last_camera_turf = null
@@ -225,14 +243,18 @@
 	var/is_living = isliving(user)
 	// Living creature or not, we remove you anyway.
 	concurrent_users -= user_ref
+	LAZYREMOVE(netdm_camera_viewers, user_ref)
+	if(!length(netdm_camera_viewers) && netdm_cameras_enabled())
+		netdm_camera_clear()
 	// Unregister map objects
 	cam_plane_group?.unregister_from_client(user?.client)
 	user?.client?.clear_map(map_name)
 	// Turn off the console
 	if(length(concurrent_users) == 0 && is_living)
-		active_camera = null
-		last_camera_turf = null
-		cam_screen.vis_contents.Cut()
+		if(!length(netdm_camera_viewers))
+			active_camera = null
+			last_camera_turf = null
+			cam_screen.vis_contents.Cut()
 		playsound(src, 'sound/machines/terminal_off.ogg', 25, FALSE)
 		use_power(0)
 

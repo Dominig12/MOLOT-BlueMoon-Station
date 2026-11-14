@@ -8,6 +8,8 @@
 #define NETDM_SPACE_LOG 12
 /// Requests of one window in flight at once.
 #define NETDM_SPACE_PENDING 4
+/// A read can wait for the outer shell command and the inner typed result.
+#define NETDM_SPACE_ALARM_WAIT (12 SECONDS)
 
 /// Topology screen flags reused by the window's map (tgui NetdmTopology/model.ts).
 #define NETDM_SPACE_FLAG_DEVICE 8
@@ -34,6 +36,7 @@
 	var/z
 	var/pending = 0
 	var/refresh_timer
+	var/list/alarm_request
 
 /datum/netdm_space/New(datum/netdm_terminal/opener)
 	terminal = opener
@@ -81,6 +84,7 @@
 /datum/netdm_space/proc/refresh()
 	deltimer(refresh_timer)
 	refresh_timer = addtimer(CALLBACK(src, PROC_REF(refresh)), NETDM_SPACE_REFRESH, TIMER_STOPPABLE)
+	check_alarm()
 	if(pending >= NETDM_SPACE_PENDING)
 		return
 	if(send("knowledge", list("since" = revision), CALLBACK(src, PROC_REF(knowledge_answered))))
@@ -195,6 +199,57 @@
 	else
 		note("> [line]: [status || "нет ответа"] [output?["error"]]")
 
+/datum/netdm_space/proc/read_alarm(instance)
+	if(!istext(instance) || length(instance) > 64 || alarm_request || presence?["state"] != "active")
+		return FALSE
+	var/list/service = items["s|[instance]"]
+	if(service?["type"] != "atmos.alarm" || is_stale(service))
+		return FALSE
+	var/datum/node = terminal?.node_ref?.resolve()
+	var/datum/netdm_service_endpoint/endpoint = node ? SSnetdm_observe.services?.by_node[node] : null
+	if(!endpoint)
+		return FALSE
+	var/list/request = list("instance" = instance, "recipient" = endpoint.id, "generation" = "[endpoint.generation]",
+		"deadline" = world.time + NETDM_SPACE_ALARM_WAIT, "stream" = SSnetdm_observe.bridge?.stream_id)
+	if(!send("act", list("line" = "invoke [instance] read reason=inspect"), CALLBACK(src, PROC_REF(alarm_accepted), request)))
+		return FALSE
+	alarm_request = request
+	return TRUE
+
+/datum/netdm_space/proc/alarm_accepted(list/request, list/output)
+	if(alarm_request != request)
+		return
+	var/list/records = output?["records"]
+	var/list/record = length(records) ? records[1] : null
+	var/list/fields = list()
+	for(var/list/pair in record)
+		fields[pair["name"]] = pair["value"]
+	if(fields["status"] == "sent" && fields["instance"] == alarm_request["instance"] && length(fields["operation"]))
+		alarm_request["operation"] = fields["operation"]
+		check_alarm()
+		return
+	alarm_request = null
+	note("Датчик атмосферы не принял запрос ([fields["status"] || output?["status"] || "нет ответа"]).")
+
+/datum/netdm_space/proc/check_alarm()
+	if(!alarm_request)
+		return
+	if(!terminal?.can_submit() || alarm_request["stream"] != SSnetdm_observe.bridge?.stream_id)
+		alarm_request = null
+		return
+	var/operation = alarm_request["operation"]
+	var/list/sample = operation ? SSnetdm_observe.telemetry?.take_alarm_result(operation, alarm_request["instance"],
+		alarm_request["recipient"], alarm_request["generation"]) : null
+	if(sample)
+		var/danger = sample["danger"]
+		var/state = danger >= 2 ? "опасно" : (danger == 1 ? "предупреждение" : "норма")
+		var/instance = alarm_request["instance"]
+		alarm_request = null
+		note("[instance] · [sample["pressureKPa"]] кПа · [sample["temperatureK"]] K · [state][sample["alarm"] ? " · тревога в зоне" : ""].")
+	else if(world.time >= alarm_request["deadline"])
+		alarm_request = null
+		note("Датчик атмосферы не ответил.")
+
 // ---- Window ------------------------------------------------------------------------------------
 
 /// The node a presence stands on, found through the shell service it stands at, if the operator knows it.
@@ -240,7 +295,7 @@
 					"stale" = is_stale(fields)))
 	return list("title" = terminal ? terminal.device_title(terminal.device_ref?.resolve()) : "нет связи", "z" = z, "levels" = levels,
 		"nodes" = nodes, "edges" = edges, "down" = down, "services" = services, "presence" = presence, "hostNode" = host,
-		"log" = log, "revision" = revision)
+		"log" = log, "revision" = revision, "alarmPending" = !!alarm_request)
 
 /datum/netdm_space/ui_act(action, list/params, datum/tgui/ui, datum/ui_state/state)
 	. = ..()
@@ -257,6 +312,8 @@
 			return move(params["to"])
 		if("act")
 			return act_line("[params["line"]]")
+		if("read_alarm")
+			return read_alarm(params["instance"])
 		if("level")
 			var/level = text2num("[params["z"]]")
 			if(isnum(level))
@@ -289,6 +346,7 @@
 #undef NETDM_SPACE_ITEMS
 #undef NETDM_SPACE_LOG
 #undef NETDM_SPACE_PENDING
+#undef NETDM_SPACE_ALARM_WAIT
 #undef NETDM_SPACE_FLAG_DEVICE
 #undef NETDM_SPACE_FLAG_APC
 #undef NETDM_SPACE_FLAG_UNPOWERED
