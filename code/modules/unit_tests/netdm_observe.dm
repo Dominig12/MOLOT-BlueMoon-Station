@@ -3131,10 +3131,41 @@
 	while(stopped["pending"] && world.time < deadline)
 		sleep(2)
 	TEST_ASSERT_EQUAL(stopped["status"], "stopped", "The stop result reaches the implant's terminal.")
+	TEST_ASSERT(implanted.start_program("kept", "on self | select radio\nself", TRUE), "The implant can keep a rule on its media.")
+	var/list/kept_start = implanted.entries[length(implanted.entries)]
+	deadline = world.time + 20 SECONDS
+	while(kept_start["pending"] && world.time < deadline)
+		sleep(2)
+	TEST_ASSERT_EQUAL(kept_start["status"], "started", "A kept rule starts like any program.")
+	var/list/kept_on_media = implanted.kept_names()
+	var/kept_record = json_encode(implant.netdm_programs)
+	TEST_ASSERT(length(kept_on_media) == 1 && kept_on_media[1] == "kept" && length(implant.netdm_programs) == 1, "The rule is written to the implant: [kept_record]")
 	test_user.forceMove(left)
 	TEST_ASSERT(wait_for_node(implant.node, left, FALSE)?["a"] == implant_fact["a"], "The implant keeps its node as its wearer moves.")
 	var/datum/component/netdm_node/extracted_node = implant.node
 	TEST_ASSERT(implant.removed(test_user, TRUE) && QDELETED(extracted_node) && !implanted.submit("self"), "Removing the implant retires its node and closes the execution path.")
+	// The implant carries what it keeps: installed again, its new node starts the rule by itself.
+	TEST_ASSERT(implant.implant(test_user, test_user, TRUE) && implant.node && implant.node != extracted_node, "The implant can be installed again.")
+	var/datum/netdm_terminal/local/implant/reinstalled = allocate(/datum/netdm_terminal/local/implant, implant, implant.node, test_user)
+	var/list/kept_listed
+	deadline = world.time + 40 SECONDS
+	while(world.time < deadline)
+		kept_listed = type_line(reinstalled, "programs | select program name")
+		if(kept_listed?["status"] == "ok" && length(kept_listed["records"]) == 1 && field(kept_listed["records"][1], "name") == "kept")
+			break
+		sleep(5)
+	TEST_ASSERT(kept_listed?["status"] == "ok" && length(kept_listed["records"]) == 1 && field(kept_listed["records"][1], "name") == "kept",
+		"The reinstalled implant starts its kept rule on attach: [json_encode(kept_listed)]")
+	TEST_ASSERT(reinstalled.forget_program("kept") && !length(implant.netdm_programs) && !length(reinstalled.kept_names()), "The rule can be taken off the media.")
+	var/list/kept_stop = null
+	if(reinstalled.stop_program(field(kept_listed["records"][1], "program")))
+		kept_stop = reinstalled.entries[length(reinstalled.entries)]
+		deadline = world.time + 20 SECONDS
+		while(kept_stop["pending"] && world.time < deadline)
+			sleep(2)
+	TEST_ASSERT_EQUAL(kept_stop?["status"], "stopped", "The restarted rule is stopped by its device.")
+	extracted_node = implant.node
+	TEST_ASSERT(implant.removed(test_user, TRUE) && QDELETED(extracted_node), "The implant is removed again.")
 
 	var/obj/item/netdm_adapter/adapter = allocate(/obj/item/netdm_adapter, left)
 	TEST_ASSERT(test_user.put_in_hands(adapter), "The operator can hold the adapter and data disk.")

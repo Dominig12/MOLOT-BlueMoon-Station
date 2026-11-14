@@ -476,6 +476,8 @@
 		if("attach")
 			if(ok)
 				endpoint.attached_node = op["node"]
+				// Programs kept on the device's media start again: after a new session or a new generation.
+				SSnetdm_observe.diagnostics?.endpoint_attached(endpoint.node)
 		if("register")
 			if(ok)
 				endpoint.registered[op["instance"]] = TRUE

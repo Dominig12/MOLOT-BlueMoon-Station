@@ -25,6 +25,8 @@ type Data = {
   limit: number;
   scriptLimit: number;
   programsEnabled: BooleanLike;
+  /** Names of programs kept on the device's media; null when the device has no media for them. */
+  kept: string[] | null;
   disk: { id: string; name: string; file: string } | null;
   diskNotice: string | null;
   loadedScript: { id: number; source: string } | null;
@@ -109,6 +111,7 @@ export const NetdmTerminal = () => {
   const [line, setLine] = useState('');
   const [script, setScript] = useState('');
   const [programName, setProgramName] = useState('');
+  const [keepProgram, setKeepProgram] = useState(false);
   const [editingScript, setEditingScript] = useState(false);
   const { disk, diskNotice, loadedScript } = data;
   const loadedId = loadedScript?.id;
@@ -194,10 +197,34 @@ export const NetdmTerminal = () => {
                         icon="play"
                         content="Запустить программу"
                         disabled={!canRun || !/^[a-zA-Z0-9._-]+$/.test(programName)}
-                        onClick={() => act('start_program', { name: programName, source: script })}
+                        onClick={() => act('start_program', { name: programName, source: script, keep: keepProgram })}
                       />
                     </Stack.Item>
+                    {!!data.kept && (
+                      <Stack.Item>
+                        <Button.Checkbox
+                          checked={keepProgram}
+                          content="Хранить на устройстве"
+                          tooltip="Программа записывается на устройство и запускается при каждом его подключении к сети."
+                          onClick={() => setKeepProgram(!keepProgram)}
+                        />
+                      </Stack.Item>
+                    )}
                   </Stack>
+                )}
+                {!!data.programsEnabled && !!data.kept && data.kept.length > 0 && (
+                  <Box mt={0.5}>
+                    <Box inline color="label" mr={0.5}>На устройстве:</Box>
+                    {data.kept.map((name) => (
+                      <Button.Confirm
+                        key={name}
+                        icon="times"
+                        content={name}
+                        confirmContent={`Не хранить ${name}?`}
+                        onClick={() => act('forget_program', { name })}
+                      />
+                    ))}
+                  </Box>
                 )}
                 {disk ? (
                   <Box key={`${disk.id}/${disk.file}`} mt={0.5}>

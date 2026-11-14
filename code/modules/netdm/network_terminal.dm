@@ -130,7 +130,8 @@
 	var/list/media = disk ? list("id" = REF(disk), "name" = disk.name, "file" = file ? REF(file) : "") : null
 	return list("title" = device ? device_title(device) : "нет связи", "entries" = entries,
 		"limit" = NETDM_TERMINAL_LINE_LENGTH, "scriptLimit" = NETDM_TERMINAL_SCRIPT_LENGTH,
-		"disk" = media, "diskNotice" = disk_notice, "loadedScript" = loaded_script, "programsEnabled" = supports_programs())
+		"disk" = media, "diskNotice" = disk_notice, "loadedScript" = loaded_script, "programsEnabled" = supports_programs(),
+		"kept" = supports_programs() ? kept_names() : null)
 
 /datum/netdm_terminal/proc/device_title(atom/device)
 	return get_area_name(device, TRUE)
@@ -145,7 +146,9 @@
 		if("run_script")
 			return submit(params["source"], TRUE)
 		if("start_program")
-			return start_program(params["name"], params["source"])
+			return start_program(params["name"], params["source"], !!params["keep"])
+		if("forget_program")
+			return forget_program(params["name"])
 		if("list_programs")
 			return submit("programs")
 		if("stop_program")
@@ -221,10 +224,19 @@
 	var/list/arguments = script ? list("source" = line) : list("line" = line)
 	return submit_request(line, script ? "run_script" : "run", arguments)
 
-/datum/netdm_terminal/proc/start_program(name, source)
+/// keep: the program is also written to the device's media and comes back on every attach.
+/datum/netdm_terminal/proc/start_program(name, source, keep = FALSE)
 	if(!supports_programs() || !istext(name) || !length(name) || length_char(name) > 32 || !valid_source(source, NETDM_TERMINAL_SCRIPT_LENGTH))
 		return FALSE
-	return submit_request("start [name]", "start", list("name" = name, "source" = source))
+	var/list/arguments = list("name" = name, "source" = source)
+	if(keep)
+		var/error = keep_program(name, source)
+		if(error)
+			disk_notice = error
+			return TRUE
+		arguments["ensure"] = TRUE
+		disk_notice = "[name] хранится на устройстве и запускается при каждом подключении."
+	return submit_request("start [name]", "start", arguments)
 
 /datum/netdm_terminal/proc/supports_programs()
 	return TRUE
@@ -467,6 +479,181 @@
 	category = list("initial", "Tools", "Tool Designs")
 	departmental_flags = DEPARTMENTAL_FLAG_ENGINEERING | DEPARTMENTAL_FLAG_SCIENCE
 
+/// Programs one device keeps on its own media; the Host runs at most as many per device.
+#define NETDM_KEPT_PROGRAMS 4
+
+/// The kept program file of a PDA drive: a JSON list of list("name", "source").
+/datum/computer_file/data/netdm_programs
+	filename = "netdm_programs"
+	filetype = "NDP1"
+
+/obj/machinery/power/apc
+	/// Programs the APC's network module keeps and starts on every attach.
+	var/list/netdm_programs
+
+/obj/item/implant/netdm_terminal
+	var/list/netdm_programs
+
+/obj/item/netdm_adapter
+	var/list/netdm_programs
+
+/**
+ * Programs kept on a device's media: list of list("name", "source"), empty when there are none, or null when
+ * the device has no media for them (a PDA without a working drive). The device starts each of them with
+ * "ensure" whenever its endpoint attaches, so they come back after a Host restart or a new endpoint
+ * generation and leave with the media: a removed drive, a destroyed implant.
+ */
+/proc/netdm_kept_programs(atom/device)
+	if(istype(device, /obj/item/modular_computer/pda))
+		var/obj/item/modular_computer/pda/pda = device
+		var/obj/item/computer_hardware/hard_drive/drive = pda.all_components[MC_HDD]
+		if(!drive?.check_functionality())
+			return null
+		var/datum/computer_file/data/netdm_programs/file = drive.find_file_by_name("netdm_programs")
+		if(!istype(file))
+			return list()
+		var/list/decoded = safe_json_decode(file.stored_data)
+		return netdm_valid_kept(decoded)
+	var/list/stored
+	if(istype(device, /obj/machinery/power/apc))
+		var/obj/machinery/power/apc/apc = device
+		stored = apc.netdm_programs
+	else if(istype(device, /obj/item/implant/netdm_terminal))
+		var/obj/item/implant/netdm_terminal/implant = device
+		stored = implant.netdm_programs
+	else if(istype(device, /obj/item/netdm_adapter))
+		var/obj/item/netdm_adapter/adapter = device
+		stored = adapter.netdm_programs
+	else
+		return null
+	return netdm_valid_kept(stored)
+
+/// Only well-formed entries count; a damaged file reads as fewer programs, never as foreign data.
+/proc/netdm_valid_kept(list/entries)
+	var/list/valid = list()
+	if(!islist(entries))
+		return valid
+	for(var/list/entry in entries)
+		if(length(valid) >= NETDM_KEPT_PROGRAMS)
+			break
+		var/name = entry["name"]
+		var/source = entry["source"]
+		if(istext(name) && length(name) && length_char(name) <= 32 && istext(source) && length(source) && length_char(source) <= NETDM_TERMINAL_SCRIPT_LENGTH)
+			valid += list(list("name" = name, "source" = source))
+	return valid
+
+/// Writes the kept programs back. FALSE when the device has no media or the media refuses the write.
+/proc/netdm_store_kept(atom/device, list/programs)
+	if(istype(device, /obj/item/modular_computer/pda))
+		var/obj/item/modular_computer/pda/pda = device
+		var/obj/item/computer_hardware/hard_drive/drive = pda.all_components[MC_HDD]
+		if(!drive?.check_functionality())
+			return FALSE
+		var/datum/computer_file/data/netdm_programs/file = drive.find_file_by_name("netdm_programs")
+		if(file && !istype(file))
+			return FALSE
+		if(!length(programs))
+			if(file)
+				drive.remove_file(file)
+			return TRUE
+		var/text = json_encode(programs)
+		if(file)
+			var/new_size = max(1, round(length(text) / file.block_size))
+			if(file.undeletable || drive.used_capacity - file.size + new_size > drive.max_capacity)
+				return FALSE
+			file.stored_data = text
+			file.calculate_size()
+			drive.recalculate_size()
+			return TRUE
+		file = new
+		file.stored_data = text
+		file.calculate_size()
+		if(!drive.store_file(file))
+			qdel(file)
+			return FALSE
+		return TRUE
+	var/list/copy = length(programs) ? programs.Copy() : null
+	if(istype(device, /obj/machinery/power/apc))
+		var/obj/machinery/power/apc/apc = device
+		apc.netdm_programs = copy
+	else if(istype(device, /obj/item/implant/netdm_terminal))
+		var/obj/item/implant/netdm_terminal/implant = device
+		implant.netdm_programs = copy
+	else if(istype(device, /obj/item/netdm_adapter))
+		var/obj/item/netdm_adapter/adapter = device
+		adapter.netdm_programs = copy
+	else
+		return FALSE
+	return TRUE
+
+/// The endpoint of a node attached in this session: the device starts what it keeps. Answers are logged.
+/datum/netdm_diagnostics/proc/endpoint_attached(datum/node)
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	var/atom/device = lane?.owner_of(node)
+	if(!istype(device) || QDELETED(device))
+		return
+	var/list/kept = netdm_kept_programs(device)
+	if(!length(kept))
+		return
+	var/datum/weakref/device_ref = WEAKREF(device)
+	for(var/list/entry in kept)
+		var/list/arguments = list("name" = entry["name"], "source" = entry["source"], "ensure" = TRUE)
+		if(!queue_shell_request(node, node, "start", arguments, CALLBACK(src, PROC_REF(kept_answered), device_ref, entry["name"]),
+			CALLBACK(src, PROC_REF(kept_device_present), device_ref)))
+			SSnetdm_observe.log_issue("kept program [entry["name"]] of [device] not queued")
+	counters["kept_starts"] = (counters["kept_starts"] || 0) + length(kept)
+
+/datum/netdm_diagnostics/proc/kept_device_present(datum/weakref/device_ref)
+	var/atom/device = device_ref?.resolve()
+	return device && !QDELETED(device)
+
+/datum/netdm_diagnostics/proc/kept_answered(datum/weakref/device_ref, name, list/output)
+	var/status = output?["status"]
+	if(status == "started" || status == "running")
+		return
+	var/atom/device = device_ref?.resolve()
+	SSnetdm_observe.log_issue("kept program [name] of [device || "a gone device"]: [status || "no answer"] [output?["error"]]")
+
+/// Keeps a program on the terminal's device, replacing one of the same name. Returns an error text or null.
+/datum/netdm_terminal/proc/keep_program(name, source)
+	var/atom/device = device_ref?.resolve()
+	var/list/kept = device && netdm_kept_programs(device)
+	if(!islist(kept))
+		return "У устройства нет носителя для программ."
+	for(var/list/entry in kept.Copy())
+		if(entry["name"] == name)
+			kept -= list(entry)
+	if(length(kept) >= NETDM_KEPT_PROGRAMS)
+		return "На устройстве уже [NETDM_KEPT_PROGRAMS] программы."
+	kept += list(list("name" = name, "source" = source))
+	return netdm_store_kept(device, kept) ? null : "Носитель не принял запись: проверь место и состояние диска."
+
+/datum/netdm_terminal/proc/forget_program(name)
+	var/atom/device = device_ref?.resolve()
+	var/list/kept = device && netdm_kept_programs(device)
+	if(!istext(name) || !islist(kept))
+		return FALSE
+	var/found = FALSE
+	for(var/list/entry in kept.Copy())
+		if(entry["name"] == name)
+			kept -= list(entry)
+			found = TRUE
+	if(!found || !netdm_store_kept(device, kept))
+		return FALSE
+	disk_notice = "[name] больше не хранится на устройстве. Запущенная программа работает, пока её не остановят."
+	return TRUE
+
+/datum/netdm_terminal/proc/kept_names()
+	var/atom/device = device_ref?.resolve()
+	var/list/kept = device && netdm_kept_programs(device)
+	if(!islist(kept))
+		return null
+	var/list/names = list()
+	for(var/list/entry in kept)
+		names += entry["name"]
+	return names
+
+#undef NETDM_KEPT_PROGRAMS
 #undef NETDM_TERMINAL_LINES
 #undef NETDM_TERMINAL_LINE_LENGTH
 #undef NETDM_TERMINAL_SCRIPT_LENGTH
