@@ -3347,6 +3347,41 @@
 	adapter.disconnect()
 	TEST_ASSERT(!adapter.connected() && !adapter.anchored, "The detached adapter is portable again.")
 
+	// P12.4: the network window of the APC terminal. The APC is the operator; its presence stands on its shell.
+	var/datum/netdm_space/space = new(terminal)
+	TEST_ASSERT(terminal.space == space && space.enter(), "The window sends the presence command.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && space.presence?["state"] != "active")
+		sleep(2)
+	TEST_ASSERT_EQUAL(space.presence?["state"], "active", "The operator enters the network: [json_encode(space.presence)] [json_encode(space.log)]")
+	TEST_ASSERT(space.scan(2), "The window scans from the presence.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && !findtext(jointext(space.log, " | "), "Сканирование:"))
+		sleep(2)
+	var/scan_log = jointext(space.log, " | ")
+	TEST_ASSERT(findtext(scan_log, "Сканирование:"), "The scan is answered: [scan_log]")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && !(space.items["n|[near_id]"] && space.host_node() == near_id))
+		space.refresh()
+		sleep(5)
+	var/list/view = space.ui_data(null)
+	var/known_record = json_encode(space.items)
+	TEST_ASSERT(space.items["n|[near_id]"] && space.host_node() == near_id && length(view["nodes"]) >= 1,
+		"The window knows its APC and shows the presence there: host=[space.host_node()] [known_record]")
+	TEST_ASSERT(space.act_line("self | select node"), "The window sends a line to the presence.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && !findtext(jointext(space.log, " | "), "> self | select node:"))
+		sleep(2)
+	var/act_log = jointext(space.log, " | ")
+	TEST_ASSERT(findtext(act_log, "> self | select node: node=[near_id]"), "The line runs where the presence stands: [act_log]")
+	TEST_ASSERT(space.leave(), "The window sends leave.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && space.presence?["state"] != "ended")
+		sleep(2)
+	TEST_ASSERT_EQUAL(space.presence?["state"], "ended", "The operator leaves the network: [json_encode(space.presence)]")
+	qdel(space)
+	TEST_ASSERT(!terminal.space, "Closing the window detaches it from the terminal.")
+
 	// A terminal at a dead module is not opened.
 	TEST_ASSERT(!diagnostics.open_terminal(near, null), "A terminal needs someone to open it.")
 	// The APC terminal opens like the APC interface: access, or an unlocked or emagged interface.

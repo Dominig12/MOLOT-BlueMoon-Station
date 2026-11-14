@@ -174,6 +174,8 @@
 		if("clear")
 			entries.Cut()
 			return TRUE
+		if("open_space")
+			return open_space(ui.user)
 
 /// Resolve media from the user's hands on each action. The browser only identifies the disk it displayed.
 /datum/netdm_terminal/proc/held_script_disk(mob/user)

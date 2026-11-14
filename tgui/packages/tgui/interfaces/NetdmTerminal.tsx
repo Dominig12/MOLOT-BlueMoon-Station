@@ -142,6 +142,7 @@ export const NetdmTerminal = () => {
                 <>
                   <Button icon="code" content="Скрипт" selected={editingScript} onClick={() => setEditingScript(!editingScript)} />
                   <Button icon="list" content="Программы" onClick={() => act('list_programs')} />
+                  <Button icon="project-diagram" content="Сеть" onClick={() => act('open_space')} />
                   <Button icon="eraser" content="Очистить" onClick={() => act('clear')} />
                 </>
               }

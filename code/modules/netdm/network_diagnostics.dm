@@ -48,6 +48,9 @@
 	lane.dispatcher.allow_result("start", new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow_result("stop", new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow_result("migrate", new /datum/netdm_effect_handler/network_query_page, "network.shell")
+	// P12 network space: the window's scans, knowledge, presence and actions.
+	for(var/space_command in list("scan", "knowledge", "enter", "detach", "leave", "presence", "act", "move"))
+		lane.dispatcher.allow_result(space_command, new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow("query.directory", new /datum/netdm_effect_handler/network_directory_event)
 
 /// A new Host session: retry reads, but don't replay shell requests that may already have sent commands.
