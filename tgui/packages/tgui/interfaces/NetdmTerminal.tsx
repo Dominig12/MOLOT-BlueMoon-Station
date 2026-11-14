@@ -24,6 +24,7 @@ type Data = {
   entries: Entry[];
   limit: number;
   scriptLimit: number;
+  programsEnabled: BooleanLike;
   disk: { id: string; name: string; file: string } | null;
   diskNotice: string | null;
   loadedScript: { id: number; source: string } | null;
@@ -38,6 +39,7 @@ const STATUS_TEXT: Record<string, string> = {
   source_failed: 'команда не выполнена',
   no_answer: 'сетевой модуль не ответил',
   refused: 'запрос отклонён',
+  unknown_program: 'программа недоступна',
 };
 
 /** Column names in the order the records first name them. */
@@ -53,29 +55,35 @@ export const columnsOf = (records: Field[][]): string[] => {
   return names;
 };
 
-const Records = (props: { records: Field[][] }) => {
-  const columns = columnsOf(props.records);
+const Records = (props: { records: Field[][]; onStop?: (id: string) => void }) => {
+  const { records, onStop } = props;
+  const columns = columnsOf(records);
   return (
     <Table>
       <Table.Row header>
         {columns.map((name) => (
           <Table.Cell key={name}>{name}</Table.Cell>
         ))}
+        {onStop && <Table.Cell />}
       </Table.Row>
-      {props.records.map((record, index) => (
-        <Table.Row key={index}>
-          {columns.map((name) => (
-            <Table.Cell key={name}>{record.find((field) => field.name === name)?.value ?? ''}</Table.Cell>
-          ))}
-        </Table.Row>
-      ))}
+      {records.map((record, index) => {
+        const id = record.find((field) => field.name === 'program')?.value;
+        return (
+          <Table.Row key={index}>
+            {columns.map((name) => (
+              <Table.Cell key={name}>{record.find((field) => field.name === name)?.value ?? ''}</Table.Cell>
+            ))}
+            {onStop && <Table.Cell>{id && <Button icon="stop" content="Остановить" onClick={() => onStop(id)} />}</Table.Cell>}
+          </Table.Row>
+        );
+      })}
     </Table>
   );
 };
 
-const EntryView = (props: { entry: Entry }) => {
-  const { entry } = props;
-  const failed = !entry.pending && entry.status !== 'ok';
+const EntryView = (props: { entry: Entry; onStop: (id: string) => void }) => {
+  const { entry, onStop } = props;
+  const failed = !entry.pending && !['ok', 'started', 'stopped'].includes(entry.status || '');
   return (
     <Box mb={1}>
       <Box bold fontFamily="monospace" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
@@ -91,7 +99,7 @@ const EntryView = (props: { entry: Entry }) => {
         </NoticeBox>
       )}
       {!entry.pending && !failed && entry.records.length === 0 && <Box color="label">нет записей</Box>}
-      {entry.records.length > 0 && <Records records={entry.records} />}
+      {entry.records.length > 0 && <Records records={entry.records} onStop={entry.line === 'programs' ? onStop : undefined} />}
     </Box>
   );
 };
@@ -100,6 +108,7 @@ export const NetdmTerminal = () => {
   const { act, data } = useBackend<Data>();
   const [line, setLine] = useState('');
   const [script, setScript] = useState('');
+  const [programName, setProgramName] = useState('');
   const [editingScript, setEditingScript] = useState(false);
   const { disk, diskNotice, loadedScript } = data;
   const loadedId = loadedScript?.id;
@@ -129,6 +138,7 @@ export const NetdmTerminal = () => {
               buttons={
                 <>
                   <Button icon="code" content="Скрипт" selected={editingScript} onClick={() => setEditingScript(!editingScript)} />
+                  <Button icon="list" content="Программы" onClick={() => act('list_programs')} />
                   <Button icon="eraser" content="Очистить" onClick={() => act('clear')} />
                 </>
               }
@@ -139,7 +149,7 @@ export const NetdmTerminal = () => {
                 </Box>
               )}
               {data.entries.map((entry) => (
-                <EntryView key={entry.id} entry={entry} />
+                <EntryView key={entry.id} entry={entry} onStop={(program) => act('stop_program', { program })} />
               ))}
             </Section>
           </Stack.Item>
@@ -168,6 +178,27 @@ export const NetdmTerminal = () => {
                   onInput={(_event: unknown, value: string) => setScript(value)}
                   onChange={(_event: unknown, value: string) => setScript(value)}
                 />
+                {!!data.programsEnabled && (
+                  <Stack mt={0.5}>
+                    <Stack.Item grow>
+                      <Input
+                        fluid
+                        maxLength={32}
+                        placeholder="Имя программы"
+                        value={programName}
+                        onInput={(_event: unknown, value: string) => setProgramName(value)}
+                      />
+                    </Stack.Item>
+                    <Stack.Item>
+                      <Button
+                        icon="play"
+                        content="Запустить программу"
+                        disabled={!canRun || !/^[a-zA-Z0-9._-]+$/.test(programName)}
+                        onClick={() => act('start_program', { name: programName, source: script })}
+                      />
+                    </Stack.Item>
+                  </Stack>
+                )}
                 {disk ? (
                   <Box key={`${disk.id}/${disk.file}`} mt={0.5}>
                     <Box color="label">{disk.name}{disk.file ? ' · netdm.NDS1' : ''}</Box>

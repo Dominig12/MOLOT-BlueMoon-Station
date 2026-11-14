@@ -309,7 +309,10 @@
 			to_chat(user, span_notice("You press the power button and start up \the [src]."))
 		if(looping_sound)
 			soundloop.start()
+		var/was_enabled = enabled
 		enabled = 1
+		if(!was_enabled)
+			SEND_SIGNAL(src, COMSIG_MODULAR_COMPUTER_TURNED_ON, user)
 		update_appearance()
 		if(open_ui)
 			ui_interact(user)
@@ -466,7 +469,10 @@
 		soundloop.stop()
 	if(loud)
 		physical.visible_message(span_notice("\The [src] shuts down."))
+	var/was_enabled = enabled
 	enabled = 0
+	if(was_enabled)
+		SEND_SIGNAL(src, COMSIG_MODULAR_COMPUTER_SHUT_DOWN, loud)
 	update_appearance()
 
 /**

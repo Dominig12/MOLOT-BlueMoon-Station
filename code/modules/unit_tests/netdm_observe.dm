@@ -3045,14 +3045,62 @@
 		"The PDA finds and sends a command to a wired service via radio: [json_encode(mobile_sent)]")
 	var/turf/out_of_range = isolated_turf()
 	TEST_ASSERT(out_of_range, "The test map has a spot outside APC radio coverage.")
+	TEST_ASSERT(mobile.start_program("pda-watch", "on trace [far_id] | select state\nself"), "The PDA can start a background rule.")
+	var/list/pda_started = mobile.entries[length(mobile.entries)]
+	deadline = world.time + 20 SECONDS
+	while(pda_started["pending"] && world.time < deadline)
+		sleep(2)
+	TEST_ASSERT_EQUAL(pda_started["status"], "started", "The PDA receives its program number.")
+	var/pda_program = field(pda_started["records"][1], "program")
+	var/list/baseline
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline)
+		baseline = type_line(mobile, "programs | select program state runs fuel")
+		if(baseline?["status"] == "ok" && length(baseline["records"]) && text2num(field(baseline["records"][1], "fuel")) > 0)
+			break
+		sleep(2)
+	TEST_ASSERT(baseline?["status"] == "ok" && length(baseline["records"]) == 1 && field(baseline["records"][1], "runs") == "0" && text2num(field(baseline["records"][1], "fuel")) > 0,
+		"The PDA rule has observed its initial route: [json_encode(baseline)]")
+	pda.shutdown_computer()
+	TEST_ASSERT(!mobile.submit("self"), "A powered-off PDA cannot submit commands.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && SSnetdm_observe.node_facts[pda_node]?["executionPowered"] != 0)
+		sleep(2)
+	TEST_ASSERT_EQUAL(SSnetdm_observe.node_facts[pda_node]?["executionPowered"], 0, "Host acknowledges the standby fact without removing the node.")
+	test_user.forceMove(out_of_range)
+	TEST_ASSERT(wait_for_node(pda_node, out_of_range, FALSE), "The PDA follows the operator while off.")
+	sleep(2 SECONDS)
+	test_user.forceMove(right)
+	TEST_ASSERT(wait_for_node(pda_node, right, FALSE), "The powered-off PDA returns to its original route.")
+	TEST_ASSERT(pda.turn_on(test_user, FALSE), "The operator boots the PDA.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && SSnetdm_observe.node_facts[pda_node]?["executionPowered"] != 1)
+		sleep(2)
+	TEST_ASSERT_EQUAL(SSnetdm_observe.node_facts[pda_node]?["executionPowered"], 1, "Host acknowledges the boot fact.")
+	var/list/resumed = type_line(mobile, "programs | select program state runs")
+	TEST_ASSERT(resumed?["status"] == "ok" && length(resumed["records"]) == 1 && field(resumed["records"][1], "program") == pda_program && field(resumed["records"][1], "runs") == "0",
+		"The same rule survives shutdown and ignores changes while off: [json_encode(resumed)]")
 	test_user.forceMove(out_of_range)
 	TEST_ASSERT(wait_for_node(pda_node, out_of_range, FALSE), "The PDA follows the operator out of range.")
 	var/list/lost = type_line(mobile, "trace [far_id] | select state")
 	TEST_ASSERT(lost?["status"] == "ok" && field(lost["records"][1], "state") == "unreachable",
 		"The PDA shell runs locally, but can no longer reach the far APC: [json_encode(lost)]")
-	pda.shutdown_computer()
-	TEST_ASSERT(!mobile.submit("self"), "A powered-off PDA cannot submit commands.")
-	TEST_ASSERT(pda.turn_on(test_user, FALSE) && test_user.dropItemToGround(pda), "The operator can put the PDA down.")
+	var/list/fired
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline)
+		fired = type_line(mobile, "programs | select program state runs")
+		if(fired?["status"] == "ok" && length(fired["records"]) && field(fired["records"][1], "runs") == "1")
+			break
+		sleep(2)
+	TEST_ASSERT(fired?["status"] == "ok" && length(fired["records"]) == 1 && field(fired["records"][1], "program") == pda_program && field(fired["records"][1], "state") == "watching" && field(fired["records"][1], "runs") == "1",
+		"The resumed rule fires once for a change while powered: [json_encode(fired)]")
+	TEST_ASSERT(mobile.stop_program(pda_program), "The operator can stop the program.")
+	var/list/pda_stopped = mobile.entries[length(mobile.entries)]
+	deadline = world.time + 20 SECONDS
+	while(pda_stopped["pending"] && world.time < deadline)
+		sleep(2)
+	TEST_ASSERT_EQUAL(pda_stopped["status"], "stopped", "The PDA receives the stop result.")
+	TEST_ASSERT(test_user.dropItemToGround(pda), "The operator can put the PDA down.")
 	TEST_ASSERT(!mobile.submit("self"), "The previous operator cannot submit after dropping the PDA.")
 
 	test_user.forceMove(right)
@@ -3067,6 +3115,22 @@
 	var/list/implant_sent = type_line(implanted, "services -type machine.control | where instance -eq [pump_instance] | invoke set_power on=true", TRUE)
 	TEST_ASSERT(implant_sent?["status"] == "ok" && length(implant_sent["records"]) == 1 && field(implant_sent["records"][1], "status") == "sent",
 		"The implant sends commands to services within radio reach: [json_encode(implant_sent)]")
+	TEST_ASSERT(implanted.start_program("watch", "on self | select radio\nself"), "The implant can start a resident rule.")
+	var/list/started = implanted.entries[length(implanted.entries)]
+	deadline = world.time + 20 SECONDS
+	while(started["pending"] && world.time < deadline)
+		sleep(2)
+	TEST_ASSERT_EQUAL(started["status"], "started", "The start result reaches the implant's terminal.")
+	var/program_id = field(started["records"][1], "program")
+	var/list/listed_programs = type_line(implanted, "programs | select program name")
+	TEST_ASSERT(listed_programs?["status"] == "ok" && length(listed_programs["records"]) == 1 && field(listed_programs["records"][1], "program") == program_id,
+		"The implant sees its own program.")
+	TEST_ASSERT(implanted.stop_program(program_id), "The implant can stop its rule.")
+	var/list/stopped = implanted.entries[length(implanted.entries)]
+	deadline = world.time + 20 SECONDS
+	while(stopped["pending"] && world.time < deadline)
+		sleep(2)
+	TEST_ASSERT_EQUAL(stopped["status"], "stopped", "The stop result reaches the implant's terminal.")
 	test_user.forceMove(left)
 	TEST_ASSERT(wait_for_node(implant.node, left, FALSE)?["a"] == implant_fact["a"], "The implant keeps its node as its wearer moves.")
 	var/datum/component/netdm_node/extracted_node = implant.node

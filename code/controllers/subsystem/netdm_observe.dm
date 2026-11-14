@@ -269,7 +269,8 @@ SUBSYSTEM_DEF(netdm_observe)
 /datum/controller/subsystem/netdm_observe/proc/same_fact(list/left, list/right)
 	return left && right && left["x"] == right["x"] && left["y"] == right["y"] && left["z"] == right["z"] \
 		&& left["anchored"] == right["anchored"] && left["mount"] == right["mount"] && left["range"] == right["range"] \
-		&& left["powered"] == right["powered"] && left["operational"] == right["operational"]
+		&& left["powered"] == right["powered"] && left["operational"] == right["operational"] \
+		&& left["executionPowered"] == right["executionPowered"]
 
 /// Sends one bounded delta of device facts and APC states. Positions coalesce: only the latest
 /// state of a node leaves.

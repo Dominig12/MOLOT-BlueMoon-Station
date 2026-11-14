@@ -45,6 +45,8 @@
 	lane.dispatcher.allow_result("state", new /datum/netdm_effect_handler/network_query_page, "network.query")
 	lane.dispatcher.allow_result("run", new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow_result("run_script", new /datum/netdm_effect_handler/network_query_page, "network.shell")
+	lane.dispatcher.allow_result("start", new /datum/netdm_effect_handler/network_query_page, "network.shell")
+	lane.dispatcher.allow_result("stop", new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow("query.directory", new /datum/netdm_effect_handler/network_directory_event)
 
 /// A new Host session: retry reads, but don't replay shell requests that may already have sent commands.

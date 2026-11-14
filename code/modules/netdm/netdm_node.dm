@@ -32,11 +32,14 @@
 	RegisterSignal(parent, COMSIG_OBJ_SETANCHORED, PROC_REF(on_anchored))
 	if(ismachinery(parent))
 		RegisterSignal(parent, COMSIG_MACHINERY_SET_MACHINE_STAT, PROC_REF(on_machine_stat))
+	else if(is_handheld_pda())
+		RegisterSignal(parent, list(COMSIG_MODULAR_COMPUTER_TURNED_ON, COMSIG_MODULAR_COMPUTER_SHUT_DOWN), PROC_REF(on_power_changed))
 	watch_containers()
 	SSnetdm_observe.add_node(src)
 
 /datum/component/netdm_node/UnregisterFromParent()
-	UnregisterSignal(parent, list(COMSIG_MOVABLE_MOVED, COMSIG_OBJ_SETANCHORED, COMSIG_MACHINERY_SET_MACHINE_STAT))
+	UnregisterSignal(parent, list(COMSIG_MOVABLE_MOVED, COMSIG_OBJ_SETANCHORED, COMSIG_MACHINERY_SET_MACHINE_STAT,
+		COMSIG_MODULAR_COMPUTER_TURNED_ON, COMSIG_MODULAR_COMPUTER_SHUT_DOWN))
 	unwatch_containers()
 	SSnetdm_observe.remove_node(src)
 
@@ -77,6 +80,13 @@
 	SIGNAL_HANDLER
 	SSnetdm_observe.node_changed(src)
 
+/datum/component/netdm_node/proc/is_handheld_pda()
+	return istype(parent, /obj/item/modular_computer/pda) && !istype(parent, /obj/item/modular_computer/pda/silicon)
+
+/datum/component/netdm_node/proc/on_power_changed()
+	SIGNAL_HANDLER
+	SSnetdm_observe.node_changed(src)
+
 /// NETDM_STATE_* flags: a machine needs power and must not be broken, under maintenance or
 /// EMP-disabled. Other objects have no power state and are always up.
 /datum/component/netdm_node/proc/state()
@@ -105,9 +115,14 @@
 	// Only an object standing on its turf is mounted; anything carried or stored is loose.
 	var/anchored_here = body.anchored && body.loc == position
 	var/node_state = state()
-	return list("op" = "device_state", "a" = node_id, "x" = position.x, "y" = position.y, "z" = position.z,
+	var/list/result = list("op" = "device_state", "a" = node_id, "x" = position.x, "y" = position.y, "z" = position.z,
 		"mount" = mount, "anchored" = anchored_here ? 1 : 0, "range" = radio_range,
 		"powered" = node_state & NETDM_STATE_POWERED ? 1 : 0, "operational" = node_state & NETDM_STATE_OPERATIONAL ? 1 : 0)
+	// The PDA can receive messenger traffic in standby while its programs are paused.
+	if(is_handheld_pda())
+		var/obj/item/modular_computer/pda/pda = body
+		result["executionPowered"] = pda.netdm_execution_powered() ? 1 : 0
+	return result
 
 /// Adds a netDM node to `target` when Observe is enabled; otherwise it costs nothing.
 /proc/netdm_make_node(atom/movable/target, mount = NETDM_MOUNT_FIXED, radio_range = NETDM_NODE_RADIO_RANGE)

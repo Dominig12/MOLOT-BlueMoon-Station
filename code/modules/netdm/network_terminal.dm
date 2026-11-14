@@ -32,8 +32,15 @@
 	return queue_shell(asker, provider, "run_script", "source", source, NETDM_TERMINAL_SCRIPT_LENGTH, on_output, can_send)
 
 /datum/netdm_diagnostics/proc/queue_shell(datum/asker, datum/provider, command, argument, source, max_length, datum/callback/on_output, datum/callback/can_send)
+	if(!istext(source) || !length(source) || length_char(source) > max_length)
+		return FALSE
+	var/list/arguments = list()
+	arguments[argument] = source
+	return queue_shell_request(asker, provider, command, arguments, on_output, can_send)
+
+/datum/netdm_diagnostics/proc/queue_shell_request(datum/asker, datum/provider, command, list/arguments, datum/callback/on_output, datum/callback/can_send)
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
-	if(!lane || QDELETED(asker) || QDELETED(provider) || !on_output || !istext(source) || !length(source) || length_char(source) > max_length)
+	if(!lane || QDELETED(asker) || QDELETED(provider) || !on_output)
 		return FALSE
 	var/local_shell = istype(provider, /datum/component/netdm_node)
 	if(length(queries) >= NETDM_TERMINAL_PENDING || (local_shell ? (asker != provider || !can_send) : !lane.node_id(provider)))
@@ -45,8 +52,6 @@
 	if(!endpoint.services[instance])
 		lane.offer(provider, instance, "network.shell", "shell.output", 1, scope = local_shell ? "none" : "domain")
 	counters["lines"] = (counters["lines"] || 0) + 1
-	var/list/arguments = list()
-	arguments[argument] = source
 	queries["sh-[++serial]"] = list("asker" = WEAKREF(asker), "provider" = WEAKREF(provider), "instance" = instance, "command" = command,
 		"arguments" = arguments, "callback" = CALLBACK(src, PROC_REF(line_answered), on_output),
 		"deadline" = world.time + NETDM_TERMINAL_TIMEOUT, "sent" = FALSE, "may_act" = TRUE, "can_send" = can_send)
@@ -67,6 +72,8 @@
 		if(length(records) >= NETDM_TERMINAL_ROWS)
 			break
 	var/list/answer = islist(output) ? output.Copy() : list("status" = "no_answer")
+	if(answer["program"])
+		records += list(list(list("name" = "program", "value" = "[answer["program"]]"), list("name" = "status", "value" = answer["status"])))
 	answer["records"] = records
 	on_output.Invoke(answer)
 
@@ -123,7 +130,7 @@
 	var/list/media = disk ? list("id" = REF(disk), "name" = disk.name, "file" = file ? REF(file) : "") : null
 	return list("title" = device ? device_title(device) : "нет связи", "entries" = entries,
 		"limit" = NETDM_TERMINAL_LINE_LENGTH, "scriptLimit" = NETDM_TERMINAL_SCRIPT_LENGTH,
-		"disk" = media, "diskNotice" = disk_notice, "loadedScript" = loaded_script)
+		"disk" = media, "diskNotice" = disk_notice, "loadedScript" = loaded_script, "programsEnabled" = supports_programs())
 
 /datum/netdm_terminal/proc/device_title(atom/device)
 	return get_area_name(device, TRUE)
@@ -137,6 +144,12 @@
 			return submit(trim("[params["line"]]"))
 		if("run_script")
 			return submit(params["source"], TRUE)
+		if("start_program")
+			return start_program(params["name"], params["source"])
+		if("list_programs")
+			return submit("programs")
+		if("stop_program")
+			return stop_program(params["program"])
 		if("save_disk", "load_disk", "run_disk")
 			return script_disk_action(ui.user, action, params["disk"], params["file"], params["source"])
 		if("clear")
@@ -202,10 +215,30 @@
 
 /// Puts a line or script on the screen and sends it; the answer fills the entry in.
 /datum/netdm_terminal/proc/submit(line, script = FALSE)
+	var/max_length = script ? NETDM_TERMINAL_SCRIPT_LENGTH : NETDM_TERMINAL_LINE_LENGTH
+	if(!valid_source(line, max_length))
+		return FALSE
+	var/list/arguments = script ? list("source" = line) : list("line" = line)
+	return submit_request(line, script ? "run_script" : "run", arguments)
+
+/datum/netdm_terminal/proc/start_program(name, source)
+	if(!supports_programs() || !istext(name) || !length(name) || length_char(name) > 32 || !valid_source(source, NETDM_TERMINAL_SCRIPT_LENGTH))
+		return FALSE
+	return submit_request("start [name]", "start", list("name" = name, "source" = source))
+
+/datum/netdm_terminal/proc/supports_programs()
+	return TRUE
+
+/datum/netdm_terminal/proc/stop_program(program)
+	var/id = istext(program) ? text2num(program) : program
+	if(!isnum(id) || id < 1 || id > 1000000000 || round(id) != id)
+		return FALSE
+	return submit_request("stop [id]", "stop", list("program" = id))
+
+/datum/netdm_terminal/proc/submit_request(line, command, list/arguments)
 	var/datum/node = node_ref?.resolve()
 	var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe.diagnostics
-	var/max_length = script ? NETDM_TERMINAL_SCRIPT_LENGTH : NETDM_TERMINAL_LINE_LENGTH
-	if(!valid_source(line, max_length) || !node || !diagnostics || !can_submit())
+	if(!node || !diagnostics || !can_submit())
 		return FALSE
 	var/list/entry = list("id" = ++serial, "line" = line, "pending" = TRUE, "status" = null, "error" = null, "position" = null,
 		"fuel" = null, "records" = list())
@@ -214,7 +247,7 @@
 		entries.Cut(1, length(entries) - NETDM_TERMINAL_LINES + 1)
 	var/datum/callback/on_output = CALLBACK(src, PROC_REF(answered), entry)
 	var/datum/callback/can_send = send_guard()
-	var/queued = script ? diagnostics.run_script(node, node, line, on_output, can_send) : diagnostics.run_line(node, node, line, on_output, can_send)
+	var/queued = diagnostics.queue_shell_request(node, node, command, arguments, on_output, can_send)
 	if(!queued)
 		entry["pending"] = FALSE
 		entry["status"] = "refused"
@@ -265,7 +298,10 @@
 	return ..() && pda && user.is_holding(pda) && pda.netdm_terminal_powered()
 
 /obj/item/modular_computer/pda/proc/netdm_terminal_powered()
-	return enabled && screen_on && get_battery_percent() > 0
+	return screen_on && netdm_execution_powered()
+
+/obj/item/modular_computer/pda/proc/netdm_execution_powered()
+	return enabled && get_battery_percent() > 0
 
 /obj/item/modular_computer/pda/proc/open_netdm_terminal(mob/user)
 	if(!SSnetdm_observe?.services || GLOB.hands_state.can_use_topic(src, user) != UI_INTERACTIVE || !netdm_terminal_powered())
