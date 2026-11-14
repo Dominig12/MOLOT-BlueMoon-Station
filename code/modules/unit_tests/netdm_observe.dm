@@ -2421,7 +2421,8 @@
 	var/list/zone_area = list()
 	for(var/area/root as anything in export.zones)
 		var/datum/netdm_apc_zone/zone = export.zones[root]
-		zone_area[zone.apc["a"]] = root
+		if(zone.apc) // Duct zones without an APC are counted by the Host's graph below.
+			zone_area[zone.apc["a"]] = root
 	var/list/nodes = list()
 	var/list/anchors = list()
 	for(var/list/fact in export.facts)
@@ -2429,7 +2430,9 @@
 			if("add_node")
 				nodes[fact["a"]] = fact
 			if("area_span")
-				spans += list(list(fact["area"], fact["z"], fact["y"], fact["x"], fact["endX"]))
+				// The DM figures keep the rule of 11.11.2026 (zones with an APC only) for comparison.
+				if(zone_area[fact["area"]])
+					spans += list(list(fact["area"], fact["z"], fact["y"], fact["x"], fact["endX"]))
 			if("area_apc")
 				anchors["[fact["a"]]/[fact["z"]]"] = fact
 
@@ -2592,7 +2595,7 @@
 			without_apc += list(list("area" = describe(root), "tiles" = total, "levels" = per_level, "station" = station_area))
 			continue
 		var/datum/netdm_apc_zone/zone = export.zones[root]
-		if(!zone)
+		if(!zone?.apc)
 			continue
 		for(var/level in per_level)
 			var/missing = per_level[level] - exported["[zone.apc["a"]]/[level]"]
@@ -2652,6 +2655,84 @@
 		"cells" = export.cells_visited,
 	)
 
+/**
+ * The wired APC graph the Host built (decision of 14.11.2026: ducts and several APCs per segment), on the
+ * station levels: APC-to-APC links of cost 1 are wires, the costlier ones radio bridges. Components count
+ * the station APCs; "host_isolated" are APCs without a wire to another APC.
+ */
+/datum/unit_test/netdm_observe/area_map/map_audit/proc/host_graph(list/report)
+	var/list/apc_ids = list()
+	for(var/key in SSnetdm_observe.known)
+		var/list/entry = SSnetdm_observe.known[key]
+		if(entry?["a"])
+			apc_ids["[entry["a"]]"] = entry["z"]
+	var/list/station_levels = SSmapping.levels_by_trait(ZTRAIT_STATION)
+	var/list/edges = list()
+	var/list/station_apcs = list()
+	for(var/level in station_levels)
+		var/datum/http_response/response = world_safe_http_get("[http_base]/api/game/map?z=[level]&limit=8000&outer=true", 30 SECONDS)
+		var/list/map = response?.status_code == 200 ? json_decode(response.body) : null
+		if(!map)
+			report["host_graph_error"] = "no map for level [level]"
+			return
+		for(var/list/node in map["nodes"])
+			if(!isnull(apc_ids[node["id"]]))
+				station_apcs[node["id"]] = node["id"]
+		// An APC link to another level is listed from both levels: it is counted once.
+		for(var/list/edge in map["edges"])
+			var/key = text2num(edge["a"]) < text2num(edge["b"]) ? "[edge["a"]]-[edge["b"]]" : "[edge["b"]]-[edge["a"]]"
+			edges[key] = edge
+	var/list/wired = list()
+	var/list/bridged = list()
+	for(var/key in edges)
+		var/list/edge = edges[key]
+		if(!station_apcs[edge["a"]] || !station_apcs[edge["b"]])
+			continue
+		var/list/pair = list(edge["a"], edge["b"])
+		if(edge["cost"] == 1)
+			wired += list(pair)
+		bridged += list(pair)
+	report["host_wires"] = length(wired)
+	report["host_bridges"] = length(bridged) - length(wired)
+	var/list/wired_sizes = components_of(station_apcs, wired)
+	var/list/grouped_sizes = components_of(station_apcs, bridged)
+	report["host_components"] = length(wired_sizes)
+	report["host_component_sizes"] = wired_sizes
+	report["host_groups"] = length(grouped_sizes)
+	var/list/degree = list()
+	for(var/list/pair in wired)
+		degree[pair[1]] = TRUE
+		degree[pair[2]] = TRUE
+	var/isolated = 0
+	for(var/id in station_apcs)
+		if(!degree[id])
+			isolated++
+	report["host_isolated"] = isolated
+
+/datum/unit_test/netdm_observe/area_map/map_audit/proc/components_of(list/ids, list/pairs)
+	var/list/root = list()
+	for(var/id in ids)
+		root[id] = id
+	for(var/list/pair in pairs)
+		var/a = pair[1]
+		var/b = pair[2]
+		while(root[a] != a)
+			a = root[a]
+		while(root[b] != b)
+			b = root[b]
+		if(a != b)
+			root[b] = a
+	var/list/sizes = list()
+	for(var/id in ids)
+		var/top = id
+		while(root[top] != top)
+			top = root[top]
+		sizes[top] += 1
+	. = list()
+	for(var/top in sizes)
+		. += sizes[top]
+	sortTim(., GLOBAL_PROC_REF(cmp_numeric_dsc))
+
 /// Runs the map audit on the loaded station and writes netdm_map_audit.json to the round logs.
 /// Only contract breaches fail: the export must complete and every APC must reach the Host.
 /datum/unit_test/netdm_observe/area_map/map_audit
@@ -2673,6 +2754,7 @@
 	var/list/summary = response?.status_code == 200 ? json_decode(response.body) : null
 	report["host_nodes"] = summary?["nodes"]
 	report["host_links"] = summary?["links"]
+	host_graph(report)
 	var/path = "[GLOB.log_directory]/netdm_map_audit.json"
 	fdel(path)
 	text2file(json_encode(report), path)
