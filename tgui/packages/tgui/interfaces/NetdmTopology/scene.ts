@@ -38,6 +38,16 @@ export type SceneFilters = {
   devices: boolean;
 };
 
+export type NodePresenceCounts = Readonly<Record<string, number>>;
+
+/** A null slot is an undisclosed hop. The segments on either side stay separate. */
+export type SceneRoute = {
+  nodes: readonly (string | null)[];
+  radioLegs: readonly number[];
+  moving: boolean;
+  broken?: boolean;
+};
+
 export interface TopologyScene {
   /** Renderer backend the client actually got: 'webgl', 'webgpu' or 'canvas'. */
   readonly backend: string;
@@ -45,6 +55,8 @@ export interface TopologyScene {
   update(view: View, levelKey: string): void;
   setSelection(id: string | null): void;
   setPresence(id: string | null): void;
+  setOtherPresences(counts: NodePresenceCounts | null): void;
+  setRoute(route: SceneRoute | null): void;
   setFilters(filters: SceneFilters): void;
   fit(): void;
   destroy(): void;
@@ -70,6 +82,9 @@ const COLORS = {
   air: 0xf0a040,
   selection: 0xffffff,
   presence: 0x55e7d0,
+  otherPresence: 0xd19aff,
+  preview: 0xffc36a,
+  routeBreak: 0xff6868,
 };
 
 /** Offline nodes keep their shape (square APC, round device) in a muted color. */
@@ -92,6 +107,7 @@ const CLICK_TRAVEL = 4;
 class PixiTopologyScene implements TopologyScene {
   private readonly nodes = new Map<string, { data: ViewNode; graphic: Graphics }>();
   private readonly links = new Map<string, { data: ViewLink; graphic: Graphics }>();
+  private readonly otherPresenceGraphic = new Graphics();
   private view: Viewport = { x: 0, y: 0, scale: 1 };
   private levelKey: string | null = null;
   private fitted = false;
@@ -103,6 +119,8 @@ class PixiTopologyScene implements TopologyScene {
   private autoFit = true;
   private selected: string | null = null;
   private presenceNode: string | null = null;
+  private otherPresences: NodePresenceCounts | null = null;
+  private route: SceneRoute | null = null;
   private filters: SceneFilters = { radio: true, devices: true };
   private frame = 0;
   private destroyed = false;
@@ -117,10 +135,12 @@ class PixiTopologyScene implements TopologyScene {
     private readonly world: Container,
     private readonly linkLayer: Container,
     private readonly nodeLayer: Container,
+    private readonly routeGraphic: Graphics,
     private readonly selection: Graphics,
     private readonly presence: Graphics,
     private readonly contexts: Record<Style, GraphicsContext>,
   ) {
+    world.addChild(this.otherPresenceGraphic);
     const canvas = app.canvas as HTMLCanvasElement;
     canvas.style.display = 'block';
     canvas.style.touchAction = 'none';
@@ -209,7 +229,9 @@ class PixiTopologyScene implements TopologyScene {
     if (!this.fitted && this.nodes.size) {
       this.fit();
     }
+    this.drawRoute();
     this.placeMarkers();
+    this.drawOtherPresences();
     this.requestRender();
   }
 
@@ -225,6 +247,18 @@ class PixiTopologyScene implements TopologyScene {
     this.requestRender();
   }
 
+  setOtherPresences(counts: NodePresenceCounts | null) {
+    this.otherPresences = counts;
+    this.drawOtherPresences();
+    this.requestRender();
+  }
+
+  setRoute(route: SceneRoute | null) {
+    this.route = route;
+    this.drawRoute();
+    this.requestRender();
+  }
+
   setFilters(filters: SceneFilters) {
     this.filters = filters;
     for (const entry of this.nodes.values()) {
@@ -233,7 +267,9 @@ class PixiTopologyScene implements TopologyScene {
     for (const entry of this.links.values()) {
       entry.graphic.visible = this.linkVisible(entry.data);
     }
+    this.drawRoute();
     this.placeMarkers();
+    this.drawOtherPresences();
     this.requestRender();
   }
 
@@ -246,6 +282,8 @@ class PixiTopologyScene implements TopologyScene {
     this.fitted = this.nodes.size > 0 && width > 1 && height > 1;
     this.autoFit = true;
     this.applyView();
+    this.drawRoute();
+    this.drawOtherPresences();
   }
 
   destroy() {
@@ -270,8 +308,10 @@ class PixiTopologyScene implements TopologyScene {
     }
     this.nodes.clear();
     this.links.clear();
+    this.routeGraphic.destroy();
     this.selection.destroy();
     this.presence.destroy();
+    this.otherPresenceGraphic.destroy();
     for (const context of Object.values(this.contexts)) {
       context.destroy();
     }
@@ -320,6 +360,40 @@ class PixiTopologyScene implements TopologyScene {
     graphic.visible = this.linkVisible(link);
   }
 
+  private drawRoute() {
+    const graphic = this.routeGraphic.clear();
+    if (!this.route) {
+      return;
+    }
+    const { broken, moving, nodes, radioLegs } = this.route;
+    for (let index = 1; index < nodes.length; index++) {
+      const from = this.nodes.get(nodes[index - 1] ?? '');
+      const to = this.nodes.get(nodes[index] ?? '');
+      if (!from?.graphic.visible || !to?.graphic.visible) {
+        continue;
+      }
+      const a = from.graphic.position;
+      const b = to.graphic.position;
+      const radio = radioLegs.includes(index);
+      if (moving && !radio) {
+        graphic.moveTo(a.x, a.y).lineTo(b.x, b.y);
+        continue;
+      }
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dashes = Math.max(1, Math.min(12, Math.round(Math.hypot(dx, dy) * this.view.scale / 12)));
+      for (let dash = 0; dash < dashes; dash++) {
+        const start = dash / dashes;
+        const end = (dash + (radio ? 0.35 : 0.65)) / dashes;
+        graphic.moveTo(a.x + dx * start, a.y + dy * start).lineTo(a.x + dx * end, a.y + dy * end);
+      }
+    }
+    graphic.stroke({
+      width: (moving || broken ? 3 : 2) / this.view.scale,
+      color: broken ? COLORS.routeBreak : moving ? COLORS.presence : COLORS.preview,
+    });
+  }
+
   private placeMarkers() {
     this.placeMarker(this.selection, this.selected);
     this.placeMarker(this.presence, this.presenceNode);
@@ -334,6 +408,29 @@ class PixiTopologyScene implements TopologyScene {
     marker.visible = true;
     marker.position.copyFrom(entry.graphic.position);
     marker.scale.set(this.nodeScale());
+  }
+
+  private drawOtherPresences() {
+    const graphic = this.otherPresenceGraphic.clear();
+    const pixel = 1 / this.view.scale;
+    const radius = 4 * pixel;
+    const offset = 6 * pixel;
+    for (const [id, count] of Object.entries(this.otherPresences ?? {})) {
+      const node = this.nodes.get(id)?.graphic;
+      if (!node?.visible || !(count > 0)) {
+        continue;
+      }
+      const x = node.position.x + offset;
+      const y = node.position.y - offset;
+      graphic
+        .moveTo(x, y - radius)
+        .lineTo(x + radius, y)
+        .lineTo(x, y + radius)
+        .lineTo(x - radius, y)
+        .lineTo(x, y - radius)
+        .fill(COLORS.otherPresence)
+        .stroke({ width: pixel, color: COLORS.background });
+    }
   }
 
   /** Node graphics are drawn at 1 world unit per pixel; this keeps them NODE_PIXELS wide on screen. */
@@ -390,6 +487,8 @@ class PixiTopologyScene implements TopologyScene {
     this.autoFit = false;
     this.view = zoomAt(this.view, Math.exp(-event.deltaY * 0.0015), event.offsetX, event.offsetY);
     this.applyView();
+    this.drawRoute();
+    this.drawOtherPresences();
   };
 
   private onPointerDown = (event: PointerEvent) => {
@@ -469,11 +568,12 @@ export const createScene = async (
   const world = new Container();
   const linkLayer = new Container();
   const nodeLayer = new Container();
+  const route = new Graphics();
   const selection = new Graphics().circle(0, 0, half * 1.6).stroke({ width: 1.5, color: COLORS.selection });
   selection.visible = false;
   const presence = new Graphics().circle(0, 0, half * 2.2).stroke({ width: 2, color: COLORS.presence });
   presence.visible = false;
-  world.addChild(linkLayer, nodeLayer, selection, presence);
+  world.addChild(linkLayer, route, nodeLayer, selection, presence);
   app.stage.addChild(world);
-  return new PixiTopologyScene(app, host, callbacks, world, linkLayer, nodeLayer, selection, presence, contexts);
+  return new PixiTopologyScene(app, host, callbacks, world, linkLayer, nodeLayer, route, selection, presence, contexts);
 };

@@ -10,6 +10,9 @@
 #define NETDM_TERMINAL_PENDING 32
 /// A line without an answer for this long shows as unanswered.
 #define NETDM_TERMINAL_TIMEOUT (10 SECONDS)
+/// Keep the logical endpoint long enough to resume the Host's five-minute presence grace.
+#define NETDM_APC_OPERATOR_IDLE (5 MINUTES + 10 SECONDS)
+#define NETDM_APC_OPERATOR_PENDING 8
 
 /// Source code for the v1 shell, kept in the standard removable drive filesystem.
 /datum/computer_file/data/netdm_script
@@ -38,6 +41,17 @@
 	arguments[argument] = source
 	return queue_shell_request(asker, provider, command, arguments, on_output, can_send)
 
+/// Registers only the shell. Transport still waits for the world node to be acknowledged.
+/datum/netdm_diagnostics/proc/offer_shell(datum/provider)
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	var/datum/netdm_service_endpoint/endpoint = lane?.endpoint_for(provider)
+	if(!endpoint)
+		return null
+	var/instance = "netshell.[endpoint.id]"
+	if(!endpoint.services[instance])
+		lane.offer(provider, instance, "network.shell", "shell.output", 1, scope = istype(provider, /datum/component/netdm_node) ? "none" : "domain")
+	return instance
+
 /datum/netdm_diagnostics/proc/queue_shell_request(datum/asker, datum/provider, command, list/arguments, datum/callback/on_output, datum/callback/can_send)
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
 	if(!lane || QDELETED(asker) || QDELETED(provider) || !on_output)
@@ -45,12 +59,24 @@
 	var/local_shell = istype(provider, /datum/component/netdm_node)
 	if(length(queries) >= NETDM_TERMINAL_PENDING || (local_shell ? (asker != provider || !can_send) : !lane.node_id(provider)))
 		return FALSE
-	var/datum/netdm_service_endpoint/endpoint = lane.endpoint_for(provider)
-	if(!endpoint)
+	var/datum/netdm_apc_operator/operator = asker
+	if(istype(operator))
+		var/datum/netdm_service_endpoint/endpoint = lane.by_node[operator]
+		if(operator.apc_ref?.resolve() != provider || !can_send || !endpoint)
+			return FALSE
+		if(endpoint.attached_node != lane.node_id(operator))
+			lane.node_moved(operator)
+		var/operator_pending = 0
+		var/datum/weakref/operator_ref = WEAKREF(operator)
+		for(var/key in queries)
+			var/list/query = queries[key]
+			if(query["asker"] == operator_ref)
+				operator_pending++
+				if(operator_pending >= NETDM_APC_OPERATOR_PENDING)
+					return FALSE
+	var/instance = offer_shell(provider)
+	if(!instance)
 		return FALSE
-	var/instance = "netshell.[endpoint.id]"
-	if(!endpoint.services[instance])
-		lane.offer(provider, instance, "network.shell", "shell.output", 1, scope = local_shell ? "none" : "domain")
 	counters["lines"] = (counters["lines"] || 0) + 1
 	queries["sh-[++serial]"] = list("asker" = WEAKREF(asker), "provider" = WEAKREF(provider), "instance" = instance, "command" = command,
 		"arguments" = arguments, "callback" = CALLBACK(src, PROC_REF(line_answered), on_output),
@@ -79,7 +105,7 @@
 
 /// A multitool on a closed APC opens the terminal of its network module. TRUE when the click was taken.
 /datum/netdm_diagnostics/proc/open_terminal(obj/machinery/power/apc/apc, mob/user)
-	if(!SSnetdm_observe.services || !SSnetdm_observe.published || !user)
+	if(!SSnetdm_observe.services || !SSnetdm_observe.published || !isliving(user) || !user.client)
 		return FALSE
 	if(!SSnetdm_observe.apc_node_id(apc))
 		tell(user, span_warning("Сетевой модуль этого АПЦ не входит в карту сети."))
@@ -90,8 +116,15 @@
 	if(!terminal_access(apc, user))
 		tell(user, span_warning("Доступ запрещён: нужен инженерный доступ или разблокированный интерфейс АПЦ."))
 		return TRUE
-	var/datum/netdm_terminal/terminal = new(apc)
-	terminal.ui_interact(user)
+	var/datum/netdm_apc_operator/operator = apc_operator(apc, user)
+	if(!operator)
+		tell(user, span_warning("Не удалось открыть личный сеанс АПЦ."))
+		return TRUE
+	var/datum/netdm_terminal/apc/terminal = operator.terminal_ref?.resolve()
+	if(!terminal)
+		terminal = new(apc, operator)
+	if(!terminal.ui_interact(user))
+		qdel(terminal)
 	return TRUE
 
 /// The APC terminal opens like the APC's own interface: an ID with its access (silicons included), or an
@@ -101,6 +134,87 @@
 	if(!istype(apc) || !user)
 		return FALSE
 	return !apc.locked || (apc.obj_flags & EMAGGED) || apc.allowed(user)
+
+/// A player's endpoint is attached to the APC's physical node. Its provider is the public APC shell.
+/datum/netdm_apc_operator
+	var/datum/netdm_diagnostics/diagnostics
+	var/key
+	var/datum/weakref/apc_ref
+	var/datum/weakref/user_ref
+	var/client/operator_client
+	var/datum/weakref/terminal_ref
+	var/idle_until
+	var/detach_needed = FALSE
+
+/datum/netdm_apc_operator/New(datum/netdm_diagnostics/owner, operator_key, obj/machinery/power/apc/apc, mob/living/user)
+	diagnostics = owner
+	key = operator_key
+	apc_ref = WEAKREF(apc)
+	user_ref = WEAKREF(user)
+	operator_client = user.client
+	idle_until = world.time + NETDM_APC_OPERATOR_IDLE
+	RegisterSignal(user, list(COMSIG_PARENT_QDELETING, COMSIG_MOB_CLIENT_LOGOUT), PROC_REF(on_gone))
+	RegisterSignal(apc, COMSIG_PARENT_QDELETING, PROC_REF(on_gone))
+	return ..()
+
+/datum/netdm_apc_operator/proc/on_gone(datum/source)
+	SIGNAL_HANDLER
+	qdel(src)
+
+/datum/netdm_apc_operator/proc/authorized()
+	var/mob/living/user = user_ref?.resolve()
+	var/obj/machinery/power/apc/apc = apc_ref?.resolve()
+	return !QDELETED(src) && !QDELETED(apc) && !QDELETED(user) && operator_client && user.client == operator_client && diagnostics?.terminal_access(apc, user)
+
+/datum/netdm_apc_operator/proc/can_detach_presence()
+	var/datum/netdm_terminal/apc/terminal = terminal_ref?.resolve()
+	return !QDELETED(src) && !QDELETED(apc_ref?.resolve()) && !terminal?.space
+
+/datum/netdm_apc_operator/proc/detach_answered(list/output)
+	if(can_detach_presence() && !(output?["status"] in list("suspended", "ended", "none")))
+		detach_needed = TRUE
+
+/datum/netdm_apc_operator/Destroy()
+	var/mob/living/user = user_ref?.resolve()
+	var/obj/machinery/power/apc/apc = apc_ref?.resolve()
+	if(user)
+		UnregisterSignal(user, list(COMSIG_PARENT_QDELETING, COMSIG_MOB_CLIENT_LOGOUT))
+	if(apc)
+		UnregisterSignal(apc, COMSIG_PARENT_QDELETING)
+	if(diagnostics?.apc_operators[key] == src)
+		diagnostics.apc_operators -= key
+	SSnetdm_observe?.services?.drop(src)
+	qdel(terminal_ref?.resolve())
+	operator_client = null
+	diagnostics = null
+	return ..()
+
+/datum/netdm_diagnostics/proc/apc_operator(obj/machinery/power/apc/apc, mob/living/user)
+	var/key = "[REF(apc)]/[REF(user)]"
+	var/datum/netdm_apc_operator/operator = apc_operators[key]
+	if(operator?.authorized() && operator.apc_ref.resolve() == apc && operator.user_ref.resolve() == user)
+		return operator
+	qdel(operator)
+	operator = new(src, key, apc, user)
+	if(!SSnetdm_observe.services?.endpoint_for(operator))
+		qdel(operator)
+		return null
+	apc_operators[key] = operator
+	return operator
+
+/datum/netdm_diagnostics/proc/check_apc_operators()
+	if(!length(apc_operators) || world.time < next_apc_operator_check)
+		return
+	next_apc_operator_check = world.time + 1 SECONDS
+	for(var/key in apc_operators.Copy())
+		var/datum/netdm_apc_operator/operator = apc_operators[key]
+		if(!operator.authorized() || (operator.idle_until && world.time >= operator.idle_until))
+			qdel(operator)
+			continue
+		if(operator.detach_needed && operator.can_detach_presence() && queue_shell_request(operator, operator.apc_ref.resolve(),
+			"detach", list("note" = "window"), CALLBACK(operator, TYPE_PROC_REF(/datum/netdm_apc_operator, detach_answered)),
+			CALLBACK(operator, TYPE_PROC_REF(/datum/netdm_apc_operator, can_detach_presence))))
+			operator.detach_needed = FALSE
 
 /// A terminal runs lines and scripts at its own endpoint. The UI host is the device the user operates.
 /datum/netdm_terminal
@@ -116,8 +230,61 @@
 	device_ref = WEAKREF(device)
 	node_ref = WEAKREF(node)
 	submit("self")
-	if(device == node)
+	if(device == shell_provider())
 		submit("links")
+
+/datum/netdm_terminal/proc/shell_provider()
+	return node_ref?.resolve()
+
+/datum/netdm_terminal/apc
+	var/opening = FALSE
+
+/datum/netdm_terminal/apc/New(obj/machinery/power/apc/apc, datum/netdm_apc_operator/operator)
+	operator.terminal_ref = WEAKREF(src)
+	operator.idle_until = 0
+	return ..(apc, operator)
+
+/datum/netdm_terminal/apc/Destroy()
+	var/datum/netdm_apc_operator/operator = node_ref?.resolve()
+	var/datum/netdm_terminal/apc/current = operator?.terminal_ref?.resolve()
+	if(istype(operator) && (!current || current == src))
+		operator.terminal_ref = null
+		operator.idle_until = world.time + NETDM_APC_OPERATOR_IDLE
+	return ..()
+
+/datum/netdm_terminal/apc/shell_provider()
+	return device_ref?.resolve()
+
+/datum/netdm_terminal/apc/ui_interact(mob/user, datum/tgui/ui)
+	if(opening)
+		return TRUE
+	opening = TRUE
+	. = ..()
+	if(!QDELETED(src))
+		opening = FALSE
+
+/datum/netdm_terminal/apc/ui_status(mob/user, datum/ui_state/state)
+	var/datum/netdm_apc_operator/operator = node_ref?.resolve()
+	return user == operator?.user_ref?.resolve() && operator?.authorized() ? ..() : UI_CLOSE
+
+/datum/netdm_terminal/apc/can_submit()
+	if(QDELETED(src))
+		return FALSE
+	var/datum/netdm_apc_operator/operator = node_ref?.resolve()
+	var/mob/living/user = operator?.user_ref?.resolve()
+	return operator?.authorized() && !user.stat && !user.incapacitated() && ui_status(user, ui_state(user)) == UI_INTERACTIVE
+
+/datum/netdm_terminal/apc/send_guard()
+	return CALLBACK(src, PROC_REF(can_submit))
+
+/datum/netdm_terminal/apc/kept_names()
+	return null
+
+/datum/netdm_terminal/apc/keep_program(name, source)
+	return "Личный терминал АПЦ сохраняет скрипты на съёмный диск."
+
+/datum/netdm_terminal/apc/forget_program(name)
+	return FALSE
 
 /datum/netdm_terminal/ui_host(mob/user)
 	return device_ref?.resolve() || src
@@ -129,7 +296,8 @@
 	ui = SStgui.try_update_ui(user, src, ui)
 	if(!ui)
 		ui = new(user, src, "NetdmTerminal")
-		ui.open()
+		return ui.open()
+	return TRUE
 
 /datum/netdm_terminal/ui_close(mob/user)
 	qdel(src)
@@ -284,7 +452,7 @@
 		entries.Cut(1, length(entries) - NETDM_TERMINAL_LINES + 1)
 	var/datum/callback/on_output = CALLBACK(src, PROC_REF(answered), entry)
 	var/datum/callback/can_send = send_guard()
-	var/queued = diagnostics.queue_shell_request(node, node, command, arguments, on_output, can_send)
+	var/queued = diagnostics.queue_shell_request(node, shell_provider(), command, arguments, on_output, can_send)
 	if(!queued)
 		entry["pending"] = FALSE
 		entry["status"] = "refused"
@@ -712,3 +880,5 @@
 #undef NETDM_TERMINAL_ROWS
 #undef NETDM_TERMINAL_PENDING
 #undef NETDM_TERMINAL_TIMEOUT
+#undef NETDM_APC_OPERATOR_IDLE
+#undef NETDM_APC_OPERATOR_PENDING

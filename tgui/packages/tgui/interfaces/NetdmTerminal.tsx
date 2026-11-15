@@ -1,8 +1,8 @@
 import { BooleanLike } from 'common/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useBackend } from '../backend';
-import { Box, Button, Input, NoticeBox, Section, Stack, Table, TextArea } from '../components';
+import { Box, Button, Dropdown, Input, NoticeBox, Section, Stack, Table, TextArea } from '../components';
 import { Window } from '../layouts';
 
 type Field = { name: string; value: string };
@@ -44,8 +44,25 @@ const STATUS_TEXT: Record<string, string> = {
   unknown_program: 'программа недоступна',
 };
 
-const SCRIPT_EXAMPLE = 'if links | where state -eq up\n  services -type atmos.alarm | sort hops | first 1 | invoke read reason=inspect\nend';
+const HELP_TOPICS = [
+  { topic: '', title: 'Обзор' },
+  { topic: 'basics', title: 'Команды' },
+  { topic: 'services', title: 'Устройства' },
+  { topic: 'scripts', title: 'Скрипты' },
+  { topic: 'programs', title: 'Программы' },
+];
+
+const SCRIPT_EXAMPLES = {
+  'Поиск серверов': 'services -type research.server | sort hops | first 3 | select instance hops',
+  'Замер воздуха': '$alarms = services -type atmos.alarm | sort hops | first 1\nif $alarms\n  $alarms | invoke read reason=inspect\nend',
+  'Таймер программы': 'every 10\n$state = self | select node state',
+};
+
 const HISTORY_LIMIT = 32;
+const SERVICE_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+const OPERATION_ID = /^[1-9][0-9]{0,18}$/;
+const helpLine = (topic: string) => topic ? `help ${topic}` : 'help';
+const valueOf = (fields: Field[], name: string) => fields.find(field => field.name === name)?.value;
 
 /** Column names in the order the records first name them. */
 export const columnsOf = (records: Field[][]): string[] => {
@@ -60,25 +77,51 @@ export const columnsOf = (records: Field[][]): string[] => {
   return names;
 };
 
-const Records = (props: { records: Field[][]; onStop?: (id: string) => void }) => {
-  const { records, onStop } = props;
+const Records = (props: { entry: Entry; onCommand: (line: string) => void; onStop: (id: string) => void }) => {
+  const { entry, onCommand, onStop } = props;
+  const { records } = entry;
   const columns = columnsOf(records);
+  const listingJobs = /^jobs(?:\s|$)/i.test(entry.line);
+  const actions = records.map(record => {
+    const instance = valueOf(record, 'instance');
+    const type = valueOf(record, 'type');
+    const operation = valueOf(record, 'operation');
+    const program = valueOf(record, 'program');
+    const state = valueOf(record, 'state');
+    return {
+      instance: instance && type && SERVICE_NAME.test(instance) ? instance : null,
+      operation: operation && OPERATION_ID.test(operation) ? operation : null,
+      alarm: type === 'atmos.alarm',
+      alarmRead: !!instance?.startsWith('atmos.alarm.') && valueOf(record, 'command') === 'read',
+      stop: /^programs(?:\s|$)/i.test(entry.line) && program && OPERATION_ID.test(program) &&
+        state && !['done', 'faulted', 'stopped', 'migrated'].includes(state) ? program : null,
+    };
+  });
+  const showActions = actions.some(action => action.instance || action.stop || (action.operation && (!listingJobs || action.alarmRead)));
   return (
     <Table>
       <Table.Row header>
         {columns.map((name) => (
           <Table.Cell key={name}>{name}</Table.Cell>
         ))}
-        {onStop && <Table.Cell />}
+        {showActions && <Table.Cell />}
       </Table.Row>
       {records.map((record, index) => {
-        const id = record.find((field) => field.name === 'program')?.value;
+        const { instance, operation, alarm, alarmRead, stop } = actions[index];
         return (
           <Table.Row key={index}>
             {columns.map((name) => (
-              <Table.Cell key={name}>{record.find((field) => field.name === name)?.value ?? ''}</Table.Cell>
+              <Table.Cell key={name}>{valueOf(record, name) ?? ''}</Table.Cell>
             ))}
-            {onStop && <Table.Cell>{id && <Button icon="stop" content="Остановить" onClick={() => onStop(id)} />}</Table.Cell>}
+            {showActions && (
+              <Table.Cell collapsing>
+                {instance && <Button icon="route" aria-label="Показать маршрут" tooltip="Показать маршрут" onClick={() => onCommand(`route ${instance}`)} />}
+                {instance && alarm && <Button icon="tachometer-alt" aria-label="Снять показания" tooltip="Снять показания" onClick={() => onCommand(`invoke ${instance} read reason=inspect`)} />}
+                {operation && !listingJobs && <Button icon="tasks" aria-label="Проверить доставку" tooltip="Проверить доставку" onClick={() => onCommand(`jobs | where operation -eq "${operation}"`)} />}
+                {operation && alarmRead && <Button icon="poll" aria-label="Получить показания" tooltip="Получить показания" onClick={() => onCommand(`result ${operation}`)} />}
+                {stop && <Button.Confirm icon="stop" content="Остановить" confirmContent="Остановить программу?" onClick={() => onStop(stop)} />}
+              </Table.Cell>
+            )}
           </Table.Row>
         );
       })}
@@ -86,9 +129,11 @@ const Records = (props: { records: Field[][]; onStop?: (id: string) => void }) =
   );
 };
 
-const EntryView = (props: { entry: Entry; onStop: (id: string) => void }) => {
-  const { entry, onStop } = props;
-  const failed = !entry.pending && !['ok', 'started', 'stopped'].includes(entry.status || '');
+const failedEntry = (entry: Entry) => !entry.pending && !['ok', 'started', 'running', 'stopped', 'migrated'].includes(entry.status || '');
+
+const EntryView = (props: { entry: Entry; onCommand: (line: string) => void; onStop: (id: string) => void }) => {
+  const { entry, onCommand, onStop } = props;
+  const failed = failedEntry(entry);
   return (
     <Box mb={1}>
       <Box bold fontFamily="monospace" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
@@ -104,8 +149,45 @@ const EntryView = (props: { entry: Entry; onStop: (id: string) => void }) => {
         </NoticeBox>
       )}
       {!entry.pending && !failed && entry.records.length === 0 && <Box color="label">нет записей</Box>}
-      {entry.records.length > 0 && <Records records={entry.records} onStop={entry.line === 'programs' ? onStop : undefined} />}
+      {entry.records.length > 0 && <Records entry={entry} onCommand={onCommand} onStop={onStop} />}
     </Box>
+  );
+};
+
+const Help = (props: { entry?: Entry; topic: string; hasDraft: boolean; onTopic: (topic: string) => void;
+  onExample: (example: string) => void }) => {
+  const { entry, topic, hasDraft, onTopic, onExample } = props;
+  return (
+    <Section fill scrollable title="Справка"
+      buttons={HELP_TOPICS.map(item => (
+        <Button key={item.topic} selected={item.topic === topic} onClick={() => onTopic(item.topic)}>{item.title}</Button>
+      ))}>
+      {!entry || entry.pending ? (
+        <Box color="label">Ожидание ответа по сети…</Box>
+      ) : failedEntry(entry) ? (
+        <NoticeBox warning>Справка недоступна. Выберите раздел ещё раз, когда связь восстановится.</NoticeBox>
+      ) : entry.records.map((record, index) => {
+        const syntax = valueOf(record, 'syntax');
+        const description = valueOf(record, 'description');
+        const example = valueOf(record, 'example');
+        return (
+          <Box key={index} mb={1}>
+            <Box bold color="good" fontFamily="monospace">{syntax}</Box>
+            <Box>{description}</Box>
+            {example && (
+              <Button
+                mt={0.25}
+                icon="terminal"
+                disabled={hasDraft}
+                tooltip={hasDraft ? 'Сначала выполните или очистите черновик команды' : 'Подставить пример в командную строку'}
+                onClick={() => onExample(example)}>
+                {example}
+              </Button>
+            )}
+          </Box>
+        );
+      })}
+    </Section>
   );
 };
 
@@ -119,6 +201,10 @@ export const NetdmTerminal = () => {
   const [programName, setProgramName] = useState('');
   const [keepProgram, setKeepProgram] = useState(false);
   const [editingScript, setEditingScript] = useState(false);
+  const [helpTopic, setHelpTopic] = useState<string | null>(null);
+  const commandInput = useRef<HTMLInputElement>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const followLog = useRef(true);
   const { disk, diskNotice, loadedScript } = data;
   const loadedId = loadedScript?.id;
   const loadedSource = loadedScript?.source;
@@ -128,7 +214,30 @@ export const NetdmTerminal = () => {
     }
   }, [loadedId, loadedSource]);
   const canRun = !!script.trim() && script.length <= data.scriptLimit;
+  const helpEntry = helpTopic === null ? undefined : [...data.entries].reverse().find(entry => entry.line === helpLine(helpTopic));
+  useEffect(() => {
+    if (!editingScript && helpTopic === null) {
+      commandInput.current?.focus();
+    }
+  }, [editingScript, helpTopic]);
+  useLayoutEffect(() => {
+    if (log.current && followLog.current) {
+      log.current.scrollTop = log.current.scrollHeight;
+    }
+  });
+
+  const run = (command: string) => {
+    followLog.current = true;
+    act('run', { line: command });
+  };
+  const openHelp = (topic: string) => {
+    setHelpTopic(topic);
+    run(helpLine(topic));
+  };
   const recall = (index: number) => {
+    if (index < 0 || index > history.length || historyIndex === index) {
+      return;
+    }
     if (historyIndex === history.length) {
       setDraft(line);
     }
@@ -138,7 +247,7 @@ export const NetdmTerminal = () => {
   const send = (text: string) => {
     const trimmed = text.trim();
     if (trimmed.length > 0 && trimmed.length <= data.limit) {
-      act('run', { line: trimmed });
+      run(trimmed);
       const next = [...history.filter(entry => entry !== trimmed), trimmed].slice(-HISTORY_LIMIT);
       setHistory(next);
       setHistoryIndex(next.length);
@@ -147,45 +256,75 @@ export const NetdmTerminal = () => {
     }
   };
   return (
-    <Window title={`Сетевой модуль: ${data.title}`} width={640} height={520}>
+    <Window title={`Сетевой модуль: ${data.title}`} width={760} height={560}>
       <Window.Content>
         <Stack vertical fill>
-          <Stack.Item grow>
-            <Section
-              fill
-              scrollable
-              title="Терминал"
-              buttons={
-                <>
-                  <Button icon="code" content="Скрипт" selected={editingScript} onClick={() => setEditingScript(!editingScript)} />
-                  <Button icon="list" content="Программы" onClick={() => act('list_programs')} />
-                  <Button icon="project-diagram" content="Сеть" onClick={() => act('open_space')} />
-                  <Button icon="eraser" content="Очистить" onClick={() => act('clear')} />
-                </>
-              }
-            >
-              {data.entries.length === 0 && (
-                <Box color="label">
-                  Команды: services, links, self, trace, route, jobs, programs, затем where, select, sort, first, last, count; действие — invoke.
-                </Box>
-              )}
-              {data.entries.map((entry) => (
-                <EntryView key={entry.id} entry={entry} onStop={(program) => act('stop_program', { program })} />
-              ))}
+          <Stack.Item>
+            <Section fitted>
+              <Button icon="code" content="Редактор" selected={editingScript && helpTopic === null} onClick={() => {
+                setEditingScript(helpTopic !== null || !editingScript);
+                setHelpTopic(null);
+              }} />
+              <Button icon="question-circle" content="Справка" selected={helpTopic !== null} onClick={() => {
+                if (helpTopic === null) {
+                  openHelp('');
+                } else {
+                  setHelpTopic(null);
+                }
+              }} />
+              <Button icon="project-diagram" content="Сеть" onClick={() => act('open_space')} />
+              <Button icon="search" content="Сервисы" onClick={() => { setHelpTopic(null); run('services'); }} />
+              <Button icon="tachometer-alt" content="Атмосфера" onClick={() => { setHelpTopic(null); run('services -type atmos.alarm'); }} />
+              <Button icon="tasks" content="Доставка" onClick={() => { setHelpTopic(null); run('jobs'); }} />
+              {!!data.programsEnabled && <Button icon="list" content="Программы" onClick={() => { setHelpTopic(null); run('programs'); }} />}
             </Section>
           </Stack.Item>
-          {editingScript ? (
+          <Stack.Item grow>
+            {helpTopic !== null ? (
+              <Help
+                entry={helpEntry}
+                topic={helpTopic}
+                hasDraft={!!line.trim()}
+                onTopic={openHelp}
+                onExample={example => {
+                  setLine(example);
+                  setHistoryIndex(history.length);
+                  setEditingScript(false);
+                  setHelpTopic(null);
+                }} />
+            ) : (
+              <Section
+                key="terminal-log"
+                fill
+                scrollable
+                scrollableRef={log}
+                onScroll={() => {
+                  const node = log.current;
+                  if (node) {
+                    followLog.current = node.scrollHeight - node.scrollTop - node.clientHeight < 32;
+                  }
+                }}
+                title="Журнал терминала"
+                buttons={<Button icon="eraser" tooltip="Очистить журнал" onClick={() => act('clear')} />}>
+                {data.entries.length === 0 && <Box color="label">Введите команду или откройте справку.</Box>}
+                {data.entries.map(entry => (
+                  <EntryView key={entry.id} entry={entry} onCommand={run} onStop={program => act('stop_program', { program })} />
+                ))}
+              </Section>
+            )}
+          </Stack.Item>
+          {helpTopic === null && (editingScript ? (
             <Stack.Item>
               <Section
                 title="Скрипт"
                 buttons={
                   <>
-                    <Button
-                      icon="file-code"
-                      content="Пример"
-                      disabled={!!script.trim()}
-                      onClick={() => setScript(SCRIPT_EXAMPLE)}
-                    />
+                    {!script.trim() && (
+                      <Dropdown
+                        options={Object.keys(SCRIPT_EXAMPLES)}
+                        selected="Пример"
+                        onSelected={(key: keyof typeof SCRIPT_EXAMPLES) => setScript(SCRIPT_EXAMPLES[key])} />
+                    )}
                     <Button
                       icon="play"
                       content="Запустить"
@@ -295,15 +434,31 @@ export const NetdmTerminal = () => {
             <Stack.Item>
               <Stack>
                 <Stack.Item grow>
-                  <Input
-                    fluid
-                    autoFocus
-                    maxLength={data.limit}
-                    placeholder="services -type research.server | sort hops | first 3"
-                    value={line}
-                    onInput={(_event: unknown, value: string) => setLine(value)}
-                    onEnter={(_event: unknown, value: string) => send(value)}
-                  />
+                  <div className="Input Input--fluid Input--monospace">
+                    <div className="Input__baseline" aria-hidden="true">.</div>
+                    <input
+                      ref={commandInput}
+                      className="Input__input"
+                      aria-label="Командная строка"
+                      autoComplete="off"
+                      spellCheck={false}
+                      maxLength={data.limit}
+                      placeholder="help · ↑↓ история"
+                      value={line}
+                      onChange={event => setLine(event.currentTarget.value)}
+                      onKeyDown={event => {
+                        if (event.nativeEvent.isComposing) {
+                          return;
+                        }
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          send(line);
+                        } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                          event.preventDefault();
+                          recall(historyIndex + (event.key === 'ArrowUp' ? -1 : 1));
+                        }
+                      }} />
+                  </div>
                 </Stack.Item>
                 <Stack.Item>
                   <Button
@@ -322,7 +477,7 @@ export const NetdmTerminal = () => {
                 </Stack.Item>
               </Stack>
             </Stack.Item>
-          )}
+          ))}
         </Stack>
       </Window.Content>
     </Window>

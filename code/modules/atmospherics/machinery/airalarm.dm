@@ -474,6 +474,7 @@ GLOBAL_LIST_INIT(air_alarm_modes, init_air_alarm_modes())
 	alarm_area = get_area(src)
 	if(alarm_area)
 		LAZYADD(alarm_area.airalarms, src)
+	netdm_refresh_alarm()
 
 /obj/machinery/airalarm/on_area_swap(area/old_area, area/new_area)
 	. = ..()
@@ -544,8 +545,7 @@ GLOBAL_LIST_INIT(air_alarm_modes, init_air_alarm_modes())
 	ui = SStgui.try_update_ui(user, src, ui)
 	if(!ui)
 		ui = new(user, src, "AirAlarm", name)
-		if(ui.open() && isliving(user) && user.Adjacent(src) && !is_antag_training_atom(user))
-			SSnetdm_observe?.telemetry?.add_alarm(src)
+		ui.open()
 
 /obj/machinery/airalarm/ui_data(mob/user)
 	var/data = list(
@@ -765,13 +765,8 @@ GLOBAL_LIST_INIT(air_alarm_modes, init_air_alarm_modes())
 			investigate_log("was turned to [get_mode_name(mode)] mode by [key_name(usr)]",INVESTIGATE_ATMOS)
 			apply_mode()
 			. = TRUE
-		if("alarm")
-			if(alarm_manager.send_alarm(ALARM_ATMOS))
-				post_alert(2, AALARM_CAUSE_MANUAL)
-			. = TRUE
-		if("reset")
-			if(alarm_manager.clear_alarm(ALARM_ATMOS))
-				post_alert(0)
+		if("alarm", "reset")
+			set_manual_alarm(action == "alarm")
 			. = TRUE
 	if(.)
 		// settings changed (thresholds, mode, vent/scrubber orders): re-read the air on the very
@@ -779,6 +774,18 @@ GLOBAL_LIST_INIT(air_alarm_modes, init_air_alarm_modes())
 		process_interval = 1
 		process_skips_left = 0
 	update_icon()
+
+/// Changes this panel's manual alert and sends the normal air-alarm radio notification.
+/obj/machinery/airalarm/proc/set_manual_alarm(enabled)
+	if(enabled)
+		if(!alarm_manager.send_alarm(ALARM_ATMOS))
+			return FALSE
+		post_alert(2, AALARM_CAUSE_MANUAL)
+	else
+		if(!alarm_manager.clear_alarm(ALARM_ATMOS))
+			return FALSE
+		post_alert(0)
+	return TRUE
 
 /obj/machinery/airalarm/proc/reset(wire)
 	switch(wire)

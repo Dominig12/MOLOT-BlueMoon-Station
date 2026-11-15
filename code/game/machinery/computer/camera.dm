@@ -46,6 +46,7 @@
 	cam_background = new
 	cam_background.assigned_map = map_name
 	cam_background.del_on_map_removal = FALSE
+	netdm_register_camera_node(src)
 
 /obj/machinery/computer/security/Destroy()
 	netdm_camera_clear()

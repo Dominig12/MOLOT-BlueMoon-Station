@@ -4,8 +4,6 @@
 #define NETDM_TELEMETRY_REPORTS 256
 /// Latency samples kept for percentiles.
 #define NETDM_TELEMETRY_SAMPLES 512
-/// Only a limited number of locally visited air alarms advertise on the live network.
-#define NETDM_ATMOS_ALARMS 32
 /// A result can arrive before the window learns the operation ID from the shell.
 #define NETDM_ATMOS_ALARM_RESULTS 64
 #define NETDM_ATMOS_ALARM_RESULT_AGE (15 SECONDS)
@@ -38,8 +36,6 @@
 	/// Sensors with a node: sensor weakref -> TRUE; instances they offer -> TRUE.
 	var/list/sensors = list()
 	var/list/sensor_instances = list()
-	/// A locally visited alarm's weakref -> weakref of the node added to advertise its reading.
-	var/list/air_alarms = list()
 	/// Operation ID -> recent, unclaimed result, in delivery order.
 	var/list/air_alarm_results = list()
 	/// Console endpoint ID -> list("matched", "radio_only", reason -> count), for station reports.
@@ -60,6 +56,8 @@
 	lane.dispatcher.allow_result("sample", new /datum/netdm_effect_handler/atmos_snapshot)
 	lane.dispatcher.allow_command("atmos.alarm", "read", new /datum/netdm_command_handler/atmos_alarm)
 	lane.dispatcher.allow_result("read", new /datum/netdm_effect_handler/atmos_alarm_state, "atmos.alarm")
+	lane.dispatcher.allow_command("atmos.alarm", "set_alert", new /datum/netdm_command_handler/atmos_set_alert)
+	lane.dispatcher.allow_result("set_alert", new /datum/netdm_effect_handler/atmos_alert_set, "atmos.alarm")
 
 /datum/netdm_telemetry_shadow/proc/reset_session()
 	// Deliveries of the old session will never arrive: those reports are not compared.
@@ -75,38 +73,6 @@
 		SSnetdm_observe.services.offer(node, instance, "atmos.telemetry", "atmos.sample", 1)
 		sensors[WEAKREF(sensor)] = TRUE
 		sensor_instances[instance] = TRUE
-
-/datum/netdm_telemetry_shadow/proc/add_alarm(obj/machinery/airalarm/alarm)
-	var/datum/weakref/alarm_ref = WEAKREF(alarm)
-	if(!netdm_station_air_alarm(alarm))
-		return
-	for(var/datum/weakref/registered as anything in air_alarms)
-		var/datum/weakref/node_ref = air_alarms[registered]
-		if(!registered.resolve() || !node_ref.resolve())
-			air_alarms -= registered
-	if(length(air_alarms) >= NETDM_ATMOS_ALARMS || alarm.GetComponent(/datum/component/netdm_node))
-		return
-	var/datum/component/netdm_node/node = netdm_make_node(alarm)
-	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
-	var/datum/netdm_service_endpoint/endpoint = node && SSnetdm_observe.nodes[node] ? lane.endpoint_for(node) : null
-	if(!endpoint)
-		qdel(node)
-		return
-	lane.offer(node, "atmos.alarm.[endpoint.id]", "atmos.alarm", "atmos.alarm_state", 1)
-	air_alarms[alarm_ref] = WEAKREF(node)
-	RegisterSignal(alarm, list(COMSIG_MOVABLE_MOVED, COMSIG_OBJ_SETANCHORED), PROC_REF(alarm_moved))
-
-/datum/netdm_telemetry_shadow/proc/alarm_moved(obj/machinery/airalarm/alarm)
-	SIGNAL_HANDLER
-	if(netdm_station_air_alarm(alarm))
-		return
-	var/datum/weakref/alarm_ref = WEAKREF(alarm)
-	var/datum/weakref/node_ref = air_alarms[alarm_ref]
-	var/datum/component/netdm_node/node = node_ref?.resolve()
-	air_alarms -= alarm_ref
-	UnregisterSignal(alarm, list(COMSIG_MOVABLE_MOVED, COMSIG_OBJ_SETANCHORED))
-	if(!QDELETED(node))
-		qdel(node)
 
 /datum/netdm_telemetry_shadow/proc/take_alarm_result(operation, instance, recipient, generation)
 	var/list/reply = air_alarm_results[operation]
@@ -407,10 +373,58 @@
 /proc/netdm_station_air_alarm(obj/machinery/airalarm/alarm)
 	return istype(alarm) && !QDELETED(alarm) && alarm.anchored && isturf(alarm.loc) && is_station_level(alarm.z) && !is_antag_training_atom(alarm)
 
+/obj/machinery/airalarm
+	/// The component that advertises this station alarm. Unmounting retires its endpoint.
+	var/datum/component/netdm_node/netdm_alarm_node
+
+
+/obj/machinery/airalarm/Moved(atom/old_loc, dir, forced)
+	. = ..()
+	netdm_refresh_alarm()
+
+/obj/machinery/airalarm/set_anchored(anchorvalue)
+	. = ..()
+	if(!isnull(.))
+		netdm_refresh_alarm()
+
+/obj/machinery/airalarm/proc/netdm_refresh_alarm()
+	if(!SSnetdm_observe?.observing() || !(flags_1 & INITIALIZED_1) || QDELETED(src))
+		return
+	if(!netdm_station_air_alarm(src))
+		QDEL_NULL(netdm_alarm_node)
+		return
+	if(!QDELETED(netdm_alarm_node))
+		return
+	var/datum/component/netdm_node/node = netdm_make_node(src)
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	var/datum/netdm_service_endpoint/endpoint = node && SSnetdm_observe.nodes[node] ? lane.endpoint_for(node) : null
+	if(!endpoint)
+		qdel(node)
+		return
+	netdm_alarm_node = node
+	lane.offer(node, "atmos.alarm.[endpoint.id]", "atmos.alarm", "atmos.alarm_state", 1)
+
+/// Remote controls keep the panel's lock and access policies. The actor's own ID is checked at the panel.
+/obj/machinery/airalarm/proc/netdm_can_set_alert(mob/living/user)
+	if(!netdm_station_air_alarm(src) || QDELETED(user) || !istype(user) || !user.client || user.stat || user.incapacitated())
+		return FALSE
+	var/turf/position = get_turf(user)
+	if(!position || !is_station_level(position.z) || is_antag_training_atom(user) || !wires || wires.is_cut(WIRE_IDSCAN))
+		return FALSE
+	var/silicon_access = hasSiliconAccessInArea(user)
+	var/bot_privileges = silicon_access || (user.silicon_privileges & PRIVILEGES_DRONE)
+	return !(locked && !bot_privileges) && !(silicon_access && aidisabled) && allowed(user)
+
 /// A live, read-only snapshot of what the wall panel is measuring.
 /datum/netdm_command_handler/atmos_alarm/execute(datum/target, list/item)
 	var/obj/machinery/airalarm/alarm = target
-	var/atom/source = SSnetdm_observe.services.registry.resolve(item["producer"], item["producerGeneration"])
+	var/datum/producer = SSnetdm_observe.services.registry.resolve(item["producer"], item["producerGeneration"])
+	var/datum/netdm_apc_operator/operator = producer
+	var/atom/source = producer
+	if(istype(operator))
+		if(!operator.authorized())
+			return "access_denied"
+		source = operator.apc_ref?.resolve()
 	if(!netdm_station_air_alarm(alarm) || !isatom(source) || is_antag_training_atom(source))
 		return "alarm_outside_station"
 	var/datum/component/netdm_node/node = source.GetComponent(/datum/component/netdm_node)
@@ -445,6 +459,35 @@
 		results.Cut(1, 2)
 	return TRUE
 
+/// Applies the same alarm operation as the wall panel to this one source.
+/datum/netdm_command_handler/atmos_set_alert/execute(datum/target, list/item)
+	var/obj/machinery/airalarm/alarm = target
+	if(!netdm_station_air_alarm(alarm))
+		return "alarm_outside_station"
+	var/list/payload = item["payload"]
+	var/mob/living/operator = SSnetdm_observe.diagnostics.consume_alarm_action(item, alarm, payload)
+	if(!operator || !alarm.netdm_can_set_alert(operator))
+		return "access_denied"
+	if(alarm.machine_stat & (NOPOWER|BROKEN|MAINT|EMPED) || alarm.shorted || alarm.buildstage != 2 || !alarm.alarm_manager)
+		return "alarm_offline"
+	var/area/zone = get_area(alarm)
+	if(!zone || zone.area_flags & NO_ALERTS)
+		return "alarms_disabled"
+	var/enabled = !!payload["enabled"]
+	var/changed = alarm.set_manual_alarm(enabled)
+	if(changed)
+		alarm.investigate_log("[enabled ? "raised" : "cleared"] its alarm over netDM by [key_name(operator)]", INVESTIGATE_ATMOS)
+	alarm.process_interval = 1
+	alarm.process_skips_left = 0
+	alarm.update_icon()
+	var/list/sources = alarm.alarm_manager.sent_alarms[ALARM_ATMOS]
+	return list("result" = list("ticket" = payload["ticket"], "sourceActive" = !!(sources && (zone in sources)),
+		"zoneAlarm" = !!zone.active_alarms[ALARM_ATMOS], "changed" = !!changed))
+
+/datum/netdm_effect_handler/atmos_alert_set/apply(datum/target, list/item)
+	SSnetdm_observe.diagnostics?.alarm_action_received(item)
+	return TRUE
+
 // The pilot devices. Without Observe nothing below adds a component or a call.
 /obj/machinery/air_sensor/Initialize(mapload)
 	. = ..()
@@ -477,6 +520,5 @@
 #undef NETDM_TELEMETRY_SETTLE
 #undef NETDM_TELEMETRY_REPORTS
 #undef NETDM_TELEMETRY_SAMPLES
-#undef NETDM_ATMOS_ALARMS
 #undef NETDM_ATMOS_ALARM_RESULTS
 #undef NETDM_ATMOS_ALARM_RESULT_AGE

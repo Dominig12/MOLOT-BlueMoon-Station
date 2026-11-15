@@ -2,7 +2,7 @@
 #define NETDM_OBSERVE_CAP 4096
 #define NETDM_OBSERVE_BATCH 64
 /// Observed netDM nodes; the Host accepts up to 4096 devices per runtime.
-#define NETDM_NODE_CAP 2048
+#define NETDM_NODE_CAP 4096
 /// Real-time wait for one reply before a new session. Multi-second host stalls were measured on Windows;
 /// the Host itself drops a silent owner after 30 seconds.
 #define NETDM_OBSERVE_ACK_TIMEOUT (20 SECONDS)
@@ -572,6 +572,7 @@ SUBSYSTEM_DEF(netdm_observe)
 		published = TRUE
 		published_revision = export_revision
 		known = sample
+		services?.refresh_apc_attachments()
 		forget_unmapped_apc_states()
 		discard_export()
 

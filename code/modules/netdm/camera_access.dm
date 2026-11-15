@@ -18,8 +18,20 @@
 	var/netdm_camera_status
 	var/list/netdm_camera_viewers
 
-/obj/machinery/computer/security/proc/netdm_cameras_enabled()
-	return world.GetConfig("env", "NETDM_CAMERA_MODE") == "authoritative" && !!SSnetdm_observe?.services
+/proc/netdm_cameras_enabled()
+	return SSnetdm_observe?.observing() && world.GetConfig("env", "NETDM_CAMERA_MODE") == "authoritative"
+
+/// Declares a camera-domain endpoint during initialization, before anyone opens a console.
+/proc/netdm_register_camera_node(atom/movable/device, offers_feed = FALSE)
+	if(!netdm_cameras_enabled())
+		return
+	var/datum/component/netdm_node/node = netdm_make_node(device)
+	if(!node || !SSnetdm_observe.nodes[node])
+		return
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	var/datum/netdm_service_endpoint/endpoint = lane.endpoint_for(node, NETDM_CAMERA_DOMAIN)
+	if(endpoint && offers_feed)
+		lane.offer(node, "camera.[endpoint.id]", "camera.access", "camera.access", 1)
 
 /obj/machinery/computer/security/proc/netdm_camera_allowed(obj/machinery/camera/camera)
 	return !QDELETED(camera) && z && camera.z && length(network & camera.network) && \
@@ -89,24 +101,18 @@
 		return
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
 	var/datum/component/netdm_node/console_node = GetComponent(/datum/component/netdm_node)
-	if(!console_node)
-		console_node = netdm_make_node(src)
 	var/datum/component/netdm_node/camera_node = camera.GetComponent(/datum/component/netdm_node)
-	if(!camera_node)
-		camera_node = netdm_make_node(camera)
-	if(!console_node || !camera_node || !SSnetdm_observe.nodes[console_node] || !SSnetdm_observe.nodes[camera_node])
+	if(!console_node || !camera_node)
 		return
-	var/datum/netdm_service_endpoint/console_endpoint = lane.endpoint_for(console_node, NETDM_CAMERA_DOMAIN)
-	var/datum/netdm_service_endpoint/camera_endpoint = lane.endpoint_for(camera_node, NETDM_CAMERA_DOMAIN)
-	if(!console_endpoint || !camera_endpoint)
+	var/datum/netdm_service_endpoint/console_endpoint = lane.by_node[console_node]
+	var/datum/netdm_service_endpoint/camera_endpoint = lane.by_node[camera_node]
+	if(console_endpoint?.domain != NETDM_CAMERA_DOMAIN || camera_endpoint?.domain != NETDM_CAMERA_DOMAIN)
 		if(netdm_camera_status != "denied")
 			netdm_camera_status = "denied"
 			SStgui.update_uis(src)
 		netdm_camera_next = world.time + NETDM_CAMERA_RENEW
 		return
 	netdm_camera_instance = "camera.[camera_endpoint.id]"
-	if(!camera_endpoint.services[netdm_camera_instance])
-		lane.offer(camera_node, netdm_camera_instance, "camera.access", "camera.access", 1)
 	if(!lane.ready(camera_node, netdm_camera_instance))
 		return
 	var/request = "cam-[console_endpoint.id]-[++netdm_camera_serial]"

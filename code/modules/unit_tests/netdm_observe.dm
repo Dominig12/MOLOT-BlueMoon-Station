@@ -2885,7 +2885,10 @@
 	while(world.time < deadline && isnull(press["arrived"][airlock_instance]))
 		sleep(1)
 	TEST_ASSERT(!isnull(press["arrived"][airlock_instance]), "The command reaches the airlock: [shadow.state()]")
-	var/list/again = shadow.received(airlock, list("payload" = list("press" = press["id"]), "instance" = airlock_instance))
+	var/datum/component/netdm_node/button_node = airlock_button.GetComponent(/datum/component/netdm_node)
+	var/datum/netdm_service_endpoint/button_endpoint = SSnetdm_observe.services.by_node[button_node]
+	var/list/again = shadow.received(airlock, list("payload" = list("press" = press["id"]), "instance" = airlock_instance,
+		"producer" = button_endpoint.id, "producerGeneration" = "[button_endpoint.generation]"))
 	TEST_ASSERT(islist(again) && again["result"]["reason"] == "shadow" && shadow.counters["duplicates"] == before["duplicates"] + 1,
 		"A repeated command is recorded once: [shadow.state()]")
 	TEST_ASSERT(wait_compared(shadow, before["compared"] + 1), "The second airlock press is compared: [shadow.state()]")
@@ -2902,6 +2905,8 @@
 	shadow.set_authoritative(TRUE)
 	sleep(11) // The buttons' cooldown from the presses above.
 	TEST_ASSERT(first.density && second.density && away.density, "The blast doors start closed.")
+	TEST_ASSERT_EQUAL(shadow.received(first, list("payload" = list("press" = "unknown", "state" = "open"))), "invalid_press", "A raw command cannot forge a world button press.")
+	TEST_ASSERT(first.density, "A forged press does not move the door.")
 	before = shadow.counters.Copy()
 	blast_control.activate()
 	TEST_ASSERT(first.density && second.density, "Under authority a press does not move the doors itself.")
@@ -2923,7 +2928,8 @@
 	while(world.time < deadline && airlock.safe == safe_before)
 		sleep(1)
 	TEST_ASSERT(airlock.safe == !safe_before, "The airlock takes its safety from the command.")
-	var/list/repeated = shadow.received(airlock, list("payload" = list("press" = press["id"], "safety" = safe_before), "instance" = airlock_instance))
+	var/list/repeated = shadow.received(airlock, list("payload" = list("press" = press["id"], "safety" = safe_before), "instance" = airlock_instance,
+		"producer" = button_endpoint.id, "producerGeneration" = "[button_endpoint.generation]"))
 	TEST_ASSERT(repeated?["result"]["reason"] == "duplicate" && airlock.safe == !safe_before, "A repeated command does not apply twice.")
 	TEST_ASSERT(wait_compared(shadow, before["compared"] + 1), "The authoritative airlock press is compared: [shadow.state()]")
 	shadow.set_authoritative(FALSE)
@@ -3063,6 +3069,9 @@
 	var/obj/machinery/computer/security/console = allocate(/obj/machinery/computer/security, left)
 	var/obj/machinery/camera/camera = allocate(/obj/machinery/camera, right)
 	var/obj/machinery/camera/private_camera = allocate(/obj/machinery/camera, right)
+	var/datum/component/netdm_node/camera_node = camera.GetComponent(/datum/component/netdm_node)
+	TEST_ASSERT(camera_node && SSnetdm_observe.services.by_node[camera_node], "The camera joins the network before selection.")
+	TEST_ASSERT(console.GetComponent(/datum/component/netdm_node), "The console has a node before interaction.")
 	private_camera.network = list("private-test")
 	console.set_machine_stat(console.machine_stat & ~(NOPOWER|BROKEN|EMPED))
 	camera.set_machine_stat(camera.machine_stat & ~(NOPOWER|BROKEN|EMPED))
@@ -3070,7 +3079,6 @@
 	TEST_ASSERT(!console.netdm_camera_select(private_camera), "A camera from another network is denied.")
 	TEST_ASSERT(console.netdm_camera_select(camera) && !console.active_camera, "Selection waits for the network result.")
 	TEST_ASSERT(wait_feed(console, camera, "ready"), "The camera is only shown after the round trip.")
-	var/datum/component/netdm_node/camera_node = camera.GetComponent(/datum/component/netdm_node)
 	var/list/camera_fact = wait_for_node(camera_node, right, TRUE)
 	TEST_ASSERT(camera_fact && wait_for_links(right.z, camera_fact["a"], 1, FALSE), "The camera is wired to the far APC.")
 	var/obj/machinery/computer/security/second_console = allocate(/obj/machinery/computer/security, left)
@@ -3098,11 +3106,12 @@
 	TEST_ASSERT(station_apc, "The station has a powered network access point.")
 	var/obj/machinery/airalarm/alarm = allocate(/obj/machinery/airalarm, get_turf(station_apc))
 	alarm.set_machine_stat(alarm.machine_stat & ~(NOPOWER|BROKEN|MAINT|EMPED))
-	SSnetdm_observe.telemetry.add_alarm(alarm)
 	var/datum/component/netdm_node/node = alarm.GetComponent(/datum/component/netdm_node)
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
 	var/datum/netdm_service_endpoint/endpoint = lane.by_node[node]
-	TEST_ASSERT(endpoint, "A station air alarm can be registered after local interaction.")
+	TEST_ASSERT(endpoint, "A station air alarm registers before local interaction.")
+	var/datum/netdm_service_endpoint/apc_endpoint = lane.by_node[station_apc]
+	TEST_ASSERT(apc_endpoint?.services["netshell.[apc_endpoint.id]"], "The mapped APC offers its shell before its terminal opens.")
 	var/instance = "atmos.alarm.[endpoint.id]"
 	var/deadline = world.time + 30 SECONDS
 	while(world.time < deadline && !lane.ready(node, instance))

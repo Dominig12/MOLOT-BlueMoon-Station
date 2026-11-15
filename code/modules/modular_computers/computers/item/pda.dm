@@ -166,6 +166,9 @@
 	GLOB.PDAs += src
 	if(icon == 'icons/obj/pda_alt.dmi' && icon_state != base_icon_state)
 		job_icon_state = icon_state
+	var/datum/component/netdm_node/network_node = netdm_make_node(src, NETDM_MOUNT_MOBILE)
+	if(network_node && SSnetdm_observe.nodes[network_node])
+		SSnetdm_observe.diagnostics?.offer_shell(network_node)
 
 /obj/item/modular_computer/pda/equipped(mob/user, slot)
 	. = ..()

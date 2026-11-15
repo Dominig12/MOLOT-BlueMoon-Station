@@ -31,6 +31,11 @@
 	var/list/queries = list()
 	/// Operation ID -> query key.
 	var/list/query_operations = list()
+	/// Logical APC sessions, indexed by the world objects of the APC and its operator.
+	var/list/apc_operators = list()
+	var/next_apc_operator_check = 0
+	/// A single-use player authorization awaiting a station device. The UI never receives these keys.
+	var/list/alarm_actions = list()
 	/// Watched query instance -> list("services", "digest", "partial", "at"): the last published state of the
 	/// directory that APC reaches. A changed digest means a query would answer differently now.
 	var/list/directory_states = list()
@@ -49,7 +54,7 @@
 	lane.dispatcher.allow_result("stop", new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow_result("migrate", new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	// P12 network space: the window's scans, knowledge, presence and actions.
-	for(var/space_command in list("scan", "knowledge", "enter", "detach", "leave", "presence", "act", "move"))
+	for(var/space_command in list("scan", "knowledge", "enter", "detach", "leave", "presence", "act", "move", "preview_move", "abort_move", "poll_alarm", "alarm_action", "chat_read", "chat_send"))
 		lane.dispatcher.allow_result(space_command, new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow("query.directory", new /datum/netdm_effect_handler/network_directory_event)
 
@@ -281,6 +286,7 @@
 /// Sends the requests whose APC is attached, and gives up on those that waited too long.
 /datum/netdm_diagnostics/proc/tick()
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	check_apc_operators()
 	if(length(queries))
 		pump_queries(lane)
 	if(!length(pending))

@@ -10,14 +10,13 @@
 #define NETDM_DOORS_FANOUT 32
 /// How long the network may carry a door command, in Host ticks of 100 ms.
 #define NETDM_DOORS_TTL_TICKS 30
+/// Spread map registration over Observe fires. The shared world node budget still applies.
+#define NETDM_DOORS_PREWARM_BATCH 8
 
 /**
- * Buttons and doors in Shadow mode (P9.1).
- *
- * A button and its doors join the network at the button's first press: the button becomes a fixed netDM node, each
- * blast door or airlock a fixed node offering machine.door as door.<endpoint>, and that press waits for them to
- * attach. A station has well over a thousand doors and hundreds of buttons; joining them all at round start held
- * back every other service. A press keeps its legacy effect: the controller finds its doors by
+ * Buttons and doors in Shadow mode (P9.1). Mapped station buttons and their tagged doors join in batches
+ * after the first network snapshot. Built or reconfigured controls also join at the first press if needed.
+ * A press keeps its legacy effect: the controller finds its doors by
  * ID across the station and acts at once. Besides, the button sends each of those doors the command set_state
  * over the network with the state that press gives it: open or closed, and for an airlock controller the bolts,
  * ID scanner, shock and safety it leaves. The values are absolute, never a toggle, so a retry or a duplicate
@@ -41,6 +40,10 @@
 	/// Door weakref -> its instance door.<endpoint>, and back.
 	var/list/instances = list()
 	var/list/by_instance = list()
+	/// Weak refs collected while the map initializes. Buttons establish channels before doors are matched.
+	var/list/prewarm_buttons = list()
+	var/list/prewarm_doors = list()
+	var/list/prewarm_channels = list()
 	/// Press ID -> record, oldest first.
 	var/list/presses = list()
 	/// Press ID -> TRUE while some of its doors wait for their endpoints to attach.
@@ -75,18 +78,22 @@
 
 /// A button joins the network as a fixed node with an endpoint. Returns the node.
 /datum/netdm_door_shadow/proc/add_button(obj/machinery/button/button)
-	var/datum/component/netdm_node/node = netdm_make_node(button)
-	if(node && SSnetdm_observe.services?.endpoint_for(node))
+	var/datum/component/netdm_node/node = device_node(button)
+	if(!node)
+		return null
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	if(!lane.by_node[node])
+		if(!lane.endpoint_for(node))
+			return null
 		counters["buttons"]++
-		return node
-	return null
+	return node
 
 /// A door is a fixed node offering door.<endpoint>. Returns the instance.
 /datum/netdm_door_shadow/proc/add_door(obj/machinery/door/door)
 	var/datum/weakref/door_ref = WEAKREF(door)
 	if(instances[door_ref] || QDELETED(door))
 		return instances[door_ref]
-	var/datum/component/netdm_node/node = netdm_make_node(door)
+	var/datum/component/netdm_node/node = device_node(door)
 	var/datum/netdm_service_endpoint/endpoint = node ? SSnetdm_observe.services?.endpoint_for(node) : null
 	if(!endpoint)
 		return null
@@ -108,6 +115,62 @@
 	var/datum/component/netdm_node/node = thing?.GetComponent(/datum/component/netdm_node)
 	return node ? SSnetdm_observe.services.node_id(node) : null
 
+/datum/netdm_door_shadow/proc/device_node(atom/movable/device)
+	var/datum/component/netdm_node/node = device.GetComponent(/datum/component/netdm_node)
+	if(node)
+		return SSnetdm_observe.nodes[node] ? node : null
+	node = netdm_make_node(device)
+	if(node && SSnetdm_observe.nodes[node])
+		return node
+	qdel(node)
+	return null
+
+/datum/netdm_door_shadow/proc/mapped_button_channel(obj/machinery/button/button)
+	var/obj/item/assembly/control/control = button.device
+	if(!istype(control) || !control.id)
+		return null
+	if(control.type == /obj/item/assembly/control)
+		return "blast:[control.id]"
+	if(control.type == /obj/item/assembly/control/airlock)
+		var/obj/item/assembly/control/airlock/airlock_control = control
+		if(airlock_control.specialfunctions & (OPEN|IDSCAN|BOLTS|SHOCK|SAFE))
+			return "airlock:[control.id]"
+	return null
+
+/datum/netdm_door_shadow/proc/mapped_door_channel(obj/machinery/door/door)
+	if(istype(door, /obj/machinery/door/airlock))
+		var/obj/machinery/door/airlock/airlock = door
+		return airlock.id_tag ? "airlock:[airlock.id_tag]" : null
+	if(istype(door, /obj/machinery/door/poddoor))
+		var/obj/machinery/door/poddoor/blast = door
+		return blast.id ? "blast:[blast.id]" : null
+	return null
+
+/datum/netdm_door_shadow/proc/tick_prewarm()
+	if(!SSnetdm_observe.published)
+		return
+	var/remaining = NETDM_DOORS_PREWARM_BATCH
+	while(remaining && length(prewarm_buttons))
+		remaining--
+		var/datum/weakref/button_ref = prewarm_buttons[prewarm_buttons.len]
+		prewarm_buttons.len--
+		var/obj/machinery/button/button = button_ref.resolve()
+		if(!button || !button.anchored || !isturf(button.loc) || !is_station_level(button.z) || is_antag_training_atom(button))
+			continue
+		var/channel = mapped_button_channel(button)
+		if(channel && add_button(button))
+			prewarm_channels[channel] = TRUE
+	while(remaining && length(prewarm_doors))
+		remaining--
+		var/datum/weakref/door_ref = prewarm_doors[prewarm_doors.len]
+		prewarm_doors.len--
+		var/obj/machinery/door/door = door_ref.resolve()
+		if(!door || !door.anchored || !isturf(door.loc) || !is_station_level(door.z) || is_antag_training_atom(door))
+			continue
+		var/channel = mapped_door_channel(door)
+		if(channel && prewarm_channels[channel])
+			add_door(door)
+
 // ---- Legacy side -----------------------------------------------------------------------------
 
 /**
@@ -118,7 +181,7 @@
 /datum/netdm_door_shadow/proc/plan(obj/item/assembly/control/control)
 	counters["presses"]++
 	var/obj/machinery/button/button = control.loc
-	if(!istype(button) || !(button.GetComponent(/datum/component/netdm_node) || add_button(button)))
+	if(!istype(button) || !add_button(button))
 		return exception("not_button")
 	var/list/doors = list()
 	var/functions = 0
@@ -264,19 +327,24 @@
 	if(!istext(press))
 		return "invalid_press"
 	var/list/record = presses[press]
+	var/datum/weakref/button_ref = record?["button"]
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	var/obj/machinery/button/button = button_ref?.resolve()
+	var/datum/weakref/door_ref = record?["targets"]?[instance]
+	if(!button || lane.registry.resolve(item["producer"], item["producerGeneration"]) != button || door_ref?.resolve() != door)
+		return "invalid_press"
 	var/first = TRUE
-	if(record)
-		if(isnull(record["arrived"][instance]))
-			record["arrived"][instance] = netdm_now_us() - record["created_us"]
-		else
-			counters["duplicates"]++
-			first = FALSE
-	if(!(record ? record["authoritative"] : authoritative))
+	if(isnull(record["arrived"][instance]))
+		record["arrived"][instance] = netdm_now_us() - record["created_us"]
+	else
+		counters["duplicates"]++
+		first = FALSE
+	if(!record["authoritative"])
 		return list("result" = door_state(door, press, FALSE, "shadow"))
 	if(!first)
 		return list("result" = door_state(door, press, FALSE, "duplicate")) // The first arrival already applied it.
 	var/datum/weakref/user_ref = record?["user"]
-	return list("result" = apply(door, payload, user_ref?.resolve(), press))
+	return list("result" = apply(door, record["wanted"][instance], user_ref?.resolve(), press))
 
 /// Authoritative: the door takes the absolute state the command carries. What it cannot do is named in the reason.
 /datum/netdm_door_shadow/proc/apply(obj/machinery/door/door, list/payload, mob/user, press)
@@ -343,6 +411,7 @@
 // ---- Comparison ------------------------------------------------------------------------------
 
 /datum/netdm_door_shadow/proc/tick()
+	tick_prewarm()
 	if(length(warming))
 		var/now = REALTIMEOFDAY
 		for(var/id in warming)
@@ -482,6 +551,18 @@
 
 // ---- Hooks; without Observe they add nothing but a null check --------------------------------
 
+/obj/machinery/button/Initialize(mapload, ndir = 0, built = 0)
+	. = ..()
+	var/datum/netdm_door_shadow/shadow = SSnetdm_observe?.doors
+	if(mapload && . != INITIALIZE_HINT_QDEL && shadow?.mapped_button_channel(src))
+		shadow.prewarm_buttons += WEAKREF(src)
+
+/obj/machinery/door/Initialize(mapload)
+	. = ..()
+	var/datum/netdm_door_shadow/shadow = SSnetdm_observe?.doors
+	if(mapload && . != INITIALIZE_HINT_QDEL && shadow?.mapped_door_channel(src))
+		shadow.prewarm_doors += WEAKREF(src)
+
 /obj/machinery/door/Destroy()
 	SSnetdm_observe.doors?.remove_door(src)
 	return ..()
@@ -517,3 +598,4 @@
 #undef NETDM_DOORS_PRESSES
 #undef NETDM_DOORS_FANOUT
 #undef NETDM_DOORS_TTL_TICKS
+#undef NETDM_DOORS_PREWARM_BATCH

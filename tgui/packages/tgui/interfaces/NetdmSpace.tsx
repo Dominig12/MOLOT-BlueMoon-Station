@@ -1,14 +1,14 @@
 import { BooleanLike } from 'common/react';
-import { useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackend } from '../backend';
-import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, Section, Stack, Table } from '../components';
+import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
 import { TopologyCanvas } from './NetdmTopology';
 import { FLAG_APC, FLAG_UNPOWERED, parseView, View } from './NetdmTopology/model';
-import { SceneFilters } from './NetdmTopology/scene';
+import { NodePresenceCounts, SceneFilters, SceneRoute } from './NetdmTopology/scene';
 
-type Service = { instance: string; type: string; node: string; stale: BooleanLike };
+type Service = { instance: string; type: string; node: string; stale: BooleanLike; canControlAlarm?: BooleanLike };
 
 type Presence = {
   status: string;
@@ -19,7 +19,56 @@ type Presence = {
   reason?: string;
   to?: string;
   arriveIn?: number;
+  travelSeconds?: number;
+  route?: (string | null)[];
+  radioLegs?: number[];
+  limited?: BooleanLike;
+  breakFrom?: string;
+  breakTo?: string;
+  breakKind?: 'cable' | 'radio' | 'endpoint';
 };
+
+type RoutePreview = {
+  target: string;
+  status: string;
+  nodes?: (string | null)[];
+  seconds?: number;
+  hops?: number;
+  radioHops?: number;
+  radioLegs?: number[];
+  limited?: BooleanLike;
+};
+
+type AlarmWatch = {
+  instance: string;
+  node: string;
+  z: number | null;
+  state: 'waiting' | 'clear' | 'warning' | 'danger' | 'alarm' | 'offline' | 'paused';
+  sample: { pressureKPa: number; temperatureK: number } | null;
+  age: number | null;
+};
+
+type MachineCommand = {
+  instance: string;
+  enabled: BooleanLike;
+  status: 'sending' | 'sent' | 'applied' | 'rejected' | 'not_delivered' | 'no_receipt' | 'unknown';
+  operation?: string;
+  reason?: string;
+  source?: string;
+  zoneAlarm?: BooleanLike;
+  sourceActive?: BooleanLike;
+};
+
+type NodeChat = {
+  node: string;
+  visit: string;
+  received: number;
+  messages: { id: string; text: string; sender: string; own: BooleanLike }[];
+  status?: string | null;
+};
+
+type ChatProgress = Pick<NodeChat, 'visit' | 'received'>;
+type ChatOpening = { previousRead: ChatProgress | null; snapshot: ChatProgress | null };
 
 /** DM sends its booleans as 0/1: render them only through `!!`. */
 type Data = {
@@ -32,13 +81,20 @@ type Data = {
   services: Service[];
   presence: Presence | null;
   hostNode: string | null;
+  otherPresences?: NodePresenceCounts;
+  chat?: NodeChat | null;
   log: string[];
   revision: number;
   alarmPending: BooleanLike;
+  alarmWatch: AlarmWatch | null;
+  machineCommand: MachineCommand | null;
+  routePreview: RoutePreview | null;
 };
 
 const FILTERS: SceneFilters = { radio: true, devices: true };
 const FALLBACK_ROWS = 200;
+const OTHER_PRESENCE_COLOR = '#d19aff';
+const CHAT_LIMIT = 160;
 
 const STATE_TEXT: Record<string, string> = {
   active: 'в сети',
@@ -57,13 +113,92 @@ const REASON_TEXT: Record<string, string> = {
   left: 'оператор вышел',
   lost_in_transit: 'потеряно в пути',
   'returned: route_lost': 'вернулось: маршрут оборвался',
+  'returned: cancelled': 'вернулось на исходный узел',
+};
+
+const ROUTE_STATUS: Record<string, string> = {
+  pending: 'Запрашиваем маршрут…',
+  invalid_argument: 'Выберите другой узел для перехода.',
+  unreachable: 'Цель сейчас недостижима.',
+  out_of_reach: 'Терминал потерял связь с присутствием.',
+  suspended: 'Сначала возобновите присутствие.',
+  moving: 'Дождитесь завершения перехода.',
+  forbidden: 'Вход на этот узел недоступен.',
+  limit_exceeded: 'На целевом узле нет места для присутствия.',
+  no_presence: 'Войдите в сеть для перехода.',
+  busy: 'Модуль занят. Запросите маршрут ещё раз.',
+};
+
+const BREAK_TEXT: Record<NonNullable<Presence['breakKind']>, string> = {
+  cable: 'Оборвалось проводное соединение',
+  radio: 'Пропала радиосвязь',
+  endpoint: 'Узел перестал отвечать',
+};
+
+const WATCH_STATUS = {
+  waiting: { text: 'Ожидание замера', color: 'label' },
+  clear: { text: 'В норме', color: 'good' },
+  warning: { text: 'Отклонение', color: 'average' },
+  danger: { text: 'Опасная атмосфера', color: 'bad' },
+  alarm: { text: 'Тревога в зоне', color: 'bad' },
+  offline: { text: 'Нет связи', color: 'bad' },
+  paused: { text: 'Наблюдение приостановлено', color: 'label' },
+};
+
+const MACHINE_STATUS = {
+  sending: { text: 'Передаём команду…', color: 'label' },
+  sent: { text: 'Ожидаем ответа от панели…', color: 'label' },
+  applied: { text: 'Панель подтвердила выполнение', color: 'good' },
+  rejected: { text: 'Команда отклонена', color: 'bad' },
+  not_delivered: { text: 'Команда не дошла до панели', color: 'bad' },
+  no_receipt: { text: 'Host зафиксировал выполнение. Квитанция не пришла.', color: 'average' },
+  unknown: { text: 'Нет данных об исходе команды', color: 'average' },
+};
+
+const MACHINE_REASON: Record<string, string> = {
+  access_denied: 'У оператора нет доступа к этой панели.',
+  access_revoked: 'Доступ к сервису отозван.',
+  alarm_offline: 'Атмосферная панель отключена.',
+  alarm_outside_station: 'Панель недоступна из сети станции.',
+  alarms_disabled: 'Тревоги в этой зоне отключены.',
+  denied: 'Требуется доступ к атмосферной панели.',
+  forbidden: 'Требуется доступ к атмосферной панели.',
+  busy: 'Сетевой модуль занят.',
+  unreachable: 'Маршрут до панели недоступен.',
+  out_of_reach: 'Терминал потерял связь с присутствием.',
+  origin_unavailable: 'Узел отправки потерял связь или сменил оболочку.',
+  invalid_route: 'Маршрут до панели недоступен.',
+  no_answer: 'Время ожидания ответа истекло.',
+  offline: 'Атмосферная панель отключена.',
+  suspended: 'Присутствие приостановлено.',
+  moving: 'Присутствие в пути.',
+  no_presence: 'Войдите в сеть.',
+};
+
+const CHAT_STATUS: Record<string, string> = {
+  sending: 'Отправляем…',
+  sent: 'Сообщение отправлено.',
+  rate_limited: 'Подождите перед следующим сообщением.',
+  busy: 'Чат занят. Попробуйте ещё раз.',
+  invalid_argument: 'Сообщение не принято.',
+  invalid_text: 'Сообщение не принято.',
+  no_answer: 'Нет подтверждения отправки.',
+  refused: 'Не удалось отправить сообщение.',
+  no_presence: 'Войдите в сеть, чтобы написать.',
+  suspended: 'Возобновите присутствие, чтобы написать.',
+  moving: 'Дождитесь завершения перехода.',
+  out_of_reach: 'Терминал потерял связь с присутствием.',
+  stale_chat: 'Подключение к чату изменилось. Попробуйте ещё раз.',
 };
 
 /** What the operator knows of one node: its kind, freshness and the services seen there. */
 const NodePanel = (props: { view: View; id: string | null; services: Service[]; presenceHost: string | null;
-  active: boolean; alarmPending: boolean; onMove: (instance: string) => void; onTrace: (id: string) => void;
-  onReadAlarm: (instance: string) => void }) => {
-  const { id, view, services, presenceHost, active, alarmPending, onMove, onTrace, onReadAlarm } = props;
+  otherPresences: number;
+  active: boolean; alarmPending: boolean; machinePending: boolean; routePending: boolean; watchedAlarm: string | null;
+  onPreview: (instance: string) => void; onTrace: (id: string) => void; onWatchAlarm: (instance: string) => void;
+  onReadAlarm: (instance: string) => void; onSetAlarm: (instance: string, enabled: boolean) => void }) => {
+  const { id, view, services, presenceHost, otherPresences, active, alarmPending, machinePending, routePending, watchedAlarm,
+    onPreview, onTrace, onReadAlarm, onWatchAlarm, onSetAlarm } = props;
   const node = id ? view.nodes.get(id) : undefined;
   if (!id || !node) {
     return <Section title="Узел">Выберите узел на карте.</Section>;
@@ -75,42 +210,196 @@ const NodePanel = (props: { view: View; id: string | null; services: Service[]; 
       title={`Узел ${id}`}
       buttons={(
         <Button icon="route" disabled={!active} onClick={() => onTrace(id)}>
-          Проверить маршрут
+          Проверить связь
         </Button>
       )}>
       <LabeledList>
         <LabeledList.Item label="Тип">{node.flags & FLAG_APC ? 'ретранслятор (АПЦ)' : 'устройство'}</LabeledList.Item>
         <LabeledList.Item label="Сведения">{stale ? 'устарели' : 'свежие'}</LabeledList.Item>
         <LabeledList.Item label="Клетка">{node.x}, {node.y}</LabeledList.Item>
+        {otherPresences > 0 && (
+          <LabeledList.Item label="Чужие присутствия">
+            <Box color={OTHER_PRESENCE_COLOR}>◆ {otherPresences}</Box>
+          </LabeledList.Item>
+        )}
       </LabeledList>
       {here.length === 0 && <Box color="label" mt={0.5}>Известных сервисов нет.</Box>}
       {here.map(service => (
-        <Stack key={service.instance} mt={0.5} align="center">
-          <Stack.Item grow color={service.stale ? 'label' : undefined}>
-            {service.type === 'atmos.alarm' ? 'Датчик атмосферы' : `${service.instance} · ${service.type}`}
-          </Stack.Item>
-          {service.type === 'atmos.alarm' && (
-            <Stack.Item>
-              <Button
-                icon="tachometer-alt"
-                disabled={!active || stale || !!service.stale || alarmPending}
-                onClick={() => onReadAlarm(service.instance)}>
-                {alarmPending ? 'Ожидание ответа' : 'Снять показания'}
-              </Button>
+        <Box key={service.instance} mt={0.5}>
+          <Stack align="center" wrap>
+            <Stack.Item grow color={service.stale ? 'label' : undefined}>
+              <Box title={service.instance}>
+                {service.type === 'atmos.alarm' ? 'Датчик атмосферы' : service.type === 'network.shell' ? 'Оболочка узла' : `${service.instance} · ${service.type}`}
+              </Box>
             </Stack.Item>
+            {service.type === 'atmos.alarm' && (
+              <Stack.Item>
+                <Button
+                  icon="tachometer-alt"
+                  disabled={!active || stale || !!service.stale || alarmPending}
+                  onClick={() => onReadAlarm(service.instance)}>
+                  Замер
+                </Button>
+                <Button
+                  icon="bell"
+                  selected={watchedAlarm === service.instance}
+                  disabled={!active || stale || !!service.stale || watchedAlarm === service.instance}
+                  onClick={() => onWatchAlarm(service.instance)}>
+                  {watchedAlarm === service.instance ? 'Под наблюдением' : 'Следить'}
+                </Button>
+              </Stack.Item>
+            )}
+            {service.type === 'network.shell' && service.instance !== presenceHost && (
+              <Stack.Item>
+                <Button
+                  icon="route"
+                  disabled={!active || stale || !!service.stale || routePending}
+                  onClick={() => onPreview(service.instance)}>
+                  Маршрут перехода
+                </Button>
+              </Stack.Item>
+            )}
+          </Stack>
+          {service.type === 'atmos.alarm' && !!service.canControlAlarm && (
+            <Box mt={0.5}>
+              <Button.Confirm
+                icon="exclamation-circle"
+                content="Поднять тревогу"
+                confirmContent="Поднять тревогу панели?"
+                disabled={!active || stale || !!service.stale || machinePending}
+                onClick={() => onSetAlarm(service.instance, true)} />
+              <Button.Confirm
+                icon="bell-slash"
+                content="Снять тревогу панели"
+                confirmContent="Снять тревогу панели?"
+                disabled={!active || stale || !!service.stale || machinePending}
+                onClick={() => onSetAlarm(service.instance, false)} />
+            </Box>
           )}
-          {service.type === 'network.shell' && service.instance !== presenceHost && (
-            <Stack.Item>
-              <Button
-                icon="sign-in-alt"
-                disabled={!active || stale || !!service.stale}
-                onClick={() => onMove(service.instance)}>
-                Перейти
-              </Button>
-            </Stack.Item>
+          {service.type === 'atmos.alarm' && active && !stale && !service.stale && !service.canControlAlarm && (
+            <Box color="label">Для управления нужны доступ и разблокированная панель.</Box>
           )}
-        </Stack>
+        </Box>
       ))}
+    </Section>
+  );
+};
+
+const RouteNodes = (props: { nodes: readonly (string | null)[]; radioLegs: readonly number[] }) => (
+  <Box mt={0.5} style={{ overflowWrap: 'anywhere' }}>
+    {props.nodes.map((id, index) => `${index === 0 ? '' : props.radioLegs.includes(index) ? ' ⇢ ' : ' → '}${id || '?'}`).join('')}
+  </Box>
+);
+
+const RoutePanel = (props: { preview: RoutePreview | null; presence: Presence | null; canMove: boolean;
+  onMove: (target: string) => void; onRetry: (target: string) => void; onClear: () => void; onAbort: () => void }) => {
+  const { preview, presence, canMove, onMove, onRetry, onAbort, onClear } = props;
+  const close = <Button icon="times" tooltip="Закрыть маршрут" onClick={onClear} />;
+  if (presence?.state === 'moving') {
+    const remaining = presence.arriveIn ?? 0;
+    const elapsed = presence.travelSeconds ? 1 - remaining / presence.travelSeconds : 0;
+    return (
+      <Section
+        title="Переход"
+        buttons={<Button icon="undo" tooltip="Вернуться на исходный узел" onClick={onAbort}>Прервать</Button>}>
+        <ProgressBar color="teal" value={Math.max(0, Math.min(elapsed, 1))}>До прибытия {remaining} с</ProgressBar>
+        {!!presence.route?.length && <RouteNodes nodes={presence.route} radioLegs={presence.radioLegs ?? []} />}
+        {!!presence.limited && <Box color="label">Часть пути неизвестна.</Box>}
+      </Section>
+    );
+  }
+  if (preview?.status === 'ready') {
+    return (
+      <Section
+        title="Предпросмотр маршрута"
+        buttons={(
+          <>
+            <Button icon="sign-in-alt" disabled={!canMove} onClick={() => onMove(preview.target)}>
+              Перейти
+            </Button>
+            {close}
+          </>
+        )}>
+        <Box color="#ffc36a">{preview.seconds} с · переходов {preview.hops ?? 0} · по радио {preview.radioHops ?? 0}</Box>
+        {!!preview.nodes?.length && <RouteNodes nodes={preview.nodes} radioLegs={preview.radioLegs ?? []} />}
+        {!!preview.limited && <Box color="label">Часть пути неизвестна.</Box>}
+      </Section>
+    );
+  }
+  if (preview) {
+    return (
+      <Section
+        title="Предпросмотр маршрута"
+        buttons={(
+          <>
+            {preview.status !== 'pending' && (
+              <Button disabled={!canMove} icon="redo" onClick={() => onRetry(preview.target)}>Повторить</Button>
+            )}
+            {close}
+          </>
+        )}>
+        <Box color={preview.status === 'pending' ? 'label' : 'average'}>
+          {ROUTE_STATUS[preview.status] ?? 'Модуль не вернул маршрут.'}
+        </Box>
+      </Section>
+    );
+  }
+  if (presence?.breakKind) {
+    return (
+      <Section title="Переход прерван">
+        <Box color="bad">
+          {BREAK_TEXT[presence.breakKind]}
+          {presence.breakFrom && ` · ${presence.breakFrom}`}
+          {presence.breakTo && `${presence.breakFrom ? ' → ' : ' · '}${presence.breakTo}`}
+        </Box>
+      </Section>
+    );
+  }
+  return null;
+};
+
+const AlarmWatchPanel = (props: { watch: AlarmWatch; onSelect: () => void; onStop: () => void }) => {
+  const { watch, onSelect, onStop } = props;
+  const { text, color } = WATCH_STATUS[watch.state];
+  return (
+    <Section
+      title="Наблюдение за атмосферой"
+      buttons={<Button icon="times" tooltip="Остановить наблюдение" onClick={onStop} />}>
+      <Stack align="center">
+        <Stack.Item grow><Box bold color={color}>{text}</Box></Stack.Item>
+        <Stack.Item><Button icon="crosshairs" onClick={onSelect}>Узел {watch.node}</Button></Stack.Item>
+      </Stack>
+      {watch.sample && (
+        <Box mt={0.5}>
+          {`${watch.sample.pressureKPa} кПа · ${watch.sample.temperatureK} K`}
+          {watch.age !== null && <Box inline ml={0.5} color="label">{watch.age} с назад</Box>}
+        </Box>
+      )}
+    </Section>
+  );
+};
+
+const MachineCommandPanel = (props: { command: MachineCommand }) => {
+  const { instance, enabled, status, operation, reason, source, zoneAlarm, sourceActive } = props.command;
+  const { text, color } = MACHINE_STATUS[status] ?? MACHINE_STATUS.unknown;
+  return (
+    <Section title="Команда атмосферной панели">
+      <Box title={instance}>{enabled ? 'Поднять тревогу' : 'Снять тревогу панели'}</Box>
+      <Box aria-live="polite" bold color={color}>{text}</Box>
+      {status === 'applied' && zoneAlarm != null && sourceActive != null && (
+        <Box color={zoneAlarm ? 'average' : 'label'}>
+          {sourceActive ? 'Тревога панели активна' : 'Тревога панели снята'}
+          {zoneAlarm && !sourceActive ? ' · в зоне остались другие тревоги' : ''}
+        </Box>
+      )}
+      {reason && <Box color="label">{MACHINE_REASON[reason] ?? reason}</Box>}
+      {(source || operation) && (
+        <Box color="label">
+          {source && `Узел отправки ${source}`}
+          {source && operation && ' · '}
+          {operation && `Операция №${operation}`}
+        </Box>
+      )}
     </Section>
   );
 };
@@ -137,8 +426,10 @@ const ActionBox = (props: { line: string; enabled: boolean; onLine: (value: stri
   </Section>
 );
 
-const FallbackList = (props: { view: View; reason: string; onSelect: (id: string) => void; onRetry: () => void }) => {
+const FallbackList = (props: { view: View; reason: string; otherPresences?: NodePresenceCounts;
+  onSelect: (id: string) => void; onRetry: () => void }) => {
   const rows = [...props.view.nodes.values()].slice(0, FALLBACK_ROWS);
+  const otherPresences: NodePresenceCounts = props.otherPresences ?? {};
   return (
     <Section fill scrollable title="Известные узлы" buttons={<Button icon="redo" onClick={props.onRetry}>Повторить</Button>}>
       <NoticeBox>Графический режим недоступен ({props.reason}). Знание показано списком.</NoticeBox>
@@ -150,10 +441,182 @@ const FallbackList = (props: { view: View; reason: string; onSelect: (id: string
             </Table.Cell>
             <Table.Cell>{node.x}, {node.y}</Table.Cell>
             <Table.Cell>{node.flags & FLAG_UNPOWERED ? 'устарело' : 'свежее'}</Table.Cell>
+            <Table.Cell>
+              {otherPresences[node.id] > 0 && (
+                <Box color={OTHER_PRESENCE_COLOR}>Чужие присутствия: {otherPresences[node.id]}</Box>
+              )}
+            </Table.Cell>
           </Table.Row>
         ))}
       </Table>
     </Section>
+  );
+};
+
+const firstUnreadMessage = (chat: NodeChat, readThrough: number, openedThrough: number) => {
+  // The snapshot is a suffix of the inbox. Only incoming rows advance received.
+  let received = chat.received;
+  let first: string | null = null;
+  for (let index = chat.messages.length - 1; index >= 0 && received > readThrough; index--) {
+    const message = chat.messages[index];
+    if (message.own) {
+      continue;
+    }
+    if (received <= openedThrough) {
+      first = message.id;
+    }
+    received--;
+  }
+  return first;
+};
+
+const isAtChatEnd = (list: HTMLDivElement) => list.scrollHeight - list.scrollTop - list.clientHeight <= 2;
+
+const NodeChatPanel = (props: { chat: NodeChat | null; state?: string; firstUnread: string | null;
+  onJournal: () => void; onRead: (visit: string, received: number) => void; onSend: (node: string, text: string) => void }) => {
+  const { chat, state, firstUnread, onJournal, onRead, onSend } = props;
+  const [draft, setDraft] = useState('');
+  const [heldHistory, setHeldHistory] = useState<{ chat: NodeChat; firstUnread: string | null } | null>(null);
+  const submitted = useRef<string | null>(null);
+  const scrollable = useRef<HTMLDivElement>(null);
+  const unreadDivider = useRef<HTMLDivElement>(null);
+  const opened = useRef(false);
+  const jumpToMessage = useRef<string | null>(null);
+  const pending = chat?.status === 'sending';
+  const text = draft.trim();
+  // Keep the displayed rows intact while reading, even as the Host evicts old messages.
+  const history = chat && heldHistory?.chat.visit === chat.visit ? heldHistory : null;
+  const messages = (history?.chat ?? chat)?.messages;
+  const dividerMessage = history ? history.firstUnread : firstUnread;
+  const newCount = chat && history ? Math.max(0, chat.received - history.chat.received) : 0;
+  useLayoutEffect(() => {
+    const list = scrollable.current;
+    if (!list || !chat || history) {
+      return;
+    }
+    const requested = jumpToMessage.current;
+    jumpToMessage.current = null;
+    const target = requested
+      ? Array.from(list.querySelectorAll<HTMLElement>('[data-chat-message-id]'))
+        .find(row => row.dataset.chatMessageId === requested)
+      : opened.current ? null : unreadDivider.current;
+    opened.current = true;
+    if (target) {
+      list.scrollTop += target.getBoundingClientRect().top - list.getBoundingClientRect().top;
+      if (!isAtChatEnd(list)) {
+        setHeldHistory({ chat, firstUnread });
+      }
+    } else {
+      list.scrollTop = list.scrollHeight;
+    }
+    onRead(chat.visit, chat.received);
+  }, [chat, firstUnread, history, onRead]);
+  useLayoutEffect(() => {
+    const sent = submitted.current;
+    if (chat?.status === 'sent' && sent !== null) {
+      setDraft(current => current.trim() === sent ? '' : current);
+    }
+    if (chat?.status !== 'sending') {
+      submitted.current = null;
+    }
+  }, [chat?.status]);
+
+  const send = () => {
+    if (chat && !pending && text && text.length <= CHAT_LIMIT) {
+      submitted.current = text;
+      onSend(chat.node, text);
+    }
+  };
+  const handleScroll = () => {
+    const list = scrollable.current;
+    if (!list || !chat) {
+      return;
+    }
+    if (isAtChatEnd(list)) {
+      setHeldHistory(null);
+    } else if (!history) {
+      setHeldHistory({ chat, firstUnread });
+    }
+  };
+  const showNewMessages = () => {
+    if (chat && history) {
+      jumpToMessage.current = firstUnreadMessage(chat, history.chat.received, chat.received);
+      setHeldHistory(null);
+    }
+  };
+  const unavailable = state === 'active' ? 'Подключаемся к чату…' : CHAT_STATUS[state ?? ''] ?? 'Войдите в сеть, чтобы открыть чат узла.';
+  return (
+    <>
+      <Stack.Item grow position="relative">
+        <Section
+          fill
+          scrollable
+          scrollableRef={scrollable}
+          onScroll={handleScroll}
+          title={chat ? `Чат узла ${chat.node}` : 'Чат узла'}
+          buttons={<Button icon="list" onClick={onJournal}>Журнал</Button>}>
+          {!chat && <Box color="label">{unavailable}</Box>}
+          {messages?.length === 0 && <Box color="label">Сообщений пока нет.</Box>}
+          {messages?.map(message => (
+            <Box key={message.id} data-chat-message-id={message.id} mb={0.5} style={{ overflowWrap: 'anywhere' }}>
+              {message.id === dividerMessage && (
+                <div ref={unreadDivider} role="separator" aria-label="Новые сообщения">
+                  <Box bold color="average" my={0.5} pt={0.5} style={{ borderTop: '1px solid currentColor' }}>
+                    Новые сообщения
+                  </Box>
+                </div>
+              )}
+              <Box color={message.own ? 'good' : 'label'}>{message.own ? 'Вы' : message.sender}</Box>
+              {message.text}
+            </Box>
+          ))}
+        </Section>
+        <Box position="absolute" bottom={0.75} right={0.75} style={{ zIndex: 1 }} aria-live="polite">
+          {newCount > 0 && (
+            <Button
+              icon="arrow-down"
+              color="average"
+              aria-label={`К новым сообщениям, непрочитанных ${newCount}`}
+              onClick={showNewMessages}>
+              К новым сообщениям · {newCount > 99 ? '99+' : newCount}
+            </Button>
+          )}
+        </Box>
+      </Stack.Item>
+      {!!chat && (
+        <Stack.Item>
+          <Section>
+            <Stack align="center">
+              <Stack.Item grow>
+                <div className="Input Input--fluid">
+                  <div className="Input__baseline" aria-hidden="true">.</div>
+                  <input
+                    className="Input__input"
+                    aria-label="Сообщение в чат узла"
+                    autoComplete="off"
+                    maxLength={CHAT_LIMIT}
+                    placeholder="Сообщение на узел"
+                    value={draft}
+                    onChange={event => setDraft(event.currentTarget.value)}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                        event.preventDefault();
+                        send();
+                      }
+                    }} />
+                </div>
+              </Stack.Item>
+              <Stack.Item>
+                <Button icon="paper-plane" disabled={pending || !text} onClick={send}>Отправить</Button>
+              </Stack.Item>
+            </Stack>
+            {!!chat.status && CHAT_STATUS[chat.status] && (
+              <Box mt={0.5} color={pending || chat.status === 'sent' ? 'label' : 'average'}>{CHAT_STATUS[chat.status]}</Box>
+            )}
+          </Section>
+        </Stack.Item>
+      )}
+    </>
   );
 };
 
@@ -173,12 +636,65 @@ export const NetdmSpace = () => {
   const [fitRequest, setFitRequest] = useState(0);
   const [line, setLine] = useState('');
   const [advanced, setAdvanced] = useState(false);
+  const [chatOpening, setChatOpening] = useState<ChatOpening | null>(null);
+  const [readChat, setReadChat] = useState<ChatProgress | null>(null);
+  const showChat = chatOpening !== null;
   const presence = data.presence;
+  const watch = data.alarmWatch;
+  const machineCommand = data.machineCommand;
+  const machinePending = machineCommand?.status === 'sending' || machineCommand?.status === 'sent';
   const inside = !!presence?.presence && presence.state !== 'ended';
   const active = inside && presence.state === 'active';
+  const chat = active ? data.chat ?? null : null;
+  const visit = chat?.visit;
+  const received = chat?.received ?? 0;
+  const read = readChat && readChat.visit === visit ? readChat.received : 0;
+  const unread = !showChat && visit ? Math.max(0, received - read) : 0;
+  const openingSnapshot = chatOpening?.snapshot ?? chat;
+  const openingRead = chatOpening?.previousRead;
+  const readAtOpening = openingRead && openingRead.visit === visit ? openingRead.received : 0;
+  const firstUnread = chatOpening && chat && openingSnapshot && openingSnapshot.visit === chat.visit
+    ? firstUnreadMessage(chat, readAtOpening, openingSnapshot.received)
+    : null;
+  const markChatRead = useCallback((visit: string, received: number) => {
+    setReadChat(previous => (
+      previous?.visit === visit && previous.received >= received ? previous : { visit, received }
+    ));
+  }, []);
+  useLayoutEffect(() => {
+    if (chatOpening && !chatOpening.snapshot && visit) {
+      setChatOpening({ ...chatOpening, snapshot: { visit, received } });
+    }
+  }, [chatOpening, visit, received]);
   const canResume = inside && presence.state === 'suspended' && presence.reason === 'operator_away';
   const canScan = !inside || active;
   const shown = selected ?? data.hostNode ?? null;
+  const otherPresences = data.otherPresences;
+  const moving = presence?.state === 'moving';
+  const foundTarget = active && data.routePreview ? data.services.find(service => (
+    service.type === 'network.shell' && service.instance === data.routePreview?.target && service.node === shown
+  )) : undefined;
+  const routePending = active && data.routePreview?.status === 'pending';
+  const preview = foundTarget || routePending ? data.routePreview : null;
+  const route = useMemo<SceneRoute | null>(() => {
+    if (moving && presence?.route?.length) {
+      return { moving: true, nodes: presence.route, radioLegs: presence.radioLegs ?? [] };
+    }
+    if (preview?.status === 'ready' && preview.nodes?.length) {
+      return { moving: false, nodes: preview.nodes, radioLegs: preview.radioLegs ?? [] };
+    }
+    if (presence?.breakFrom && presence.breakTo) {
+      return {
+        moving: false,
+        broken: true,
+        nodes: [presence.breakFrom, presence.breakTo],
+        radioLegs: presence.breakKind === 'radio' ? [1] : [],
+      };
+    }
+    return null;
+  }, [moving, presence?.route, presence?.radioLegs, presence?.breakFrom, presence?.breakTo, presence?.breakKind, preview]);
+  const targetNode = foundTarget && view.nodes.get(foundTarget.node);
+  const canMove = active && !!foundTarget && !!targetNode && !foundTarget.stale && !(targetNode.flags & FLAG_UNPOWERED);
   const reason = presence?.reason ? REASON_TEXT[presence.reason] ?? presence.reason : null;
   const send = () => {
     const trimmed = line.trim();
@@ -205,7 +721,7 @@ export const NetdmSpace = () => {
                     <Box>
                       Присутствие №{presence!.presence}: {STATE_TEXT[presence!.state ?? ''] ?? presence!.state}
                       {presence!.state === 'moving'
-                        ? ` → ${presence!.to}, ещё ${presence!.arriveIn ?? 0} с`
+                        ? ` → ${presence!.to}`
                         : ` на ${presence!.host}`}
                       {inside && presence?.state !== 'moving' && view.nodes.has(data.hostNode ?? '') && (
                         <Box inline ml={0.5} color="#55e7d0" title="Ваше присутствие на карте">○</Box>
@@ -263,24 +779,44 @@ export const NetdmSpace = () => {
           </Stack.Item>
           <Stack.Item grow>
             <Stack fill>
-              <Stack.Item grow>
+              <Stack.Item grow position="relative">
                 {view.nodes.size === 0 ? (
                   <Section fill>
                     <Box color="label">Вы пока ничего не знаете о сети. Сканируйте, чтобы увидеть окрестность.</Box>
                   </Section>
                 ) : failure ? (
-                  <FallbackList view={view} reason={failure} onSelect={setSelected} onRetry={() => setFailure(null)} />
+                  <FallbackList
+                    view={view}
+                    reason={failure}
+                    otherPresences={otherPresences}
+                    onSelect={setSelected}
+                    onRetry={() => setFailure(null)} />
                 ) : (
                   <TopologyCanvas
                     view={view}
                     levelKey={String(data.z)}
                     selected={selected}
                     presenceNode={inside && presence?.state !== 'moving' ? data.hostNode : null}
+                    otherPresences={otherPresences}
+                    route={route}
                     filters={FILTERS}
                     fitRequest={fitRequest}
                     onSelect={setSelected}
                     onFailure={setFailure}
                     onReport={() => undefined} />
+                )}
+                {!failure && view.nodes.size > 0 && otherPresences && Object.keys(otherPresences).length > 0 && (
+                  <Box
+                    position="absolute"
+                    bottom={0.5}
+                    left={0.5}
+                    px={0.5}
+                    py={0.25}
+                    color={OTHER_PRESENCE_COLOR}
+                    backgroundColor="#101217"
+                    style={{ pointerEvents: 'none' }}>
+                    ◆ Чужое присутствие
+                  </Box>
                 )}
               </Stack.Item>
               <Stack.Item basis="300px">
@@ -291,25 +827,82 @@ export const NetdmSpace = () => {
                       id={shown}
                       services={data.services}
                       presenceHost={inside ? presence!.host ?? null : null}
+                      otherPresences={shown ? otherPresences?.[shown] ?? 0 : 0}
                       active={active}
                       alarmPending={!!data.alarmPending}
-                      onMove={instance => act('move', { to: instance })}
+                      machinePending={machinePending}
+                      routePending={routePending}
+                      watchedAlarm={watch?.instance ?? null}
+                      onPreview={instance => act('preview_move', { to: instance })}
                       onReadAlarm={instance => act('read_alarm', { instance })}
+                      onWatchAlarm={instance => act('watch_alarm', { instance })}
+                      onSetAlarm={(instance, enabled) => act('machine_alert', { instance, enabled: enabled ? 1 : 0 })}
                       onTrace={trace} />
                   </Stack.Item>
-                  <Stack.Item grow>
-                    <Section
-                      fill
-                      scrollable
-                      title="Журнал"
-                      buttons={<Button icon="terminal" selected={advanced} onClick={() => setAdvanced(current => !current)}>Команды</Button>}>
-                      {data.log.length === 0 && <Box color="label">Пусто.</Box>}
-                      {[...data.log].reverse().map((entry, index) => (
-                        <Box key={index}>{entry}</Box>
-                      ))}
-                    </Section>
-                  </Stack.Item>
-                  {advanced && (
+                  {machineCommand && (
+                    <Stack.Item><MachineCommandPanel command={machineCommand} /></Stack.Item>
+                  )}
+                  {(moving || preview || presence?.breakKind) && (
+                    <Stack.Item>
+                      <RoutePanel
+                        preview={preview}
+                        presence={presence}
+                        canMove={canMove}
+                        onMove={target => act('move', { to: target })}
+                        onRetry={target => act('preview_move', { to: target })}
+                        onClear={() => act('clear_route_preview')}
+                        onAbort={() => act('abort_move')} />
+                    </Stack.Item>
+                  )}
+                  {watch && (
+                    <Stack.Item>
+                      <AlarmWatchPanel
+                        watch={watch}
+                        onSelect={() => {
+                          setSelected(watch.node);
+                          if (watch.z !== null && watch.z !== data.z) {
+                            act('level', { z: watch.z });
+                          }
+                        }}
+                        onStop={() => act('stop_alarm_watch')} />
+                    </Stack.Item>
+                  )}
+                  {showChat ? (
+                    <NodeChatPanel
+                      key={chat?.visit ?? 'connecting'}
+                      chat={chat}
+                      state={presence?.state}
+                      firstUnread={firstUnread}
+                      onJournal={() => setChatOpening(null)}
+                      onRead={markChatRead}
+                      onSend={(node, text) => act('send_chat', { node, text })} />
+                  ) : (
+                    <Stack.Item grow>
+                      <Section
+                        fill
+                        scrollable
+                        title="Журнал"
+                        buttons={(
+                          <>
+                            <Button
+                              icon="comments"
+                              color={unread ? 'average' : undefined}
+                              aria-label={unread ? `Чат узла, непрочитанных сообщений ${unread}` : 'Чат узла'}
+                              onClick={() => setChatOpening({ previousRead: readChat, snapshot: visit ? { visit, received } : null })}>
+                              Чат узла
+                              {unread > 0 && <Box as="span" bold ml={0.5}>{unread > 99 ? '99+' : unread}</Box>}
+                            </Button>
+                            <Button icon="terminal" selected={advanced} onClick={() => setAdvanced(current => !current)}>Команды</Button>
+                          </>
+                        )}>
+                        {data.log.length === 0 && <Box color="label">Пусто.</Box>}
+                        {[...data.log].reverse().map((entry, index) => (
+                          <Box key={index}>{entry}</Box>
+                        ))}
+                      </Section>
+                    </Stack.Item>
+                  )}
+                  {!showChat && advanced && (
                     <Stack.Item>
                       <ActionBox line={line} enabled={active} onLine={setLine} onSend={send} />
                     </Stack.Item>

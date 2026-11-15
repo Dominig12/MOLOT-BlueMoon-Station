@@ -330,6 +330,8 @@
 	register_area_apc()
 	update_nightshift_auth_requirement()
 	register_context()
+	if(SSnetdm_observe?.observing() && is_station_level(z) && !is_antag_training_atom(src))
+		SSnetdm_observe.diagnostics?.offer_shell(src)
 
 /obj/machinery/power/apc/add_context(atom/source, list/context, obj/item/held_item, mob/living/user)
 	. = ..()
@@ -338,6 +340,7 @@
 		return CONTEXTUAL_SCREENTIP_SET
 
 /obj/machinery/power/apc/Destroy()
+	SSnetdm_observe?.services?.drop(src)
 	apc_unpark()
 	GLOB.apcs_list -= src
 	GLOB.nightshift_apc_queue -= src

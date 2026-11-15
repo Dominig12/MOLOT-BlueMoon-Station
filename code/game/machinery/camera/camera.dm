@@ -88,6 +88,7 @@
 		toggle_cam()
 
 	alarm_manager = new(src)
+	netdm_register_camera_node(src, offers_feed = TRUE)
 
 /obj/machinery/camera/connect_to_shuttle(obj/docking_port/mobile/port, obj/docking_port/stationary/dock, idnum, override=FALSE)
 	for(var/i in network)

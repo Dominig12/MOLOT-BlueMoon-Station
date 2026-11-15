@@ -1,0 +1,70 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+import { combineReducers, createStore, setGlobalStore } from 'common/redux';
+
+import { backendReducer, backendUpdate } from '../backend';
+import { debugReducer } from '../debug';
+import { NetdmTerminal } from './NetdmTerminal';
+
+const fields = (record: Record<string, string>) => Object.entries(record).map(([name, value]) => ({ name, value }));
+
+const setup = () => {
+  const topic = jest.fn();
+  (global as any).Byond = { winset: () => {}, winget: () => Promise.resolve(null), topic };
+  const store = createStore(combineReducers({ backend: backendReducer, debug: debugReducer }));
+  setGlobalStore(store);
+  const push = (entries: object[]) => store.dispatch(backendUpdate({
+    config: { interface: 'NetdmTerminal' },
+    data: { title: 'АПЦ', limit: 1024, scriptLimit: 4096, entries },
+  }));
+  push([]);
+  const ui = render(<NetdmTerminal />);
+  return {
+    push: (entries: object[]) => { push(entries); ui.rerender(<NetdmTerminal />); },
+    commands: () => topic.mock.calls.filter(([message]) => message.type === 'act/run')
+      .map(([message]) => JSON.parse(message.payload).line),
+  };
+};
+
+test('история по стрелкам сохраняет черновик при переходе в справку и обратно', () => {
+  const { commands } = setup();
+  const getInput = () => screen.getByRole<HTMLInputElement>('textbox', { name: 'Командная строка' });
+  fireEvent.change(getInput(), { target: { value: 'services' } });
+  fireEvent.keyDown(getInput(), { key: 'Enter' });
+  expect(commands()).toEqual(['services']);
+  fireEvent.change(getInput(), { target: { value: 'trace 42' } });
+  fireEvent.keyDown(getInput(), { key: 'ArrowUp' });
+  expect(getInput().value).toBe('services');
+  fireEvent.keyDown(getInput(), { key: 'ArrowDown' });
+  expect(getInput().value).toBe('trace 42');
+
+  fireEvent.click(screen.getByText('Справка'));
+  fireEvent.click(screen.getByText('Устройства'));
+  expect(commands()).toEqual(['services', 'help', 'help services']);
+  fireEvent.click(screen.getAllByText('Справка')[0]);
+  expect(getInput().value).toBe('trace 42');
+});
+
+test('результат термометра и доставка запроса используют ID возвращённой операции', () => {
+  const { commands, push } = setup();
+  push([{
+    id: 1, line: 'invoke atmos.alarm.e42 read reason=inspect', status: 'ok', pending: false,
+    records: [fields({ instance: 'atmos.alarm.e42', command: 'read', status: 'sent', operation: '987' })],
+  }]);
+  fireEvent.click(screen.getByLabelText('Проверить доставку'));
+  fireEvent.click(screen.getByLabelText('Получить показания'));
+  expect(commands()).toEqual(['jobs | where operation -eq "987"', 'result 987']);
+});
+
+test('пример из ответа справки подставляется в строку и ждёт запуска игроком', () => {
+  const { commands, push } = setup();
+  fireEvent.click(screen.getByText('Справка'));
+  push([{
+    id: 1, line: 'help', status: 'ok', pending: false,
+    records: [fields({ topic: 'services', syntax: 'services', description: 'Найти сервисы в сети', example: 'services -type atmos.alarm' })],
+  }]);
+  expect(screen.getByText('Найти сервисы в сети')).toBeTruthy();
+  fireEvent.click(screen.getByText('services -type atmos.alarm'));
+  const input = screen.getByRole<HTMLInputElement>('textbox', { name: 'Командная строка' });
+  expect(input.value).toBe('services -type atmos.alarm');
+  expect(commands()).toEqual(['help']);
+});

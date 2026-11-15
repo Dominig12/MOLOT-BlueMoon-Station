@@ -19,6 +19,8 @@ const fakeScene = (): jest.Mocked<TopologyScene> => ({
   update: jest.fn(),
   setSelection: jest.fn(),
   setPresence: jest.fn(),
+  setOtherPresences: jest.fn(),
+  setRoute: jest.fn(),
   setFilters: jest.fn(),
   fit: jest.fn(),
   destroy: jest.fn(),

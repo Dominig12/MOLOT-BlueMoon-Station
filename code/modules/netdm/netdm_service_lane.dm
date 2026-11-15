@@ -20,13 +20,13 @@
 #define NETDM_LANE_SENT 1
 #define NETDM_LANE_WAIT 2
 
-/// One service endpoint of a netDM node. The ID lives for the round; what the Host acknowledged
+/// One service endpoint on a netDM node. The ID lives for the round; what the Host acknowledged
 /// lives for one session and is rebuilt after every new snapshot.
 /datum/netdm_service_endpoint
 	var/domain = "station"
 	var/id
 	var/generation = 1
-	var/datum/component/netdm_node/node
+	var/datum/node
 	/// instance -> list("type", "schema", "major", "minor")
 	var/list/services = list()
 	/// key -> list("instance", "schema", "major", "projection")
@@ -58,11 +58,13 @@
 	var/datum/netdm_effect_dispatcher/dispatcher = new
 	/// endpoint ID -> /datum/netdm_service_endpoint
 	var/list/endpoints = list()
-	/// node component -> endpoint
+	/// local endpoint owner (node component, APC or APC operator) -> endpoint
 	var/list/by_node = list()
 	/// Endpoint IDs whose declared state the Host may not have yet. Only these are reconciled: a station
 	/// has hundreds of endpoints (every door and button), and nearly all of them are settled.
 	var/list/unsettled = list()
+	/// Retired APC operator IDs and their generations waiting for detach from a live node.
+	var/list/pending_detaches = list()
 	/// request ID -> list("op", ...)
 	var/list/inflight = list()
 	/// instance -> queued publication; a newer value replaces one not sent yet.
@@ -96,11 +98,13 @@
 	var/max_reply_us = 0
 	var/max_reply_op
 
-/datum/netdm_service_lane/proc/endpoint_for(datum/component/netdm_node/node, domain)
+/datum/netdm_service_lane/proc/endpoint_for(datum/node, domain)
 	var/datum/netdm_service_endpoint/endpoint = by_node[node]
 	if(endpoint)
 		return !domain || endpoint.domain == domain ? endpoint : null
-	var/id = registry.register(owner_of(node))
+	// The Host can keep a presence between connections. A new player session must never inherit its key.
+	var/id_prefix = istype(node, /datum/netdm_apc_operator) ? "p-[rustg_generate_uuid_v4()]-" : null
+	var/id = registry.register(owner_of(node), id_prefix)
 	if(!id)
 		return null
 	endpoint = new
@@ -113,7 +117,7 @@
 	unsettled[id] = TRUE
 	return endpoint
 
-/// The world object an endpoint stands for: the parent of a device node, or an APC of the map itself.
+/// The owner used to resolve deliveries: the parent of a device node, the APC, or its operator.
 /datum/netdm_service_lane/proc/owner_of(datum/node)
 	var/datum/component/netdm_node/component = node
 	return istype(component) ? component.parent : node
@@ -152,11 +156,17 @@
 	if(!length(wanting))
 		wanted_by -= instance
 
-/// The node is gone: its ID is retired, and the Host removed its endpoint with the device.
-/datum/netdm_service_lane/proc/drop(datum/component/netdm_node/node)
+/// The Host removes an endpoint with its world node. An operator's retirement keeps the APC live.
+/datum/netdm_service_lane/proc/drop(datum/node)
 	var/datum/netdm_service_endpoint/endpoint = by_node[node]
 	if(!endpoint)
 		return
+	if(istype(node, /datum/netdm_apc_operator))
+		var/list/setup = inflight[endpoint.busy]
+		if(endpoint.attached_node || setup?["op"] == "attach")
+			pending_detaches[endpoint.id] = endpoint.generation
+		// A command queued before retirement still holds this endpoint datum.
+		endpoint.attached_node = null
 	for(var/instance in endpoint.registered)
 		provider_changed(instance)
 	for(var/key in endpoint.subscriptions)
@@ -187,10 +197,18 @@
 			counters["resubscribed"]++
 
 /// The node's acknowledged wire ID changed or went away: its endpoint attaches anew.
-/datum/netdm_service_lane/proc/node_moved(datum/component/netdm_node/node)
+/datum/netdm_service_lane/proc/node_moved(datum/node)
 	var/datum/netdm_service_endpoint/endpoint = by_node[node]
 	if(endpoint)
 		unsettled[endpoint.id] = TRUE
+
+/// Map publication makes APC nodes visible to the lane, including their logical operators.
+/datum/netdm_service_lane/proc/refresh_apc_attachments()
+	for(var/id in endpoints)
+		var/datum/netdm_service_endpoint/endpoint = endpoints[id]
+		var/datum/node = endpoint.node
+		if((istype(node, /obj/machinery/power/apc) || istype(node, /datum/netdm_apc_operator)) && endpoint.attached_node != node_id(node))
+			unsettled[id] = TRUE
 
 /// True while the instance of this node can publish in the current session.
 /datum/netdm_service_lane/proc/ready(datum/component/netdm_node/node, instance)
@@ -213,7 +231,7 @@
 /// Queues a command. on_accept receives the entry and the Host reply with the operation; a command
 /// that never left because its node detached meanwhile gets a reply with the error "detached".
 /// timeout_ticks is how long the network may carry it (Host ticks of 100 ms, at most 900).
-/datum/netdm_service_lane/proc/invoke(datum/component/netdm_node/node, instance, command, idempotency_key, list/arguments, datum/callback/on_accept, timeout_ticks = 50)
+/datum/netdm_service_lane/proc/invoke(datum/node, instance, command, idempotency_key, list/arguments, datum/callback/on_accept, timeout_ticks = 50)
 	var/datum/netdm_service_endpoint/endpoint = by_node[node]
 	if(!endpoint?.attached_node || length(invokes) >= 64)
 		return null
@@ -230,7 +248,7 @@
 	return TRUE
 
 /// Asks for the outcome of a command this node initiated; the callback receives the Host reply.
-/datum/netdm_service_lane/proc/query_command(datum/component/netdm_node/node, operation_id, datum/callback/on_reply)
+/datum/netdm_service_lane/proc/query_command(datum/node, operation_id, datum/callback/on_reply)
 	var/datum/netdm_service_endpoint/endpoint = by_node[node]
 	if(!endpoint?.attached_node || length(command_queries) >= NETDM_LANE_QUERIES)
 		return FALSE
@@ -250,6 +268,7 @@
 /// A new Host session: endpoints, services, subscriptions and deliveries start over there.
 /datum/netdm_service_lane/proc/reset_session()
 	inflight.Cut()
+	pending_detaches.Cut()
 	publishes.Cut()
 	invokes.Cut()
 	queries.Cut()
@@ -272,11 +291,15 @@
 		endpoint.busy = null
 		unsettled[id] = TRUE
 
-/// Node wire ID acknowledged by the Host, or null while it is not in the network. An APC is a node of
-/// the published map; its endpoint is checked again whenever it is used (offer() marks it unsettled).
-/datum/netdm_service_lane/proc/node_id(datum/component/netdm_node/node)
+/// Node wire ID acknowledged by the Host, or null while it is not in the network. APC operators
+/// share their APC's published wire ID and keep their own endpoint IDs.
+/datum/netdm_service_lane/proc/node_id(datum/node)
 	if(istype(node, /obj/machinery/power/apc))
 		return SSnetdm_observe.apc_node_id(node)
+	var/datum/netdm_apc_operator/operator = node
+	if(istype(operator))
+		var/obj/machinery/power/apc/apc = operator.apc_ref?.resolve()
+		return apc ? SSnetdm_observe.apc_node_id(apc) : null
 	return SSnetdm_observe.node_facts[node] ? SSnetdm_observe.node_ids[node] : null
 
 /// Sends what the Host misses, within the in-flight budget. Returns the number of requests sent,
@@ -305,6 +328,13 @@
 				max_poll_gap_us = max(max_poll_gap_us, now - last_poll_us)
 			last_poll_us = now
 			.++
+	while(length(pending_detaches) && length(inflight) < NETDM_LANE_INFLIGHT)
+		var/id = pending_detaches[1]
+		var/generation = pending_detaches[id]
+		if(!send(bridge.endpoint_detach(id, generation), list("op" = "detach", "id" = id, "generation" = generation)))
+			return
+		pending_detaches -= id
+		.++
 	if(length(unsettled))
 		var/list/settled = list()
 		for(var/id in unsettled)
@@ -476,6 +506,9 @@
 	var/ok = reply["ok"]
 	var/error = reply["error"]
 	switch(op["op"])
+		if("detach")
+			if(!ok && error != "unknown_endpoint" && error != "stale_generation")
+				pending_detaches[op["id"]] = op["generation"]
 		if("attach")
 			if(ok)
 				endpoint.attached_node = op["node"]
