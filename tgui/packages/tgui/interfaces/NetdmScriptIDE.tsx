@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { KeyboardEvent, useMemo, useRef, useState } from 'react';
 
 import { Box, Button, NoticeBox, Section, Stack, TextArea } from '../components';
 import { SHELL_COMMANDS, ShellDynamicPool } from './netdmShell';
@@ -86,6 +86,7 @@ type Props = {
 
 export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }: Props) => {
   const caret = useRef(source.length);
+  const editor = useRef<{ textareaRef: { current: HTMLTextAreaElement | null } } | null>(null);
   const [preview, setPreview] = useState(false);
   const lines = source.split('\n');
   const outline = useMemo(() => scriptOutline(source), [source]);
@@ -93,12 +94,25 @@ export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }
   const issue = check?.position === null || check?.position === undefined ? null
     : scriptLocation(source, check.position);
 
-  const choose = (choice: string) => {
-    const next = insertCompletion(source, caret.current, choice);
-    if (next.source.length <= limit) {
-      caret.current = next.caret;
-      onChange(next.source);
+  const applyCompletion = (current: string, position: number, choice: string) => {
+    const next = insertCompletion(current, position, choice);
+    if (next.source.length > limit) {
+      return;
     }
+    const input = editor.current?.textareaRef.current;
+    if (input) {
+      // TextArea owns the DOM while it is editing: update its live input as well
+      // as React state, otherwise mouse completion is invisible until blur.
+      input.value = next.source;
+      input.setSelectionRange(next.caret, next.caret);
+      input.focus();
+    }
+    caret.current = next.caret;
+    onChange(next.source);
+  };
+  const choose = (choice: string) => {
+    const input = editor.current?.textareaRef.current;
+    applyCompletion(input?.value ?? source, input?.selectionStart ?? caret.current, choice);
   };
 
   return (
@@ -124,6 +138,7 @@ export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }
             </Stack.Item>
             <Stack.Item grow basis={0}>
               <TextArea
+                ref={editor}
                 fluid
                 scrollbar
                 height={14}
@@ -139,19 +154,15 @@ export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }
                   caret.current = event.target.selectionStart ?? value.length;
                   onChange(value);
                 }}
-                onKeyDown={(event: KeyboardEvent & { target: HTMLTextAreaElement }) => {
-                  caret.current = event.target.selectionStart;
+                onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
+                  caret.current = event.currentTarget.selectionStart;
                   if (event.key === 'Tab') {
                     event.preventDefault();
-                    const suggestions = scriptSuggestions(event.target.value, caret.current, pool);
+                    const suggestions = scriptSuggestions(event.currentTarget.value, caret.current, pool);
                     if (suggestions.length === 1) {
-                      choose(suggestions[0]);
+                      applyCompletion(event.currentTarget.value, caret.current, suggestions[0]);
                     } else {
-                      const next = insertCompletion(event.target.value, caret.current, '  ');
-                      if (next.source.length <= limit) {
-                        caret.current = next.caret;
-                        onChange(next.source);
-                      }
+                      applyCompletion(event.currentTarget.value, caret.current, '  ');
                     }
                   }
                 }}
