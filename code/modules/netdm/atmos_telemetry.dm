@@ -440,6 +440,35 @@
 	netdm_alarm_node = node
 	lane.offer(node, "atmos.alarm.[endpoint.id]", "atmos.alarm", "atmos.alarm_state", 1)
 
+/// The same typed snapshot is used by both the explicit read command and change events.
+/// This code is local sensor sampling, not an alternative transport to other machines.
+/obj/machinery/airalarm/proc/netdm_alarm_payload()
+	if(machine_stat & (NOPOWER|BROKEN|MAINT|EMPED) || shorted || buildstage != 2)
+		return null
+	var/turf/location = get_turf(src)
+	var/datum/gas_mixture/air = location?.return_air()
+	var/area/zone = get_base_area(src)
+	if(!air || !zone)
+		return null
+	return list(
+		"pressureKPa" = clamp(round(air.return_pressure(), 0.01), 0, 1000000),
+		"temperatureK" = clamp(round(air.temperature, 0.01), 0, 1000000),
+		"danger" = clamp(danger_level, 0, 2),
+		"alarm" = !!zone.active_alarms[ALARM_ATMOS])
+
+/// A state transition is an event on the alarm's existing registered service.
+/// The publisher is the panel itself. Consumers subscribe with watch/observe and
+/// receive this only after normal network delivery; there is no local fanout.
+/obj/machinery/airalarm/proc/netdm_publish_alarm_state()
+	if(!netdm_station_air_alarm(src) || QDELETED(netdm_alarm_node))
+		return FALSE
+	var/datum/netdm_service_lane/lane = SSnetdm_observe?.services
+	var/datum/netdm_service_endpoint/endpoint = lane?.by_node[netdm_alarm_node]
+	if(!endpoint || !lane.ready(netdm_alarm_node, "atmos.alarm.[endpoint.id]"))
+		return FALSE
+	var/list/payload = netdm_alarm_payload()
+	return payload ? !!lane.publish(netdm_alarm_node, "atmos.alarm.[endpoint.id]", payload) : FALSE
+
 /// Remote controls keep the panel's lock and access policies. The actor's own ID is checked at the panel.
 /obj/machinery/airalarm/proc/netdm_can_set_alert(mob/living/user)
 	if(!netdm_station_air_alarm(src) || QDELETED(user) || !istype(user) || !user.client || user.stat || user.incapacitated())
@@ -470,17 +499,8 @@
 		return "alarm_outside_station"
 	if(alarm.machine_stat & (NOPOWER|BROKEN|MAINT|EMPED) || alarm.shorted || alarm.buildstage != 2)
 		return "alarm_offline"
-	var/turf/location = get_turf(alarm)
-	var/datum/gas_mixture/air = location?.return_air()
-	var/area/zone = get_base_area(alarm)
-	if(!air || !zone)
-		return "no_sample"
-	return list("result" = list(
-		"pressureKPa" = clamp(round(air.return_pressure(), 0.01), 0, 1000000),
-		"temperatureK" = clamp(round(air.temperature, 0.01), 0, 1000000),
-		"danger" = alarm.danger_level,
-		"alarm" = !!zone.active_alarms[ALARM_ATMOS],
-	))
+	var/list/payload = alarm.netdm_alarm_payload()
+	return payload ? list("result" = payload) : "no_sample"
 
 /datum/netdm_effect_handler/atmos_alarm_state/apply(datum/target, list/item)
 	var/datum/netdm_telemetry_shadow/telemetry = SSnetdm_observe.telemetry
