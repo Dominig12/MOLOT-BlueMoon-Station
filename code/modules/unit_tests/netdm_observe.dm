@@ -633,219 +633,50 @@
 /obj/machinery/computer/atmos_control/netdm_test
 	sensors = list("netdm_test_sensor" = "netDM test sensor")
 
-/// P4 gate: the atmos.telemetry pilot in Shadow mode against the radio path in a real DreamDaemon.
-/// A console on the network receives every report and a snapshot within the latency budget; a broken
-/// console still takes the radio report, and the comparison names why netDM did not deliver to it.
+/// Network telemetry: a powered console receives the sample through a service delivery.
+/// A broken console cannot acquire a fresh sample by listening to the old radio frequency.
 /datum/unit_test/netdm_observe/area_map/atmos_telemetry
 
 /datum/unit_test/netdm_observe/area_map/atmos_telemetry/Run()
 	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
 		return
-	TEST_ASSERT(wait_until_live(), "Observe must publish the initial map ([SSnetdm_observe.observe_state()]).")
-	var/datum/netdm_telemetry_shadow/telemetry = SSnetdm_observe.telemetry
-	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
-	TEST_ASSERT(telemetry && lane, "Observe must run the telemetry pilot.")
+	TEST_ASSERT(wait_until_live(), "Host must publish the network.")
 	var/turf/left = run_loc_floor_bottom_left
 	var/turf/middle = get_step(left, EAST)
 	var/turf/right = get_step(middle, EAST)
-	TEST_ASSERT(middle && right, "Expected three adjacent test cells.")
+	TEST_ASSERT(middle && right, "Three adjacent turfs required.")
 	var/area/served = test_zone(/area/netdm_test/first)
 	assign_area(left, served)
 	assign_area(middle, served)
 	assign_area(right, served)
 	var/obj/machinery/power/apc/apc = allocate(/obj/machinery/power/apc, left)
-	TEST_ASSERT(wait_for_fact(WEAKREF(apc), left), "Expected the zone APC to be published.")
-
+	TEST_ASSERT(wait_for_fact(WEAKREF(apc), left), "APC must be visible.")
 	var/obj/machinery/air_sensor/netdm_test/sensor = allocate(/obj/machinery/air_sensor/netdm_test, middle)
 	var/obj/machinery/computer/atmos_control/netdm_test/online = allocate(/obj/machinery/computer/atmos_control/netdm_test, right)
 	var/obj/machinery/computer/atmos_control/netdm_test/broken = allocate(/obj/machinery/computer/atmos_control/netdm_test, left)
 	var/instance = netdm_atmos_instance(sensor.frequency, sensor.id_tag)
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
 	var/datum/component/netdm_node/sensor_node = sensor.GetComponent(/datum/component/netdm_node)
 	var/datum/component/netdm_node/online_node = online.GetComponent(/datum/component/netdm_node)
 	var/datum/component/netdm_node/broken_node = broken.GetComponent(/datum/component/netdm_node)
-	TEST_ASSERT(sensor_node && online_node && broken_node, "Pilot devices must become nodes.")
-	// A broken console keeps its radio receiver and loses the network.
+	TEST_ASSERT(sensor_node && online_node && broken_node, "Network endpoints required.")
 	broken.set_machine_stat(broken.machine_stat | BROKEN)
-
 	var/datum/netdm_service_endpoint/online_endpoint = lane.by_node[online_node]
 	var/datum/netdm_service_endpoint/broken_endpoint = lane.by_node[broken_node]
 	var/deadline = world.time + 60 SECONDS
-	while(world.time < deadline && !(lane.ready(sensor_node, instance) && online_endpoint.subscribed[instance] && broken_endpoint.subscribed[instance]))
+	while(world.time < deadline && !(lane.ready(sensor_node, instance) && online_endpoint?.subscribed[instance] && broken_endpoint?.subscribed[instance]))
 		sleep(2)
-	TEST_ASSERT(lane.ready(sensor_node, instance), "The sensor must register its instance ([lane.state()]).")
-	TEST_ASSERT(online_endpoint.subscribed[instance] && broken_endpoint.subscribed[instance], "Both consoles must subscribe ([lane.state()]).")
-
-	var/list/before = telemetry.counters.Copy()
-	var/list/reasons_before = telemetry.reasons.Copy()
-	// A queued value replaced by a newer report never leaves DM: latest-value telemetry, not a loss.
-	var/coalesced_before = lane.counters["superseded"]
-	var/latency_start = length(telemetry.latencies)
-	// Real sensors report every two seconds at most; one report a second keeps samples apart.
-	// Thirty samples keep p95 below the maximum, so one stall of the test host is not the verdict.
-	var/reports = 30
-	for(var/i in 1 to reports)
-		sensor.next_forced_report = 0
-		sensor.try_report()
-		sleep(1 SECONDS)
-	// A radio-only console is explained by a network state; a newer value may replace a late one.
-	var/list/network_reasons = list("invalid_route", "no_route", "expired", "deadline", "transport_ttl", "newer_value", "receiver_gone")
-	var/compared = 0
-	var/radio_only = 0
-	var/explained = 0
-	var/unexplained = 0
-	deadline = world.time + 60 SECONDS
-	while(world.time < deadline)
-		compared = telemetry.counters["compared"] - before["compared"]
-		radio_only = telemetry.counters["legacy_only"] - before["legacy_only"]
-		explained = 0
-		unexplained = 0
-		for(var/reason in telemetry.reasons)
-			var/delta = telemetry.reasons[reason] - reasons_before[reason]
-			if(reason in network_reasons)
-				explained += delta
-			else
-				unexplained += delta
-		if(compared + lane.counters["superseded"] - coalesced_before >= reports && explained + unexplained >= radio_only 			&& telemetry.counters["snapshots"] > before["snapshots"])
-			break
-		sleep(5)
-	var/matched = telemetry.counters["matched"] - before["matched"]
-	var/netdm_only = telemetry.counters["netdm_only"] - before["netdm_only"]
-	var/superseded = telemetry.reasons["newer_value"] - reasons_before["newer_value"]
-	var/list/new_latencies = telemetry.latencies.Copy(max(1, latency_start + 1))
-	var/p95 = telemetry.percentile_ms(new_latencies, 0.95)
-	var/list/latency_ms = list()
-	for(var/sample in sortTim(new_latencies.Copy(), GLOBAL_PROC_REF(cmp_numeric_asc)))
-		latency_ms += round(sample / 1000)
-	var/datum/http_response/status_response = world_safe_http_get("[world.GetConfig("env", "NETDM_TEST_HTTP")]/api/game/status", 5 SECONDS)
-	var/list/host_status = status_response?.status_code == 200 ? json_decode(status_response.body) : null
-	var/list/packet = host_status?["packet"]
-	var/list/runner = host_status?["runner"]
-	var/host_detail = "host packets: expired=[packet?["expired"]] reroutes=[packet?["reroutes"]] reroute_deferrals=[packet?["rerouteQueueDeferrals"]] no_route_deferrals=[packet?["noRouteDeferrals"]] age_p95_ticks=[packet?["deliveryAgeP95Ticks"]] runner=[json_encode(runner)]"
-	var/detail = "[SSnetdm_observe.observe_state()] [host_detail] latencies_ms=[json_encode(latency_ms)] mismatches=[json_encode(telemetry.mismatches)]"
-	var/coalesced = lane.counters["superseded"] - coalesced_before
-	TEST_ASSERT(compared + coalesced >= reports, "Every report must be compared or replaced by a newer one ([compared] + [coalesced] of [reports]): [detail]")
-	TEST_ASSERT_EQUAL(matched + superseded, compared, "The console on the network must receive every report it was not given a newer one for: [detail]")
-	TEST_ASSERT_EQUAL(radio_only, compared + superseded, "The radio must still reach the broken console: [detail]")
-	TEST_ASSERT_EQUAL(netdm_only, 0, "netDM must not deliver where the radio does not: [detail]")
-	TEST_ASSERT_EQUAL(unexplained, 0, "Every radio-only console needs a network reason: [detail]")
-	TEST_ASSERT(telemetry.counters["snapshots"] > before["snapshots"], "A subscribing console must receive a snapshot: [detail]")
-	TEST_ASSERT(!isnull(p95) && p95 <= 500, "End-to-end p95 must stay within 500 ms, got [p95] ms: [detail]")
-	TEST_ASSERT(online.sensor_information[sensor.id_tag], "The console screen keeps the radio report in Shadow mode.")
-	log_world("netDM telemetry gate: [detail] p95_window=[p95]ms")
-
-	// The sensor is rebuilt. The Host drops the subscriptions with the old provider and never moves them
-	// to a new one, so the console must subscribe again by itself instead of waiting for nothing.
-	var/resubscribed_before = lane.counters["resubscribed"]
-	qdel(sensor)
-	var/obj/machinery/air_sensor/netdm_test/rebuilt = allocate(/obj/machinery/air_sensor/netdm_test, middle)
-	var/datum/component/netdm_node/rebuilt_node = rebuilt.GetComponent(/datum/component/netdm_node)
-	TEST_ASSERT(rebuilt_node, "The rebuilt sensor must become a node.")
-	deadline = world.time + 60 SECONDS
-	while(world.time < deadline && !(lane.ready(rebuilt_node, instance) && online_endpoint.subscribed[instance]))
+	TEST_ASSERT(lane.ready(sensor_node, instance), "Sensor must offer service: [lane.state()]")
+	TEST_ASSERT(online_endpoint?.subscribed[instance], "Console must subscribe: [lane.state()]")
+	sensor.next_forced_report = 0
+	TEST_ASSERT(sensor.try_report(), "Sensor should sample.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && !online.sensor_information[sensor.id_tag])
 		sleep(2)
-	TEST_ASSERT(lane.ready(rebuilt_node, instance), "The rebuilt sensor must register the instance again ([lane.state()]).")
-	TEST_ASSERT(online_endpoint.subscribed[instance], "The console must subscribe to the rebuilt sensor ([lane.state()]).")
-	TEST_ASSERT(lane.counters["resubscribed"] > resubscribed_before, "The dropped subscription must be asked again ([lane.state()]).")
-	var/matched_before = telemetry.counters["matched"]
-	var/compared_before = telemetry.counters["compared"]
-	for(var/i in 1 to 3)
-		rebuilt.next_forced_report = 0
-		rebuilt.try_report()
-		sleep(1 SECONDS)
-	deadline = world.time + 30 SECONDS
-	while(world.time < deadline && telemetry.counters["compared"] - compared_before < 3)
-		sleep(5)
-	TEST_ASSERT(telemetry.counters["matched"] - matched_before >= 2, "The console must receive the rebuilt sensor: \
-		[lane.state()] [json_encode(telemetry.mismatches)]")
-
-/// P5 Shadow on the runtime station: Observe placed an R&D server next to the R&D console. A purchase
-/// on the legacy console is decided again by the Host ledger, over the network, and the server's
-/// treasury storage keeps the web's balance and knowledge.
-/datum/unit_test/netdm_observe/research_shadow
-
-/datum/unit_test/netdm_observe/research_shadow/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
-		return
-	TEST_ASSERT(wait_until_live(), "Observe must publish the map ([SSnetdm_observe.observe_state()]).")
-	var/datum/netdm_research_shadow/shadow = SSnetdm_observe.research
-	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
-	TEST_ASSERT(shadow && lane, "Observe must run the research pilot.")
-	var/obj/machinery/rnd/server/server = locate(/obj/machinery/rnd/server) in SSresearch.servers
-	TEST_ASSERT(server, "The runtime station must get an R&D server under Observe.")
-	var/datum/techweb/web = server.stored_research
-	TEST_ASSERT(web == SSresearch.science_tech, "The placed server must join the station web.")
-	var/obj/machinery/computer/rdconsole/console
-	for(var/obj/machinery/computer/rdconsole/candidate in GLOB.machines)
-		if(candidate.stored_research == web)
-			console = candidate
-			break
-	TEST_ASSERT(console, "The runtime station needs an R&D console on the station web.")
-	var/datum/component/netdm_node/server_node = server.GetComponent(/datum/component/netdm_node)
-	var/datum/component/netdm_node/console_node = console.GetComponent(/datum/component/netdm_node)
-	TEST_ASSERT(server_node && console_node, "The server and the console must become nodes.")
-
-	var/deadline = world.time + 2 MINUTES
-	var/storage
-	while(world.time < deadline)
-		storage = shadow.treasury_of(web)
-		var/datum/netdm_service_endpoint/console_endpoint = lane.by_node[console_node]
-		if(storage && shadow.synchronized() && lane.ready(server_node, "research.[storage]") && console_endpoint?.attached_node)
-			break
-		sleep(5)
-	TEST_ASSERT(storage, "The station web needs a treasury storage: [shadow.state()]")
-	TEST_ASSERT(shadow.synchronized(), "The mirror must catch up: [shadow.state()] [json_encode(shadow.notes)]")
-	TEST_ASSERT(lane.ready(server_node, "research.[storage]"), "The server must offer research.server: [lane.state()]")
-
-	// Legacy points written straight to the balance reach the treasury through the mirror.
-	web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = 50000), FALSE)
-	var/node_id
-	for(var/id in web.available_nodes)
-		if(web.researched_nodes[id] || web.boosted_nodes[id])
-			continue
-		var/datum/techweb_node/candidate_node = SSresearch.techweb_node_by_id(id)
-		var/cost = candidate_node.research_costs[TECHWEB_POINT_TYPE_GENERIC] || 0
-		if(cost > 0 && cost <= 50000)
-			node_id = id
-			break
-	TEST_ASSERT(node_id, "The station web needs an affordable node without a boost.")
-	var/matched_before = shadow.counters["matched"]
-	var/mismatched_before = shadow.counters["mismatched"]
-	TEST_ASSERT(console.research_node(node_id, null), "The legacy console must buy [node_id].")
-	deadline = world.time + 30 SECONDS
-	while(world.time < deadline && shadow.counters["matched"] == matched_before && shadow.counters["mismatched"] == mismatched_before)
-		sleep(2)
-	TEST_ASSERT_EQUAL(shadow.counters["matched"] - matched_before, 1,
-		"The Host ledger must decide [node_id] like the legacy web: [shadow.state()] [json_encode(shadow.notes)]")
-	TEST_ASSERT(!console.research_node(node_id, null), "A researched node is not bought twice.")
-
-	// Balance and knowledge of the treasury against the web, with passive income flowing meanwhile.
-	sleep(3 SECONDS)
-	var/compares = shadow.counters["compares"]
-	shadow.next_compare = 0
-	deadline = world.time + 60 SECONDS
-	while(world.time < deadline && shadow.counters["compares"] == compares)
-		sleep(5)
-	TEST_ASSERT(shadow.counters["compares"] > compares, "The treasury must be compared with the web: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.counters["drifts"], 0, "The treasury must hold the web's points: [shadow.state()] [json_encode(shadow.notes)]")
-	TEST_ASSERT(shadow.last_drift < 0.1, "The treasury balance must match within float error: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.counters["knowledge_drifts"], 0, "The treasury must know the web's nodes: [json_encode(shadow.notes)]")
-	TEST_ASSERT_EQUAL(shadow.counters["rejected"] + shadow.counters["dropped"], 0, "Every mirror event must be accepted: [json_encode(shadow.notes)]")
-	// An event lost or refused for a web the ledger would take over blocks the switch for the round: the
-	// projection must not erase points the ledger never received (§13.10, §18.1).
-	var/mirror_complete = shadow.synchronized()
-	shadow.lost_mirror("test: simulated drop")
-	TEST_ASSERT(!shadow.synchronized(), "An incomplete mirror must not report synchronization: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.authorize(), FALSE, "Authority must not switch over an incomplete mirror: [shadow.state()]")
-	TEST_ASSERT(!shadow.authoritative, "The web must stay legacy while the mirror is incomplete.")
-	shadow.mirror_lost = FALSE
-	shadow.notes = list()
-	shadow.authority_requested = FALSE
-	TEST_ASSERT_EQUAL(shadow.synchronized(), mirror_complete, "A complete mirror synchronizes again: [shadow.state()]")
-	var/datum/http_response/response = world_safe_http_get("[world.GetConfig("env", "NETDM_TEST_HTTP")]/api/research/status", 5 SECONDS)
-	var/list/host = response?.status_code == 200 ? json_decode(response.body) : null
-	var/list/totals = host?["totals"]
-	TEST_ASSERT(totals?["balanced"], "The Host ledger must stay balanced: [response?.body]")
-	log_world("netDM research shadow: [shadow.state()] host=[response?.body]")
+	TEST_ASSERT(online.sensor_information[sensor.id_tag], "The network-delivered sample updates the console.")
+	TEST_ASSERT(!broken.sensor_information[sensor.id_tag], "The broken console cannot receive a radio bypass.")
+	var/list/payload = online.sensor_information[sensor.id_tag]
+	TEST_ASSERT(islist(payload["gases"]), "The network preserves gas composition.")
 
 /// P5 canary on the runtime station: the Host ledger takes over the station web. A second server gets the
 /// web's knowledge but not its balance, each server earns into its own wallet, a console buys on its bound

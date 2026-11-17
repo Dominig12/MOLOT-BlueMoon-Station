@@ -38,6 +38,8 @@
 	var/list/sensor_instances = list()
 	/// Operation ID -> recent, unclaimed result, in delivery order.
 	var/list/air_alarm_results = list()
+	/// Sensor weakref -> last packet accepted from that physical sensor for snapshot replies.
+	var/list/last_samples = list()
 	/// Console endpoint ID -> list("matched", "radio_only", reason -> count), for station reports.
 	var/list/per_console = list()
 	/// "console/instance" -> list(reason, world.time until it is trusted): a console that the network
@@ -70,7 +72,7 @@
 /datum/netdm_telemetry_shadow/proc/add_sensor(obj/machinery/air_sensor/sensor, datum/component/netdm_node/node)
 	var/instance = netdm_atmos_instance(sensor.frequency, sensor.id_tag)
 	if(instance && node)
-		SSnetdm_observe.services.offer(node, instance, "atmos.telemetry", "atmos.sample", 1)
+		SSnetdm_observe.services.offer(node, instance, "atmos.telemetry", "atmos.sample", 1, 1)
 		sensors[WEAKREF(sensor)] = TRUE
 		sensor_instances[instance] = TRUE
 
@@ -97,16 +99,17 @@
 			SSnetdm_observe.services.want(node, instance, instance, "atmos.sample", 1, "full")
 
 /// The full atmos.sample payload of the last radio report, or null before the first one.
+/datum/netdm_telemetry_shadow/proc/remove_sensor(obj/machinery/air_sensor/sensor)
+	var/datum/weakref/key = WEAKREF(sensor)
+	sensors -= key
+	last_samples -= key
+	var/instance = netdm_atmos_instance(sensor.frequency, sensor.id_tag)
+	if(instance)
+		sensor_instances -= instance
+
+/// Last report as published on the wire. A snapshot never re-reads another sensor's state.
 /datum/netdm_telemetry_shadow/proc/sample_of(obj/machinery/air_sensor/sensor)
-	if(isnull(sensor.last_report_pressure))
-		return null
-	var/reported_at = sensor.next_forced_report - ATMOS_TELEMETRY_HEARTBEAT
-	return list(
-		"pressureKPa" = clamp(round(sensor.last_report_pressure, 0.01), 0, 1000000),
-		"temperatureK" = clamp(round(sensor.last_report_temperature, 0.01), 0, 1000000),
-		"sampleTick" = netdm_tick_of(reported_at),
-		"quality" = "current",
-	)
+	return last_samples[WEAKREF(sensor)]
 
 /datum/netdm_telemetry_shadow/proc/report_for(instance, tick)
 	var/key = "[instance]/[tick]"
@@ -122,12 +125,21 @@
 	return report
 
 /// The radio report of a sensor left; its netDM copy goes to the lane.
-/datum/netdm_telemetry_shadow/proc/sensor_reported(obj/machinery/air_sensor/sensor)
+/datum/netdm_telemetry_shadow/proc/sensor_reported(obj/machinery/air_sensor/sensor, list/report_data)
 	var/datum/component/netdm_node/node = sensor.GetComponent(/datum/component/netdm_node)
 	var/instance = netdm_atmos_instance(sensor.frequency, sensor.id_tag)
-	var/list/payload = sample_of(sensor)
-	if(!node || !instance || !payload)
+	if(!node || !instance || !islist(report_data))
 		return
+	var/gases_json = json_encode(report_data["gases"] || list())
+	if(length(gases_json) > 2000)
+		gases_json = "{}"
+	var/list/payload = list(
+		"pressureKPa" = clamp(round(report_data["pressure"], 0.01), 0, 1000000),
+		"temperatureK" = clamp(round(report_data["temperature"], 0.01), 0, 1000000),
+		"sampleTick" = netdm_tick_of(report_data["timestamp"]),
+		"quality" = "current",
+		"gasesJson" = gases_json)
+	last_samples[WEAKREF(sensor)] = payload
 	var/list/report = report_for(instance, payload["sampleTick"])
 	var/list/entry = SSnetdm_observe.services.publish(node, instance, payload, CALLBACK(src, PROC_REF(published), report))
 	if(entry)
@@ -163,6 +175,29 @@
 /// A console received a sample over netDM: recorded, never shown.
 /datum/netdm_telemetry_shadow/proc/netdm_received(obj/machinery/computer/atmos_control/console, list/item, kind)
 	var/list/payload = item["payload"]
+	if(!islist(payload) || !isnum(payload["pressureKPa"]) || !isnum(payload["temperatureK"]))
+		return "invalid_sample"
+	var/id_tag
+	for(var/tag in console.sensors)
+		if(netdm_atmos_instance(console.frequency, tag) == item["instance"])
+			id_tag = tag
+			break
+	if(!id_tag)
+		return "unknown_sensor"
+	var/list/gases = list()
+	if(istext(payload["gasesJson"]))
+		try
+			var/list/decoded = json_decode(payload["gasesJson"])
+			if(islist(decoded))
+				gases = decoded
+		catch(var/exception/error)
+			return "invalid_gases"
+	// The UI uses the original sample time for stale-state display, not delivery time.
+	console.sensor_information[id_tag] = list(
+		"timestamp" = round(payload["sampleTick"] * world.tick_lag),
+		"pressure" = payload["pressureKPa"],
+		"temperature" = payload["temperatureK"],
+		"gases" = gases)
 	if(kind == "snapshot")
 		counters["snapshots"]++
 		var/started = snapshot_started[item["operationId"]]
@@ -497,11 +532,6 @@
 	if(node)
 		SSnetdm_observe.telemetry?.add_sensor(src, node)
 
-/obj/machinery/air_sensor/try_report()
-	. = ..()
-	if(.)
-		SSnetdm_observe.telemetry?.sensor_reported(src)
-
 /obj/machinery/computer/atmos_control/Initialize(mapload)
 	. = ..()
 	if(. == INITIALIZE_HINT_QDEL)
@@ -509,13 +539,6 @@
 	var/datum/component/netdm_node/node = netdm_make_node(src)
 	if(node)
 		SSnetdm_observe.telemetry?.add_console(src, node)
-
-/obj/machinery/computer/atmos_control/receive_signal(datum/signal/signal)
-	. = ..()
-	var/id_tag = signal?.data["id_tag"]
-	// The legacy console took the report exactly when it stored this signal's data.
-	if(id_tag && SSnetdm_observe.telemetry && sensor_information[id_tag] == signal.data)
-		SSnetdm_observe.telemetry.legacy_received(src, id_tag, signal.data["timestamp"])
 
 #undef NETDM_TELEMETRY_SETTLE
 #undef NETDM_TELEMETRY_REPORTS

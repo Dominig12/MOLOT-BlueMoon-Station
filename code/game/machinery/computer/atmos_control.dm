@@ -93,7 +93,9 @@
 			var/gas_name = GLOB.gas_data.names[gas_id]
 			signal.data["gases"][gas_name] = air_sample.get_moles(gas_id) / total_moles * 100
 
-	radio_connection?.post_signal(src, signal, filter = RADIO_ATMOSIA)
+	// Device telemetry is delivered by the network service to each subscribed console.
+	// An absent Host must not turn this into an instantaneous radio broadcast.
+	SSnetdm_observe.telemetry?.sensor_reported(src, signal.data)
 	return TRUE
 
 
@@ -108,6 +110,7 @@
 	set_frequency(frequency)
 
 /obj/machinery/air_sensor/Destroy()
+	SSnetdm_observe.telemetry?.remove_sensor(src)
 	SSair.stop_processing_machine(src)
 	SSradio.remove_object(src, frequency)
 	return ..()
@@ -217,14 +220,9 @@ GLOBAL_LIST_EMPTY(atmos_air_controllers)
 		return TRUE
 
 /obj/machinery/computer/atmos_control/receive_signal(datum/signal/signal)
-	if(!signal)
-		return
-
-	var/id_tag = signal.data["id_tag"]
-	if(!id_tag || !sensors.Find(id_tag))
-		return
-
-	sensor_information[id_tag] = signal.data
+	// Sensor readings are network deliveries. A radio frame cannot update the
+	// authoritative display and must not bypass a disconnected netDM endpoint.
+	return
 
 /obj/machinery/computer/atmos_control/proc/set_frequency(new_frequency)
 	SSradio.remove_object(src, frequency)
