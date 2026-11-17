@@ -2,6 +2,8 @@ import { BooleanLike } from 'common/react';
 import { useState } from 'react';
 
 import { Box, Button, Icon } from '../components';
+import { NetdmDevicePanel } from './NetdmDevicePanel';
+import { DeviceEvent } from './NetdmDeviceState';
 
 /**
  * The welcoming view is strictly a projection of already acknowledged shell data.
@@ -141,6 +143,7 @@ type Props = {
   events: number;
   watches: number;
   watchKeys: string[];
+  eventFeed: DeviceEvent[];
   onDiscover: () => void;
   onAlarms: () => void;
   onMap: () => void;
@@ -255,33 +258,18 @@ export const NetdmHome = (props: Props) => {
             </button>
           ))}
           {selected && (
-            <div className="NetdmHome__details">
-              <div className="NetdmHome__sectionLabel">ВЫБРАННОЕ УСТРОЙСТВО</div>
-              <div className="NetdmHome__detailsTitle">{categoryName(selected.type)}</div>
-              <div className="NetdmHome__minor">{selected.instance} · {selected.hops ?? '—'} переходов до сервиса</div>
-              <div className="NetdmHome__detailsActions">
-                {selected.type === 'atmos.alarm' && (
-                  <Button icon="tachometer-alt" content="Получить показания"
-                    tooltip="Сетевой запрос: состояние появится после ответа"
-                    onClick={() => props.onCommand(`invoke ${selected.instance} read reason=inspect`)} />
-                )}
-                {(selected.type === 'atmos.alarm' || selected.type === 'atmos.telemetry') && (
-                  <Button icon={subscribed ? 'bell-slash' : 'bell'}
-                    content={subscribed ? 'Не следить' : 'Следить за событиями'}
-                    disabled={changingSubscription}
-                    onClick={() => props.onCommand(subscribed
-                      ? `unwatch ${selected.instance}`
-                      : `watch ${selected.instance} -key ${selected.instance}`)} />
-                )}
-                <Button icon="route" content="Путь через сеть"
-                  onClick={() => props.onInspect(`route ${selected.instance}`)} />
-                <Button icon="code" content="Технические сведения"
-                  onClick={() => props.onInspect(`api ${selected.type}`)} />
-              </div>
-              <div className="NetdmHome__detailFoot">
-                Действия используют реальную сеть. Отправка не означает, что устройство уже ответило.
-              </div>
-            </div>
+            <NetdmDevicePanel
+              key={selected.instance}
+              instance={selected.instance}
+              type={selected.type}
+              hops={selected.hops}
+              entries={props.entries}
+              events={props.eventFeed}
+              subscribed={subscribed}
+              changingSubscription={changingSubscription}
+              onCommand={props.onCommand}
+              onInspect={props.onInspect}
+            />
           )}
           {services.length > limited.length && (
             <div className="NetdmHome__more">
