@@ -9,8 +9,8 @@ import {
   invocationLine,
   isReadAction,
   latestApiReply,
-  ServiceField,
   serviceActions,
+  ServiceField,
 } from './NetdmServiceSchema';
 
 type Props = {
