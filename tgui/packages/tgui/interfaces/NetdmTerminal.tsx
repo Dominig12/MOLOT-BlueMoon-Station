@@ -401,11 +401,13 @@ export const NetdmTerminal = () => {
                 entries={data.entries}
                 events={data.events?.length ?? 0}
                 watches={data.watches?.length ?? 0}
+                watchKeys={data.watches ?? []}
                 onDiscover={() => run('services')}
                 onAlarms={() => run('services -type atmos.alarm')}
                 onMap={() => act('open_space')}
                 onEvents={showEvents}
                 onAdvanced={showTools}
+                onInspect={command => { showTools(); run(command); }}
                 onCommand={run}
               />
             ) : helpTopic !== null ? (
