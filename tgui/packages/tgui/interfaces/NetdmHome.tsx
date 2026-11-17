@@ -101,10 +101,6 @@ const Activity = ({
   const operation = entry && /^invoke atmos\.alarm\.[^\s]+ read\b/.test(entry.line)
     ? value('operation') : null;
   const readTicket = operation && /^[1-9][0-9]{0,17}$/.test(operation) ? operation : null;
-  const pressure = entry && /^result [1-9][0-9]*$/.test(entry.line) ? value('pressureKPa') : null;
-  const temperature = pressure !== null && pressure !== undefined ? value('temperatureK') : null;
-  const hasReading = entry?.status === 'ok' && pressure !== null && pressure !== undefined &&
-    temperature !== null && temperature !== undefined;
   const text = !entry ? 'Пока нет запросов.'
     : entry.pending ? 'Запрос в пути. Ожидается ответ по сети.'
       : readTicket ? 'Запрос принят в сеть. Выберите устройство, чтобы проверить результат.'
@@ -116,12 +112,6 @@ const Activity = ({
     <div className="NetdmHome__activity">
       <div className="NetdmHome__sectionLabel">ПОСЛЕДНЕЕ ДЕЙСТВИЕ</div>
       <div className="NetdmHome__activityText">{text}</div>
-      {hasReading && (
-        <div className="NetdmHome__reading">
-          <div><strong>{pressure}</strong> кПа</div>
-          <div>{temperature} K · {value('alarm') === 'true' ? 'Есть тревога' : 'Тревоги нет'}</div>
-        </div>
-      )}
       {!!entry && (
         <>
           <div className="NetdmHome__activityCommand">{entry.line}</div>
