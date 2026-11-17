@@ -229,6 +229,8 @@
 /datum/netdm_terminal/New(atom/device, datum/node = device)
 	device_ref = WEAKREF(device)
 	node_ref = WEAKREF(node)
+	var/datum/netdm_service_endpoint/endpoint = SSnetdm_observe.services?.endpoint_for(node)
+	endpoint?.observe_terminal(src)
 	submit("self")
 	if(device == shell_provider())
 		submit("links")
@@ -307,7 +309,12 @@
 	var/obj/item/computer_hardware/hard_drive/portable/disk = held_script_disk(user)
 	var/datum/computer_file/data/netdm_script/file = script_file(disk)
 	var/list/media = disk ? list("id" = REF(disk), "name" = disk.name, "file" = file ? REF(file) : "") : null
+	var/datum/netdm_service_endpoint/endpoint = SSnetdm_observe.services?.by_node[node_ref?.resolve()]
+	var/list/watches = list()
+	for(var/key in endpoint?.event_watches)
+		watches += key
 	return list("title" = device ? device_title(device) : "нет связи", "entries" = entries,
+		"events" = endpoint ? endpoint.event_journal : list(), "watches" = watches,
 		"limit" = NETDM_TERMINAL_LINE_LENGTH, "scriptLimit" = NETDM_TERMINAL_SCRIPT_LENGTH,
 		"disk" = media, "diskNotice" = disk_notice, "loadedScript" = loaded_script, "programsEnabled" = supports_programs(),
 		"kept" = supports_programs() ? kept_names() : null)
@@ -472,6 +479,22 @@
 	entry["position"] = output["position"]
 	entry["fuel"] = output["fuel"]
 	entry["records"] = output["records"]
+	// Only the Host's accepted shell output can enable a generic inbox key.
+	// These keys are UI observers, never authorization or service registrations.
+	var/datum/netdm_service_endpoint/endpoint = SSnetdm_observe.services?.by_node[node_ref?.resolve()]
+	if(endpoint && output["status"] == "ok")
+		for(var/list/record in output["records"])
+			var/list/fields = list()
+			for(var/list/field in record)
+				if(istext(field["name"]))
+					fields[field["name"]] = field["value"]
+			var/key = fields["key"]
+			if(!istext(key) || length(key) > 64)
+				continue
+			if(fields["status"] == "watching")
+				endpoint.event_watches[key] = TRUE
+			else if(fields["status"] == "ok" && fields["key"] && copytext(entry["line"], 1, 9) == "unwatch ")
+				endpoint.event_watches -= key
 	SStgui.update_uis(src)
 
 /datum/netdm_terminal/local
