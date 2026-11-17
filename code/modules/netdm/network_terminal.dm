@@ -493,9 +493,12 @@
 			if(!istext(key) || length(key) > 64)
 				continue
 			if(fields["status"] == "watching")
-				endpoint.event_watches[key] = TRUE
-			else if(fields["status"] == "ok" && fields["key"] && copytext(entry["line"], 1, 9) == "unwatch ")
-				endpoint.event_watches -= key
+				// Restore only a subscription explicitly accepted by Host, with its authorized
+				// schema and delivery configuration. This is not a local event subscription.
+				SSnetdm_observe.services.remember_shell_watch(endpoint, key, fields["instance"],
+					fields["schema"], text2num(fields["major"]), fields["projection"], fields["mode"], text2num(fields["pending"]))
+			else if(fields["status"] == "unwatched")
+				SSnetdm_observe.services.forget_shell_watch(endpoint, key)
 	SStgui.update_uis(src)
 
 /datum/netdm_terminal/local
