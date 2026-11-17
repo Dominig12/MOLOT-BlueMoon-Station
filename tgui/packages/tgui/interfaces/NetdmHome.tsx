@@ -62,17 +62,44 @@ const serviceIcon = (type: string) => {
   return 'network-wired';
 };
 
-const Activity = ({ entry, onOpenLog }: { entry?: HomeEntry; onOpenLog: () => void }) => {
+const Activity = ({
+  entry, onOpenLog, onCommand,
+}: {
+  entry?: HomeEntry;
+  onOpenLog: () => void;
+  onCommand: (command: string) => void;
+}) => {
+  const value = (field: string) => entry?.records
+    .flatMap(record => record).find(item => item.name === field)?.value;
+  const operation = entry && /^invoke atmos\.alarm\.[^\s]+ read\b/.test(entry.line)
+    ? value('operation') : null;
+  const readTicket = operation && /^[1-9][0-9]{0,17}$/.test(operation) ? operation : null;
+  const pressure = entry && /^result [1-9][0-9]*$/.test(entry.line) ? value('pressureKPa') : null;
+  const temperature = pressure !== null && pressure !== undefined ? value('temperatureK') : null;
+  const hasReading = entry?.status === 'ok' && pressure !== null && pressure !== undefined &&
+    temperature !== null && temperature !== undefined;
   const text = !entry ? 'Пока нет запросов.'
     : entry.pending ? 'Запрос в пути. Ожидается ответ по сети.'
-      : entry.status === 'ok' ? 'Ответ от сетевого сервиса получен.'
-        : entry.status === 'valid' ? 'Исходник проверен. Команды не выполнялись.'
-          : entry.status === 'started' || entry.status === 'running' ? 'Программа принята сетевым сервисом.'
-            : 'Операция завершилась отказом или без ответа.';
+      : readTicket ? 'Запрос принят в сеть. Измерение ещё нужно получить после доставки.'
+        : entry.status === 'ok' ? 'Ответ от сетевого сервиса получен.'
+          : entry.status === 'valid' ? 'Исходник проверен. Команды не выполнялись.'
+            : entry.status === 'started' || entry.status === 'running' ? 'Программа принята сетевым сервисом.'
+              : 'Операция завершилась отказом или без ответа.';
   return (
     <div className="NetdmHome__activity">
       <div className="NetdmHome__sectionLabel">ПОСЛЕДНЕЕ ДЕЙСТВИЕ</div>
       <div className="NetdmHome__activityText">{text}</div>
+      {hasReading && (
+        <div className="NetdmHome__reading">
+          <div><strong>{pressure}</strong> кПа</div>
+          <div>{temperature} K · {value('alarm') === 'true' ? 'Есть тревога' : 'Тревоги нет'}</div>
+        </div>
+      )}
+      {!!readTicket && !entry?.pending && (
+        <Button icon="poll" content="Получить ответ"
+          tooltip="Результат доступен только после сетевой доставки"
+          onClick={() => onCommand(`result ${readTicket}`)} />
+      )}
       {!!entry && (
         <>
           <div className="NetdmHome__activityCommand">{entry.line}</div>
@@ -213,7 +240,7 @@ export const NetdmHome = (props: Props) => {
             <div className="NetdmHome__minor">{props.watches} активных наблюдений</div>
             <Button icon="bell" content="Открыть события" onClick={props.onEvents} />
           </div>
-          <Activity entry={latest} onOpenLog={props.onAdvanced} />
+          <Activity entry={latest} onOpenLog={props.onAdvanced} onCommand={props.onCommand} />
           <div className="NetdmHome__deep">
             <div className="NetdmHome__deepTitle">Хотите глубже?</div>
             <div className="NetdmHome__minor">Маршруты, API, скрипты и диагностика доступны в расширенном режиме.</div>
