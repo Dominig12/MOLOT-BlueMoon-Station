@@ -91,11 +91,10 @@ const serviceIcon = (type: string) => {
 };
 
 const Activity = ({
-  entry, onOpenLog, onCommand,
+  entry, onOpenLog,
 }: {
   entry?: HomeEntry;
   onOpenLog: () => void;
-  onCommand: (command: string) => void;
 }) => {
   const value = (field: string) => entry?.records
     .flatMap(record => record).find(item => item.name === field)?.value;
@@ -108,7 +107,7 @@ const Activity = ({
     temperature !== null && temperature !== undefined;
   const text = !entry ? 'Пока нет запросов.'
     : entry.pending ? 'Запрос в пути. Ожидается ответ по сети.'
-      : readTicket ? 'Запрос принят в сеть. Измерение ещё нужно получить после доставки.'
+      : readTicket ? 'Запрос принят в сеть. Выберите устройство, чтобы проверить результат.'
         : entry.status === 'ok' ? 'Ответ от сетевого сервиса получен.'
           : entry.status === 'valid' ? 'Исходник проверен. Команды не выполнялись.'
             : entry.status === 'started' || entry.status === 'running' ? 'Программа принята сетевым сервисом.'
@@ -122,11 +121,6 @@ const Activity = ({
           <div><strong>{pressure}</strong> кПа</div>
           <div>{temperature} K · {value('alarm') === 'true' ? 'Есть тревога' : 'Тревоги нет'}</div>
         </div>
-      )}
-      {!!readTicket && !entry?.pending && (
-        <Button icon="poll" content="Получить ответ"
-          tooltip="Результат доступен только после сетевой доставки"
-          onClick={() => onCommand(`result ${readTicket}`)} />
       )}
       {!!entry && (
         <>
@@ -304,7 +298,7 @@ export const NetdmHome = (props: Props) => {
             <div className="NetdmHome__minor">{props.watches} активных наблюдений</div>
             <Button icon="bell" content="Открыть события" onClick={props.onEvents} />
           </div>
-          <Activity entry={latest} onOpenLog={props.onAdvanced} onCommand={props.onCommand} />
+          <Activity entry={latest} onOpenLog={props.onAdvanced} />
           <div className="NetdmHome__deep">
             <div className="NetdmHome__deepTitle">Хотите глубже?</div>
             <div className="NetdmHome__minor">Маршруты, API, скрипты и диагностика доступны в расширенном режиме.</div>
