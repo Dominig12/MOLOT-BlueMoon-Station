@@ -114,6 +114,19 @@
     background: #1b2c38;
   }
   &__panel { min-width: 0; overflow: hidden; }
+  &__previous {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    font-size: 10px;
+    line-height: 1.45;
+    color: #ead9b2;
+    background: #34372d;
+    border-bottom: 1px solid #706747;
+  }
+  &__previous > .Icon { flex-shrink: 0; color: #d0b979; }
+  &__previous > span { flex: 1; }
   &__panelHeading {
     display: flex;
     align-items: center;
