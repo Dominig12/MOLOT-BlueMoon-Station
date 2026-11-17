@@ -79,8 +79,8 @@ export const columnsOf = (records: Field[][]): string[] => {
   return names;
 };
 
-const Records = (props: { entry: Entry; onCommand: (line: string) => void; onStop: (id: string) => void }) => {
-  const { entry, onCommand, onStop } = props;
+const Records = (props: { entry: Entry; onCommand: (line: string) => void; onDraft: (line: string) => void; onStop: (id: string) => void }) => {
+  const { entry, onCommand, onDraft, onStop } = props;
   const { records } = entry;
   const columns = columnsOf(records);
   const listingJobs = /^jobs(?:\s|$)/i.test(entry.line);
@@ -92,6 +92,7 @@ const Records = (props: { entry: Entry; onCommand: (line: string) => void; onSto
     const state = valueOf(record, 'state');
     return {
       instance: instance && type && SERVICE_NAME.test(instance) ? instance : null,
+      type: type && SERVICE_NAME.test(type) ? type : null,
       operation: operation && OPERATION_ID.test(operation) ? operation : null,
       alarm: type === 'atmos.alarm',
       alarmRead: !!instance?.startsWith('atmos.alarm.') && valueOf(record, 'command') === 'read',
@@ -109,7 +110,7 @@ const Records = (props: { entry: Entry; onCommand: (line: string) => void; onSto
         {showActions && <Table.Cell />}
       </Table.Row>
       {records.map((record, index) => {
-        const { instance, operation, alarm, alarmRead, stop } = actions[index];
+        const { instance, type, operation, alarm, alarmRead, stop } = actions[index];
         return (
           <Table.Row key={index}>
             {columns.map((name) => (
@@ -118,6 +119,9 @@ const Records = (props: { entry: Entry; onCommand: (line: string) => void; onSto
             {showActions && (
               <Table.Cell collapsing>
                 {instance && <Button icon="route" aria-label="Показать маршрут" tooltip="Показать маршрут" onClick={() => onCommand(`route ${instance}`)} />}
+                {instance && type && <Button icon="code" aria-label="Схема сервиса" tooltip="Посмотреть команды и их аргументы" onClick={() => onCommand(`api ${type}`)} />}
+                {instance && <Button icon="terminal" aria-label="Подготовить вызов" tooltip="Заполнить командную строку, не отправляя вызов" onClick={() => onDraft(`invoke ${instance} `)} />}
+                {instance && <Button icon="bell" aria-label="Подготовить подписку" tooltip="Заполнить командную строку для подписки" onClick={() => onDraft(`watch ${instance}`)} />}
                 {instance && alarm && <Button icon="tachometer-alt" aria-label="Снять показания" tooltip="Снять показания" onClick={() => onCommand(`invoke ${instance} read reason=inspect`)} />}
                 {operation && !listingJobs && <Button icon="tasks" aria-label="Проверить доставку" tooltip="Проверить доставку" onClick={() => onCommand(`jobs | where operation -eq "${operation}"`)} />}
                 {operation && alarmRead && <Button icon="poll" aria-label="Получить показания" tooltip="Получить показания" onClick={() => onCommand(`result ${operation}`)} />}
@@ -133,8 +137,8 @@ const Records = (props: { entry: Entry; onCommand: (line: string) => void; onSto
 
 const failedEntry = (entry: Entry) => !entry.pending && !['ok', 'started', 'running', 'stopped', 'migrated'].includes(entry.status || '');
 
-const EntryView = (props: { entry: Entry; onCommand: (line: string) => void; onStop: (id: string) => void }) => {
-  const { entry, onCommand, onStop } = props;
+const EntryView = (props: { entry: Entry; onCommand: (line: string) => void; onDraft: (line: string) => void; onStop: (id: string) => void }) => {
+  const { entry, onCommand, onDraft, onStop } = props;
   const failed = failedEntry(entry);
   return (
     <Box mb={1}>
@@ -151,7 +155,7 @@ const EntryView = (props: { entry: Entry; onCommand: (line: string) => void; onS
         </NoticeBox>
       )}
       {!entry.pending && !failed && entry.records.length === 0 && <Box color="label">нет записей</Box>}
-      {entry.records.length > 0 && <Records entry={entry} onCommand={onCommand} onStop={onStop} />}
+      {entry.records.length > 0 && <Records entry={entry} onCommand={onCommand} onDraft={onDraft} onStop={onStop} />}
     </Box>
   );
 };
@@ -333,7 +337,9 @@ export const NetdmTerminal = () => {
                 buttons={<Button icon="eraser" tooltip="Очистить журнал" onClick={() => act('clear')} />}>
                 {data.entries.length === 0 && <Box color="label">Введите команду или откройте справку.</Box>}
                 {data.entries.map(entry => (
-                  <EntryView key={entry.id} entry={entry} onCommand={run} onStop={program => act('stop_program', { program })} />
+                  <EntryView key={entry.id} entry={entry} onCommand={run}
+                    onDraft={command => { setLine(command); setEditingScript(false); setHelpTopic(null); }}
+                    onStop={program => act('stop_program', { program })} />
                 ))}
               </Section>
             )}
