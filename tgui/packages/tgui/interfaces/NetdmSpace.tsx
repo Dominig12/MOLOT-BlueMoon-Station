@@ -1,4 +1,14 @@
 import { BooleanLike } from 'common/react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+
+import { useBackend } from '../backend';
+import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
+import { Window } from '../layouts';
+import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
+import { TopologyCanvas } from './NetdmTopology';
+import { MapChrome } from './NetdmTopology/MapChrome';
+import { countActivityNodes, FLAG_APC, FLAG_UNPOWERED, parseView, View } from './NetdmTopology/model';
+import { NodePresenceCounts, SceneFilters, SceneOperator, SceneRoute } from './NetdmTopology/scene';
 
 // PixiJS resizes its canvas from a ResizeObserver; when the browser coalesces a layout pass it reports
 // "ResizeObserver loop completed with undelivered notifications" as a window error, and TGUI turns any
@@ -12,16 +22,6 @@ if (typeof window !== 'undefined') {
     }
   }, true);
 }
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-
-import { useBackend } from '../backend';
-import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
-import { Window } from '../layouts';
-import { TopologyCanvas } from './NetdmTopology';
-import { MapChrome } from './NetdmTopology/MapChrome';
-import { countActivityNodes, FLAG_APC, FLAG_UNPOWERED, parseView, View } from './NetdmTopology/model';
-import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
-import { NodePresenceCounts, SceneFilters, SceneOperator, SceneRoute } from './NetdmTopology/scene';
 
 type Service = { instance: string; type: string; node: string; stale: BooleanLike; canControlAlarm?: BooleanLike };
 
@@ -459,7 +459,7 @@ const MachineCommandPanel = (props: { command: MachineCommand }) => {
     <Section title="Команда атмосферной панели">
       <Box title={instance}>{enabled ? 'Поднять тревогу' : 'Снять тревогу панели'}</Box>
       <Box aria-live="polite" bold color={color}>{text}</Box>
-      {status === 'applied' && zoneAlarm != null && sourceActive != null && (
+      {status === 'applied' && zoneAlarm !== null && sourceActive !== null && (
         <Box color={zoneAlarm ? 'average' : 'label'}>
           {sourceActive ? 'Тревога панели активна' : 'Тревога панели снята'}
           {zoneAlarm && !sourceActive ? ' · в зоне остались другие тревоги' : ''}
@@ -885,7 +885,8 @@ const NetworkLifePanel = (props: {
           <Button icon="save" onClick={() => onPersona(name, signature, status, colour)}>
             Применить
           </Button>
-        </LabeledList.Item>        <LabeledList.Item label="Вызов агента">
+        </LabeledList.Item>
+        <LabeledList.Item label="Вызов агента">
           <Dropdown
             width="9rem"
             selected={summonLabel}
@@ -1017,6 +1018,8 @@ const HackPanel = (props: { hack: HackState | null; selected: string | null }) =
     </Section>
   );
 };
+// TODO(netdm-ui): split this stateful screen into feature panels and dedicated hooks.
+// eslint-disable-next-line complexity
 export const NetdmSpace = () => {
   const { act, data } = useBackend<Data>();
   const view = useMemo(
@@ -1296,7 +1299,8 @@ export const NetdmSpace = () => {
                       onImmerse={() => act('immerse')}
                       onSurface={() => act('surface')}
                       onSummon={goal => act('call_agent', { goal })} />
-                  </Stack.Item>                  <Stack.Item>
+                  </Stack.Item>
+                  <Stack.Item>
                     <HackPanel hack={data.hack ?? null} selected={selected} />
                   </Stack.Item>
                   {machineCommand && (

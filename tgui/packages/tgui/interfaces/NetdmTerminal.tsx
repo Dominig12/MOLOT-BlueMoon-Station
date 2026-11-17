@@ -3,8 +3,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, NoticeBox, Section, Stack, Table, TextArea } from '../components';
-import { SHELL_COMMANDS, tabComplete } from './netdmShell';
 import { Window } from '../layouts';
+import { SHELL_COMMANDS, tabComplete } from './netdmShell';
 
 type Field = { name: string; value: string };
 

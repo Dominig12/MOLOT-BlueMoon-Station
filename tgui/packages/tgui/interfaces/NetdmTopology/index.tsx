@@ -1,19 +1,10 @@
 import { BooleanLike } from 'common/react';
-
-// The scene resizes its canvas from a ResizeObserver; the browser's loop warning must not reach TGUI's crash handler.
-if (typeof window !== 'undefined') {
-  window.addEventListener('error', event => {
-    if (String(event.message || '').includes('ResizeObserver loop')) {
-      event.stopImmediatePropagation();
-      event.preventDefault();
-    }
-  }, true);
-}
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
 import { Box, Button, Dropdown, LabeledList, NoticeBox, Section, Stack, Table } from '../../components';
 import { Window } from '../../layouts';
+import { MapChrome } from './MapChrome';
 import {
   FLAG_ACCESS_POINT,
   FLAG_APC,
@@ -26,9 +17,18 @@ import {
   View,
   ViewNode,
 } from './model';
-import { MapChrome } from './MapChrome';
 import { createScene, NodeActivityCounts, NodePresenceCounts, SceneAgent, SceneCancelled, SceneFilters, SceneOperator, SceneRoute, TopologyScene } from './scene';
 
+
+// The scene resizes its canvas from a ResizeObserver; the browser's loop warning must not reach TGUI's crash handler.
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', event => {
+    if (String(event.message || '').includes('ResizeObserver loop')) {
+      event.stopImmediatePropagation();
+      event.preventDefault();
+    }
+  }, true);
+}
 type Level = { z: number; name: string };
 
 /** DM sends its booleans as 0/1: render them only through `!!`, a bare 0 shows up as text. */
