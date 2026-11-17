@@ -1196,6 +1196,9 @@ GLOBAL_LIST_INIT(air_alarm_modes, init_air_alarm_modes())
 
 
 /obj/machinery/airalarm/proc/post_alert(alert_level, cause, cause_gas)
+	// Publish the panel's authoritative state transition to network subscribers.
+	// Delivery is asynchronous; the legacy station alert is not used as a network fallback.
+	netdm_publish_alarm_state()
 	var/datum/radio_frequency/frequency = SSradio.return_frequency(alarm_frequency)
 
 	if(!frequency)
