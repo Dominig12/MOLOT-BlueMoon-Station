@@ -34,7 +34,7 @@ export const nearbyDestinations = (
       shells.set(service.node, service);
     }
   }
-  const targets = new Map<string, NearbyDestination>();
+  const targets = new Map<string, { destination: NearbyDestination; down: boolean }>();
   for (const link of view.links.values()) {
     if (link.a !== currentNode && link.b !== currentNode) {
       continue;
@@ -52,13 +52,18 @@ export const nearbyDestinations = (
       unavailable: link.down || isOffline(target.flags) || !!shell.stale,
     };
     const previous = targets.get(node);
-    // Prefer an operational wired connection if several links point to the same node.
-    if (!previous || (previous.unavailable && !destination.unavailable) ||
-        (previous.unavailable === destination.unavailable && previous.radio && !destination.radio)) {
-      targets.set(node, destination);
+    // A silent wire never overrides a known live radio connection, even if the
+    // provider itself is stale; prefer working links before comparing their medium.
+    if (!previous || (previous.down && !link.down) ||
+        (previous.down === link.down &&
+          previous.destination.unavailable && !destination.unavailable) ||
+        (previous.down === link.down &&
+          previous.destination.unavailable === destination.unavailable &&
+          previous.destination.radio && !destination.radio)) {
+      targets.set(node, { destination, down: link.down });
     }
   }
-  return [...targets.values()]
+  return [...targets.values()].map(value => value.destination)
     .sort((a, b) => Number(a.unavailable) - Number(b.unavailable) ||
       Number(a.radio) - Number(b.radio) || a.node.localeCompare(b.node, undefined, { numeric: true }))
     .slice(0, Math.max(0, Math.min(12, max)));
