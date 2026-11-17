@@ -12,14 +12,16 @@ const setup = () => {
   (global as any).Byond = { winset: () => {}, winget: () => Promise.resolve(null), topic };
   const store = createStore(combineReducers({ backend: backendReducer, debug: debugReducer }));
   setGlobalStore(store);
-  const push = (entries: object[]) => store.dispatch(backendUpdate({
+  const push = (entries: object[], extra: Record<string, unknown> = {}) => store.dispatch(backendUpdate({
     config: { interface: 'NetdmTerminal' },
-    data: { title: 'АПЦ', limit: 1024, scriptLimit: 4096, entries },
+    data: { title: 'АПЦ', limit: 1024, scriptLimit: 4096, entries, ...extra },
   }));
   push([]);
   const ui = render(<NetdmTerminal />);
   return {
-    push: (entries: object[]) => { push(entries); ui.rerender(<NetdmTerminal />); },
+    push: (entries: object[], extra: Record<string, unknown> = {}) => {
+      push(entries, extra); ui.rerender(<NetdmTerminal />);
+    },
     commands: () => topic.mock.calls.filter(([message]) => message.type === 'act/run')
       .map(([message]) => JSON.parse(message.payload).line),
   };
@@ -86,4 +88,21 @@ test('универсальные действия предлагают API и г
   fireEvent.click(screen.getByLabelText('Подготовить подписку'));
   expect(input.value).toBe('watch machine.test');
   expect(commands()).toEqual(['api machine.control']);
+});
+
+test('доставленные события отображаются без сетевого вызова или применения эффекта', () => {
+  const { commands, push } = setup();
+  push([], {
+    watches: ['oxygen'],
+    events: [{
+      delivery: '802', key: 'oxygen', instance: 'atmos.test', schema: 'atmos.sample',
+      payload: '{"pressureKPa":101.3,"quality":"current"}', truncated: false, at: 250,
+    }],
+  });
+  fireEvent.click(screen.getByText('События (1)'));
+  expect(screen.getByText('atmos.test · atmos.sample')).toBeTruthy();
+  expect(screen.getByText('{"pressureKPa":101.3,"quality":"current"}')).toBeTruthy();
+  expect(commands()).toEqual([]);
+  fireEvent.click(screen.getByText('oxygen'));
+  expect(commands()).toEqual(['unwatch oxygen']);
 });
