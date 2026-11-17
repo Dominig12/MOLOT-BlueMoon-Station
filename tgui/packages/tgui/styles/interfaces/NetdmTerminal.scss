@@ -128,10 +128,50 @@
   &__emptyTitle { font-size: 14px; color: #d7e9eb; font-weight: 600; }
   &__service { display: flex; align-items: center; gap: 9px; border-bottom: 1px solid #29414d; padding: 9px 13px; }
   &__service:last-child { border-bottom: none; }
+  &__serviceSelect {
+    appearance: none;
+    font: inherit;
+    width: 100%;
+    cursor: pointer;
+    text-align: left;
+    background: transparent;
+    color: inherit;
+    border-top: 0;
+    border-left: 3px solid transparent;
+    border-right: 0;
+    border-bottom: 1px solid #29414d;
+    padding-left: 10px;
+    transition: background 130ms ease, border-color 130ms ease;
+  }
+  &__serviceSelect:hover, &__serviceSelect:focus-visible {
+    background: #25404b;
+  }
+  &__serviceSelect:focus-visible {
+    outline: 2px solid #83c7c3;
+    outline-offset: -3px;
+  }
+  &__service--selected {
+    border-left-color: #83cfc4;
+    background: #263f48;
+  }
+  &__serviceOpen {
+    color: #8ebdbd;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  &__details {
+    padding: 12px 14px 13px;
+    background: linear-gradient(135deg, #213a43, #1a303b);
+    border-top: 1px solid #426a70;
+  }
+  &__detailsTitle { color: #eff9fa; font-size: 15px; font-weight: 650; margin-top: 5px; }
+  &__detailsActions { display: flex; gap: 5px; flex-wrap: wrap; margin: 10px 0 8px; }
+  &__detailFoot { color: #9ab7c0; font-size: 10px; line-height: 1.4; }
   &__serviceIcon { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 31px; height: 31px; border-radius: 7px; color: #9acbc5; background: #28434d; }
   &__serviceMain { flex: 1; min-width: 0; }
-  &__serviceTitle { color: #e4f0f2; font-size: 12px; font-weight: 600; }
-  &__serviceId { color: #9eafb9; font-size: 10px; font-family: monospace; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+  &__serviceTitle { display: block; color: #e4f0f2; font-size: 12px; font-weight: 600; }
+  &__serviceId { display: block; color: #9eafb9; font-size: 10px; font-family: monospace; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
   &__serviceMeta { font-size: 10px; color: #9baeb8; }
   &__serviceActions { display: flex; gap: 3px; flex-wrap: wrap; justify-content: flex-end; }
   &__more { padding: 9px 13px; }
