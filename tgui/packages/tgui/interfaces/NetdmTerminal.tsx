@@ -214,6 +214,12 @@ const Help = (props: { entry?: Entry; topic: string; hasDraft: boolean; onTopic:
   );
 };
 
+const terminalSize = (simpleView: boolean, editingScript: boolean) => {
+  if (simpleView) return { width: 820, height: 650 };
+  if (editingScript) return { width: 940, height: 720 };
+  return { width: 760, height: 560 };
+};
+
 export const NetdmTerminal = () => {
   const { act, data } = useBackend<Data>();
   const [line, setLine] = useState('');
@@ -334,10 +340,12 @@ export const NetdmTerminal = () => {
     setEventView(true);
   };
 
+  const size = terminalSize(simpleView, editingScript);
+
   return (
     <Window title={`Сетевой модуль: ${data.title}`}
-      width={simpleView ? 820 : editingScript ? 940 : 760}
-      height={simpleView ? 650 : editingScript ? 720 : 560}>
+      width={size.width}
+      height={size.height}>
       <Window.Content>
         <Stack vertical fill>
           <Stack.Item>
@@ -345,10 +353,10 @@ export const NetdmTerminal = () => {
               <Button icon="home" content="Обзор" selected={simpleView}
                 onClick={() => setSimpleView(true)} />
               <Button icon="terminal" content="Инструменты"
-                selected={!simpleView && !editingScript && helpTopic === null && !eventView}
+                selected={!simpleView && !editingScript}
                 onClick={showTools} />
               <Button icon="code" content="Редактор"
-                selected={!simpleView && editingScript && helpTopic === null}
+                selected={!simpleView && editingScript}
                 onClick={showEditor} />
               <Button icon="project-diagram" content="Карта сети"
                 onClick={() => act('open_space')} />
