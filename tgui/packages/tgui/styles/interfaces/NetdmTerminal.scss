@@ -167,7 +167,71 @@
   }
   &__detailsTitle { color: #eff9fa; font-size: 15px; font-weight: 650; margin-top: 5px; }
   &__detailsActions { display: flex; gap: 5px; flex-wrap: wrap; margin: 10px 0 8px; }
-  &__detailFoot { color: #9ab7c0; font-size: 10px; line-height: 1.4; }
+  &__detailFoot { color: #9ab7c0; font-size: 10px; line-height: 1.4; padding-top: 8px; }
+  &__measurement {
+    margin: 10px 0 8px;
+    border-radius: 7px;
+    background: #1a303a;
+    border: 1px solid #456a73;
+    overflow: hidden;
+  }
+  &__measurementHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 9px;
+    padding: 9px 11px 4px;
+  }
+  &__measurementState {
+    padding: 3px 8px;
+    border-radius: 11px;
+    border: 1px solid #4d877b;
+    color: #b5e5d8;
+    background: #25483f;
+    font-size: 10px;
+  }
+  &__measurementState--alert {
+    background: #50332b;
+    border-color: #956449;
+    color: #ffd2a6;
+  }
+  &__measurementValues {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+    padding: 10px 11px 11px;
+  }
+  &__measurementValues > div + div { border-left: 1px solid #395966; padding-left: 11px; }
+  &__measurementNumber { font-size: 22px; font-weight: 650; color: #e0f4f3; }
+  &__measurementUnit { font-size: 11px; color: #acc6ca; }
+  &__measurementLabel { font-size: 10px; color: #9ab2bd; margin-top: 3px; }
+  &__measurementNote {
+    padding: 7px 11px 9px;
+    border-top: 1px solid #304d59;
+    color: #99b5bd;
+    font-size: 10px;
+    line-height: 1.45;
+  }
+  &__requestState {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 10px 0;
+    padding: 9px 10px;
+    border-radius: 6px;
+    background: #233b44;
+    border: 1px solid #3b606c;
+    color: #b5cdd2;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  &__requestState > .Icon { color: #8cc9c8; margin-top: 1px; }
+  &__technical {
+    margin: 8px 0;
+    padding: 9px 10px;
+    border-top: 1px solid #40636c;
+    background: #1a2e39;
+  }
   &__serviceIcon { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 31px; height: 31px; border-radius: 7px; color: #9acbc5; background: #28434d; }
   &__serviceMain { flex: 1; min-width: 0; }
   &__serviceTitle { display: block; color: #e4f0f2; font-size: 12px; font-weight: 600; }
