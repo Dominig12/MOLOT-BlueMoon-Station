@@ -1166,7 +1166,7 @@ export const NetdmSpace = () => {
     [view, data.hostNode, data.services],
   );
   const targetNode = foundTarget && view.nodes.get(foundTarget.node);
-  const canMove = active && !!foundTarget && !!targetNode && !foundTarget.stale && !(targetNode.flags & FLAG_UNPOWERED);
+  const canMove = active && !!foundTarget && !!targetNode && !foundTarget.stale && !isOffline(targetNode.flags);
   const reason = presence?.reason ? REASON_TEXT[presence.reason] ?? presence.reason : null;
   // Camera movements never imply a presence move. Only server-authorized move can do that.
   const focusHome = useCallback(() => {
@@ -1181,10 +1181,11 @@ export const NetdmSpace = () => {
         return;
       }
       const target = event.target as HTMLElement | null;
-      if (target?.closest('input, textarea, select, [contenteditable="true"]')) {
+      if (target?.closest('input, textarea, select, button, [role="button"], [contenteditable="true"]')) {
         return;
       }
-      // Do not steal keyboard focus from chat or from text editor controls.
+      // The chat and shell are independent input surfaces; shortcuts work only
+      // when the player is navigating the main network canvas.
       if (showChat) {
         return;
       }
@@ -1193,11 +1194,22 @@ export const NetdmSpace = () => {
         focusHome();
       } else if (event.key === 'Escape') {
         setSelected(null);
+      } else if (event.key.toLowerCase() === 'g' && active && !moving && !routePending &&
+                 selected && selectedTravel.state === 'ready' && selectedTravel.instance) {
+        event.preventDefault();
+        act('preview_move', { to: selectedTravel.instance });
+      } else if (event.key === 'Enter' && canMove && !moving &&
+                 isSelectedPreview(selectedTravel, preview) && preview?.target) {
+        // Enter only confirms a route returned by Host for this exact selected
+        // destination; the server will still recheck everything during move.
+        event.preventDefault();
+        act('move', { to: preview.target });
       }
     };
     window.addEventListener('keydown', keyboard);
     return () => window.removeEventListener('keydown', keyboard);
-  }, [inside, showChat, focusHome]);
+  }, [inside, showChat, focusHome, active, moving, routePending, selected,
+    selectedTravel, canMove, preview, act]);
   const send = () => {
     const trimmed = line.trim();
     if (active && trimmed.length > 0 && trimmed.length <= 1024) {
