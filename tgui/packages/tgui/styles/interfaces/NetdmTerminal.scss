@@ -1,0 +1,156 @@
+// NTnet's welcoming surface. Pure presentation: shell and service runtime remain authoritative.
+.NetdmHome {
+  height: 100%;
+  overflow: auto;
+  padding: 12px 14px 16px;
+  color: #dce8ed;
+  background: linear-gradient(145deg, #101c26 0%, #162631 48%, #111d28 100%);
+  scrollbar-color: #415b69 transparent;
+
+  &__hero {
+    min-height: 102px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 22px;
+    margin-bottom: 15px;
+    border-radius: 9px;
+    border: 1px solid #385363;
+    background:
+      radial-gradient(ellipse at 86% 0%, rgba(79, 165, 180, 0.14), transparent 55%),
+      linear-gradient(110deg, #213846, #192b38);
+  }
+
+  &__heroMain { min-width: 0; }
+  &__eyebrow, &__caption, &__sectionLabel {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: #84adb9;
+  }
+  &__title {
+    margin-top: 5px;
+    font-size: 26px;
+    line-height: 1.2;
+    font-weight: 700;
+    color: #eff8fa;
+  }
+  &__subtitle {
+    margin-top: 5px;
+    line-height: 1.4;
+    color: #b2c8d1;
+    font-size: 12px;
+  }
+  &__status {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border-radius: 14px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid #59606a;
+    color: #b6c2c8;
+    padding: 7px 10px;
+    background: #27333d;
+  }
+  &__status--ready {
+    border-color: #407d75;
+    color: #b7e2d7;
+    background: #203e3d;
+  }
+  &__statusDot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #8999a1;
+  }
+  &__status--ready &__statusDot { background: #73c5a8; }
+  &__caption { padding: 0 2px 9px; }
+  &__actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 15px;
+  }
+  &__action {
+    appearance: none;
+    text-align: left;
+    position: relative;
+    font: inherit;
+    cursor: pointer;
+    min-width: 0;
+    min-height: 127px;
+    border-radius: 8px;
+    border: 1px solid #344f5c;
+    background: linear-gradient(145deg, #253b49, #1b2e3a);
+    color: #e5f0f3;
+    padding: 13px 14px 25px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+  }
+  &__action:hover, &__action:focus-visible {
+    border-color: #7cb9bb;
+    background: linear-gradient(145deg, #2b4854, #233d49);
+  }
+  &__action:focus-visible { outline: 2px solid #a0d9d4; outline-offset: 2px; }
+  &__action:active { transform: translateY(1px); }
+  &__actionIcon {
+    color: #9dd8d3;
+    font-size: 20px;
+    margin-bottom: 7px;
+    height: 21px;
+  }
+  &__actionTitle { font-size: 14px; font-weight: 650; line-height: 1.25; }
+  &__actionDescription { font-size: 11px; line-height: 1.45; color: #afc4cd; }
+  &__actionArrow { position: absolute; right: 13px; bottom: 10px; font-size: 11px; color: #8ec6be; }
+  &__columns { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(195px, 1fr); gap: 12px; }
+  &__panel, &__activity, &__deep {
+    border: 1px solid #304956;
+    border-radius: 8px;
+    background: #1b2c38;
+  }
+  &__panel { min-width: 0; overflow: hidden; }
+  &__panelHeading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 13px 14px 11px;
+    border-bottom: 1px solid #304956;
+  }
+  &__panelTitle { font-size: 15px; font-weight: 650; margin-top: 4px; }
+  &__count { font-size: 12px; color: #9ed3d1; border: 1px solid #3e7278; border-radius: 12px; padding: 3px 8px; }
+  &__empty { min-height: 175px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #a1bac5; padding: 16px 24px; gap: 8px; font-size: 12px; line-height: 1.45; }
+  &__empty > .Icon { color: #6895a3; }
+  &__emptyTitle { font-size: 14px; color: #d7e9eb; font-weight: 600; }
+  &__service { display: flex; align-items: center; gap: 9px; border-bottom: 1px solid #29414d; padding: 9px 13px; }
+  &__service:last-child { border-bottom: none; }
+  &__serviceIcon { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 31px; height: 31px; border-radius: 7px; color: #9acbc5; background: #28434d; }
+  &__serviceMain { flex: 1; min-width: 0; }
+  &__serviceTitle { color: #e4f0f2; font-size: 12px; font-weight: 600; }
+  &__serviceId { color: #9eafb9; font-size: 10px; font-family: monospace; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+  &__serviceMeta { font-size: 10px; color: #9baeb8; }
+  &__serviceActions { display: flex; gap: 3px; flex-wrap: wrap; justify-content: flex-end; }
+  &__more { padding: 9px 13px; }
+  &__sidebar { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+  &__activity, &__deep { padding: 13px 14px; }
+  &__watchCount { font-size: 29px; font-weight: 600; line-height: 1; color: #d4eee8; padding-top: 7px; }
+  &__activityText { font-size: 12px; color: #dbe7ea; margin: 7px 0; line-height: 1.45; }
+  &__activityCommand { color: #9db7c3; font-size: 10px; font-family: monospace; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; margin-bottom: 8px; }
+  &__minor { color: #a0b7c2; line-height: 1.45; font-size: 11px; margin: 6px 0 10px; }
+  &__deep { background: #213a42; border-color: #456c73; }
+  &__deepTitle { font-size: 13px; font-weight: 650; color: #e6f3f4; }
+}
+
+@media (max-width: 680px) {
+  .NetdmHome {
+    &__hero { align-items: flex-start; padding: 14px; flex-direction: column; }
+    &__actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    &__columns { grid-template-columns: 1fr; }
+    &__sidebar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    &__deep { grid-column: 1 / -1; }
+  }
+}
