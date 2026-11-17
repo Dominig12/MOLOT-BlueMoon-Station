@@ -84,16 +84,21 @@ const safeToken = /^[a-zA-Z0-9._:@,-]+$/;
  * Advanced users can send complex arguments from the real shell after reviewing the wire schema. */
 export const argumentError = (field: ServiceField, raw: string): string | null => {
   if (!raw) return field.required ? 'Обязательное поле' : null;
-  if (field.type === 'boolean')
+  if (field.type === 'boolean') {
     return ['true', 'false'].includes(raw) ? null : 'Выберите да или нет';
-  if (field.type === 'enum')
+  }
+  if (field.type === 'enum') {
     return field.choices.includes(raw) ? null : 'Выберите доступное значение';
+  }
   if (field.type === 'integer' || field.type === 'number') {
     if (!/^-?\d+(?:\.\d+)?$/.test(raw) ||
-        (field.type === 'integer' && !/^-?\d+$/.test(raw))) return 'Введите число';
+        (field.type === 'integer' && !/^-?\d+$/.test(raw))) {
+      return 'Введите число';
+    }
     const number = Number(raw);
-    if (!Number.isFinite(number) || !Number.isSafeInteger(number) && field.type === 'integer')
+    if (!Number.isFinite(number) || !Number.isSafeInteger(number) && field.type === 'integer') {
       return 'Число вне допустимого диапазона';
+    }
     if (field.min !== null && number < field.min || field.max !== null && number > field.max)
       return 'Число вне разрешённых границ';
     return null;
