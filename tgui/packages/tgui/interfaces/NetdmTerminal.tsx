@@ -220,6 +220,18 @@ const terminalSize = (simpleView: boolean, editingScript: boolean) => {
   return { width: 760, height: 560 };
 };
 
+const editorCheckState = (entries: Entry[], checkTag: number | null, checkedSource: string, script: string) => {
+  if (checkTag === null) return undefined;
+  const entry = [...entries].reverse().find(item => item.line === `check ${checkTag}`);
+  return {
+    status: entry?.status ?? null,
+    error: entry?.error,
+    position: entry?.position,
+    pending: !entry || !!entry.pending,
+    stale: checkedSource !== script,
+  };
+};
+
 export const NetdmTerminal = () => {
   const { act, data } = useBackend<Data>();
   const [line, setLine] = useState('');
@@ -250,14 +262,7 @@ export const NetdmTerminal = () => {
   }, [loadedId, loadedSource]);
   const canRun = !!script.trim() && script.length <= data.scriptLimit;
   const canRunOnce = canRun && !/^(observe|on|every)\b/.test(script.trimStart());
-  const checkEntry = checkTag === null ? null : [...data.entries].reverse().find(entry => entry.line === `check ${checkTag}`);
-  const checkState = checkTag === null ? undefined : {
-    status: checkEntry?.status ?? null,
-    error: checkEntry?.error,
-    position: checkEntry?.position,
-    pending: !checkEntry || !!checkEntry.pending,
-    stale: checkedSource !== script,
-  };
+  const checkState = editorCheckState(data.entries, checkTag, checkedSource, script);
   const helpEntry = helpTopic === null ? undefined : [...data.entries].reverse().find(entry => entry.line === helpLine(helpTopic));
   // Dynamic completion pools: instances from the last `services`, nodes from the last `nodes`/`trace`.
   const completion = useMemo(() => {
