@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, NoticeBox, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
+import { NetdmHome } from './NetdmHome';
 import { NetdmScriptIDE } from './NetdmScriptIDE';
 import { SHELL_COMMANDS, tabComplete } from './netdmShell';
 
@@ -35,6 +36,8 @@ type Data = {
   title: string;
   events?: NetworkEvent[];
   watches?: string[];
+  /** Host and endpoint both acknowledged the current network session. */
+  connectionReady?: BooleanLike;
   entries: Entry[];
   limit: number;
   scriptLimit: number;
@@ -220,6 +223,8 @@ export const NetdmTerminal = () => {
   const [script, setScript] = useState('');
   const [programName, setProgramName] = useState('');
   const [keepProgram, setKeepProgram] = useState(false);
+  // The device starts as a simple control panel; scripts and CLI are opt-in.
+  const [simpleView, setSimpleView] = useState(true);
   const [editingScript, setEditingScript] = useState(false);
   const [checkedSource, setCheckedSource] = useState('');
   const [checkTag, setCheckTag] = useState<number | null>(null);
@@ -310,39 +315,92 @@ export const NetdmTerminal = () => {
       setLine('');
     }
   };
+  const showTools = () => {
+    setSimpleView(false);
+    setEditingScript(false);
+    setHelpTopic(null);
+    setEventView(false);
+  };
+  const showEditor = () => {
+    setSimpleView(false);
+    setEditingScript(true);
+    setHelpTopic(null);
+    setEventView(false);
+  };
+  const showEvents = () => {
+    setSimpleView(false);
+    setEditingScript(false);
+    setHelpTopic(null);
+    setEventView(true);
+  };
+
   return (
-    <Window title={`Сетевой модуль: ${data.title}`} width={editingScript ? 940 : 760} height={editingScript ? 720 : 560}>
+    <Window title={`Сетевой модуль: ${data.title}`}
+      width={simpleView ? 820 : editingScript ? 940 : 760}
+      height={simpleView ? 650 : editingScript ? 720 : 560}>
       <Window.Content>
         <Stack vertical fill>
           <Stack.Item>
             <Section fitted>
-              <Button icon="code" content="Редактор" selected={editingScript && helpTopic === null} onClick={() => {
-                setEditingScript(helpTopic !== null || !editingScript);
-                setHelpTopic(null);
-              }} />
-              <Button icon="question-circle" content="Справка" selected={helpTopic !== null} onClick={() => {
-                if (helpTopic === null) {
-                  openHelp('');
-                } else {
-                  setHelpTopic(null);
-                }
-              }} />
-              <Button icon="project-diagram" content="Сеть" onClick={() => act('open_space')} />
-              <Button icon="search" content="Сервисы" onClick={() => { setHelpTopic(null); run('services'); }} />
-              <Button icon="plug" content="API" onClick={() => { setHelpTopic(null); run('api'); }} />
-              <Button icon="list" content="Команды" onClick={() => { setHelpTopic(null); run('commands'); }} />
-              <Button icon="tachometer-alt" content="Атмосфера" onClick={() => { setHelpTopic(null); run('services -type atmos.alarm'); }} />
-              <Button icon="tasks" content="Доставка" onClick={() => { setHelpTopic(null); run('jobs'); }} />
-              <Button icon="bell" content={`События (${data.events?.length ?? 0})`}
-                selected={eventView && helpTopic === null} onClick={() => {
-                  setHelpTopic(null);
-                  setEventView(!eventView);
-                }} />
-              {!!data.programsEnabled && <Button icon="list" content="Программы" onClick={() => { setHelpTopic(null); run('programs'); }} />}
+              <Button icon="home" content="Обзор" selected={simpleView}
+                onClick={() => setSimpleView(true)} />
+              <Button icon="terminal" content="Инструменты"
+                selected={!simpleView && !editingScript && helpTopic === null && !eventView}
+                onClick={showTools} />
+              <Button icon="code" content="Редактор"
+                selected={!simpleView && editingScript && helpTopic === null}
+                onClick={showEditor} />
+              <Button icon="project-diagram" content="Карта сети"
+                onClick={() => act('open_space')} />
             </Section>
           </Stack.Item>
+          {!simpleView && (
+            <Stack.Item>
+              <Section fitted>
+                <Button icon="question-circle" content="Справка" selected={helpTopic !== null}
+                  onClick={() => {
+                    if (helpTopic === null) {
+                      openHelp('');
+                    } else {
+                      setHelpTopic(null);
+                    }
+                  }} />
+                <Button icon="search" content="Сервисы"
+                  onClick={() => { setHelpTopic(null); run('services'); }} />
+                <Button icon="plug" content="API"
+                  onClick={() => { setHelpTopic(null); run('api'); }} />
+                <Button icon="list" content="Команды"
+                  onClick={() => { setHelpTopic(null); run('commands'); }} />
+                <Button icon="tachometer-alt" content="Атмосфера"
+                  onClick={() => { setHelpTopic(null); run('services -type atmos.alarm'); }} />
+                <Button icon="tasks" content="Доставка"
+                  onClick={() => { setHelpTopic(null); run('jobs'); }} />
+                <Button icon="bell" content={`События (${data.events?.length ?? 0})`}
+                  selected={eventView && helpTopic === null} onClick={() => {
+                    setHelpTopic(null);
+                    setEventView(!eventView);
+                  }} />
+                {!!data.programsEnabled && <Button icon="list" content="Программы"
+                  onClick={() => { setHelpTopic(null); run('programs'); }} />}
+              </Section>
+            </Stack.Item>
+          )}
           <Stack.Item grow>
-            {helpTopic !== null ? (
+            {simpleView ? (
+              <NetdmHome
+                title={data.title}
+                connected={!!data.connectionReady}
+                entries={data.entries}
+                events={data.events?.length ?? 0}
+                watches={data.watches?.length ?? 0}
+                onDiscover={() => run('services')}
+                onAlarms={() => run('services -type atmos.alarm')}
+                onMap={() => act('open_space')}
+                onEvents={showEvents}
+                onAdvanced={showTools}
+                onCommand={run}
+              />
+            ) : helpTopic !== null ? (
               <Help
                 entry={helpEntry}
                 topic={helpTopic}
@@ -405,7 +463,7 @@ export const NetdmTerminal = () => {
               </Section>
             )}
           </Stack.Item>
-          {helpTopic === null && (editingScript ? (
+          {!simpleView && helpTopic === null && (editingScript ? (
             <Stack.Item>
               <Section
                 title="Скрипт"
