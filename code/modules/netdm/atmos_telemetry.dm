@@ -191,6 +191,7 @@
 			if(islist(decoded))
 				gases = decoded
 		catch(var/exception/error)
+			log_world("netDM atmos: invalid gas composition payload: [error]")
 			return "invalid_gases"
 	// The UI uses the original sample time for stale-state display, not delivery time.
 	console.sensor_information[id_tag] = list(
