@@ -1030,6 +1030,7 @@ export const NetdmSpace = () => {
   const [failure, setFailure] = useState<string | null>(null);
   const [radius, setRadius] = useState(3);
   const [fitRequest, setFitRequest] = useState(0);
+  const [focusRequest, setFocusRequest] = useState(0);
   const [showMapLegend, setShowMapLegend] = useState(false);
   const [line, setLine] = useState('');
   const [advanced, setAdvanced] = useState(false);
@@ -1105,6 +1106,36 @@ export const NetdmSpace = () => {
   const targetNode = foundTarget && view.nodes.get(foundTarget.node);
   const canMove = active && !!foundTarget && !!targetNode && !foundTarget.stale && !(targetNode.flags & FLAG_UNPOWERED);
   const reason = presence?.reason ? REASON_TEXT[presence.reason] ?? presence.reason : null;
+  // Camera movements never imply a presence move. Only server-authorized move can do that.
+  const focusHome = useCallback(() => {
+    if (data.hostNode && view.nodes.has(data.hostNode)) {
+      setSelected(data.hostNode);
+      setFocusRequest(request => request + 1);
+    }
+  }, [data.hostNode, view]);
+  useEffect(() => {
+    const keyboard = (event: KeyboardEvent) => {
+      if (!inside || event.altKey || event.ctrlKey || event.metaKey || event.repeat) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) {
+        return;
+      }
+      // Do not steal keyboard focus from chat or from text editor controls.
+      if (showChat) {
+        return;
+      }
+      if (event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        focusHome();
+      } else if (event.key === 'Escape') {
+        setSelected(null);
+      }
+    };
+    window.addEventListener('keydown', keyboard);
+    return () => window.removeEventListener('keydown', keyboard);
+  }, [inside, showChat, focusHome]);
   const send = () => {
     const trimmed = line.trim();
     if (active && trimmed.length > 0 && trimmed.length <= 1024) {
@@ -1119,7 +1150,7 @@ export const NetdmSpace = () => {
   };
 
   return (
-    <Window width={860} height={600} title={`Сеть: ${data.title}`}>
+    <Window width={inside ? 1120 : 860} height={inside ? 720 : 600} title={`Сеть: ${data.title}`}>
       <Window.Content>
         <Stack fill vertical>
           <Stack.Item>
@@ -1178,9 +1209,16 @@ export const NetdmSpace = () => {
                       }} />
                   </Stack.Item>
                 )}
+                {inside && !!data.hostNode && view.nodes.has(data.hostNode) && (
+                  <Stack.Item>
+                    <Button icon="crosshairs" onClick={focusHome} tooltip="Показать своё местоположение (F)">
+                      Я здесь · F
+                    </Button>
+                  </Stack.Item>
+                )}
                 {!failure && view.nodes.size > 0 && (
                   <Stack.Item>
-                    <Button icon="expand" onClick={() => setFitRequest(current => current + 1)}>Вписать карту</Button>
+                    <Button icon="expand" onClick={() => setFitRequest(current => current + 1)}>Вся карта</Button>
                   </Stack.Item>
                 )}
               </Stack>
@@ -1217,6 +1255,8 @@ export const NetdmSpace = () => {
                     route={route}
                     filters={FILTERS}
                     fitRequest={fitRequest}
+                    focusRequest={focusRequest}
+                    focusTarget={data.hostNode}
                     onSelect={setSelected}
                     onFailure={setFailure}
                     onReport={() => undefined} />
