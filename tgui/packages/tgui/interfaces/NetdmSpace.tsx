@@ -267,7 +267,7 @@ const CHAT_STATUS: Record<string, string> = {
 };
 
 /** What the operator knows of one node: its kind, freshness and the services seen there. */
-const NodePanel = (props: { view: View; id: string | null; services: Service[]; presenceHost: string | null;
+const NodePanel = (props: { view: View; id: string | null; services: Service[];
   otherPresences: number; travel: NodeTravelChoice;
   active: boolean; alarmPending: boolean; machinePending: boolean; routePending: boolean; watchedAlarm: string | null;
   onPreview: (instance: string) => void; onTrace: (id: string) => void; onWatchAlarm: (instance: string) => void;
@@ -1390,7 +1390,6 @@ export const NetdmSpace = () => {
                       view={view}
                       id={shown}
                       services={data.services}
-                      presenceHost={inside ? presence!.host ?? null : null}
                       travel={selectedTravel}
                       otherPresences={shown ? otherPresences?.[shown] ?? 0 : 0}
                       active={active}
