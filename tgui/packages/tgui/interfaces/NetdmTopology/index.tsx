@@ -26,6 +26,7 @@ import {
   View,
   ViewNode,
 } from './model';
+import { MapChrome } from './MapChrome';
 import { createScene, NodeActivityCounts, NodePresenceCounts, SceneAgent, SceneCancelled, SceneFilters, SceneOperator, SceneRoute, TopologyScene } from './scene';
 
 type Level = { z: number; name: string };
@@ -303,6 +304,7 @@ export const NetdmTopology = () => {
   const [filters, setFilters] = useState<SceneFilters>({ radio: true, devices: true });
   const [failure, setFailure] = useState<string | null>(null);
   const [fitRequest, setFitRequest] = useState(0);
+  const [showLegend, setShowLegend] = useState(false);
   const levels = data.levels ?? [];
   const levelKey = String(data.z);
 
@@ -364,7 +366,8 @@ export const NetdmTopology = () => {
                     onSelect={setSelected}
                     onRetry={() => setFailure(null)} />
                 ) : (
-                  <TopologyCanvas
+                  <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+                    <TopologyCanvas
                     view={view}
                     levelKey={levelKey}
                     selected={selected}
@@ -372,7 +375,16 @@ export const NetdmTopology = () => {
                     fitRequest={fitRequest}
                     onSelect={setSelected}
                     onFailure={setFailure}
-                    onReport={rendererReport => act('renderer', rendererReport)} />
+                      onReport={rendererReport => act('renderer', rendererReport)} />
+                    <MapChrome
+                      level={data.z}
+                      nodeCount={view.nodes.size}
+                      linkCount={view.links.size}
+                      selected={selected ? view.nodes.get(selected) : undefined}
+                      view={view}
+                      showLegend={showLegend}
+                      onToggleLegend={() => setShowLegend(value => !value)} />
+                  </div>
                 )}
               </Stack.Item>
               <Stack.Item basis="260px">
