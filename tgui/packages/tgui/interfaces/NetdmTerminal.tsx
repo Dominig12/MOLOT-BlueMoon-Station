@@ -70,7 +70,7 @@ const SCRIPT_EXAMPLES = {
   'Поиск серверов': 'services -type research.server | sort hops | first 3 | select instance hops',
   'Замер воздуха': '$alarms = services -type atmos.alarm | sort hops | first 1\nif $alarms\n  $alarms | invoke read reason=inspect\nend',
   'Таймер программы': 'every 10\n$state = self | select node state',
-  'Реакция на событие': 'on events -key oxygen | where pressureKPa -gt 130\nservices -type machine.control | first 1 | invoke set_power on=false\nwait\n$result | select instance outcome',
+  'Реакция на событие': 'observe atmos.o2_sensor -key oxygen -projection panel.v1 -mode queue -pending 4\non events -key oxygen | where pressureKPa -gt 130\nservices -type machine.control | first 1 | invoke set_power on=false\nwait\n$result | select instance outcome',
 };
 
 const HISTORY_LIMIT = 32;
