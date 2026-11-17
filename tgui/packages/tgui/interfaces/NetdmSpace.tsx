@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
+import { nearbyDestinations, NearbyDestination } from './netdmPresenceNavigation';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
 import { TopologyCanvas } from './NetdmTopology';
 import { MapChrome } from './NetdmTopology/MapChrome';
@@ -430,6 +431,49 @@ const RoutePanel = (props: { preview: RoutePreview | null; presence: Presence | 
   }
   return null;
 };
+
+/** A fast hop selector for players who live inside the network.
+ * These are known links only: the server must still approve preview_move and move.
+ */
+const NearbyMovementPanel = (props: {
+  destinations: NearbyDestination[];
+  active: boolean;
+  moving: boolean;
+  pending: boolean;
+  onPreview: (destination: NearbyDestination) => void;
+}) => (
+  <Section title="Известные переходы рядом">
+    {props.destinations.length === 0 ? (
+      <Box color="label">
+        Рядом не обнаружены точки перехода. Просканируйте сеть или выберите узел на карте.
+      </Box>
+    ) : (
+      <>
+        <Box color="label" mb={0.5}>
+          Выберите точку, чтобы проверить маршрут. Переход не начинается автоматически.
+        </Box>
+        <Stack wrap>
+          {props.destinations.map(destination => (
+            <Stack.Item key={destination.node}>
+              <Button
+                icon={destination.radio ? 'wifi' : 'network-wired'}
+                disabled={!props.active || props.moving || props.pending || destination.unavailable}
+                tooltip={destination.unavailable
+                  ? 'Известная связь или точка перехода сейчас недоступна'
+                  : 'Запросить маршрут к этому узлу'}
+                onClick={() => props.onPreview(destination)}>
+                Узел {destination.node}{destination.radio ? ' · радио' : ''}
+              </Button>
+            </Stack.Item>
+          ))}
+        </Stack>
+        {props.destinations.some(destination => destination.unavailable) && (
+          <Box color="label" mt={0.5}>Недоступные точки показаны, но переход к ним заблокирован.</Box>
+        )}
+      </>
+    )}
+  </Section>
+);
 
 const AlarmWatchPanel = (props: { watch: AlarmWatch; onSelect: () => void; onStop: () => void }) => {
   const { watch, onSelect, onStop } = props;
@@ -1103,6 +1147,10 @@ export const NetdmSpace = () => {
     }
     return null;
   }, [moving, presence?.route, presence?.radioLegs, presence?.breakFrom, presence?.breakTo, presence?.breakKind, preview]);
+  const nearby = useMemo(
+    () => nearbyDestinations(view, data.hostNode, data.services),
+    [view, data.hostNode, data.services],
+  );
   const targetNode = foundTarget && view.nodes.get(foundTarget.node);
   const canMove = active && !!foundTarget && !!targetNode && !foundTarget.stale && !(targetNode.flags & FLAG_UNPOWERED);
   const reason = presence?.reason ? REASON_TEXT[presence.reason] ?? presence.reason : null;
@@ -1296,6 +1344,19 @@ export const NetdmSpace = () => {
                         onRetry={target => act('preview_move', { to: target })}
                         onClear={() => act('clear_route_preview')}
                         onAbort={() => act('abort_move')} />
+                    </Stack.Item>
+                  )}
+                  {inside && (
+                    <Stack.Item>
+                      <NearbyMovementPanel
+                        destinations={nearby}
+                        active={active}
+                        moving={moving}
+                        pending={routePending}
+                        onPreview={destination => {
+                          setSelected(destination.node);
+                          act('preview_move', { to: destination.instance });
+                        }} />
                     </Stack.Item>
                   )}
                   <Stack.Item>
