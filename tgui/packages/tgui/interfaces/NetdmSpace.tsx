@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
-import { isSelectedPreview, nodeTravelChoice, NodeTravelChoice } from './netdmNodeTravel';
+import { isSelectedPreview, NodeTravelChoice, nodeTravelChoice } from './netdmNodeTravel';
 import { NearbyDestination, nearbyDestinations } from './netdmPresenceNavigation';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
 import { TopologyCanvas } from './NetdmTopology';
@@ -398,8 +398,9 @@ const RoutePanel = (props: { preview: RoutePreview | null; presence: Presence | 
         title="Предпросмотр маршрута"
         buttons={(
           <>
-            <Button icon="sign-in-alt" disabled={!canMove} onClick={() => onMove(preview.target)}>
-              Перейти
+            <Button icon="sign-in-alt" disabled={!canMove} onClick={() => onMove(preview.target)}
+              tooltip="Подтвердить рассчитанный маршрут (Enter)">
+              Перейти · Enter
             </Button>
             {close}
           </>
@@ -1372,19 +1373,6 @@ export const NetdmSpace = () => {
                         onAbort={() => act('abort_move')} />
                     </Stack.Item>
                   )}
-                  {inside && (
-                    <Stack.Item>
-                      <NearbyMovementPanel
-                        destinations={nearby}
-                        active={active}
-                        moving={moving}
-                        pending={routePending}
-                        onPreview={destination => {
-                          setSelected(destination.node);
-                          act('preview_move', { to: destination.instance });
-                        }} />
-                    </Stack.Item>
-                  )}
                   <Stack.Item>
                     <NodePanel
                       view={view}
@@ -1403,6 +1391,19 @@ export const NetdmSpace = () => {
                       onSetAlarm={(instance, enabled) => act('machine_alert', { instance, enabled: enabled ? 1 : 0 })}
                       onTrace={trace} />
                   </Stack.Item>
+                  {inside && (
+                    <Stack.Item>
+                      <NearbyMovementPanel
+                        destinations={nearby}
+                        active={active}
+                        moving={moving}
+                        pending={routePending}
+                        onPreview={destination => {
+                          setSelected(destination.node);
+                          act('preview_move', { to: destination.instance });
+                        }} />
+                    </Stack.Item>
+                  )}
                   {!!presence?.threat && (
                     <Stack.Item>
                       <NoticeBox danger>
