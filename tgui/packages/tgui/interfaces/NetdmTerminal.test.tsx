@@ -300,3 +300,75 @@ test('repeat discovery keeps older results visibly marked until the new network 
   fireEvent.click(screen.getByText('Повторить'));
   expect(commands()).toEqual(['services -type atmos.alarm']);
 });
+
+
+test('generic service commands are loaded only on demand and never auto-execute', () => {
+  const { push, commands } = setup('home');
+  const listing = {
+    id: 1, line: 'services', status: 'ok', pending: false, error: null,
+    records: [fields({ instance: 'research.server.lab', type: 'research.server', hops: '3' })],
+  };
+  push([listing]);
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство research.server.lab' }));
+  expect(commands()).toEqual([]);
+  expect(screen.queryByText('Получить состояние')).toBeNull();
+  fireEvent.click(screen.getByText('Доступные действия'));
+  expect(commands()).toEqual(['api research.server']);
+  push([listing, {
+    id: 2, line: 'api research.server', status: 'ok', pending: false, error: null,
+    records: [fields({
+      type: 'research.server', command: 'status',
+      request: 'research.status_request', result: 'research.status',
+    })],
+  }]);
+  fireEvent.click(screen.getByText('Получить состояние'));
+  expect(commands()).toEqual(['api research.server', 'api research.server status']);
+  push([listing, {
+    id: 2, line: 'api research.server', status: 'ok', pending: false, error: null,
+    records: [fields({
+      type: 'research.server', command: 'status',
+      request: 'research.status_request', result: 'research.status',
+    })],
+  }, {
+    id: 3, line: 'api research.server status', status: 'ok', pending: false,
+    error: null, records: [fields({
+      how: 'request', field: 'reason', type: 'enum',
+      required: 'no', spec: '=open|refresh',
+    })],
+  }]);
+  expect(commands()).toEqual(['api research.server', 'api research.server status']);
+  fireEvent.click(screen.getByText('Отправить запрос'));
+  expect(commands()).toEqual([
+    'api research.server', 'api research.server status', 'invoke research.server.lab status',
+  ]);
+});
+
+test('machine power action requires typed input and explicit confirmation', () => {
+  const { push, commands } = setup('home');
+  const listing = {
+    id: 1, line: 'services', status: 'ok', pending: false, error: null,
+    records: [fields({ instance: 'machine.test', type: 'machine.control', hops: '1' })],
+  };
+  const catalogue = {
+    id: 2, line: 'api machine.control', status: 'ok', pending: false, error: null,
+    records: [fields({ type: 'machine.control', command: 'set_power',
+      request: 'machine.set_power', result: 'machine.power_state' })],
+  };
+  const schema = {
+    id: 3, line: 'api machine.control set_power', status: 'ok', pending: false, error: null,
+    records: [fields({ how: 'request', field: 'on',
+      type: 'boolean', required: 'yes', spec: '' })],
+  };
+  push([listing]);
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство machine.test' }));
+  fireEvent.click(screen.getByText('Доступные действия'));
+  push([listing, catalogue]);
+  fireEvent.click(screen.getByText('Управление питанием'));
+  push([listing, catalogue, schema]);
+  const submit = screen.getByText('Отправить команду');
+  expect(submit.closest('.Button')?.getAttribute('class')).toContain('disabled');
+  expect(commands()).toEqual(['api machine.control', 'api machine.control set_power']);
+  fireEvent.click(screen.getByText('Да'));
+  fireEvent.click(screen.getByText('Отправить команду'));
+  expect(commands()).toEqual(['api machine.control', 'api machine.control set_power']);
+});
