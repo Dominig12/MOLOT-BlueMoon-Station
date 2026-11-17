@@ -237,3 +237,60 @@ test('technical service details open only after an explicit click', () => {
   expect(commands()).toEqual(['api machine.control']);
   expect(screen.getByRole('textbox', { name: 'Командная строка' })).toBeTruthy();
 });
+
+
+test('the selected alarm displays only acknowledged readings and actual delivered events', () => {
+  const { push, commands } = setup('home');
+  const service = {
+    id: 1, line: 'services', pending: false, status: 'ok', error: null,
+    records: [fields({ instance: 'atmos.alarm.e42', type: 'atmos.alarm', hops: '1' })],
+  };
+  push([service], {
+    events: [{
+      instance: 'atmos.alarm.e42', schema: 'atmos.alarm_state', delivery: '501',
+      payload: '{"pressureKPa":130.5,"temperatureK":310,"danger":2,"alarm":true}',
+      truncated: false, at: 220,
+    }],
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство atmos.alarm.e42' }));
+  expect(screen.getByText('Последнее событие тревоги'.toUpperCase())).toBeTruthy();
+  expect(screen.getByText('130.5')).toBeTruthy();
+  expect(screen.getByText('Тревога')).toBeTruthy();
+  expect(screen.getByText(/не гарантия текущего состояния/)).toBeTruthy();
+  expect(commands()).toEqual([]);
+  fireEvent.click(screen.getByText('Запросить показания'));
+  expect(commands()).toEqual(['invoke atmos.alarm.e42 read reason=inspect']);
+  push([service, {
+    id: 2, line: 'invoke atmos.alarm.e42 read reason=inspect',
+    pending: false, status: 'ok', error: null,
+    records: [fields({ operation: '987', status: 'sent' })],
+  }]);
+  expect(screen.getByText('Запрос отправлен. Ответ ещё не получен.')).toBeTruthy();
+  fireEvent.click(screen.getByText('Получить ответ'));
+  expect(commands()).toEqual([
+    'invoke atmos.alarm.e42 read reason=inspect',
+    'result 987',
+  ]);
+});
+
+test('repeat discovery keeps older results visibly marked until the new network answer', () => {
+  const { push, commands } = setup('home');
+  const previous = {
+    id: 1, line: 'services', pending: false, status: 'ok', error: null,
+    records: [fields({ instance: 'atmos.alarm.e42', type: 'atmos.alarm', hops: '1' })],
+  };
+  push([previous, {
+    id: 2, line: 'services -type atmos.alarm', pending: true,
+    status: null, error: null, records: [],
+  }]);
+  expect(screen.getByText('atmos.alarm.e42')).toBeTruthy();
+  expect(screen.getByText(/Ниже результаты прошлого поиска/)).toBeTruthy();
+  push([previous, {
+    id: 2, line: 'services -type atmos.alarm', pending: false,
+    status: 'no_answer', error: 'timeout', records: [],
+  }]);
+  expect(screen.getByText('atmos.alarm.e42')).toBeTruthy();
+  expect(screen.getByText(/доступность могла измениться/)).toBeTruthy();
+  fireEvent.click(screen.getByText('Повторить'));
+  expect(commands()).toEqual(['services -type atmos.alarm']);
+});
