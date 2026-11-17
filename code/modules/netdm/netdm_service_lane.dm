@@ -35,8 +35,8 @@
 	var/attached_node
 	var/list/registered = list()
 	var/list/subscribed = list()
-	/// Subscriptions explicitly created by the player's shell (key -> TRUE).
-	/// Only these unknown-schema event deliveries may enter the generic UI journal.
+	/// Subscriptions explicitly confirmed by the shell (key -> TRUE).
+	/// Kept across Host sessions; only these unknown-schema events enter the generic UI journal.
 	var/list/event_watches = list()
 	/// Recent delivered events for this endpoint alone; never a station-wide feed.
 	var/list/event_journal = list()
@@ -197,6 +197,49 @@
 	if(!length(wanting))
 		wanted_by -= instance
 
+/// A successful shell watch is a desired network subscription, not only a local UI filter.
+/// Reconciliation uses the existing Host subscribe protocol after a new session/attachment.
+/// No event is fabricated, and no DM gameplay handler is called here.
+/datum/netdm_service_lane/proc/remember_shell_watch(datum/netdm_service_endpoint/endpoint, key, instance, schema, major, projection, mode, max_pending)
+	if(!endpoint || endpoints[endpoint.id] != endpoint || !istext(key) || !istext(instance) || !istext(schema) || !istext(projection))
+		return FALSE
+	if(!(mode in list("latest_value", "queue")) || !isnum(major) || !isnum(max_pending) || max_pending < 1 || max_pending > 16)
+		return FALSE
+	var/list/previous = endpoint.subscriptions[key]
+	// A shell cannot take over a gameplay-owned subscription key.
+	if(previous && !previous["shell"])
+		return FALSE
+	if(previous)
+		unindex_want(endpoint, key, previous["instance"])
+	endpoint.subscriptions[key] = list("instance" = instance, "schema" = schema, "major" = major,
+		"projection" = projection, "mode" = mode, "pending" = max_pending, "shell" = TRUE)
+	endpoint.event_watches[key] = TRUE
+	// The Host already accepted the current subscription. Reconciliation is only needed
+	// when its provider/session is replaced, unless the declared parameters changed.
+	endpoint.subscribed[key] = TRUE
+	var/list/wanting = wanted_by[instance]
+	if(!wanting)
+		wanting = list()
+		wanted_by[instance] = wanting
+	wanting[endpoint.id] = key
+	return TRUE
+
+/// Explicit unwatch revokes both the local view and the desired subscription.
+/// No reconnect may resurrect a subscription after an accepted unwatch.
+/datum/netdm_service_lane/proc/forget_shell_watch(datum/netdm_service_endpoint/endpoint, key)
+	if(!endpoint || endpoints[endpoint.id] != endpoint || !endpoint.event_watches[key])
+		return FALSE
+	var/list/previous = endpoint.subscriptions[key]
+	if(previous && previous["shell"])
+		unindex_want(endpoint, key, previous["instance"])
+		endpoint.subscriptions -= key
+		endpoint.subscribed -= key
+		endpoint.retry_at -= key
+		endpoint.retry_delay -= key
+		endpoint.refused -= key
+	endpoint.event_watches -= key
+	return TRUE
+
 /// The Host removes an endpoint with its world node. An operator's retirement keeps the APC live.
 /datum/netdm_service_lane/proc/drop(datum/node)
 	var/datum/netdm_service_endpoint/endpoint = by_node[node]
@@ -325,7 +368,7 @@
 		endpoint.attached_node = null
 		endpoint.registered.Cut()
 		endpoint.subscribed.Cut()
-		endpoint.event_watches.Cut()
+		// Desired shell watches survive the Host restart; their transport state does not.
 		endpoint.event_journal.Cut()
 		endpoint.refused.Cut()
 		endpoint.retry_at.Cut()
@@ -485,7 +528,8 @@
 			continue
 		var/list/subscription = endpoint.subscriptions[key]
 		return send(bridge.subscribe(endpoint.id, endpoint.generation, key, subscription["instance"], subscription["schema"],
-			subscription["major"], subscription["projection"]), list("op" = "subscribe", "endpoint" = endpoint, "key" = key,
+			subscription["major"], subscription["projection"], subscription["mode"] || "latest_value", subscription["pending"] || 1),
+			list("op" = "subscribe", "endpoint" = endpoint, "key" = key,
 			"instance" = subscription["instance"], "epoch" = provider_epochs[subscription["instance"]])) ? NETDM_LANE_SENT : NETDM_LANE_WAIT
 
 /datum/netdm_service_lane/proc/send(request_id, list/op)
