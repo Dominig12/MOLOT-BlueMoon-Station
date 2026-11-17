@@ -64,7 +64,7 @@ const serviceIcon = (type: string) => {
 
 const Activity = ({ entry, onOpenLog }: { entry?: HomeEntry; onOpenLog: () => void }) => {
   const text = !entry ? 'Пока нет запросов.'
-    : !!entry.pending ? 'Запрос в пути. Ожидается ответ по сети.'
+    : entry.pending ? 'Запрос в пути. Ожидается ответ по сети.'
       : entry.status === 'ok' ? 'Ответ от сетевого сервиса получен.'
         : entry.status === 'valid' ? 'Исходник проверен. Команды не выполнялись.'
           : entry.status === 'started' || entry.status === 'running' ? 'Программа принята сетевым сервисом.'
