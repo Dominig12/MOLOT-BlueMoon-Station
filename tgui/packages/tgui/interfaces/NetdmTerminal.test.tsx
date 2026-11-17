@@ -154,8 +154,11 @@ test('поиск в обзоре использует штатную сеть и
   expect(screen.getByText('Подключено')).toBeTruthy();
   // Discovery alone never reads, watches or controls a physical device.
   expect(commands()).toEqual(['services']);
-  fireEvent.click(screen.getByText('Показания'));
-  fireEvent.click(screen.getByText('Следить'));
+  // Expensive controls only appear after the player selects a device.
+  expect(screen.queryByText('Получить показания')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство atmos.alarm.e42' }));
+  fireEvent.click(screen.getByText('Получить показания'));
+  fireEvent.click(screen.getByText('Следить за событиями'));
   expect(commands()).toEqual([
     'services',
     'invoke atmos.alarm.e42 read reason=inspect',
@@ -204,4 +207,31 @@ test('простые показания не путают принятие за�
   }]);
   expect(screen.getByText(/101.3/)).toBeTruthy();
   expect(screen.getByText(/Тревоги нет/)).toBeTruthy();
+});
+
+
+test('active observation is reversible without starting a background program', () => {
+  const { commands, push, actions } = setup('home');
+  push([{
+    id: 1, line: 'services', status: 'ok', pending: false, error: null,
+    records: [fields({ instance: 'atmos.alarm.e42', type: 'atmos.alarm', hops: '2' })],
+  }], { watches: ['atmos.alarm.e42'] });
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство atmos.alarm.e42' }));
+  expect(screen.getByText('Не следить')).toBeTruthy();
+  fireEvent.click(screen.getByText('Не следить'));
+  expect(commands()).toEqual(['unwatch atmos.alarm.e42']);
+  expect(actions()).not.toContain('act/start_program');
+});
+
+test('technical service details open only after an explicit click', () => {
+  const { commands, push } = setup('home');
+  push([{
+    id: 1, line: 'services', status: 'ok', pending: false, error: null,
+    records: [fields({ instance: 'machine.test', type: 'machine.control', hops: '1' })],
+  }]);
+  expect(screen.queryByText('Технические сведения')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство machine.test' }));
+  fireEvent.click(screen.getByText('Технические сведения'));
+  expect(commands()).toEqual(['api machine.control']);
+  expect(screen.getByRole('textbox', { name: 'Командная строка' })).toBeTruthy();
 });
