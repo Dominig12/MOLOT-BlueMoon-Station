@@ -1,4 +1,5 @@
 import { BooleanLike } from 'common/react';
+import { useState } from 'react';
 
 import { Box, Button, Icon } from '../components';
 
@@ -44,6 +45,26 @@ export const visibleServices = (entries: HomeEntry[]): {
   return { query, services };
 };
 
+export const networkIssue = (status: string | null, error?: string | null): string => {
+  const reason = `${status ?? ''} ${error ?? ''}`.toLowerCase();
+  if (/no_answer|timeout|timed_out|no_receipt/.test(reason)) {
+    return 'Устройство пока не ответило. Проверьте соединение или повторите запрос.';
+  }
+  if (/unavailable|no_route|unreachable|not_delivered|route_failed/.test(reason)) {
+    return 'Нет доступного сетевого пути к устройству.';
+  }
+  if (/denied|refused|forbidden|not_allowed|unauthorized/.test(reason)) {
+    return 'Доступ к действию ограничен.';
+  }
+  if (/no_power|unpowered|offline/.test(reason)) {
+    return 'Устройство недоступно или обесточено.';
+  }
+  if (/unknown_service|not_found/.test(reason)) {
+    return 'Этот сервис больше не обнаруживается в сети.';
+  }
+  return 'Сеть не смогла завершить запрос. Подробности доступны в журнале.';
+};
+
 const categoryName = (type: string) => {
   if (type === 'atmos.alarm') return 'Атмосферная тревога';
   if (type === 'atmos.telemetry') return 'Датчик атмосферы';
@@ -84,7 +105,7 @@ const Activity = ({
         : entry.status === 'ok' ? 'Ответ от сетевого сервиса получен.'
           : entry.status === 'valid' ? 'Исходник проверен. Команды не выполнялись.'
             : entry.status === 'started' || entry.status === 'running' ? 'Программа принята сетевым сервисом.'
-              : 'Операция завершилась отказом или без ответа.';
+              : networkIssue(entry.status, entry.error);
   return (
     <div className="NetdmHome__activity">
       <div className="NetdmHome__sectionLabel">ПОСЛЕДНЕЕ ДЕЙСТВИЕ</div>
@@ -103,7 +124,9 @@ const Activity = ({
       {!!entry && (
         <>
           <div className="NetdmHome__activityCommand">{entry.line}</div>
-          {!!entry.error && !entry.pending && <Box color="bad" mt={0.5}>{entry.error}</Box>}
+          {!!entry.error && !entry.pending && entry.status !== 'ok' && (
+            <Box color="label" mt={0.5}>Код: {entry.status}. Подробности — в журнале.</Box>
+          )}
           <Button icon="history" content="Открыть историю" onClick={onOpenLog} />
         </>
       )}
@@ -117,18 +140,26 @@ type Props = {
   entries: HomeEntry[];
   events: number;
   watches: number;
+  watchKeys: string[];
   onDiscover: () => void;
   onAlarms: () => void;
   onMap: () => void;
   onEvents: () => void;
   onAdvanced: () => void;
+  onInspect: (line: string) => void;
   onCommand: (line: string) => void;
 };
 
 export const NetdmHome = (props: Props) => {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const { query, services } = visibleServices(props.entries);
   const latest = props.entries[props.entries.length - 1];
   const limited = services.slice(0, 6);
+  const selected = limited.find(service => service.instance === selectedId) ?? null;
+  const subscribed = selected !== null && props.watchKeys.includes(selected.instance);
+  const changingSubscription = selected !== null && props.entries.some(entry =>
+    !!entry.pending && (entry.line === `watch ${selected.instance} -key ${selected.instance}` ||
+      entry.line === `unwatch ${selected.instance}`));
   const pending = !!query?.pending;
 
   return (
@@ -205,25 +236,53 @@ export const NetdmHome = (props: Props) => {
             </div>
           )}
           {limited.map(service => (
-            <div className="NetdmHome__service" key={service.instance}>
-              <div className="NetdmHome__serviceIcon"><Icon name={serviceIcon(service.type)} /></div>
-              <div className="NetdmHome__serviceMain">
-                <div className="NetdmHome__serviceTitle">{categoryName(service.type)}</div>
-                <div className="NetdmHome__serviceId">{service.instance}</div>
-                {service.hops !== null && <div className="NetdmHome__serviceMeta">Переходов: {service.hops}</div>}
+            <button type="button" className={'NetdmHome__service NetdmHome__serviceSelect' +
+              (selected?.instance === service.instance ? ' NetdmHome__service--selected' : '')}
+              key={service.instance}
+              aria-label={`Открыть устройство ${service.instance}`}
+              aria-expanded={selected?.instance === service.instance}
+              onClick={() => setSelectedId(current => current === service.instance ? null : service.instance)}>
+              <span className="NetdmHome__serviceIcon"><Icon name={serviceIcon(service.type)} /></span>
+              <span className="NetdmHome__serviceMain">
+                <span className="NetdmHome__serviceTitle">{categoryName(service.type)}</span>
+                <span className="NetdmHome__serviceId">{service.instance}</span>
+                {service.hops !== null && <span className="NetdmHome__serviceMeta">Переходов: {service.hops}</span>}
+              </span>
+              <span className="NetdmHome__serviceOpen">
+                {props.watchKeys.includes(service.instance) && <Icon name="bell" />}
+                <Icon name={selected?.instance === service.instance ? 'chevron-up' : 'chevron-right'} />
+              </span>
+            </button>
+          ))}
+          {selected && (
+            <div className="NetdmHome__details">
+              <div className="NetdmHome__sectionLabel">ВЫБРАННОЕ УСТРОЙСТВО</div>
+              <div className="NetdmHome__detailsTitle">{categoryName(selected.type)}</div>
+              <div className="NetdmHome__minor">{selected.instance} · {selected.hops ?? '—'} переходов до сервиса</div>
+              <div className="NetdmHome__detailsActions">
+                {selected.type === 'atmos.alarm' && (
+                  <Button icon="tachometer-alt" content="Получить показания"
+                    tooltip="Сетевой запрос: состояние появится после ответа"
+                    onClick={() => props.onCommand(`invoke ${selected.instance} read reason=inspect`)} />
+                )}
+                {(selected.type === 'atmos.alarm' || selected.type === 'atmos.telemetry') && (
+                  <Button icon={subscribed ? 'bell-slash' : 'bell'}
+                    content={subscribed ? 'Не следить' : 'Следить за событиями'}
+                    disabled={changingSubscription}
+                    onClick={() => props.onCommand(subscribed
+                      ? `unwatch ${selected.instance}`
+                      : `watch ${selected.instance} -key ${selected.instance}`)} />
+                )}
+                <Button icon="route" content="Путь через сеть"
+                  onClick={() => props.onInspect(`route ${selected.instance}`)} />
+                <Button icon="code" content="Технические сведения"
+                  onClick={() => props.onInspect(`api ${selected.type}`)} />
               </div>
-              <div className="NetdmHome__serviceActions">
-                {service.type === 'atmos.alarm' && (
-                  <Button icon="tachometer-alt" content="Показания" tooltip="Запросить измерение через сеть"
-                    onClick={() => props.onCommand(`invoke ${service.instance} read reason=inspect`)} />
-                )}
-                {(service.type === 'atmos.alarm' || service.type === 'atmos.telemetry') && (
-                  <Button icon="bell" tooltip="Подписаться на новые события этого устройства"
-                    content="Следить" onClick={() => props.onCommand(`watch ${service.instance} -key ${service.instance}`)} />
-                )}
+              <div className="NetdmHome__detailFoot">
+                Действия используют реальную сеть. Отправка не означает, что устройство уже ответило.
               </div>
             </div>
-          ))}
+          )}
           {services.length > limited.length && (
             <div className="NetdmHome__more">
               <Button icon="list" content="Весь список и подробности" onClick={props.onAdvanced} />
