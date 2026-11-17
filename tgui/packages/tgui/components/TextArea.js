@@ -169,6 +169,7 @@ export class TextArea extends Component {
       onFocus,
       onBlur,
       onEnter,
+      dontUseTabForIndent,
       value,
       maxLength,
       placeholder,
