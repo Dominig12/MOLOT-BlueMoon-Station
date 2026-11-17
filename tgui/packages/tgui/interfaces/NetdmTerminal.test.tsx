@@ -68,3 +68,22 @@ test('пример из ответа справки подставляется �
   expect(input.value).toBe('services -type atmos.alarm');
   expect(commands()).toEqual(['help']);
 });
+
+test('универсальные действия предлагают API и готовят команды без самовольного исполнения', () => {
+  const { commands, push } = setup();
+  push([{
+    id: 1, line: 'services', status: 'ok', pending: false,
+    records: [fields({ instance: 'machine.test', type: 'machine.control', hops: '2' })],
+  }]);
+  fireEvent.click(screen.getByLabelText('Схема сервиса'));
+  expect(commands()).toEqual(['api machine.control']);
+
+  const input = screen.getByRole<HTMLInputElement>('textbox', { name: 'Командная строка' });
+  fireEvent.click(screen.getByLabelText('Подготовить вызов'));
+  expect(input.value).toBe('invoke machine.test ');
+  expect(commands()).toEqual(['api machine.control']);
+
+  fireEvent.click(screen.getByLabelText('Подготовить подписку'));
+  expect(input.value).toBe('watch machine.test');
+  expect(commands()).toEqual(['api machine.control']);
+});
