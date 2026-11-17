@@ -162,10 +162,19 @@
 			var/list/result = executed["result"]
 			return list("applied" = TRUE, "result" = islist(result) ? result : null)
 		return list("applied" = FALSE, "reason" = istext(executed) ? executed : "rejected")
+	// Shell subscriptions may observe any schema as inert data. A delivered event is
+	// stored only for its genuine, generation-fenced recipient and subscribed key.
+	// This is NOT an alternative game command handler: the existing allowlist remains authoritative.
+	var/observed = FALSE
+	if(kind == "event" && target)
+		var/datum/netdm_service_lane/lane = SSnetdm_observe?.services
+		var/datum/netdm_service_endpoint/endpoint = lane?.endpoints[item["recipient"]]
+		if(endpoint && lane.owner_of(endpoint.node) == target)
+			observed = endpoint.capture_event(item)
 	var/datum/netdm_effect_handler/handler = kind == "result" \
 		? (result_handlers["[item["serviceType"]]/[item["command"]]"] || result_handlers[item["command"]]) : handlers[item["schema"]]
 	if(!handler)
-		return list("applied" = FALSE, "reason" = "unsupported_schema")
+		return observed ? list("applied" = TRUE) : list("applied" = FALSE, "reason" = "unsupported_schema")
 	if(!target)
 		return list("applied" = FALSE, "reason" = "receiver_gone")
 	var/applied = handler.apply(target, item)
