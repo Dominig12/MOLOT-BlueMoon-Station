@@ -13,7 +13,7 @@ export type ShellCommandInfo = {
   description: string;
 };
 
-/** First token of a line: sources, filters and the two actions (kept in sync with ShellHost.Catalogue). */
+/** First token of a line: sources, filters and transport-backed actions (kept in sync with ShellHost.Catalogue). */
 export const SHELL_COMMANDS: readonly ShellCommandInfo[] = [
   { name: 'self', kind: 'source', usage: 'self', description: 'Свой узел, питание и порты.' },
   { name: 'links', kind: 'source', usage: 'links', description: 'Соседние порты и их состояние.' },
@@ -35,6 +35,8 @@ export const SHELL_COMMANDS: readonly ShellCommandInfo[] = [
   { name: 'count', kind: 'filter', usage: 'count', description: 'Сколько записей.' },
   { name: 'invoke', kind: 'action', usage: 'invoke <instance> <command> [name=value…]', description: 'Команда сервису.' },
   { name: 'publish', kind: 'action', usage: '… | publish', description: 'Опубликовать записи.' },
+  { name: 'watch', kind: 'action', usage: 'watch <instance> [-key K] [-projection full] [-mode latest|queue]', description: 'Подписаться на сетевые события.' },
+  { name: 'unwatch', kind: 'action', usage: 'unwatch <subscription-key>', description: 'Отключить подписку.' },
 ];
 
 export const HELP_TOPICS = ['basics', 'services', 'api', 'scripts', 'programs'] as const;
