@@ -58,7 +58,7 @@
 	return FALSE
 
 /datum/unit_test/netdm_observe/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		TEST_ASSERT_NULL(SSnetdm_observe.bridge, "Observe must be disabled by default.")
 		return
 	TEST_ASSERT(wait_until_live(), "Observe must publish the initial map ([SSnetdm_observe.observe_state()]).")
@@ -121,7 +121,7 @@
 	return null
 
 /datum/unit_test/netdm_observe/area_map/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
 	TEST_ASSERT(length(http_base), "NETDM_TEST_HTTP must point to the test Host.")
@@ -216,7 +216,7 @@
 /datum/unit_test/netdm_observe/area_map/node_attachment
 
 /datum/unit_test/netdm_observe/area_map/node_attachment/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		var/obj/netdm_test_node/inert = allocate(/obj/netdm_test_node, run_loc_floor_bottom_left)
 		TEST_ASSERT_NULL(netdm_make_node(inert), "Without Observe objects must not become nodes.")
 		return
@@ -276,7 +276,7 @@
 /datum/unit_test/netdm_observe/area_map/topology_view
 
 /datum/unit_test/netdm_observe/area_map/topology_view/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	TEST_ASSERT(wait_until_live(), "Observe must publish the initial map ([SSnetdm_observe.observe_state()]).")
 	var/turf/left = run_loc_floor_bottom_left
@@ -374,7 +374,7 @@
 	return page
 
 /datum/unit_test/netdm_observe/area_map/network_diagnostics/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
 	TEST_ASSERT(length(http_base), "NETDM_TEST_HTTP must point to the test Host.")
@@ -568,7 +568,7 @@
 /datum/unit_test/netdm_observe/area_map/power_state
 
 /datum/unit_test/netdm_observe/area_map/power_state/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
 	TEST_ASSERT(length(http_base), "NETDM_TEST_HTTP must point to the test Host.")
@@ -638,7 +638,7 @@
 /datum/unit_test/netdm_observe/area_map/atmos_telemetry
 
 /datum/unit_test/netdm_observe/area_map/atmos_telemetry/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	TEST_ASSERT(wait_until_live(), "Host must publish the network.")
 	var/turf/left = run_loc_floor_bottom_left
@@ -713,7 +713,7 @@
 			return id
 
 /datum/unit_test/netdm_observe/research_authoritative/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	TEST_ASSERT(wait_until_live(), "Observe must publish the map ([SSnetdm_observe.observe_state()]).")
 	var/datum/netdm_research_shadow/shadow = SSnetdm_observe.research
@@ -866,7 +866,7 @@
 	return binding?["bound"]
 
 /datum/unit_test/netdm_observe/research_p6/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	TEST_ASSERT(wait_until_live(), "Observe must publish the map ([SSnetdm_observe.observe_state()]).")
 	var/datum/netdm_research_shadow/shadow = SSnetdm_observe.research
@@ -1114,7 +1114,7 @@
 		. += settled[result]
 
 /datum/unit_test/netdm_observe/research_authoritative/outbox/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	TEST_ASSERT(wait_until_live(), "Observe must publish the map ([SSnetdm_observe.observe_state()]).")
 	var/datum/netdm_research_shadow/shadow = SSnetdm_observe.research
@@ -1210,81 +1210,6 @@
 	TEST_ASSERT_EQUAL(shadow.counters["rejected"] + shadow.counters["dropped"], 0, "Every ledger event must be accepted: [json_encode(shadow.notes)]")
 	log_world("netDM research outbox: [shadow.state()] host=[json_encode(host_effects())]")
 
-/// P7 Shadow: two PDAs in a powered test zone. A legacy message is mirrored as an addressed network
-/// delivery, the receipt comes back to the sender, and the radio and network paths are compared.
-/// A replayed delivery of the same message is recorded once.
-/datum/unit_test/netdm_observe/area_map/messenger_shadow
-
-/datum/unit_test/netdm_observe/area_map/messenger_shadow/proc/wait_compared(datum/netdm_messenger_shadow/shadow, compared)
-	var/deadline = world.time + 30 SECONDS
-	while(world.time < deadline && shadow.counters["compared"] <= compared)
-		sleep(5)
-	return shadow.counters["compared"] > compared
-
-/datum/unit_test/netdm_observe/area_map/messenger_shadow/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
-		return
-	TEST_ASSERT(wait_until_live(), "Observe must publish the map ([SSnetdm_observe.observe_state()]).")
-	var/datum/netdm_messenger_shadow/shadow = SSnetdm_observe.messenger
-	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
-	TEST_ASSERT(shadow && lane, "Observe must run the messenger pilot.")
-	var/turf/left = run_loc_floor_bottom_left
-	var/turf/middle = get_step(left, EAST)
-	var/turf/right = get_step(middle, EAST)
-	var/area/served = test_zone(/area/netdm_test/first)
-	assign_area(left, served)
-	assign_area(middle, served)
-	assign_area(right, served)
-	var/obj/machinery/power/apc/apc = allocate(/obj/machinery/power/apc, left)
-	TEST_ASSERT(wait_for_fact(WEAKREF(apc), left), "Expected the zone APC to be published.")
-
-	var/obj/item/modular_computer/pda/alice_pda = allocate(/obj/item/modular_computer/pda, middle)
-	var/obj/item/modular_computer/pda/bob_pda = allocate(/obj/item/modular_computer/pda, right)
-	var/datum/computer_file/program/messenger/alice = locate(/datum/computer_file/program/messenger) in alice_pda.get_all_files()
-	var/datum/computer_file/program/messenger/bob = locate(/datum/computer_file/program/messenger) in bob_pda.get_all_files()
-	TEST_ASSERT(alice && bob, "PDAs come with the messenger.")
-	// The legacy contact list holds a messenger once its program runs; a drive install never adds it.
-	add_messenger(alice)
-	add_messenger(bob)
-	var/alice_instance = shadow.instances[WEAKREF(alice)]
-	var/bob_instance = shadow.instances[WEAKREF(bob)]
-	TEST_ASSERT(alice_instance && bob_instance, "Each messenger offers pda.messenger: [shadow.state()]")
-	var/datum/component/netdm_node/alice_node = alice_pda.GetComponent(/datum/component/netdm_node)
-	var/datum/component/netdm_node/bob_node = bob_pda.GetComponent(/datum/component/netdm_node)
-	var/deadline = world.time + 60 SECONDS
-	while(world.time < deadline && !(lane.ready(bob_node, bob_instance) && lane.by_node[alice_node]?.attached_node))
-		sleep(2)
-	TEST_ASSERT(lane.ready(bob_node, bob_instance), "The recipient's messenger must register: [lane.state()]")
-
-	// The radio path delivers through telecomms; the debug bypass stands in for a station's servers here.
-	var/old_bypass = SSnetworks.ntnet_debug_global_signal
-	SSnetworks.ntnet_debug_global_signal = TRUE
-	var/compared = shadow.counters["compared"]
-	TEST_ASSERT(alice.send_message(alice_pda, "netDM test: hello Bob", list(bob)), "The legacy messenger must send.")
-	TEST_ASSERT(wait_compared(shadow, compared), "The message must be compared: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.counters["matched"], 1, "Radio and network must both deliver: [shadow.state()] [json_encode(shadow.notes)]")
-	TEST_ASSERT_EQUAL(shadow.counters["legacy_duplicates"] + shadow.counters["netdm_duplicates"], 0, "Nothing is delivered twice.")
-
-	// A replayed network delivery of the same message is recorded once and answered as a duplicate.
-	var/list/replay = list("payload" = list("id" = "replayed", "text" = "x", "sender" = "y"), "instance" = bob_instance)
-	shadow.delivered(bob_pda, replay)
-	var/list/again = shadow.delivered(bob_pda, replay)
-	TEST_ASSERT(islist(again) && again["result"]["state"] == "duplicate" && shadow.counters["netdm_duplicates"] == 1,
-		"A message ID is taken once per recipient.")
-
-	// Without the bypass, the radio path needs a message server. Whatever this map has, the network
-	// path still delivers: either both did, or the comparison names the missing server.
-	SSnetworks.ntnet_debug_global_signal = FALSE
-	sleep(1.2 SECONDS)
-	compared = shadow.counters["compared"]
-	alice.send_message(alice_pda, "netDM test: without the bypass", list(bob))
-	SSnetworks.ntnet_debug_global_signal = old_bypass
-	TEST_ASSERT(wait_compared(shadow, compared), "The second message must be compared: [shadow.state()]")
-	TEST_ASSERT(shadow.counters["matched"] == 2 || shadow.reasons["legacy_server"] == 1,
-		"The network delivers with or without the message server: [shadow.state()] [json_encode(shadow.notes)]")
-	TEST_ASSERT_EQUAL(shadow.counters["legacy_only"], 0, "netDM must reach a PDA the radio reached: [shadow.state()] [json_encode(shadow.notes)]")
-	log_world("netDM messenger shadow: [shadow.state()]")
-
 /// P4 on a real station map: the map's own gas sensors and atmos consoles run the Shadow pilot.
 /// P7 authoritative: PDAs message each other through a message server node, without telecomms. The
 /// server logs a message once, the recipient shows it once and can reply, and the sender learns each
@@ -1295,7 +1220,6 @@
 /datum/unit_test/netdm_observe/area_map/messenger_authoritative/Destroy()
 	var/datum/netdm_messenger_shadow/shadow = SSnetdm_observe.messenger
 	if(shadow)
-		shadow.set_authoritative(FALSE)
 		shadow.delivery_ttl_ticks = initial(shadow.delivery_ttl_ticks)
 	return ..()
 
@@ -1328,7 +1252,7 @@
 	return counters[name] > above
 
 /datum/unit_test/netdm_observe/area_map/messenger_authoritative/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	TEST_ASSERT(wait_until_live(), "Observe must publish the map ([SSnetdm_observe.observe_state()]).")
 	var/datum/netdm_messenger_shadow/shadow = SSnetdm_observe.messenger
@@ -1435,77 +1359,12 @@
 	TEST_ASSERT_EQUAL(counters["duplicates"], 1, "Only the replayed delivery was a duplicate: [shadow.state()]")
 	log_world("netDM messenger authoritative: [shadow.state()] reasons=[json_encode(shadow.reasons)]")
 
-/// P8 Shadow: a receiver, a broadcaster and radios in a powered test zone. A transmission's listeners
-/// are matched when the network reaches them and explained when it does not: a listener in a corner of
-/// the station level without an access point is no_downlink, a speaker there is no_uplink.
-/datum/unit_test/netdm_observe/area_map/radio_shadow
-
-/datum/unit_test/netdm_observe/area_map/radio_shadow/proc/transmit(datum/netdm_radio_shadow/shadow, id, obj/item/radio/source,
-	list/listeners, obj/machinery/telecomms/receiver)
-	var/list/heard = list()
-	for(var/obj/item/radio/radio as anything in listeners)
-		heard[WEAKREF(radio)] = TRUE
-	shadow.pending[id] = list("id" = id, "source" = WEAKREF(source), "frequency" = FREQ_COMMON, "created" = world.time - 1,
-		"listeners" = heard, "receivers" = list(WEAKREF(receiver)), "asked" = FALSE)
-	var/answered = shadow.counters["answered"]
-	var/deadline = world.time + 20 SECONDS
-	while(world.time < deadline && shadow.counters["answered"] <= answered)
-		sleep(2)
-	return shadow.counters["answered"] > answered
-
-/datum/unit_test/netdm_observe/area_map/radio_shadow/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
-		return
-	TEST_ASSERT(wait_until_live(), "Observe must publish the map ([SSnetdm_observe.observe_state()]).")
-	var/datum/netdm_radio_shadow/shadow = SSnetdm_observe.radio
-	TEST_ASSERT(shadow, "Observe must run the radio pilot.")
-	var/list/turfs = list(run_loc_floor_bottom_left)
-	for(var/i in 1 to 4)
-		turfs += get_step(turfs[length(turfs)], EAST)
-	var/area/served = test_zone(/area/netdm_test/first)
-	for(var/turf/tile as anything in turfs)
-		assign_area(tile, served)
-	var/obj/machinery/power/apc/apc = allocate(/obj/machinery/power/apc, turfs[1])
-	TEST_ASSERT(wait_for_fact(WEAKREF(apc), turfs[1]), "Expected the zone APC to be published.")
-	var/obj/machinery/telecomms/receiver/receiver = allocate(/obj/machinery/telecomms/receiver, turfs[2])
-	var/obj/machinery/telecomms/broadcaster/broadcaster = allocate(/obj/machinery/telecomms/broadcaster, turfs[3])
-	var/obj/item/radio/speaker = allocate(/obj/item/radio, turfs[4])
-	var/obj/item/radio/listener = allocate(/obj/item/radio, turfs[5])
-	var/obj/item/radio/away = allocate(/obj/item/radio, turfs[5])
-	TEST_ASSERT(shadow.receivers[WEAKREF(receiver)] && shadow.broadcasters[WEAKREF(broadcaster)] && shadow.radios[WEAKREF(speaker)],
-		"Radios and telecomms ends become nodes: [shadow.state()]")
-	var/turf/corner = isolated_turf()
-	TEST_ASSERT(corner, "The station level needs a corner without an APC nearby.")
-	away.forceMove(corner)
-	var/list/things = list(receiver, broadcaster, speaker, listener, away)
-	var/deadline = world.time + 60 SECONDS
-	var/ready = FALSE
-	while(world.time < deadline && !ready)
-		ready = TRUE
-		for(var/atom/movable/thing as anything in things)
-			ready = ready && shadow.node_id(thing)
-		if(!ready)
-			sleep(2)
-	TEST_ASSERT(ready, "Every radio and telecomms end must be a published node: [shadow.state()]")
-	sleep(2 SECONDS) // The corner radio's move reaches the Host.
-
-	var/matched = shadow.counters["matched"]
-	TEST_ASSERT(transmit(shadow, "t-near", speaker, list(listener, away), receiver), "The Host must answer: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.counters["matched"] - matched, 1, "The zone listener is reached: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.reasons["no_downlink"], 1, "The corner listener is explained: [shadow.state()]")
-	TEST_ASSERT(shadow.percentile_ms(0.5) > 0, "A matched listener has a latency estimate: [shadow.state()]")
-
-	TEST_ASSERT(transmit(shadow, "t-away", away, list(listener), receiver), "The Host must answer: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.reasons["no_uplink"], 1, "A speaker out of reach never gets to the receiver: [shadow.state()]")
-	log_world("netDM radio shadow: [shadow.state()]")
-
 /// P8 authoritative uplink: a radio's speech reaches a telecomms mainframe over the network, not at
 /// once by subspace. Nothing is broadcast before the uplink arrives; a repeat is a duplicate, an uplink
 /// after the legacy backup is late, a speaker out of the network is lost, an unknown context expired.
 /datum/unit_test/netdm_observe/area_map/radio_uplink
 
 /datum/unit_test/netdm_observe/area_map/radio_uplink/Destroy()
-	SSnetdm_observe.radio?.set_authoritative(FALSE)
 	return ..()
 
 /datum/unit_test/netdm_observe/area_map/radio_uplink/proc/speak(obj/item/radio/radio, text)
@@ -1522,7 +1381,7 @@
 	return counters[name] > above
 
 /datum/unit_test/netdm_observe/area_map/radio_uplink/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	TEST_ASSERT(wait_until_live(), "Observe must publish the map ([SSnetdm_observe.observe_state()]).")
 	var/datum/netdm_radio_shadow/shadow = SSnetdm_observe.radio
@@ -1655,570 +1514,6 @@
 	TEST_ASSERT_EQUAL(delta["transmissions"], length(speakers), "Every speaker's transmission goes to the network: [json_encode(report)]")
 	TEST_ASSERT_EQUAL(broadcast, length(speakers), "Every transmission reaches a receiver and is broadcast: [json_encode(report)]")
 	TEST_ASSERT_EQUAL(delta["lost"], null, "No speech is lost on the way to telecomms: [json_encode(report)]")
-
-/// P8 Shadow on the station: radios by APCs across departments speak on the common channel through the
-/// map's own telecomms. Every radio that legacy delivered to is compared with the network's reach.
-/// Writes netdm_radio_station.json; fails only when the Host does not answer or a listener stays unexplained.
-/datum/unit_test/netdm_observe/area_map/radio_station
-
-/datum/unit_test/netdm_observe/area_map/radio_station/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
-		return
-	var/datum/netdm_radio_shadow/shadow = SSnetdm_observe.radio
-	TEST_ASSERT(shadow, "Observe must run the radio pilot.")
-	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
-	var/deadline = world.time + 10 MINUTES
-	while(world.time < deadline && !(SSnetdm_observe.published && SSnetdm_observe.phase == "live" && !SSnetdm_observe.pending))
-		sleep(10)
-	TEST_ASSERT(SSnetdm_observe.published, "Observe must publish the station map ([SSnetdm_observe.observe_state()]).")
-	var/list/apcs = list()
-	for(var/obj/machinery/power/apc/apc as anything in GLOB.apcs_list)
-		var/turf/position = get_turf(apc)
-		if(position && is_station_level(position.z) && !(apc.machine_stat & BROKEN))
-			apcs += apc
-	TEST_ASSERT(length(apcs) >= 4, "The station needs APCs to place radios by.")
-	var/step = max(1, round(length(apcs) / 12))
-	var/list/speakers = list()
-	for(var/index = 1; index <= length(apcs) && length(speakers) < 12; index += step)
-		var/obj/item/radio/radio = allocate(/obj/item/radio, get_turf(apcs[index]))
-		radio.set_frequency(FREQ_COMMON)
-		speakers += radio
-	// Map radios and the speakers become nodes; then the map settles before the window.
-	deadline = world.time + 90 SECONDS
-	var/ready = 0
-	while(world.time < deadline)
-		ready = 0
-		for(var/obj/item/radio/radio as anything in speakers)
-			if(shadow.node_id(radio))
-				ready++
-		if(ready == length(speakers))
-			break
-		sleep(10)
-	// The map's own radios publish over the first minutes; the window starts once they have settled.
-	var/unpublished = -1
-	var/steady = 0
-	deadline = world.time + 3 MINUTES
-	while(world.time < deadline && steady < 3)
-		var/count = 0
-		for(var/datum/weakref/radio_ref as anything in shadow.radios)
-			var/obj/item/radio/radio = radio_ref.resolve()
-			if(radio && !shadow.node_id(radio))
-				count++
-		steady = count == unpublished ? steady + 1 : 0
-		unpublished = count
-		if(!count)
-			break
-		sleep(5 SECONDS)
-	sleep(5 SECONDS) // Attachments of the last published radios reach the Host's routes.
-	if(shadow.authoritative)
-		authoritative_station(shadow, speakers, ready, unpublished)
-		return
-	var/list/before = shadow.counters.Copy()
-	var/list/reasons_before = shadow.reasons.Copy()
-	var/latency_start = length(shadow.latencies)
-	for(var/index in 1 to length(speakers))
-		var/obj/item/radio/radio = speakers[index]
-		// The voice belongs to someone by the radio; the radio itself as the speaker would register its signals twice.
-		var/obj/item/paper/someone = allocate(/obj/item/paper, get_turf(radio))
-		var/atom/movable/virtualspeaker/voice = new(null, someone, radio)
-		var/datum/signal/subspace/vocal/signal = new(radio, FREQ_COMMON, voice, /datum/language/common, "netDM radio test [index]", list())
-		signal.send_to_receivers()
-		sleep(3) // Within the pilot's sampling rate.
-	deadline = world.time + 60 SECONDS
-	while(world.time < deadline && length(shadow.pending))
-		sleep(5)
-	var/list/delta = list()
-	for(var/name in shadow.counters)
-		if(shadow.counters[name] != before[name])
-			delta[name] = shadow.counters[name] - before[name]
-	var/list/known = list("no_uplink", "no_chain", "no_downlink", "no_source", "source_unregistered")
-	var/list/reason_deltas = list()
-	var/unexplained = 0
-	for(var/reason in shadow.reasons)
-		var/change = shadow.reasons[reason] - reasons_before[reason]
-		if(!change)
-			continue
-		reason_deltas[reason] = change
-		if(!(reason in known))
-			unexplained += change
-	var/list/window = shadow.latencies.Copy(max(1, latency_start + 1))
-	var/list/sorted = sortTim(window.Copy(), GLOBAL_PROC_REF(cmp_numeric_asc))
-	var/p50 = length(sorted) ? sorted[clamp(CEILING(length(sorted) * 0.5, 1), 1, length(sorted))] : null
-	var/p95 = length(sorted) ? sorted[clamp(CEILING(length(sorted) * 0.95, 1), 1, length(sorted))] : null
-	var/list/latency_histogram = list()
-	for(var/sample in sorted)
-		latency_histogram["[sample]"]++
-	var/datum/http_response/status_response = world_safe_http_get("[http_base]/api/game/status", 5 SECONDS)
-	var/list/host_status = status_response?.status_code == 200 ? json_decode(status_response.body) : null
-	var/list/report = list(
-		"map" = SSmapping.config?.map_name,
-		"speakers" = length(speakers),
-		"ready" = ready,
-		"radio_nodes" = length(shadow.radios),
-		"unpublished_radios" = unpublished,
-		"receivers" = length(shadow.receivers),
-		"broadcasters" = length(shadow.broadcasters),
-		"counters" = delta,
-		"reasons" = reason_deltas,
-		"p50_ms" = p50,
-		"p95_ms" = p95,
-		"latency_ms" = latency_histogram,
-		"apc_bridges" = host_status?["apcBridges"],
-		"host_runner" = host_status?["runner"],
-		"host_process" = host_status?["process"],
-		"lane" = SSnetdm_observe.services.state(),
-	)
-	var/path = "[GLOB.log_directory]/netdm_radio_station.json"
-	fdel(path)
-	text2file(json_encode(report), path)
-	log_world("netDM radio station: [report["map"]] speakers=[length(speakers)] ready=[ready] counters=[json_encode(delta)] \
-		reasons=[json_encode(reason_deltas)] p50=[p50]ms p95=[p95]ms [shadow.state()]")
-	TEST_ASSERT(delta["sampled"] > 0, "Legacy telecomms must broadcast the speakers' transmissions: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(delta["answered"], delta["asked"], "The Host answers every question: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(unexplained, 0, "Every listener the network misses needs a reason: [json_encode(reason_deltas)]")
-
-/// Writes netdm_atmos_station.json and fails only on contract breaches: a delivery the radio did not
-/// make, a radio-only console without a reason, or p95 above the budget.
-/datum/unit_test/netdm_observe/area_map/atmos_station
-
-/datum/unit_test/netdm_observe/area_map/atmos_station/proc/endpoint_of(atom/movable/thing)
-	var/datum/component/netdm_node/node = thing.GetComponent(/datum/component/netdm_node)
-	return node ? SSnetdm_observe.services.by_node[node] : null
-
-/// Every sensor registered or refused, every console subscribed to the sensors that exist or refused.
-/datum/unit_test/netdm_observe/area_map/atmos_station/proc/pilot_settled(datum/netdm_telemetry_shadow/telemetry)
-	for(var/datum/weakref/sensor_ref as anything in telemetry.sensors)
-		var/obj/machinery/air_sensor/sensor = sensor_ref.resolve()
-		var/datum/netdm_service_endpoint/endpoint = sensor ? endpoint_of(sensor) : null
-		if(!endpoint)
-			continue
-		for(var/instance in endpoint.services)
-			if(!endpoint.registered[instance] && !endpoint.refused[instance])
-				return FALSE
-	for(var/datum/weakref/console_ref as anything in telemetry.consoles)
-		var/obj/machinery/computer/atmos_control/console = console_ref.resolve()
-		var/datum/netdm_service_endpoint/endpoint = console ? endpoint_of(console) : null
-		if(!endpoint)
-			continue
-		for(var/key in endpoint.subscriptions)
-			if(telemetry.sensor_instances[key] && !endpoint.subscribed[key] && !endpoint.refused[key])
-				return FALSE
-	return TRUE
-
-/datum/unit_test/netdm_observe/area_map/atmos_station/proc/place(atom/thing)
-	var/turf/position = get_turf(thing)
-	var/area/zone = get_area(thing)
-	return "[zone?.type] [position?.x],[position?.y],[position?.z]"
-
-/// How the Host attached the device: its links and whether it is on radio.
-/datum/unit_test/netdm_observe/area_map/atmos_station/proc/attachment(atom/movable/thing)
-	var/datum/component/netdm_node/node = thing.GetComponent(/datum/component/netdm_node)
-	var/node_id = node ? SSnetdm_observe.node_ids[node] : null
-	var/turf/position = get_turf(thing)
-	var/list/host = node_id && position ? host_node(position.z, node_id) : null
-	return host ? "links=[host["links"]] radio=[host["radioEnabled"] ? "yes" : "no"]" : "absent"
-
-/datum/unit_test/netdm_observe/area_map/atmos_station/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
-		return
-	var/datum/netdm_telemetry_shadow/telemetry = SSnetdm_observe.telemetry
-	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
-	if(!telemetry || !length(telemetry.sensors) || !length(telemetry.consoles))
-		log_world("netDM atmos station: no pilot devices on [SSmapping.config?.map_name].")
-		return
-	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
-	var/deadline = world.time + 10 MINUTES
-	while(world.time < deadline && !(SSnetdm_observe.published && SSnetdm_observe.phase == "live" && !SSnetdm_observe.pending))
-		sleep(10)
-	TEST_ASSERT(SSnetdm_observe.published, "Observe must publish the station map ([SSnetdm_observe.observe_state()]).")
-	deadline = world.time + 3 MINUTES
-	while(world.time < deadline && !pilot_settled(telemetry))
-		sleep(10)
-	TEST_ASSERT(pilot_settled(telemetry), "Sensors must register and consoles subscribe ([lane.state()]).")
-
-	var/window_start = world.time
-	lane.max_poll_gap_us = 0
-	lane.max_reply_us = 0
-	lane.max_reply_op = null
-	var/list/before = telemetry.counters.Copy()
-	var/list/reasons_before = telemetry.reasons.Copy()
-	var/list/consoles_before = list()
-	for(var/id in telemetry.per_console)
-		var/list/stats = telemetry.per_console[id]
-		consoles_before[id] = stats.Copy()
-	var/latency_start = length(telemetry.latencies)
-	var/coalesced_before = lane.counters["superseded"]
-	// The map's own sensors report every two seconds for a minute; their radio reports are the reference.
-	for(var/pass in 1 to 30)
-		for(var/datum/weakref/sensor_ref as anything in telemetry.sensors)
-			var/obj/machinery/air_sensor/sensor = sensor_ref.resolve()
-			if(sensor?.on)
-				sensor.next_forced_report = 0
-				sensor.try_report()
-		sleep(2 SECONDS)
-	deadline = world.time + 60 SECONDS
-	while(world.time < deadline && (length(telemetry.reports) || length(lane.queries) || lane.inflight.len))
-		sleep(5)
-	sleep(2 SECONDS)
-
-	// A sample published before a console's subscription reached the Host was never addressed to it.
-	// "deadline" and "transport_ttl" are the Host reasons of an expired delivery.
-	var/list/network_reasons = list("invalid_route", "no_route", "expired", "deadline", "newer_value", "receiver_gone",
-		"transport_ttl", "not_subscribed", "subscribed_later")
-	var/list/reason_deltas = list()
-	var/unexplained = 0
-	for(var/reason in telemetry.reasons)
-		var/delta = telemetry.reasons[reason] - reasons_before[reason]
-		if(!delta)
-			continue
-		reason_deltas[reason] = delta
-		if(!(reason in network_reasons))
-			unexplained += delta
-	var/list/console_rows = list()
-	for(var/datum/weakref/console_ref as anything in telemetry.consoles)
-		var/obj/machinery/computer/atmos_control/console = console_ref.resolve()
-		var/datum/netdm_service_endpoint/endpoint = console ? endpoint_of(console) : null
-		if(!endpoint)
-			continue
-		var/list/now = telemetry.per_console[endpoint.id] || list()
-		var/list/then = consoles_before[endpoint.id] || list()
-		var/list/delta = list()
-		for(var/key in now)
-			if(now[key] - then[key])
-				delta[key] = now[key] - then[key]
-		var/list/subscribed = list()
-		for(var/key in endpoint.subscribed)
-			subscribed += key
-		console_rows += list(list("endpoint" = endpoint.id, "type" = "[console.type]", "place" = place(console), "attachment" = attachment(console),
-			"broken" = !!(console.machine_stat & (BROKEN|NOPOWER|MAINT|EMPED)), "subscribed" = subscribed, "window" = delta,
-			"acknowledged" = endpoint.acknowledged_at.Copy()))
-	var/list/sensor_rows = list()
-	for(var/datum/weakref/sensor_ref as anything in telemetry.sensors)
-		var/obj/machinery/air_sensor/sensor = sensor_ref.resolve()
-		var/datum/netdm_service_endpoint/endpoint = sensor ? endpoint_of(sensor) : null
-		if(!endpoint)
-			continue
-		var/list/registered = list()
-		for(var/instance in endpoint.services)
-			registered[instance] = endpoint.registered[instance] ? "registered" : (endpoint.refused[instance] || "pending")
-		sensor_rows += list(list("endpoint" = endpoint.id, "type" = "[sensor.type]", "place" = place(sensor), "attachment" = attachment(sensor), "instances" = registered,
-			"acknowledged" = endpoint.acknowledged_at.Copy(), "id_tag" = sensor.id_tag, "frequency" = sensor.frequency))
-	var/list/window = telemetry.latencies.Copy(max(1, latency_start + 1))
-	var/list/latency_ms = list()
-	for(var/sample in sortTim(window.Copy(), GLOBAL_PROC_REF(cmp_numeric_asc)))
-		latency_ms += round(sample / 1000)
-	var/compared = telemetry.counters["compared"] - before["compared"]
-	var/matched = telemetry.counters["matched"] - before["matched"]
-	var/netdm_only = telemetry.counters["netdm_only"] - before["netdm_only"]
-	var/p95 = telemetry.percentile_ms(window, 0.95)
-	// Host transport and tick counters tell a stall of the Host from a delay in DM.
-	var/datum/http_response/status_response = world_safe_http_get("[http_base]/api/game/status", 5 SECONDS)
-	var/list/host_status = status_response?.status_code == 200 ? json_decode(status_response.body) : null
-	var/list/report = list(
-		"map" = SSmapping.config?.map_name,
-		"window_start" = window_start,
-		"lane" = lane.state(),
-		"host_runner" = host_status?["runner"],
-		"host_packet" = host_status?["packet"],
-		"host_process" = host_status?["process"],
-		"compared" = compared,
-		"matched" = matched,
-		"radio_only" = telemetry.counters["legacy_only"] - before["legacy_only"],
-		"netdm_only" = netdm_only,
-		"unmirrored" = telemetry.counters["unmirrored"] - before["unmirrored"],
-		"coalesced" = lane.counters["superseded"] - coalesced_before,
-		"reasons" = reason_deltas,
-		"p50_ms" = telemetry.percentile_ms(window, 0.5),
-		"p95_ms" = p95,
-		"max_ms" = telemetry.percentile_ms(window, 1),
-		"latencies_ms" = latency_ms,
-		"sensors" = sensor_rows,
-		"consoles" = console_rows,
-		"observe" = SSnetdm_observe.observe_state(),
-		"mismatches" = telemetry.mismatches,
-	)
-	var/path = "[GLOB.log_directory]/netdm_atmos_station.json"
-	fdel(path)
-	text2file(json_encode(report), path)
-	log_world("netDM atmos station: [report["map"]] compared=[compared] matched=[matched] radio_only=[report["radio_only"]] \
-		netdm_only=[netdm_only] reasons=[json_encode(reason_deltas)] p50=[report["p50_ms"]]ms p95=[p95]ms max=[report["max_ms"]]ms")
-	TEST_ASSERT(compared > 0, "The station pilot must compare reports: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(netdm_only, 0, "netDM must not deliver where the radio does not: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(unexplained, 0, "Every radio-only console needs a reason: [json_encode(reason_deltas)]")
-	if(matched >= 20)
-		TEST_ASSERT(p95 <= 500, "End-to-end p95 must stay within 500 ms on the station, got [p95] ms: [json_encode(latency_ms)]")
-
-/// P7 Shadow on the station: PDAs by APCs across departments message each other through the map's own
-/// telecomms, then through the debug bypass. Writes netdm_messenger_station.json; fails only on contract
-/// breaches: a message shown twice, a radio-only recipient without a network reason, or arrival p95 above
-/// the budget.
-/datum/unit_test/netdm_observe/area_map/messenger_station
-
-/datum/unit_test/netdm_observe/area_map/messenger_station/proc/exchange(datum/netdm_messenger_shadow/shadow, datum/netdm_service_lane/lane, list/messengers, list/pdas, label)
-	var/compared = shadow.counters["compared"]
-	var/count = length(messengers)
-	var/sent = 0
-	for(var/index in 1 to count)
-		var/datum/computer_file/program/messenger/sender = messengers[index]
-		var/datum/computer_file/program/messenger/target = messengers[(index + round(count / 2) - 1) % count + 1]
-		if(sender.send_message(pdas[index], "netDM station [label] [index]", list(target)))
-			sent++
-		sleep(2)
-	var/deadline = world.time + 40 SECONDS
-	while(world.time < deadline && (length(shadow.sends) || length(lane.command_queries)))
-		sleep(5)
-	sleep(1 SECONDS)
-	return list("label" = label, "legacy_sent" = sent, "compared" = shadow.counters["compared"] - compared)
-
-/// Authoritative mode on the station: the PDAs send through the map's own message server, then once
-/// more while it is off. Writes netdm_messenger_station.json.
-/datum/unit_test/netdm_observe/area_map/messenger_station/proc/authoritative_station(datum/netdm_messenger_shadow/shadow,
-	datum/netdm_service_lane/lane, list/messengers, list/pdas, ready)
-	var/list/counters = shadow.relay_counters
-	var/list/map_servers = list()
-	for(var/instance in shadow.servers)
-		var/datum/weakref/server_ref = shadow.servers[instance]
-		var/obj/machinery/telecomms/message_server/server = server_ref.resolve()
-		if(server)
-			map_servers += server
-	TEST_ASSERT(length(map_servers), "The station's message server must offer msgsrv: [shadow.state()]")
-	var/deadline = world.time + 60 SECONDS
-	while(world.time < deadline && !shadow.choose_server(pdas[1]))
-		sleep(10)
-	var/list/before = counters.Copy()
-	var/list/reasons_before = shadow.reasons.Copy()
-	var/arrivals_start = length(shadow.arrivals)
-	var/answers_start = length(shadow.relay_latencies)
-	var/list/logged_before = list()
-	for(var/obj/machinery/telecomms/message_server/server as anything in map_servers)
-		logged_before[server] = length(server.pda_msgs)
-	var/old_bypass = SSnetworks.ntnet_debug_global_signal
-	SSnetworks.ntnet_debug_global_signal = FALSE
-	var/count = length(messengers)
-	var/sent = 0
-	for(var/index in 1 to count)
-		var/datum/computer_file/program/messenger/sender = messengers[index]
-		var/datum/computer_file/program/messenger/target = messengers[(index + round(count / 2) - 1) % count + 1]
-		if(sender.send_message(pdas[index], "netDM station server [index]", list(target)))
-			sent++
-		sleep(2)
-	deadline = world.time + 60 SECONDS
-	while(world.time < deadline && length(shadow.outgoing))
-		sleep(5)
-	var/list/delta = list()
-	for(var/name in counters)
-		if(counters[name] != before[name])
-			delta[name] = counters[name] - before[name]
-	var/list/window = shadow.arrivals.Copy(max(1, arrivals_start + 1))
-	var/list/answers = shadow.relay_latencies.Copy(max(1, answers_start + 1))
-	var/logged = 0
-	for(var/obj/machinery/telecomms/message_server/server as anything in map_servers)
-		logged += length(server.pda_msgs) - logged_before[server]
-
-	// The same messages with the server off: refused, nothing shown, nothing logged.
-	for(var/obj/machinery/telecomms/message_server/server as anything in map_servers)
-		server.toggled = FALSE
-	sleep(1.2 SECONDS)
-	var/shown_on = counters["shown"]
-	var/offline_before = shadow.reasons["relay_offline"]
-	for(var/index in 1 to count)
-		var/datum/computer_file/program/messenger/sender = messengers[index]
-		var/datum/computer_file/program/messenger/target = messengers[(index + round(count / 2) - 1) % count + 1]
-		sender.send_message(pdas[index], "netDM station server off [index]", list(target))
-		sleep(2)
-	deadline = world.time + 30 SECONDS
-	while(world.time < deadline && length(shadow.outgoing))
-		sleep(5)
-	for(var/obj/machinery/telecomms/message_server/server as anything in map_servers)
-		server.toggled = TRUE
-	SSnetworks.ntnet_debug_global_signal = old_bypass
-	var/list/reason_deltas = list()
-	for(var/reason in shadow.reasons)
-		if(shadow.reasons[reason] != reasons_before[reason])
-			reason_deltas[reason] = shadow.reasons[reason] - reasons_before[reason]
-	var/list/arrival_ms = list()
-	for(var/sample in sortTim(window.Copy(), GLOBAL_PROC_REF(cmp_numeric_asc)))
-		arrival_ms += round(sample / 1000)
-	var/datum/http_response/status_response = world_safe_http_get("[http_base]/api/game/status", 5 SECONDS)
-	var/list/host_status = status_response?.status_code == 200 ? json_decode(status_response.body) : null
-	var/p95 = shadow.percentile_ms(window, 0.95)
-	var/list/server_rows = list()
-	for(var/obj/machinery/telecomms/message_server/server as anything in map_servers)
-		var/datum/component/netdm_node/node = server.GetComponent(/datum/component/netdm_node)
-		var/turf/position = get_turf(server)
-		var/area/zone = get_area(server)
-		var/node_id = node ? SSnetdm_observe.node_ids[node] : null
-		var/list/host = node_id && position ? host_node(position.z, node_id) : null
-		server_rows += list(list("place" = "[zone?.type] [position?.x],[position?.y],[position?.z]", "attached" = lane.by_node[node]?.attached_node,
-			"links" = host?["links"], "radio" = host?["radioEnabled"], "powered" = !(server.machine_stat & NOPOWER)))
-	var/list/report = list(
-		"map" = SSmapping.config?.map_name,
-		"mode" = "authoritative",
-		"pdas" = length(pdas),
-		"ready" = ready,
-		"servers" = length(map_servers),
-		"server_rows" = server_rows,
-		"apc_bridges" = host_status?["apcBridges"],
-		"sent" = sent,
-		"counters" = delta,
-		"logged" = logged,
-		"offline_refused" = shadow.reasons["relay_offline"] - offline_before,
-		"shown_while_off" = counters["shown"] - shown_on,
-		"reasons" = reason_deltas,
-		"arrival_p50_ms" = shadow.percentile_ms(window, 0.5),
-		"arrival_p95_ms" = p95,
-		"answer_p95_ms" = shadow.percentile_ms(answers, 0.95),
-		"arrival_ms" = arrival_ms,
-		"lane" = lane.state(),
-		"host_runner" = host_status?["runner"],
-		"host_process" = host_status?["process"],
-	)
-	var/path = "[GLOB.log_directory]/netdm_messenger_station.json"
-	fdel(path)
-	text2file(json_encode(report), path)
-	log_world("netDM messenger station: [report["map"]] authoritative pdas=[length(pdas)] ready=[ready] sent=[sent] \
-		counters=[json_encode(delta)] logged=[logged] offline_refused=[report["offline_refused"]] shown_while_off=[report["shown_while_off"]] \
-		reasons=[json_encode(reason_deltas)] arrival p50=[report["arrival_p50_ms"]]ms p95=[p95]ms answer p95=[report["answer_p95_ms"]]ms 		bridges=[json_encode(report["apc_bridges"])]")
-	TEST_ASSERT_EQUAL(delta["relayed"], sent, "Every message leaves through the server: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(delta["shown"], delta["delivered"], "What was shown is what the senders were told: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(delta["delivered"] + delta["unreachable"], sent, "Each recipient is delivered or reported unreachable: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(delta["duplicates"], null, "Nothing is shown twice: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(logged, delta["queued"], "The server logs each message it takes once: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(report["offline_refused"], count, "A server that is off refuses every message: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(report["shown_while_off"], 0, "Nothing is shown while the server is off: [json_encode(report)]")
-	if(delta["delivered"] >= 10)
-		TEST_ASSERT(p95 <= 1000, "Arrival p95 through the server must stay within 1000 ms, got [p95] ms: [json_encode(arrival_ms)]")
-
-/datum/unit_test/netdm_observe/area_map/messenger_station/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
-		return
-	var/datum/netdm_messenger_shadow/shadow = SSnetdm_observe.messenger
-	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
-	TEST_ASSERT(shadow && lane, "Observe must run the messenger pilot.")
-	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
-	var/deadline = world.time + 10 MINUTES
-	while(world.time < deadline && !(SSnetdm_observe.published && SSnetdm_observe.phase == "live" && !SSnetdm_observe.pending))
-		sleep(10)
-	TEST_ASSERT(SSnetdm_observe.published, "Observe must publish the station map ([SSnetdm_observe.observe_state()]).")
-
-	// One PDA by every few station APCs, spread across the map in a stable order.
-	var/list/apcs = list()
-	for(var/obj/machinery/power/apc/apc as anything in GLOB.apcs_list)
-		var/turf/position = get_turf(apc)
-		if(position && is_station_level(position.z) && !(apc.machine_stat & BROKEN))
-			apcs += apc
-	TEST_ASSERT(length(apcs) >= 4, "The station needs APCs to place PDAs by.")
-	var/step = max(1, round(length(apcs) / 12))
-	var/list/pdas = list()
-	var/list/messengers = list()
-	for(var/index = 1; index <= length(apcs) && length(pdas) < 12; index += step)
-		var/obj/machinery/power/apc/apc = apcs[index]
-		var/obj/item/modular_computer/pda/pda = allocate(/obj/item/modular_computer/pda, get_turf(apc))
-		var/datum/computer_file/program/messenger/messenger = locate(/datum/computer_file/program/messenger) in pda.get_all_files()
-		TEST_ASSERT(messenger, "PDAs come with the messenger.")
-		pda.saved_identification = "netDM [index]"
-		add_messenger(messenger)
-		pdas += pda
-		messengers += messenger
-	var/pdas_before = length(shadow.instances)
-
-	// Each messenger registers its instance, or stays pending where its node has no attachment.
-	deadline = world.time + 90 SECONDS
-	var/ready = 0
-	while(world.time < deadline)
-		ready = 0
-		for(var/index in 1 to length(pdas))
-			var/obj/item/modular_computer/pda/pda = pdas[index]
-			var/datum/component/netdm_node/node = pda.GetComponent(/datum/component/netdm_node)
-			if(node && lane.ready(node, shadow.instances[WEAKREF(messengers[index])]))
-				ready++
-		if(ready == length(pdas))
-			break
-		sleep(10)
-	if(shadow.authoritative)
-		authoritative_station(shadow, lane, messengers, pdas, ready)
-		return
-
-	var/list/before = shadow.counters.Copy()
-	var/list/reasons_before = shadow.reasons.Copy()
-	var/arrivals_start = length(shadow.arrivals)
-	lane.max_poll_gap_us = 0
-	lane.max_reply_us = 0
-	lane.max_reply_op = null
-	var/old_bypass = SSnetworks.ntnet_debug_global_signal
-	SSnetworks.ntnet_debug_global_signal = FALSE
-	var/list/passes = list()
-	passes += list(exchange(shadow, lane, messengers, pdas, "telecomms"))
-	sleep(1.2 SECONDS)
-	SSnetworks.ntnet_debug_global_signal = TRUE
-	passes += list(exchange(shadow, lane, messengers, pdas, "bypass"))
-	SSnetworks.ntnet_debug_global_signal = old_bypass
-
-	// Reasons the network gives for a recipient the radio reached and netDM did not.
-	var/list/network_reasons = list("invalid_route", "no_route", "expired", "deadline", "transport_ttl", "receiver_gone", "provider_gone",
-		"unknown_instance", "no_messenger")
-	var/list/reason_deltas = list()
-	var/unexplained = 0
-	for(var/reason in shadow.reasons)
-		var/delta = shadow.reasons[reason] - reasons_before[reason]
-		if(!delta)
-			continue
-		reason_deltas[reason] = delta
-		if(!(reason in network_reasons) && reason != "legacy_server" && reason != "legacy_missed")
-			unexplained += delta
-	var/list/rows = list()
-	for(var/index in 1 to length(pdas))
-		var/obj/item/modular_computer/pda/pda = pdas[index]
-		var/datum/component/netdm_node/node = pda.GetComponent(/datum/component/netdm_node)
-		var/datum/netdm_service_endpoint/endpoint = node ? lane.by_node[node] : null
-		var/turf/position = get_turf(pda)
-		var/node_id = node ? SSnetdm_observe.node_ids[node] : null
-		var/list/host = node_id && position ? host_node(position.z, node_id) : null
-		var/area/zone = get_area(pda)
-		rows += list(list("instance" = shadow.instances[WEAKREF(messengers[index])], "place" = "[zone?.type] [position?.x],[position?.y],[position?.z]",
-			"attached" = endpoint?.attached_node, "links" = host?["links"], "radio" = host?["radioEnabled"]))
-	var/list/window = shadow.arrivals.Copy(max(1, arrivals_start + 1))
-	var/list/arrival_ms = list()
-	for(var/sample in sortTim(window.Copy(), GLOBAL_PROC_REF(cmp_numeric_asc)))
-		arrival_ms += round(sample / 1000)
-	var/datum/http_response/status_response = world_safe_http_get("[http_base]/api/game/status", 5 SECONDS)
-	var/list/host_status = status_response?.status_code == 200 ? json_decode(status_response.body) : null
-	var/matched = shadow.counters["matched"] - before["matched"]
-	var/p95 = shadow.percentile_ms(window, 0.95)
-	var/list/report = list(
-		"map" = SSmapping.config?.map_name,
-		"pdas" = length(pdas),
-		"pdas_on_map" = pdas_before - length(pdas),
-		"ready" = ready,
-		"passes" = passes,
-		"compared" = shadow.counters["compared"] - before["compared"],
-		"matched" = matched,
-		"radio_only" = shadow.counters["legacy_only"] - before["legacy_only"],
-		"netdm_only" = shadow.counters["netdm_only"] - before["netdm_only"],
-		"legacy_duplicates" = shadow.counters["legacy_duplicates"] - before["legacy_duplicates"],
-		"netdm_duplicates" = shadow.counters["netdm_duplicates"] - before["netdm_duplicates"],
-		"unmirrored" = shadow.counters["unmirrored"] - before["unmirrored"],
-		"reasons" = reason_deltas,
-		"arrival_p50_ms" = shadow.percentile_ms(window, 0.5),
-		"arrival_p95_ms" = p95,
-		"arrival_ms" = arrival_ms,
-		"lane" = lane.state(),
-		"host_runner" = host_status?["runner"],
-		"host_process" = host_status?["process"],
-		"rows" = rows,
-		"notes" = shadow.notes,
-	)
-	var/path = "[GLOB.log_directory]/netdm_messenger_station.json"
-	fdel(path)
-	text2file(json_encode(report), path)
-	log_world("netDM messenger station: [report["map"]] pdas=[length(pdas)] ready=[ready] passes=[json_encode(passes)] \
-		matched=[matched] radio_only=[report["radio_only"]] netdm_only=[report["netdm_only"]] reasons=[json_encode(reason_deltas)] \
-		arrival p50=[report["arrival_p50_ms"]]ms p95=[p95]ms [shadow.state()]")
-	TEST_ASSERT(report["compared"] > 0, "The station pilot must compare messages: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(report["legacy_duplicates"] + report["netdm_duplicates"], 0, "Nothing is shown twice: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(unexplained, 0, "Every one-sided delivery needs a reason: [json_encode(reason_deltas)] [json_encode(shadow.notes)]")
-	if(matched >= 10)
-		TEST_ASSERT(p95 <= 500, "Arrival p95 must stay within 500 ms on the station, got [p95] ms: [json_encode(arrival_ms)]")
 
 /**
  * Audit of the APC network on the loaded station map.
@@ -2579,7 +1874,7 @@
 /datum/unit_test/netdm_observe/area_map/map_audit
 
 /datum/unit_test/netdm_observe/area_map/map_audit/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
 	// A full station map publishes slower than the test reservation.
@@ -2606,176 +1901,6 @@
 	var/published_apcs = report["apcs"] + report["off_station_apcs"]
 	TEST_ASSERT(report["host_nodes"] >= published_apcs, "The Host must hold every published APC ([report["host_nodes"]] of [published_apcs]).")
 
-/// P9.1: a press keeps its legacy effect and reaches the button's doors over the network as set_state commands.
-/// The button and its doors join the network at the first press, which waits for them; a door out of the
-/// network is missed with the Host's reason.
-/datum/unit_test/netdm_observe/area_map/door_shadow
-
-/datum/unit_test/netdm_observe/area_map/door_shadow/proc/explained(datum/netdm_door_shadow/shadow)
-	. = 0
-	for(var/reason in shadow.reasons)
-		. += shadow.reasons[reason]
-
-/// Waits for the comparison, then for the status answers that explain its misses.
-/datum/unit_test/netdm_observe/area_map/door_shadow/proc/wait_compared(datum/netdm_door_shadow/shadow, compared, timeout = 20 SECONDS)
-	var/deadline = world.time + timeout
-	while(world.time < deadline && (shadow.counters["compared"] < compared || length(shadow.presses)))
-		sleep(2)
-	deadline = world.time + 5 SECONDS
-	while(world.time < deadline && explained(shadow) < shadow.counters["missed"])
-		sleep(2)
-	return shadow.counters["compared"] >= compared
-
-/datum/unit_test/netdm_observe/area_map/door_shadow/proc/last_press(datum/netdm_door_shadow/shadow)
-	return length(shadow.presses) ? shadow.presses[shadow.presses[length(shadow.presses)]] : null
-
-/datum/unit_test/netdm_observe/area_map/door_shadow/proc/new_reasons(datum/netdm_door_shadow/shadow, list/reasons_before)
-	. = list()
-	for(var/reason in shadow.reasons)
-		if(shadow.reasons[reason] != reasons_before[reason])
-			. += reason
-
-/datum/unit_test/netdm_observe/area_map/door_shadow/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
-		return
-	TEST_ASSERT(wait_until_live(), "Observe must publish the map ([SSnetdm_observe.observe_state()]).")
-	var/datum/netdm_door_shadow/shadow = SSnetdm_observe.doors
-	TEST_ASSERT(shadow, "Observe must run the door pilot.")
-	var/list/turfs = list(run_loc_floor_bottom_left)
-	for(var/i in 1 to 3)
-		turfs += get_step(turfs[length(turfs)], EAST)
-	var/area/served = test_zone(/area/netdm_test/first)
-	for(var/turf/tile as anything in turfs)
-		assign_area(tile, served)
-	var/obj/machinery/power/apc/apc = allocate(/obj/machinery/power/apc, turfs[1])
-	TEST_ASSERT(wait_for_fact(WEAKREF(apc), turfs[1]), "Expected the zone APC to be published.")
-	var/tag = "netdm-doors-[rand(1000, 9999)]"
-	var/obj/machinery/button/door/blast_button = allocate(/obj/machinery/button/door, turfs[2])
-	var/obj/item/assembly/control/blast_control = blast_button.device
-	TEST_ASSERT(istype(blast_control), "A door button carries a blast door controller.")
-	blast_control.id = tag
-	var/obj/machinery/door/poddoor/first = allocate(/obj/machinery/door/poddoor, turfs[3])
-	var/obj/machinery/door/poddoor/second = allocate(/obj/machinery/door/poddoor, turfs[4])
-	var/obj/machinery/door/poddoor/away = allocate(/obj/machinery/door/poddoor, turfs[4])
-	var/turf/corner = isolated_turf()
-	TEST_ASSERT(corner, "The station level needs a corner without an APC nearby.")
-	away.forceMove(corner)
-	for(var/obj/machinery/door/poddoor/door as anything in list(first, second, away))
-		door.id = tag
-	var/obj/machinery/button/door/airlock_button = allocate(/obj/machinery/button/door, turfs[2])
-	qdel(airlock_button.device)
-	var/obj/item/assembly/control/airlock/airlock_control = new(airlock_button)
-	airlock_button.device = airlock_control
-	airlock_control.id = "[tag]-airlock"
-	airlock_control.specialfunctions = OPEN | SAFE
-	var/obj/machinery/door/airlock/airlock = allocate(/obj/machinery/door/airlock, turfs[2])
-	airlock.id_tag = "[tag]-airlock"
-	TEST_ASSERT(!first.GetComponent(/datum/component/netdm_node) && !blast_button.GetComponent(/datum/component/netdm_node),
-		"Buttons and doors join the network only when pressed.")
-	var/list/invalid = list("unanswered", "not_attached", "lane_full", "unknown")
-
-	// The first press brings the button and its doors into the network and waits for them.
-	var/list/before = shadow.counters.Copy()
-	var/list/reasons_before = shadow.reasons.Copy()
-	blast_control.activate()
-	var/list/press = last_press(shadow)
-	TEST_ASSERT(press && length(press["targets"]) == 3, "The press is mirrored to its three doors: [shadow.state()]")
-	TEST_ASSERT_EQUAL(press["wanted"][shadow.instances[WEAKREF(first)]]["state"], "open", "Closed blast doors are opened.")
-	TEST_ASSERT(wait_compared(shadow, before["compared"] + 3), "The press is compared: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.counters["reached"] - before["reached"], 2, "Both doors of the zone are reached: [shadow.state()] [json_encode(shadow.notes)]")
-	TEST_ASSERT_EQUAL(shadow.counters["cold"] - before["cold"], 2, "The first press waits for its endpoints: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.counters["missed"] - before["missed"], 1, "The door out of the network is missed: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.counters["kept"] - before["kept"], 2, "Legacy opened both doors as the press said: [json_encode(shadow.notes)]")
-	TEST_ASSERT(!first.density && !second.density, "The press keeps its legacy effect.")
-	var/list/missed_reasons = new_reasons(shadow, reasons_before)
-	TEST_ASSERT(length(missed_reasons) == 1 && !(missed_reasons[1] in invalid),
-		"The Host explains the miss: [json_encode(shadow.reasons)] [json_encode(shadow.notes)]")
-	TEST_ASSERT(shadow.percentile_ms(shadow.cold_arrivals, 0.5) > 0, "A first press has a latency: [shadow.state()]")
-
-	// The next press finds them attached.
-	before = shadow.counters.Copy()
-	reasons_before = shadow.reasons.Copy()
-	blast_control.activate()
-	press = last_press(shadow)
-	TEST_ASSERT_EQUAL(press?["wanted"][shadow.instances[WEAKREF(first)]]["state"], "closed", "Open blast doors are closed.")
-	TEST_ASSERT(wait_compared(shadow, before["compared"] + 3), "The second press is compared: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.counters["reached"] - before["reached"], 2, "Both doors are reached again: [shadow.state()] [json_encode(shadow.notes)]")
-	TEST_ASSERT_EQUAL(shadow.counters["cold"], before["cold"], "Attached doors take the command at once: [shadow.state()]")
-	missed_reasons = new_reasons(shadow, reasons_before)
-	TEST_ASSERT(length(missed_reasons) == 1 && !(missed_reasons[1] in invalid), "The corner door is missed again: [json_encode(shadow.reasons)]")
-	TEST_ASSERT(shadow.percentile_ms(shadow.arrivals, 0.5) > 0, "Arrivals have a latency: [shadow.state()]")
-
-	before = shadow.counters.Copy()
-	airlock_control.activate()
-	var/airlock_instance = shadow.instances[WEAKREF(airlock)]
-	TEST_ASSERT(airlock_instance, "The press brings the airlock into the network.")
-	TEST_ASSERT(wait_compared(shadow, before["compared"] + 1), "The airlock press is compared: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.counters["reached"] - before["reached"], 1, "The airlock is reached: [shadow.state()] [json_encode(shadow.notes)]")
-	var/deadline = world.time + 10 SECONDS
-	while(world.time < deadline && (airlock.density || airlock.operating))
-		sleep(2)
-	TEST_ASSERT(!airlock.density, "The airlock opened: [shadow.state()]")
-
-	before = shadow.counters.Copy()
-	airlock_control.activate()
-	press = last_press(shadow)
-	var/list/wanted = press?["wanted"][airlock_instance]
-	TEST_ASSERT(wanted && wanted["state"] == "closed" && wanted["safety"] == TRUE,
-		"An open airlock is closed, with the safety the legacy press left: [json_encode(wanted)]")
-	deadline = world.time + 10 SECONDS
-	while(world.time < deadline && isnull(press["arrived"][airlock_instance]))
-		sleep(1)
-	TEST_ASSERT(!isnull(press["arrived"][airlock_instance]), "The command reaches the airlock: [shadow.state()]")
-	var/datum/component/netdm_node/button_node = airlock_button.GetComponent(/datum/component/netdm_node)
-	var/datum/netdm_service_endpoint/button_endpoint = SSnetdm_observe.services.by_node[button_node]
-	var/list/again = shadow.received(airlock, list("payload" = list("press" = press["id"]), "instance" = airlock_instance,
-		"producer" = button_endpoint.id, "producerGeneration" = "[button_endpoint.generation]"))
-	TEST_ASSERT(islist(again) && again["result"]["reason"] == "shadow" && shadow.counters["duplicates"] == before["duplicates"] + 1,
-		"A repeated command is recorded once: [shadow.state()]")
-	TEST_ASSERT(wait_compared(shadow, before["compared"] + 1), "The second airlock press is compared: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.counters["reached"] - before["reached"], 1, "The registered airlock is reached: [shadow.state()] [json_encode(shadow.notes)]")
-
-	var/not_button = shadow.exceptions["not_button"] || 0
-	var/obj/item/assembly/control/loose = allocate(/obj/item/assembly/control, turfs[1])
-	loose.id = "[tag]-none"
-	loose.activate()
-	TEST_ASSERT(shadow.exceptions["not_button"] == not_button + 1, "A controller outside a button is an exception: [shadow.state()]")
-
-	// Authoritative: the press moves nothing itself; each door moves when its command arrives over the network,
-	// and the door the network does not reach stays as it was.
-	shadow.set_authoritative(TRUE)
-	sleep(11) // The buttons' cooldown from the presses above.
-	TEST_ASSERT(first.density && second.density && away.density, "The blast doors start closed.")
-	TEST_ASSERT_EQUAL(shadow.received(first, list("payload" = list("press" = "unknown", "state" = "open"))), "invalid_press", "A raw command cannot forge a world button press.")
-	TEST_ASSERT(first.density, "A forged press does not move the door.")
-	before = shadow.counters.Copy()
-	blast_control.activate()
-	TEST_ASSERT(first.density && second.density, "Under authority a press does not move the doors itself.")
-	deadline = world.time + 10 SECONDS
-	while(world.time < deadline && (first.density || second.density))
-		sleep(1)
-	TEST_ASSERT(!first.density && !second.density, "The doors open when the command reaches them: [shadow.state()] [json_encode(shadow.notes)]")
-	TEST_ASSERT(away.density, "A door the network does not reach stays closed.")
-	TEST_ASSERT(wait_compared(shadow, before["compared"] + 3), "The authoritative press is compared: [shadow.state()]")
-	TEST_ASSERT_EQUAL(shadow.counters["kept"] - before["kept"], 2, "Both reached doors ended where the press put them: [json_encode(shadow.notes)]")
-	var/safe_before = airlock.safe
-	var/airlock_closed = airlock.density
-	before = shadow.counters.Copy()
-	airlock_control.activate()
-	press = last_press(shadow)
-	TEST_ASSERT(airlock.safe == safe_before && airlock.density == airlock_closed, "The airlock waits for its command.")
-	TEST_ASSERT(press?["wanted"][airlock_instance]["safety"] == !safe_before, "The command carries where the safety toggle leads: [json_encode(press?["wanted"])]")
-	deadline = world.time + 10 SECONDS
-	while(world.time < deadline && airlock.safe == safe_before)
-		sleep(1)
-	TEST_ASSERT(airlock.safe == !safe_before, "The airlock takes its safety from the command.")
-	var/list/repeated = shadow.received(airlock, list("payload" = list("press" = press["id"], "safety" = safe_before), "instance" = airlock_instance,
-		"producer" = button_endpoint.id, "producerGeneration" = "[button_endpoint.generation]"))
-	TEST_ASSERT(repeated?["result"]["reason"] == "duplicate" && airlock.safe == !safe_before, "A repeated command does not apply twice.")
-	TEST_ASSERT(wait_compared(shadow, before["compared"] + 1), "The authoritative airlock press is compared: [shadow.state()]")
-	shadow.set_authoritative(FALSE)
-	log_world("netDM door shadow: [shadow.state()] notes=[json_encode(shadow.notes)]")
-
 /// P9.1 on the station: map buttons pressed there and back; every door they control is reached over the
 /// network or missed with a Host reason. Writes netdm_door_station.json.
 /datum/unit_test/netdm_observe/area_map/door_station
@@ -2795,7 +1920,7 @@
 				. += door
 
 /datum/unit_test/netdm_observe/area_map/door_station/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	var/datum/netdm_door_shadow/shadow = SSnetdm_observe.doors
 	TEST_ASSERT(shadow, "Observe must run the door pilot.")
@@ -2935,7 +2060,7 @@
 	TEST_ASSERT(wait_feed(console, null, "denied"), "Changing the console's camera network revokes its feed.")
 
 /datum/unit_test/netdm_observe/area_map/network_air_alarm/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
 	TEST_ASSERT(wait_until_live(), "Observe must publish the station map.")
@@ -2999,7 +2124,7 @@
 	return null
 
 /datum/unit_test/netdm_observe/area_map/network_terminal/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
 	TEST_ASSERT(length(http_base), "NETDM_TEST_HTTP must point to the test Host.")
@@ -3342,7 +2467,7 @@
 
 /// P13 immersion: the dive layer is opt-in, and the access point of the body is a working APC of its zone.
 /datum/unit_test/netdm_observe/area_map/network_immersion/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
 	TEST_ASSERT(wait_until_live(), "Observe must publish the station map.")
@@ -3379,7 +2504,7 @@
 /// access point ends the dive and gives the body back its hands. The window is the same one operators
 /// use: the dive adds presentation and a body state, not a second channel of commands.
 /datum/unit_test/netdm_observe/area_map/network_immersion_dive/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
 	TEST_ASSERT(wait_until_live(), "Observe must publish the station map.")
@@ -3462,7 +2587,7 @@
 		candidate.operating = TRUE
 	qdel(space)
 /datum/unit_test/netdm_observe/area_map/network_life_physical/Run()
-	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
 		return
 	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
 	TEST_ASSERT(wait_until_live(), "Observe must publish the station map.")

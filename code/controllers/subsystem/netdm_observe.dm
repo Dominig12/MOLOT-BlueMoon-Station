@@ -1,4 +1,4 @@
-// Opt-in, read-only APC observation. The legacy game remains the authority.
+// Authoritative netDM bridge: networked game interactions never bypass the Host.
 #define NETDM_OBSERVE_CAP 4096
 #define NETDM_OBSERVE_BATCH 64
 /// Observed netDM nodes; the Host accepts up to 4096 devices per runtime.
@@ -10,7 +10,7 @@
 #define NETDM_SLOW_FIRE 50
 
 SUBSYSTEM_DEF(netdm_observe)
-	name = "netDM Observe"
+	name = "netDM Network"
 	wait = 1
 	// Not a background subsystem: service deliveries have a latency budget, and a background
 	// subsystem waited up to 4.7 s for leftover tick time. Every fire is bounded by the tick check.
@@ -128,7 +128,8 @@ SUBSYSTEM_DEF(netdm_observe)
 	var/next_slow_fire_log = 0
 
 /datum/controller/subsystem/netdm_observe/PreInit()
-	if(world.GetConfig("env", "NETDM_OBSERVE") == "1" && world.GetConfig("env", "NETDM_IPC_MODE") == "v1")
+	// v1 is the supported game transport. No independent Shadow/Observe feature switch.
+	if(world.GetConfig("env", "NETDM_IPC_MODE") == "v1")
 		flags &= ~SS_NO_FIRE
 		// Devices declare their services while atoms initialize, before this subsystem does.
 		services = new
