@@ -1284,8 +1284,20 @@ export const NetdmSpace = () => {
                   </Box>
                 )}
               </Stack.Item>
-              <Stack.Item basis="300px">
+              <Stack.Item basis={inside ? '340px' : '300px'}>
                 <Stack fill vertical>
+                  {(moving || preview || presence?.breakKind) && (
+                    <Stack.Item>
+                      <RoutePanel
+                        preview={preview}
+                        presence={presence}
+                        canMove={canMove}
+                        onMove={target => act('move', { to: target })}
+                        onRetry={target => act('preview_move', { to: target })}
+                        onClear={() => act('clear_route_preview')}
+                        onAbort={() => act('abort_move')} />
+                    </Stack.Item>
+                  )}
                   <Stack.Item>
                     <NodePanel
                       view={view}
@@ -1345,18 +1357,6 @@ export const NetdmSpace = () => {
                   </Stack.Item>
                   {machineCommand && (
                     <Stack.Item><MachineCommandPanel command={machineCommand} /></Stack.Item>
-                  )}
-                  {(moving || preview || presence?.breakKind) && (
-                    <Stack.Item>
-                      <RoutePanel
-                        preview={preview}
-                        presence={presence}
-                        canMove={canMove}
-                        onMove={target => act('move', { to: target })}
-                        onRetry={target => act('preview_move', { to: target })}
-                        onClear={() => act('clear_route_preview')}
-                        onAbort={() => act('abort_move')} />
-                    </Stack.Item>
                   )}
                   {watch && (
                     <Stack.Item>
