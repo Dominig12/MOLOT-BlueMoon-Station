@@ -59,6 +59,7 @@
 	active_camera = null
 	last_camera = null
 	last_camera_turf = null
+	QDEL_NULL(netdm_window)
 	return ..()
 
 /obj/machinery/computer/security/connect_to_shuttle(obj/docking_port/mobile/port, obj/docking_port/stationary/dock, idnum, override=FALSE)
@@ -143,6 +144,8 @@
 	data["networkStatus"] = netdm_cameras_enabled() ? netdm_camera_status : null
 	var/obj/machinery/camera/target = netdm_camera_target?.resolve()
 	data["networkTarget"] = netdm_camera_allowed(target) ? target.c_tag : null
+	// P13: the network window is one button away for the officer at this console.
+	data["netdmSpace"] = (SSnetdm_observe?.observing() && SSnetdm_observe.services) ? TRUE : null
 	data["activeCamera"] = null
 	if(!QDELETED(active_camera))
 		data["activeCamera"] = list(
@@ -166,6 +169,9 @@
 	if(action == "toggle_departments")
 		show_departments = !show_departments
 		return TRUE
+	if(action == "open_network")
+		// P13: the same network the cameras live on, opened as a window from this console.
+		return netdm_open_space(usr)
 
 	if(action == "switch_camera")
 		var/c_tag = params["name"]
@@ -502,3 +508,18 @@
 	return fallback_camera
 
 #undef DEFAULT_MAP_SIZE
+
+/// P13: opens the network window of the station from the security console.
+/obj/machinery/computer/security/proc/netdm_open_space(mob/living/user)
+	if(!SSnetdm_observe?.observing() || !SSnetdm_observe.services || !isliving(user))
+		return FALSE
+	var/datum/component/netdm_node/node = netdm_make_node(src)
+	if(!node)
+		return FALSE
+	SSnetdm_observe.diagnostics?.offer_shell(src)
+	if(netdm_window && QDELETED(netdm_window))
+		netdm_window = null
+	if(!netdm_window)
+		netdm_window = new(src, node, user)
+	netdm_window.user_ref = WEAKREF(user)
+	return netdm_window.open_space(user)

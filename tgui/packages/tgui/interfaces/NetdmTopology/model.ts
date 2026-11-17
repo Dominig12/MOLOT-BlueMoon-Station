@@ -47,6 +47,18 @@ export type ViewRows = {
 };
 
 /** Upper bounds the client enforces whatever the server sends. */
+/** P13: how many recent network events touched each node; the map draws their halos. */
+export const countActivityNodes = (events: readonly { node?: string }[]): Readonly<Record<string, number>> => {
+  const counts: Record<string, number> = {};
+  for (const event of events) {
+    if (!event.node) {
+      continue;
+    }
+    counts[event.node] = (counts[event.node] ?? 0) + 1;
+  }
+  return counts;
+};
+
 export const MAX_NODES = 4096;
 export const MAX_LINKS = 8192;
 

@@ -830,6 +830,17 @@
 	TEST_ASSERT(shadow.last_drift < 0.1, "The treasury balance must match within float error: [shadow.state()]")
 	TEST_ASSERT_EQUAL(shadow.counters["knowledge_drifts"], 0, "The treasury must know the web's nodes: [json_encode(shadow.notes)]")
 	TEST_ASSERT_EQUAL(shadow.counters["rejected"] + shadow.counters["dropped"], 0, "Every mirror event must be accepted: [json_encode(shadow.notes)]")
+	// An event lost or refused for a web the ledger would take over blocks the switch for the round: the
+	// projection must not erase points the ledger never received (§13.10, §18.1).
+	var/mirror_complete = shadow.synchronized()
+	shadow.lost_mirror("test: simulated drop")
+	TEST_ASSERT(!shadow.synchronized(), "An incomplete mirror must not report synchronization: [shadow.state()]")
+	TEST_ASSERT_EQUAL(shadow.authorize(), FALSE, "Authority must not switch over an incomplete mirror: [shadow.state()]")
+	TEST_ASSERT(!shadow.authoritative, "The web must stay legacy while the mirror is incomplete.")
+	shadow.mirror_lost = FALSE
+	shadow.notes = list()
+	shadow.authority_requested = FALSE
+	TEST_ASSERT_EQUAL(shadow.synchronized(), mirror_complete, "A complete mirror synchronizes again: [shadow.state()]")
 	var/datum/http_response/response = world_safe_http_get("[world.GetConfig("env", "NETDM_TEST_HTTP")]/api/research/status", 5 SECONDS)
 	var/list/host = response?.status_code == 200 ? json_decode(response.body) : null
 	var/list/totals = host?["totals"]
@@ -922,7 +933,6 @@
 	var/legacy_before = web.research_points[TECHWEB_POINT_TYPE_GENERIC]
 	web.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = 1000), FALSE)
 	TEST_ASSERT_EQUAL(web.research_points[TECHWEB_POINT_TYPE_GENERIC], legacy_before, "Legacy points must not change the projection directly.")
-
 	// The price never rewrites the shared node, even with a boost.
 	var/boosted_id = pick_node(shadow, web, 200, 100000)
 	TEST_ASSERT(boosted_id, "The station web needs a node to price.")
@@ -3498,3 +3508,147 @@
 		"Engineering access opens the terminal of a locked APC.")
 	near.locked = was_locked
 	log_world("netDM network terminal: lines=[diagnostics.counters["lines"]] [diagnostics.state()]")
+
+/// P13 immersion: the dive layer is opt-in, and the access point of the body is a working APC of its zone.
+/datum/unit_test/netdm_observe/area_map/network_immersion/Run()
+	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+		return
+	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
+	TEST_ASSERT(wait_until_live(), "Observe must publish the station map.")
+	var/flagged = world.GetConfig("env", "NETDM_NET_IMMERSION") == "1"
+	TEST_ASSERT_EQUAL(netdm_immersion_enabled(), flagged, "The dive layer is off unless the round starts it.")
+	TEST_ASSERT_EQUAL(immersion_reason_text("implant_lost"), "имплант извлечён или уничтожен", "A lost implant is named.")
+	TEST_ASSERT_EQUAL(immersion_reason_text("access_point_lost"), "потеряна точка доступа", "A lost access point is named.")
+	var/obj/machinery/power/apc/station_apc
+	for(var/obj/machinery/power/apc/apc as anything in GLOB.apcs_list)
+		if(is_station_level(apc.z) && apc.netdm_state() == NETDM_STATE_UP && !is_antag_training_atom(apc))
+			station_apc = apc
+			break
+	TEST_ASSERT(station_apc, "The station has a powered APC.")
+	var/turf/here = get_turf(station_apc)
+	var/area/zone = netdm_power_area(get_area(here))
+	var/mob/living/carbon/human/body = allocate(/mob/living/carbon/human, here)
+	var/obj/machinery/power/apc/resolved = netdm_access_point(body)
+	TEST_ASSERT(resolved, "A working APC of the body's zone is an access point ([station_apc] state [station_apc.netdm_state()], zone [zone], zone APC [zone?.power_apc]).")
+	TEST_ASSERT(netdm_access_point_ok(resolved), "The access point is powered, operational and networked.")
+	TEST_ASSERT_EQUAL(netdm_access_point(body), resolved, "The access point of the zone is stable while it works.")
+	var/list/zone_apcs = list()
+	for(var/obj/machinery/power/apc/candidate as anything in GLOB.apcs_list)
+		if(netdm_power_area(get_area(candidate)) == netdm_power_area(get_area(resolved)))
+			zone_apcs += candidate
+	for(var/obj/machinery/power/apc/candidate as anything in zone_apcs)
+		candidate.operating = FALSE
+	TEST_ASSERT(isnull(netdm_access_point(body)), "A zone without a working APC has no access point.")
+	for(var/obj/machinery/power/apc/candidate as anything in zone_apcs)
+		candidate.operating = TRUE
+	TEST_ASSERT(netdm_access_point(body), "The repaired zone is an access point again.")
+
+
+/// P13 dive: a conscious body with a neuro-link at a working access point enters the network; losing the
+/// access point ends the dive and gives the body back its hands. The window is the same one operators
+/// use: the dive adds presentation and a body state, not a second channel of commands.
+/datum/unit_test/netdm_observe/area_map/network_immersion_dive/Run()
+	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+		return
+	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
+	TEST_ASSERT(wait_until_live(), "Observe must publish the station map.")
+	TEST_ASSERT(netdm_immersion_enabled(), "The test round enables the dive layer.")
+	var/obj/machinery/power/apc/station_apc
+	for(var/obj/machinery/power/apc/apc as anything in GLOB.apcs_list)
+		if(!is_station_level(apc.z) || apc.netdm_state() != NETDM_STATE_UP || is_antag_training_atom(apc) || !SSnetdm_observe.apc_node_id(apc))
+			continue
+		station_apc = apc
+		break
+	TEST_ASSERT(station_apc, "The station has a published APC access point.")
+	var/area/zone = netdm_power_area(get_area(station_apc))
+	var/list/zone_apcs = list()
+	for(var/obj/machinery/power/apc/candidate as anything in GLOB.apcs_list)
+		if(netdm_power_area(get_area(candidate)) == zone)
+			zone_apcs += candidate
+	var/turf/here = get_turf(station_apc)
+	var/mob/living/carbon/human/body = allocate(/mob/living/carbon/human, here)
+	var/obj/item/implant/netdm_terminal/link = allocate(/obj/item/implant/netdm_terminal, here)
+	link.implant(body)
+	TEST_ASSERT_EQUAL(link.imp_in, body, "The neuro-link sits in the body.")
+	var/deadline = world.time + 30 SECONDS
+	while(world.time < deadline && !link.node)
+		sleep(2)
+	TEST_ASSERT(link.node, "The neuro-link joins the network.")
+	var/datum/netdm_terminal/local/implant/terminal = allocate(/datum/netdm_terminal/local/implant, link, link.node, body)
+	var/datum/netdm_space/space = new(terminal)
+	TEST_ASSERT(space.immerse(), "The dive starts from the network window.")
+	TEST_ASSERT(netdm_click_blocked(body), "The dive blocks clicks into the room.")
+	TEST_ASSERT(space.immersed, "The window presents the immersion.")
+	TEST_ASSERT(HAS_TRAIT(body, TRAIT_HANDS_BLOCKED), "The body loses its hands while the mind is elsewhere.")
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && space.presence?["state"] != "active")
+		sleep(2)
+	TEST_ASSERT_EQUAL(space.presence?["state"], "active", "The presence entered the network from the access point.")
+	// The neuro-link keeps its owner's identity: a fresh endpoint restores it over the network.
+	link.netdm_persona = list("name" = "tester", "signature" = "T", "colour" = 1)
+	space.persona_restored = FALSE
+	space.restore_persona()
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && (!islist(space.presence) || "[space.presence["personaName"]]" != "tester"))
+		sleep(2)
+	TEST_ASSERT(islist(space.presence), "The presence is known while restoring the identity.")
+	TEST_ASSERT_EQUAL("[space.presence["personaName"]]", "tester", "A re-implanted neuro-link restores its owner's identity.")
+	TEST_ASSERT_EQUAL(text2num("[space.presence["personaColour"]]"), 1, "The stored colour is restored too.")
+	// A presence that leaves the network ends the dive at once: the operator's own exit does not wait
+	// for a poll, and the mind returns to the body.
+	space.leave()
+	deadline = world.time + 10 SECONDS
+	while(world.time < deadline && space.immersed)
+		sleep(1)
+	TEST_ASSERT(!space.immersed, "A presence that leaves the network ends the dive.")
+	TEST_ASSERT_EQUAL(space.immersed_reason, "presence_lost", "The dive names the lost presence.")
+	TEST_ASSERT(!HAS_TRAIT(body, TRAIT_HANDS_BLOCKED), "The body gets its hands back when the presence leaves.")
+	TEST_ASSERT(!netdm_click_blocked(body), "The room answers clicks again after the dive.")
+	// The window can enter the network again: the access point is still there.
+	var/redived = FALSE
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && !redived)
+		redived = space.immerse()
+		if(!redived)
+			sleep(5)
+	TEST_ASSERT(redived && space.immersed, "The dive can start again after the presence left: [json_encode(space.log)]")
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && (!islist(space.presence) || "[space.presence["state"]]" != "active"))
+		sleep(2)
+	TEST_ASSERT(islist(space.presence) && "[space.presence["state"]]" == "active", "The presence is active again.")
+
+	// The access point disappears: the dive ends with the reason and the body comes back to its senses.
+	for(var/obj/machinery/power/apc/candidate as anything in zone_apcs)
+		candidate.operating = FALSE
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && space.immersed)
+		sleep(2)
+	TEST_ASSERT(!space.immersed, "A broken access point ends the dive.")
+	TEST_ASSERT_EQUAL(space.immersed_reason, "access_point_lost", "The dive names the lost access point.")
+	TEST_ASSERT(!HAS_TRAIT(body, TRAIT_HANDS_BLOCKED), "The body gets its hands back after the dive.")
+	TEST_ASSERT(!netdm_click_blocked(body), "The room answers clicks after the lost access point.")
+	for(var/obj/machinery/power/apc/candidate as anything in zone_apcs)
+		candidate.operating = TRUE
+	qdel(space)
+/datum/unit_test/netdm_observe/area_map/network_life_physical/Run()
+	if(world.GetConfig("env", "NETDM_OBSERVE") != "1")
+		return
+	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
+	TEST_ASSERT(wait_until_live(), "Observe must publish the station map.")
+	var/obj/machinery/power/apc/station_apc
+	for(var/obj/machinery/power/apc/apc as anything in GLOB.apcs_list)
+		if(!is_station_level(apc.z) || apc.netdm_state() != NETDM_STATE_UP || is_antag_training_atom(apc) || !SSnetdm_observe.apc_node_id(apc))
+			continue
+		station_apc = apc
+		break
+	TEST_ASSERT(station_apc, "The station has a published APC module.")
+	var/node = SSnetdm_observe.apc_node_id(station_apc)
+	// A busy agent leaves an audible trace next to the APC, once per cooldown.
+	TEST_ASSERT(SSnetdm_observe.netdm_ambient_ping(station_apc), "An agent on the APC pings it.")
+	TEST_ASSERT(!SSnetdm_observe.netdm_ambient_ping(station_apc), "The ambient ping respects its cooldown.")
+	// An intruder trips the breaker; engineers can restore it by hand afterwards.
+	station_apc.operating = TRUE
+	TEST_ASSERT(SSnetdm_observe.netdm_sabotage(station_apc, node), "An intruder trips the APC breaker.")
+	TEST_ASSERT(!station_apc.operating, "The breaker is off after the intrusion.")
+	TEST_ASSERT(!SSnetdm_observe.netdm_sabotage(station_apc, node), "Sabotage respects its cooldown.")
+	station_apc.operating = TRUE

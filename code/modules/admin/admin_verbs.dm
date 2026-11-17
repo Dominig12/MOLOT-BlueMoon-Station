@@ -191,6 +191,9 @@ GLOBAL_PROTECT(admin_verbs_debug)
 	/client/proc/show_parallax_state,
 	/client/proc/multiz_debug_panel,
 	/client/proc/netdm_topology,
+	/client/proc/netdm_network_life,
+	/client/proc/netdm_open_network,
+	/client/proc/netdm_incidents,
 	/client/proc/space_sectors_panel,
 	/client/proc/cmd_debug_make_powernets,
 	/client/proc/cmd_debug_mob_lists,
@@ -948,3 +951,41 @@ GLOBAL_PROTECT(admin_verbs_hideable)
 	set category = "Debug.2) Info"
 
 	src << output("", "statbrowser:create_debug")
+
+/client/proc/netdm_open_network()
+	set name = "netDM: Open Network Window"
+	set category = "Admin"
+	if(!check_rights(R_ADMIN))
+		return
+	if(!SSnetdm_observe?.observing() || !SSnetdm_observe.diagnostics)
+		to_chat(src, span_warning("netDM Observe не запущен."))
+		return
+	var/obj/machinery/power/apc/nearest
+	var/best = INFINITY
+	for(var/obj/machinery/power/apc/apc as anything in GLOB.apcs_list)
+		if(!is_station_level(apc.z) || !SSnetdm_observe.apc_node_id(apc))
+			continue
+		var/distance = get_dist(mob, apc)
+		if(distance < best)
+			best = distance
+			nearest = apc
+	if(!nearest)
+		to_chat(src, span_warning("Нет опубликованной точки доступа рядом."))
+		return
+	SSnetdm_observe.diagnostics.open_terminal(nearest, mob)
+
+/client/proc/netdm_incidents()
+	set name = "netDM: Network Incidents"
+	set category = "Admin"
+	if(!check_rights(R_ADMIN))
+		return
+	if(!SSnetdm_observe?.observing())
+		to_chat(src, span_warning("netDM Observe не запущен."))
+		return
+	var/list/incidents = SSnetdm_observe.netdm_incidents
+	if(!length(incidents))
+		to_chat(src, span_notice("Журнал происшествий сети пуст."))
+		return
+	to_chat(src, span_notice("Происшествия сети (последние [min(10, length(incidents))]):"))
+	for(var/list/entry in incidents.Copy(max(1, length(incidents) - 9)))
+		to_chat(src, "• [entry["at"] / 60]:[add_zero("[entry["at"] % 60]", 2)] [entry["kind"]] [entry["text"]]")

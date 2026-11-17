@@ -116,6 +116,12 @@ export const CameraConsole = (props) => {
                   {networkStatusText[networkStatus] && ` · ${networkStatusText[networkStatus]}`}
                 </div>
                 <div className="CameraConsole__toolbarRight">
+                  {!!data.netdmSpace && (
+                    <Button
+                      icon="network-wired"
+                      tooltip="Сеть станции"
+                      onClick={() => act('open_network')} />
+                  )}
                   <Button
                     icon="chevron-left"
                     tooltip="Предыдущая камера"

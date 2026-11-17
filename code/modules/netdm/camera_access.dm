@@ -6,6 +6,8 @@
 
 /obj/machinery/computer/security
 	var/datum/weakref/netdm_camera_target
+	/// P13: the network window opened from this console, if any.
+	var/datum/netdm_terminal/local/console/netdm_window
 	var/netdm_camera_instance
 	var/netdm_camera_operation
 	var/netdm_camera_request

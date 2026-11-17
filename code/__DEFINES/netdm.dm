@@ -22,3 +22,6 @@
 #define NETDM_MESSENGER_FANOUT 8
 /// Longest PDA presentation text the message schema carries.
 #define NETDM_MESSENGER_TEXT 4000
+
+/// Source tag of the traits the network immersion applies to the body left at the access point.
+#define NETDM_IMMERSION_TRAIT "netdm_immersion"

@@ -221,7 +221,8 @@
 /// op is one of research_catalog, research_storage, research_income, research_grant, research_debit,
 /// research_import, research_boost or research_state; payload carries its fields. Milli-points travel as text.
 /datum/netdm_bridge/v1/staged/proc/research(op, list/payload)
-	if(!istext(op) || copytext(op, 1, 10) != "research_" || !islist(payload))
+	// The control plane of the Host: research ledger operations and, since P13, the network population.
+	if(!istext(op) || (copytext(op, 1, 10) != "research_" && op != "network_life") || !islist(payload))
 		return null
 	return request(list("op" = op, "payload" = payload))
 

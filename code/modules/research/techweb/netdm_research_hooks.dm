@@ -18,6 +18,10 @@
 	SSnetdm_observe.research?.remove_server(src)
 	return ..()
 
+/// P13: the R&D console carries the network window: the same node that carries its research traffic.
+/obj/machinery/computer/rdconsole
+	var/datum/netdm_terminal/local/console/netdm_window
+
 /obj/machinery/computer/rdconsole/Initialize(mapload)
 	. = ..()
 	if(. == INITIALIZE_HINT_QDEL)
@@ -44,7 +48,27 @@
 	shadow.console_purchased(src, web, id, ., before)
 
 /// Disk buttons of a console under the ledger go to its bound server (P6, §13.8).
+/obj/machinery/computer/rdconsole/Destroy()
+	QDEL_NULL(netdm_window)
+	return ..()
+
+/obj/machinery/computer/rdconsole/proc/netdm_open_space(mob/living/user)
+	if(!SSnetdm_observe?.observing() || !SSnetdm_observe.services || !isliving(user))
+		return FALSE
+	var/datum/component/netdm_node/node = netdm_make_node(src)
+	if(!node)
+		return FALSE
+	SSnetdm_observe.diagnostics?.offer_shell(src)
+	if(netdm_window && QDELETED(netdm_window))
+		netdm_window = null
+	if(!netdm_window)
+		netdm_window = new(src, node, user)
+	netdm_window.user_ref = WEAKREF(user)
+	return netdm_window.open_space(user)
+
 /obj/machinery/computer/rdconsole/ui_act(action, list/params)
+	if(action == "open_network")
+		return netdm_open_space(usr)
 	var/datum/netdm_research_shadow/shadow = SSnetdm_observe.research
 	if(shadow?.owns(stored_research) && !locked && !(machine_stat & (NOPOWER|BROKEN)) && (action in list("loadTech", "uploadDisk")))
 		if(shadow.console_disk(src, action, params))
@@ -54,6 +78,8 @@
 /obj/machinery/computer/rdconsole/ui_data(mob/user)
 	. = ..()
 	SSnetdm_observe.research?.console_ui(src, .)
+	if(SSnetdm_observe?.observing() && SSnetdm_observe.services)
+		.["netdmSpace"] = TRUE
 
 /// Under the ledger each server earns its own income; webs without a server keep the legacy rules.
 /datum/controller/subsystem/research/fire()
@@ -98,11 +124,14 @@
 	if(!income)
 		shadow?.legacy_points(src, pointlist)
 
-/// Under the ledger points with a source go to the source's server, gathered and sent every few seconds;
-/// points without one keep the legacy path (next_income, then the coordinator).
+/// Under the ledger every positive amount of a known point type reaches the ledger, with or without a
+/// source: a legacy write here would be a second writer granting the same resource (§13.4, §13.10).
+/// A source names the server the points belong to (ResearchEvidence); without one they are gathered for
+/// the web's coordinator. Frequent producers (coils, collectors, reactions, the astro sensor) are
+/// coalesced per server and sent every few seconds, so a per-tick source cannot flood the ledger.
 /datum/techweb/add_point_type(type, amount, income = TRUE, atom/source)
 	var/datum/netdm_research_shadow/shadow = SSnetdm_observe.research
-	if(source && shadow?.owns(src) && SSresearch.point_types[type] && amount > 0)
+	if(shadow?.owns(src) && SSresearch.point_types[type] && amount > 0)
 		var/list/points = list()
 		points[type] = amount
 		shadow.evidence_points(src, points, source)

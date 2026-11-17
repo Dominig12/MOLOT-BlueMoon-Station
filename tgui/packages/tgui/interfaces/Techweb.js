@@ -153,6 +153,13 @@ export const Techweb = (props) => {
             </Button>
           </Modal>
         )}
+        {!!data.netdmSpace && (
+          <Box textAlign="right" mb={0.5}>
+            <Button icon="network-wired" onClick={() => act('open_network')}>
+              Сеть станции
+            </Button>
+          </Box>
+        )}
         {staticReady ? <TechwebContent /> : <TechwebLoading />}
       </Window.Content>
     </Window>
@@ -178,6 +185,13 @@ export const AppTechweb = (props) => {
               Unlock
             </Button>
           </Modal>
+        )}
+        {!!data.netdmSpace && (
+          <Box textAlign="right" mb={0.5}>
+            <Button icon="network-wired" onClick={() => act('open_network')}>
+              Сеть станции
+            </Button>
+          </Box>
         )}
         {staticReady ? <TechwebContent /> : <TechwebLoading />}
       </NtosWindow.Content>

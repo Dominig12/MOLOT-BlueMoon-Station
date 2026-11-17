@@ -1,4 +1,5 @@
 import {
+  countActivityNodes,
   diffById,
   fitView,
   FLAG_APC,
@@ -99,5 +100,20 @@ describe('viewport', () => {
     const point = toWorld({ x: 12, y: 10 });
     expect(nearestNode(nodes, point.x + 1, point.y, 4)?.id).toBe('2');
     expect(nearestNode(nodes, point.x + 100, point.y, 4)).toBeNull();
+  });
+});
+
+describe('countActivityNodes', () => {
+  test('counts events per node and ignores empty ones', () => {
+    expect(countActivityNodes([
+      { node: '2' },
+      { node: '2' },
+      { node: '3' },
+      {},
+    ])).toEqual({ '2': 2, '3': 1 });
+  });
+
+  test('returns no marks for an empty history', () => {
+    expect(countActivityNodes([])).toEqual({});
   });
 });

@@ -192,7 +192,10 @@
  *
  * Очки идут МИМО пассивного дохода (income = FALSE): вся петля сенсора построена на
  * том, что игрок ведёт усиление и видит отдачу прямо сейчас. Буфер до следующего
- * начисления оторвал бы обратную связь от действия.
+ * начисления оторвал бы обратную связь от действия. Под авторитетным netDM те же
+ * очки уходят в реестр как ResearchEvidence (source = src): датчик не становится
+ * вторым писателем баланса, а его сервер находит ближайший сервер исследовательской
+ * сети от АПЦ зоны.
  */
 /obj/machinery/astro_sensor/proc/collect_data(datum/round_event/space_weather/phenomenon, intensity, seconds_per_tick)
 	if((machine_stat & BROKEN) || gain <= 0 || intensity <= 0)
@@ -203,7 +206,7 @@
 	var/gathered = min(ASTRO_SENSOR_DATA_RATE * gain * intensity * sensitivity * seconds_per_tick, cap - yielded)
 	collected += gathered
 	yielded += gathered
-	SSresearch.science_tech?.add_point_type(TECHWEB_POINT_TYPE_GENERIC, gathered, income = FALSE)
+	SSresearch.science_tech?.add_point_type(TECHWEB_POINT_TYPE_GENERIC, gathered, income = FALSE, source = src)
 
 // ---------------------------------------------------------------------------
 // Внешний вид и сборка

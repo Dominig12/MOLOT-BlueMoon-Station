@@ -234,6 +234,27 @@ const ApcContent = (props) => {
           )}
         </LabeledList>
       </Section>
+      {!!data.netdm?.available && (
+        <Section title="Network">
+          <LabeledList>
+            <LabeledList.Item label="Network module">
+              {data.netdm.state === 3 ? 'in the network' : 'no link'}
+            </LabeledList.Item>
+            <LabeledList.Item label="Terminal access">
+              {data.netdm.access ? 'granted' : 'denied'}
+            </LabeledList.Item>
+            <LabeledList.Item label="Agents near">
+              {data.netdm.agents || 0}
+            </LabeledList.Item>
+          </LabeledList>
+          <Button
+            mt={0.5}
+            icon="network-wired"
+            content="Open Network"
+            disabled={!data.netdm.access}
+            onClick={() => act('netdm_network')} />
+        </Section>
+      )}
     </>
   );
 };

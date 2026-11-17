@@ -1,8 +1,9 @@
 import { BooleanLike } from 'common/react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, NoticeBox, Section, Stack, Table, TextArea } from '../components';
+import { SHELL_COMMANDS, tabComplete } from './netdmShell';
 import { Window } from '../layouts';
 
 type Field = { name: string; value: string };
@@ -48,6 +49,7 @@ const HELP_TOPICS = [
   { topic: '', title: 'Обзор' },
   { topic: 'basics', title: 'Команды' },
   { topic: 'services', title: 'Устройства' },
+  { topic: 'api', title: 'API' },
   { topic: 'scripts', title: 'Скрипты' },
   { topic: 'programs', title: 'Программы' },
 ];
@@ -215,6 +217,27 @@ export const NetdmTerminal = () => {
   }, [loadedId, loadedSource]);
   const canRun = !!script.trim() && script.length <= data.scriptLimit;
   const helpEntry = helpTopic === null ? undefined : [...data.entries].reverse().find(entry => entry.line === helpLine(helpTopic));
+  // Dynamic completion pools: instances from the last `services`, nodes from the last `nodes`/`trace`.
+  const completion = useMemo(() => {
+    const lastWith = (pattern: RegExp, field: string) => {
+      const entry = [...data.entries].reverse().find(candidate => pattern.test(candidate.line));
+      if (!entry?.records) {
+        return [];
+      }
+      return entry.records
+        .map(record => record.find(cell => cell.name === field)?.value)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0);
+    };
+    return {
+      instances: lastWith(/^services(?:\s|$)/i, 'instance'),
+      nodes: [...new Set([...lastWith(/^nodes(?:\s|$)/i, 'node'), ...lastWith(/^trace(?:\s|$)/i, 'node')])],
+      types: [...new Set(lastWith(/^services(?:\s|$)/i, 'type'))],
+    };
+  }, [data.entries]);
+  const usageHint = useMemo(() => {
+    const first = line.trim().split(/\s+/)[0];
+    return SHELL_COMMANDS.find(command => command.name === first)?.usage ?? null;
+  }, [line]);
   useEffect(() => {
     if (!editingScript && helpTopic === null) {
       commandInput.current?.focus();
@@ -274,6 +297,8 @@ export const NetdmTerminal = () => {
               }} />
               <Button icon="project-diagram" content="Сеть" onClick={() => act('open_space')} />
               <Button icon="search" content="Сервисы" onClick={() => { setHelpTopic(null); run('services'); }} />
+              <Button icon="plug" content="API" onClick={() => { setHelpTopic(null); run('api'); }} />
+              <Button icon="list" content="Команды" onClick={() => { setHelpTopic(null); run('commands'); }} />
               <Button icon="tachometer-alt" content="Атмосфера" onClick={() => { setHelpTopic(null); run('services -type atmos.alarm'); }} />
               <Button icon="tasks" content="Доставка" onClick={() => { setHelpTopic(null); run('jobs'); }} />
               {!!data.programsEnabled && <Button icon="list" content="Программы" onClick={() => { setHelpTopic(null); run('programs'); }} />}
@@ -443,11 +468,16 @@ export const NetdmTerminal = () => {
                       autoComplete="off"
                       spellCheck={false}
                       maxLength={data.limit}
-                      placeholder="help · ↑↓ история"
+                      placeholder="help · Tab дополнит · ↑↓ история"
                       value={line}
                       onChange={event => setLine(event.currentTarget.value)}
                       onKeyDown={event => {
                         if (event.nativeEvent.isComposing) {
+                          return;
+                        }
+                        if (event.key === 'Tab') {
+                          event.preventDefault();
+                          setLine(current => tabComplete(current, completion));
                           return;
                         }
                         if (event.key === 'Enter') {
@@ -458,6 +488,9 @@ export const NetdmTerminal = () => {
                           recall(historyIndex + (event.key === 'ArrowUp' ? -1 : 1));
                         }
                       }} />
+                    <Box mt={0.5} color="label" fontSize="0.9em">
+                      {usageHint ?? 'Tab — автодополнение · ↑↓ — история · Enter — выполнить'}
+                    </Box>
                   </div>
                 </Stack.Item>
                 <Stack.Item>

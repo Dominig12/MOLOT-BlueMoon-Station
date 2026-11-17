@@ -531,13 +531,17 @@
 	return ..() && implant?.imp_in == user_ref?.resolve() && node_ref?.resolve()
 
 /datum/action/item_action/hands_free/activate/netdm_terminal
-	name = "Сетевой терминал"
+	name = "Нейролинк"
 
 /obj/item/implant/netdm_terminal
-	name = "сетевой имплант"
-	desc = "Встроенный радиотерминал для запуска сетевых команд и скриптов."
+	name = "нейролинк"
+	desc = "Встроенный в мозг нейролинк: сетевой терминал и, на стенде с включённым погружением, вход в сеть из исправного АПЦ зоны."
 	actions_types = list(/datum/action/item_action/hands_free/activate/netdm_terminal)
 	var/datum/component/netdm_node/node
+	/// P13: a neuro-link can also dive into the network from an access point (NETDM_NET_IMMERSION=1).
+	var/neural = TRUE
+	/// The owner's network identity, kept in the device: a re-implanted neuro-link restores it.
+	var/list/netdm_persona
 
 /obj/item/implant/netdm_terminal/implant(mob/living/target, mob/user, silent = FALSE, force = FALSE)
 	. = ..()
@@ -882,3 +886,14 @@
 #undef NETDM_TERMINAL_TIMEOUT
 #undef NETDM_APC_OPERATOR_IDLE
 #undef NETDM_APC_OPERATOR_PENDING
+
+/// P13: a security console carries the network window as a second, live view of the grid.
+/datum/netdm_terminal/local/console
+	ui_state(mob/user)
+		return GLOB.default_state
+
+	can_submit()
+		var/obj/machinery/computer/security/console = device_ref?.resolve()
+		var/mob/living/user = user_ref?.resolve()
+		return !QDELETED(src) && istype(console) && !QDELETED(console) && istype(user) && \
+			!user.stat && !user.incapacitated()

@@ -40,6 +40,21 @@ SUBSYSTEM_DEF(netdm_observe)
 	var/list/sample
 	var/datum/netdm_apc_map_export/map_export
 	var/geometry_revision = 0
+	/// P13: body weakref -> /datum/netdm_immersion. One dive per operator; the registry lets the dive end
+	/// from a signal, a close or a failed check without every caller knowing about the others.
+	var/list/netdm_immersions = list()
+	/// P13: personas live for the round, keyed by ckey: a new neuro-link restores the look, not rights.
+	var/list/netdm_personas = list()
+	/// P13: the round journal of network incidents: sabotage, repairs, intrusions, banishments.
+	var/list/netdm_incidents = list()
+	/// P13: the last life poll projected to node -> agent count, so the physical APC panel can show it.
+	var/list/netdm_life_nodes = list()
+	/// P13: the network population was seeded once for this round when NETDM_NET_LIFE is enabled.
+	var/life_seeded = FALSE
+	/// P13: the one-time note that the service lane was not ready for the seeding yet.
+	var/life_waiting = FALSE
+	/// P13: when the population next changes by itself (arrival or retirement).
+	var/next_life_event = 0
 	var/shuttle_mutations = 0
 	var/export_revision
 	var/published_revision
@@ -195,6 +210,9 @@ SUBSYSTEM_DEF(netdm_observe)
 	next_apc_state_check = 0
 	services?.reset_session()
 	telemetry?.reset_session()
+	// P13: the Host session owns the network population: a new session seeds it again.
+	life_seeded = FALSE
+	life_waiting = FALSE
 	research?.reset_session()
 	messenger?.reset_session()
 	radio?.reset_session()
@@ -345,6 +363,43 @@ SUBSYSTEM_DEF(netdm_observe)
 		if(known[key]["a"] == node_id)
 			return key.resolve()
 	return null
+
+/// P13: a busy network agent leaves a physical trace near the APC it runs on.
+/datum/controller/subsystem/netdm_observe/proc/netdm_ambient_ping(obj/machinery/power/apc/apc)
+	if(QDELETED(apc) || world.time < apc.netdm_ambient_at)
+		return FALSE
+	apc.netdm_ambient_at = world.time + rand(45 SECONDS, 90 SECONDS)
+	playsound(apc, 'sound/machines/beep.ogg', 25, TRUE)
+	return TRUE
+
+/// P13: an intruder trips the breaker of the APC it invades; engineers restore it by hand.
+/// P13: an engineer agent restores the breaker of the APC it visits; intruders and engineers can
+/// trade the same breaker, so the station sees a quiet tug of war instead of a one-way outage.
+/datum/controller/subsystem/netdm_observe/proc/netdm_repair(obj/machinery/power/apc/apc, node)
+	if(QDELETED(apc) || apc.operating || world.time < apc.netdm_repair_at)
+		return FALSE
+	apc.netdm_repair_at = world.time + 60 SECONDS
+	apc.operating = TRUE
+	apc.update()
+	apc.update_appearance()
+	apc.visible_message(span_notice("Индикаторы [apc] снова горят зелёным: сетевой агент восстановил питание."))
+	playsound(apc, 'sound/machines/chime.ogg', 40, TRUE)
+	netdm_incident("repair", node, "Инженер восстановил питание [apc].")
+	log_game("netDM: a network engineer restored the breaker of [apc] (node [node]).")
+	return TRUE
+
+/datum/controller/subsystem/netdm_observe/proc/netdm_sabotage(obj/machinery/power/apc/apc, node)
+	if(QDELETED(apc) || world.time < apc.netdm_effect_at)
+		return FALSE
+	apc.netdm_effect_at = world.time + 60 SECONDS
+	apc.operating = FALSE
+	apc.update()
+	apc.update_appearance()
+	apc.visible_message(span_warning("Индикаторы [apc] вспыхивают красным: сетевой агент выбил рубильник!"))
+	playsound(apc, 'sound/machines/warning-buzzer.ogg', 50, TRUE)
+	netdm_incident("sabotage", node, "Диверсант выбил рубильник [apc].")
+	log_game("netDM: a network intruder tripped the breaker of [apc] (node [node]).")
+	return TRUE
 
 /datum/controller/subsystem/netdm_observe/proc/collect_apc_states(list/changes)
 	var/list/batch_states = list()
@@ -575,6 +630,24 @@ SUBSYSTEM_DEF(netdm_observe)
 		services?.refresh_apc_attachments()
 		forget_unmapped_apc_states()
 		discard_export()
+		if(!life_seeded && world.GetConfig("env", "NETDM_NET_LIFE") == "1")
+			seed_network_life()
+
+	// Keep the connection alive during the initial scan and the old graph ready during live updates.
+	// The lane is created after the first publication; retry the one-time population seeding here.
+	if(!life_seeded && world.GetConfig("env", "NETDM_NET_LIFE") == "1")
+		seed_network_life()
+
+	// P13: the population also changes by itself, so the network feels alive between player actions.
+	if(services && world.GetConfig("env", "NETDM_NET_LIFE") == "1" && world.time >= next_life_event)
+		next_life_event = world.time + rand(6 MINUTES, 14 MINUTES)
+		if(prob(60))
+			services.control("network_life", list("action" = "spawn", "count" = rand(1, 2),
+				"goal" = pick("sentinel", "watcher", "archivist", "courier")),
+				CALLBACK(src, PROC_REF(network_life_event_answered)))
+		else
+			services.control("network_life", list("action" = "retire", "count" = 1),
+				CALLBACK(src, PROC_REF(network_life_event_answered)))
 
 	// Keep the connection alive during the initial scan and the old graph ready during live updates.
 	if(world.time >= next_heartbeat)
@@ -680,6 +753,30 @@ SUBSYSTEM_DEF(netdm_observe)
 		if(!mapped[node_id])
 			apc_states -= node_id
 
+/// Seeds the network population once per round when the layer is enabled. Content stays opt-in: without
+/// the flag nothing is sent, and the Host does not populate its network either.
+/datum/controller/subsystem/netdm_observe/proc/seed_network_life()
+	life_seeded = TRUE
+	if(!services)
+	{
+		// The lane is created after the map is published; the next fire retries the seeding.
+		life_seeded = FALSE
+		if(!life_waiting)
+			life_waiting = TRUE
+			log_world("netDM network life: waiting for the service lane.")
+		return
+	}
+	if(!services.control("network_life", list("action" = "spawn", "count" = 3, "goal" = "courier"),
+		CALLBACK(src, PROC_REF(network_life_seeded))))
+		life_seeded = FALSE
+
+/datum/controller/subsystem/netdm_observe/proc/network_life_seeded(list/reply)
+	var/list/result = reply?["result"]
+	if(reply?["ok"])
+		log_world("netDM network life: seeded [result?["spawned"]] agents.")
+	else
+		log_world("netDM network life: the Host refused seeding ([reply?["error"] || "no answer"]).")
+
 /datum/controller/subsystem/netdm_observe/proc/queue(request_id)
 	if(!request_id)
 		return FALSE
@@ -738,3 +835,20 @@ SUBSYSTEM_DEF(netdm_observe)
 #undef NETDM_NODE_CAP
 #undef NETDM_OBSERVE_ACK_TIMEOUT
 #undef NETDM_SLOW_FIRE
+
+/// P13: a spontaneous arrival or retirement of the population. It is ambient: the window and the
+/// activity feed show it; nothing else in the round depends on it.
+/datum/controller/subsystem/netdm_observe/proc/network_life_event_answered(list/reply)
+	if(!reply?["ok"])
+		return
+	var/list/result = reply?["result"]
+	log_world("netDM network life: population changed, [result?["total"] || "?"] agents.")
+	netdm_incident("population", "", "Население сети изменилось: [result?["total"] || "?"] агентов.")
+
+/// P13: one line of the round's network incident journal; bounded, newest last.
+/datum/controller/subsystem/netdm_observe/proc/netdm_incident(kind, node, text)
+	netdm_incidents += list(list("at" = round(world.time / 10), "kind" = "[kind]", "node" = "[node]", "text" = "[text]"))
+	// The station log is the long-term record; the window shows the round's short journal.
+	log_game("netDM incident [kind] node=[node]: [text]")
+	if(length(netdm_incidents) > 50)
+		netdm_incidents.Cut(1, length(netdm_incidents) - 50)

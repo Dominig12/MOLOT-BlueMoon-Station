@@ -6,7 +6,7 @@
  * The renderer never decides reachability: it draws what the Host reported.
  */
 // Named imports let the bundler drop the parts of PixiJS this screen does not use.
-import { Application, Container, Graphics, GraphicsContext } from 'pixi.js';
+import { Application, Container, Graphics, GraphicsContext, Text } from 'pixi.js';
 
 import {
   diffById,
@@ -40,6 +40,15 @@ export type SceneFilters = {
 
 export type NodePresenceCounts = Readonly<Record<string, number>>;
 
+/** How many recent network events touched each node of the level. */
+export type NodeActivityCounts = Readonly<Record<string, number>>;
+
+/** P13: one network entity standing on a level node. */
+export type SceneAgent = { node: string; goal: string; label: string };
+
+/** P13: another operator's presence on a level node. */
+export type SceneOperator = { node: string; label: string; colour: number };
+
 /** A null slot is an undisclosed hop. The segments on either side stay separate. */
 export type SceneRoute = {
   nodes: readonly (string | null)[];
@@ -56,6 +65,12 @@ export interface TopologyScene {
   setSelection(id: string | null): void;
   setPresence(id: string | null): void;
   setOtherPresences(counts: NodePresenceCounts | null): void;
+  /** P13: nodes where something just happened in the network. */
+  setActivity(counts: NodeActivityCounts | null): void;
+  /** P13: agents (NPC entities) on the visible level. */
+  setAgents(agents: readonly SceneAgent[] | null): void;
+  /** P13: other operators in the network on the visible level. */
+  setOperators(operators: readonly SceneOperator[] | null): void;
   setRoute(route: SceneRoute | null): void;
   setFilters(filters: SceneFilters): void;
   fit(): void;
@@ -70,7 +85,10 @@ export class SceneCancelled extends Error {
 
 type Style = 'apc' | 'wired' | 'radio' | 'node' | 'apcOffline' | 'nodeOffline';
 
+const ACTIVITY_PULSE_MS = 6000;
+
 const COLORS = {
+
   background: 0x101217,
   apc: 0x4a9eff,
   wired: 0x57c785,
@@ -83,9 +101,15 @@ const COLORS = {
   selection: 0xffffff,
   presence: 0x55e7d0,
   otherPresence: 0xd19aff,
+  activity: 0x78d9ec,
+  agent: 0xe8b24a,
+  operatorRing: 0xffffff,
   preview: 0xffc36a,
   routeBreak: 0xff6868,
 };
+
+/** P13: persona colours, indexed by the numeric colour a persona stores (0-7). */
+const OPERATOR_COLOURS = [0x6ec6ff, 0xffd166, 0x8ce99a, 0xff9f6e, 0xd0a9ff, 0xff8fa3, 0x74d3c0, 0xf2f2f2];
 
 /** Offline nodes keep their shape (square APC, round device) in a muted color. */
 const styleOf = (flags: number): Style => {
@@ -108,6 +132,17 @@ class PixiTopologyScene implements TopologyScene {
   private readonly nodes = new Map<string, { data: ViewNode; graphic: Graphics }>();
   private readonly links = new Map<string, { data: ViewLink; graphic: Graphics }>();
   private readonly otherPresenceGraphic = new Graphics();
+  private readonly activityGraphic = new Graphics();
+  private readonly agentGraphic = new Graphics();
+  private readonly operatorGraphic = new Graphics();
+  private readonly labelLayer = new Container();
+  private readonly labels = new Map<string, Text>();
+  private operators: readonly SceneOperator[] | null = null;
+  private activity: NodeActivityCounts | null = null;
+  private agents: readonly SceneAgent[] | null = null;
+  private pulseFrame = 0;
+  private pulseStart = 0;
+  private pulsePhase = 0;
   private view: Viewport = { x: 0, y: 0, scale: 1 };
   private levelKey: string | null = null;
   private fitted = false;
@@ -123,6 +158,8 @@ class PixiTopologyScene implements TopologyScene {
   private route: SceneRoute | null = null;
   private filters: SceneFilters = { radio: true, devices: true };
   private frame = 0;
+  /** Coalesces ResizeObserver notifications into one layout pass per frame. */
+  private resizeFrame = 0;
   private destroyed = false;
   private drag: { x: number; y: number; travel: number } | null = null;
   private readonly observer: ResizeObserver | null;
@@ -141,6 +178,10 @@ class PixiTopologyScene implements TopologyScene {
     private readonly contexts: Record<Style, GraphicsContext>,
   ) {
     world.addChild(this.otherPresenceGraphic);
+    world.addChild(this.activityGraphic);
+    world.addChild(this.agentGraphic);
+    world.addChild(this.operatorGraphic);
+    world.addChild(this.labelLayer);
     const canvas = app.canvas as HTMLCanvasElement;
     canvas.style.display = 'block';
     canvas.style.touchAction = 'none';
@@ -151,7 +192,18 @@ class PixiTopologyScene implements TopologyScene {
     this.listen('pointerup', this.onPointerUp as EventListener);
     this.listen('pointercancel', this.onPointerCancel as EventListener);
     this.listen('webglcontextlost', this.onContextLost as EventListener);
-    this.observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => this.resize());
+    this.observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+      // A resize handler that resizes the observed element in the same frame triggers the browser's
+      // "ResizeObserver loop completed" error, which TGUI reports as a crash. Defer to the next frame
+      // and coalesce bursts: the canvas then sees one settled size.
+      if (this.resizeFrame) {
+        return;
+      }
+      this.resizeFrame = requestAnimationFrame(() => {
+        this.resizeFrame = 0;
+        this.resize();
+      });
+    });
     this.observer?.observe(host);
   }
 
@@ -231,6 +283,7 @@ class PixiTopologyScene implements TopologyScene {
     }
     this.drawRoute();
     this.placeMarkers();
+    this.drawLabels();
     this.drawOtherPresences();
     this.requestRender();
   }
@@ -251,6 +304,54 @@ class PixiTopologyScene implements TopologyScene {
     this.otherPresences = counts;
     this.drawOtherPresences();
     this.requestRender();
+  }
+
+  setActivity(counts: NodeActivityCounts | null) {
+    this.activity = counts;
+    this.drawActivity();
+    this.requestRender();
+    if (this.activity && Object.keys(this.activity).length > 0) {
+      this.startActivityPulse();
+    }
+  }
+
+  setAgents(agents: readonly SceneAgent[] | null) {
+    this.agents = agents;
+    this.drawAgents();
+    this.drawLabels();
+    this.requestRender();
+  }
+
+  setOperators(operators: readonly SceneOperator[] | null) {
+    this.operators = operators;
+    this.drawOperators();
+    this.drawLabels();
+    this.requestRender();
+  }
+
+  private startActivityPulse() {
+    this.pulseStart = performance.now();
+    if (this.destroyed || this.pulseFrame) {
+      return;
+    }
+    const step = () => {
+      this.pulseFrame = 0;
+      if (this.destroyed) {
+        return;
+      }
+      const elapsed = performance.now() - this.pulseStart;
+      if (elapsed > ACTIVITY_PULSE_MS) {
+        this.pulsePhase = 0;
+        this.drawActivity();
+        this.requestRender();
+        return;
+      }
+      this.pulsePhase = 0.5 + 0.5 * Math.sin(elapsed / 180);
+      this.drawActivity();
+      this.requestRender();
+      this.pulseFrame = requestAnimationFrame(step);
+    };
+    this.pulseFrame = requestAnimationFrame(step);
   }
 
   setRoute(route: SceneRoute | null) {
@@ -294,6 +395,10 @@ class PixiTopologyScene implements TopologyScene {
     if (this.frame) {
       cancelAnimationFrame(this.frame);
     }
+    if (this.resizeFrame) {
+      cancelAnimationFrame(this.resizeFrame);
+      this.resizeFrame = 0;
+    }
     this.observer?.disconnect();
     const canvas = this.app.canvas as HTMLCanvasElement;
     for (const [type, handler, options] of this.listeners) {
@@ -312,6 +417,14 @@ class PixiTopologyScene implements TopologyScene {
     this.selection.destroy();
     this.presence.destroy();
     this.otherPresenceGraphic.destroy();
+    this.activityGraphic.destroy();
+    this.agentGraphic.destroy();
+    this.operatorGraphic.destroy();
+    this.labelLayer.destroy({ children: true });
+    if (this.pulseFrame) {
+      cancelAnimationFrame(this.pulseFrame);
+      this.pulseFrame = 0;
+    }
     for (const context of Object.values(this.contexts)) {
       context.destroy();
     }
@@ -408,6 +521,118 @@ class PixiTopologyScene implements TopologyScene {
     marker.visible = true;
     marker.position.copyFrom(entry.graphic.position);
     marker.scale.set(this.nodeScale());
+  }
+
+  /** Quiet halo where the network just changed: presence moves, agents, conversations. */
+  private drawActivity() {
+    const graphic = this.activityGraphic.clear();
+    const pixel = 1 / this.view.scale;
+    for (const [id, count] of Object.entries(this.activity ?? {})) {
+      const node = this.nodes.get(id)?.graphic;
+      if (!node?.visible || !(count > 0)) {
+        continue;
+      }
+      const radius = (7 + Math.min(4, count) + this.pulsePhase * 2) * pixel;
+      graphic
+        .circle(node.position.x, node.position.y, radius)
+        .fill({ color: COLORS.activity, alpha: 0.12 + this.pulsePhase * 0.12 })
+        .stroke({ width: pixel, color: COLORS.activity, alpha: 0.35 + this.pulsePhase * 0.3 });
+    }
+  }
+
+  /** P13: agents standing on visible nodes: a diamond per entity, coloured by its goal. */
+  private drawAgents() {
+    const graphic = this.agentGraphic.clear();
+    const pixel = 1 / this.view.scale;
+    for (const agent of this.agents ?? []) {
+      const node = this.nodes.get(agent.node)?.graphic;
+      if (!node?.visible) {
+        continue;
+      }
+      const radius = 3 * pixel;
+      const offset = 9 * pixel;
+      const x = node.position.x - offset;
+      const y = node.position.y + offset;
+      const color = agent.goal === 'intruder' ? 0xff6868
+        : agent.goal === 'saboteur' ? 0xffa94d
+          : agent.goal === 'engineer' ? 0x8ce99a
+            : COLORS.agent;
+      graphic
+        .moveTo(x, y - radius)
+        .lineTo(x + radius, y)
+        .lineTo(x, y + radius)
+        .lineTo(x - radius, y)
+        .lineTo(x, y - radius)
+        .fill(color)
+        .stroke({ width: pixel, color: COLORS.background });
+    }
+  }
+
+  /** P13: a ring with the persona colour marks another operator's presence. */
+  private drawOperators() {
+    const graphic = this.operatorGraphic.clear();
+    const pixel = 1 / this.view.scale;
+    for (const operator of this.operators ?? []) {
+      const node = this.nodes.get(operator.node)?.graphic;
+      if (!node?.visible) {
+        continue;
+      }
+      const radius = 7 * pixel;
+      graphic
+        .circle(node.position.x, node.position.y, radius)
+        .stroke({ width: 1.5 * pixel, color: OPERATOR_COLOURS[operator.colour % OPERATOR_COLOURS.length], alpha: 0.9 });
+    }
+  }
+
+  /** P13: short labels next to agents and other operators, so names are readable on the map. */
+  private drawLabels() {
+    const desired = new Map<string, { node: string; text: string; colour: number }>();
+    for (const agent of this.agents ?? []) {
+      desired.set(`a:${agent.node}:${agent.label}`, {
+        node: agent.node,
+        text: agent.label.slice(0, 12),
+        colour: agent.goal === 'intruder' ? 0xff6868 : COLORS.agent,
+      });
+    }
+    for (const operator of this.operators ?? []) {
+      desired.set(`o:${operator.node}:${operator.label}`, {
+        node: operator.node,
+        text: operator.label.slice(0, 12),
+        colour: OPERATOR_COLOURS[operator.colour % OPERATOR_COLOURS.length],
+      });
+    }
+    for (const [key, label] of this.labels) {
+      if (!desired.has(key)) {
+        label.destroy();
+        this.labels.delete(key);
+      }
+    }
+    for (const [key, entry] of desired) {
+      const node = this.nodes.get(entry.node)?.graphic;
+      let label = this.labels.get(key);
+      if (!node?.visible) {
+        if (label) {
+          label.visible = false;
+        }
+        continue;
+      }
+      if (!label) {
+        label = new Text({
+          text: entry.text,
+          style: {
+            fontFamily: 'Verdana',
+            fontSize: 11,
+            fill: entry.colour,
+            stroke: { color: 0x101217, width: 2 },
+          },
+        });
+        label.anchor.set(0, 1);
+        this.labels.set(key, label);
+        this.labelLayer.addChild(label);
+      }
+      label.visible = true;
+      label.position.set(node.position.x + 9, node.position.y - 7);
+    }
   }
 
   private drawOtherPresences() {

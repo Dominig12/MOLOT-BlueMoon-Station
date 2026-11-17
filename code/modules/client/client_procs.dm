@@ -1701,6 +1701,10 @@ GLOBAL_VAR_INIT(last_churn_alert, 0)
 /client/Click(atom/object, atom/location, control, params, ignore_spam = FALSE, extra_info, ignore_last_click = FALSE)
 	if(!ignore_last_click && last_click > world.time - world.tick_lag)
 		return
+	// P13: an immersed operator acts through the network window, not through the room.
+	if(netdm_click_blocked(mob))
+		to_chat(mob, span_warning("Нейролинк: тело в трансе — действия в мире недоступны, пока вы в сети."))
+		return
 	last_activity = world.time
 	last_click = world.time
 	//fullauto stuff

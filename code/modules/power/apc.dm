@@ -983,8 +983,27 @@
 		locked = FALSE
 		to_chat(user, "<span class='notice'>You emag the APC interface.</span>")
 		log_admin("[key_name(usr)] emagged [src] at [AREACOORD(src)]")
+		netdm_emag_intrusion()
 		update_appearance()
 	return TRUE
+
+/// P13: an emagged APC seeds a rogue network agent on its node when the network-life layer is enabled.
+/// A tool for interested rounds, not default content: without the flags nothing is sent.
+// P13: physical traces of the network population on this APC (ambient beeps, sabotage cooldown).
+/obj/machinery/power/apc/var/netdm_ambient_at = 0
+/obj/machinery/power/apc/var/netdm_effect_at = 0
+/obj/machinery/power/apc/var/netdm_repair_at = 0
+
+/obj/machinery/power/apc/proc/netdm_emag_intrusion()
+	if(world.GetConfig("env", "NETDM_NET_LIFE") != "1")
+		return
+	if(!SSnetdm_observe?.observing() || !SSnetdm_observe.services)
+		return
+	var/node_id = SSnetdm_observe.apc_node_id(src)
+	if(!node_id)
+		return
+	SSnetdm_observe.services.control("network_life", list("action" = "spawn", "count" = 1, "goal" = "intruder", "node" = "[node_id]"),
+		CALLBACK(SSnetdm_observe, TYPE_PROC_REF(/datum/controller/subsystem/netdm_observe, network_life_seeded)))
 
 // attack with hand - remove cell (if cover open) or interact with the APC
 
@@ -1105,6 +1124,10 @@
 			)
 		)
 	)
+	// netDM: the network module of the APC, as a tool for engineers. Hidden unless Observe is on.
+	if(SSnetdm_observe?.observing() && SSnetdm_observe.apc_node_id(src))
+		data["netdm"] = list("available" = TRUE, "state" = netdm_state(), "access" = SSnetdm_observe.diagnostics?.terminal_access(src, user),
+			"agents" = SSnetdm_observe.netdm_life_nodes?["[SSnetdm_observe.apc_node_id(src)]"] || 0)
 	return data
 
 
@@ -1170,6 +1193,11 @@
 	apc_unpark() // channel toggles, charge mode and overrides all invalidate standby
 	if(action == "hijack" && can_use(usr, 1)) //don't need auth for hijack button
 		hijack(usr)
+		return
+	if(action == "netdm_network") // P13: the network window of this APC's module, same access as the panel
+		if(SSnetdm_observe?.observing() && SSnetdm_observe.diagnostics)
+			SSnetdm_observe.diagnostics.open_terminal(src, usr)
+			return TRUE
 		return
 	if(locked && !area.hasSiliconAccessInArea(usr, PRIVILEGES_SILICON|PRIVILEGES_DRONE) && !failure_timer && action != "toggle_nightshift" && (!integration_cog || !(is_servant_of_ratvar(usr))))
 		return

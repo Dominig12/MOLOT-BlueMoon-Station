@@ -1,4 +1,14 @@
 import { BooleanLike } from 'common/react';
+
+// The scene resizes its canvas from a ResizeObserver; the browser's loop warning must not reach TGUI's crash handler.
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', event => {
+    if (String(event.message || '').includes('ResizeObserver loop')) {
+      event.stopImmediatePropagation();
+      event.preventDefault();
+    }
+  }, true);
+}
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackend } from '../../backend';
@@ -16,7 +26,7 @@ import {
   View,
   ViewNode,
 } from './model';
-import { createScene, NodePresenceCounts, SceneCancelled, SceneFilters, SceneRoute, TopologyScene } from './scene';
+import { createScene, NodeActivityCounts, NodePresenceCounts, SceneAgent, SceneCancelled, SceneFilters, SceneOperator, SceneRoute, TopologyScene } from './scene';
 
 type Level = { z: number; name: string };
 
@@ -69,6 +79,9 @@ type CanvasProps = {
   selected: string | null;
   presenceNode?: string | null;
   otherPresences?: NodePresenceCounts;
+  activity?: NodeActivityCounts;
+  agents?: readonly SceneAgent[];
+  operators?: readonly SceneOperator[];
   route?: SceneRoute | null;
   filters: SceneFilters;
   fitRequest: number;
@@ -155,6 +168,9 @@ export const TopologyCanvas = (props: CanvasProps) => {
         scene.current = created;
         const current = latest.current;
         created.setFilters(current.filters);
+      created.setActivity(current.activity ?? null);
+      created.setAgents(current.agents ?? null);
+      created.setOperators(current.operators ?? null);
         handlers.current.onReport(report(started, current.view.nodes.size, { backend: created.backend }));
         apply(created, current.view, current.levelKey);
         created.setSelection(current.selected);
@@ -196,6 +212,15 @@ export const TopologyCanvas = (props: CanvasProps) => {
   useEffect(() => {
     scene.current?.setFilters(props.filters);
   }, [props.filters]);
+  useEffect(() => {
+    scene.current?.setActivity(props.activity ?? null);
+  }, [props.activity]);
+  useEffect(() => {
+    scene.current?.setAgents(props.agents ?? null);
+  }, [props.agents]);
+  useEffect(() => {
+    scene.current?.setOperators(props.operators ?? null);
+  }, [props.operators]);
   useEffect(() => {
     if (props.fitRequest) {
       scene.current?.fit();

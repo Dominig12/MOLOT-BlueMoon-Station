@@ -42,7 +42,9 @@
 		to_chat(user, span_warning("Мы уже знаем про тип [A]."))
 		return
 	scanned = TRUE
-	linked_techweb.research_points[TECHWEB_POINT_TYPE_GENERIC] += point_reward
+	// Through the techweb primitive, not a direct write: under the ledger this is ResearchEvidence and the
+	// money reaches the scanner's server (§13.4); a raw `research_points +=` would be a second writer.
+	linked_techweb.add_point_list(list(TECHWEB_POINT_TYPE_GENERIC = point_reward), income = FALSE, source = A)
 	GLOB.scanned_atom_types[A.type] = TRUE
 	playsound(user, 'sound/machines/terminal_success.ogg', 60)
 	to_chat(user, span_notice("Новый тип отсканирован, [point_reward] очков было получено."))

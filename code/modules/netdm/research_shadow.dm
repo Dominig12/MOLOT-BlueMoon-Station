@@ -91,6 +91,11 @@
 		"projected" = 0, "server_queries" = 0, "server_by_query" = 0)
 	var/list/mismatch_reasons = list()
 	var/list/notes = list()
+	/// A mirror event of a web the ledger will take over was refused or lost. The mirror is then
+	/// incomplete and authority must not switch this round: the projection would erase points it never
+	/// received (§13.10, §18.1). Only an operator decision can clear it.
+	var/mirror_lost = FALSE
+	var/mirror_lost_reported = FALSE
 	/// TRUE after the migration (P5 canary): the Host ledger decides research, the legacy web is its projection.
 	var/authoritative = FALSE
 	/// NETDM_RESEARCH_MODE=authoritative switches over as soon as the mirror is synchronized.
@@ -412,6 +417,7 @@
 			list("node" = purchase["node"], "quote" = purchase["price"]), CALLBACK(src, PROC_REF(purchase_accepted), key))
 		if(!entry)
 			counters["unmirrored"]++
+			lost_mirror("purchase [purchase["node"]]: console not attached")
 			note("purchase [purchase["node"]]: console not attached")
 			continue
 		purchases[key] = purchase
@@ -488,7 +494,22 @@
 				counters["coalesced"]++
 				return
 	counters["dropped"]++
+	if(event_storage(entry))
+		lost_mirror("outbox full: [entry["what"]] dropped")
 	note("outbox full: [entry["what"]] dropped")
+
+/// The storage a mirror event belongs to, when the ledger will take its web over.
+/datum/netdm_research_shadow/proc/event_storage(list/entry)
+	var/list/payload = entry?["payload"]
+	var/storage = islist(payload) ? payload["storage"] : null
+	return storage && storages[storage] ? storage : null
+
+/// Records that the mirror can no longer be complete for a web the ledger would take over.
+/datum/netdm_research_shadow/proc/lost_mirror(text)
+	if(!mirror_lost)
+		log_world("netDM research: the mirror is incomplete, the ledger will not take over this round ([text]).")
+	mirror_lost = TRUE
+	note(text)
 
 /// Called every fire after the service lane: one request in flight keeps the mirror in order.
 /datum/netdm_research_shadow/proc/tick()
@@ -502,7 +523,9 @@
 	send_purchases()
 	expire_purchases()
 	if(authority_requested && !authoritative)
-		authorize()
+		if(!authorize() && mirror_lost && !mirror_lost_reported)
+			mirror_lost_reported = TRUE
+			log_world("netDM research: authority stays off for this round, the mirror is incomplete ([jointext(notes, "; ")]).")
 	if(authoritative)
 		refresh_bindings()
 		schedule_sync()
@@ -561,13 +584,16 @@
 		return
 	var/list/statuses = islist(result) ? result["statuses"] : null
 	var/status = length(statuses) ? statuses[1] : (islist(result) ? result["status"] : null)
-	confirmed_seq = max(confirmed_seq, entry["seq"] || 0)
 	if(entry["what"] == "replicate")
 		replicated(entry, reply)
 	if(reply["ok"] && (status == "ok" || status == "duplicate" || isnull(status)))
+		// A refused event does not confirm the barrier: purchases behind it wait instead of overtaking it.
+		confirmed_seq = max(confirmed_seq, entry["seq"] || 0)
 		counters["confirmed"]++
 		return
 	counters["rejected"]++
+	if(event_storage(entry))
+		lost_mirror("[entry["what"]] refused: [error || status]")
 	note("[entry["what"]] refused: [error || status]")
 
 /// Balance and knowledge of each treasury against its legacy web, while nothing is waiting to be mirrored.
@@ -698,9 +724,10 @@
 	enqueue(list("op" = "research_grant", "payload" = list("storage" = storage || treasury_of(web), "generation" = 1,
 		"source" = "[storage ? "ev" : "lp"]-[++serial]", "kind" = storage ? "evidence" : "legacy", "points" = points), "what" = "grant"))
 
-/// Frequent sources (coils, collectors, the doppler array): gathered per server and sent by flush_evidence.
+/// Frequent sources (coils, collectors, the doppler array, gas reactions, the astro sensor): gathered per
+/// server and sent by flush_evidence. Without a source the points are gathered for the web's coordinator.
 /datum/netdm_research_shadow/proc/evidence_points(datum/techweb/web, list/pointlist, atom/source)
-	var/storage = source_storage(web, source) || treasury_of(web)
+	var/storage = (source ? source_storage(web, source) : null) || treasury_of(web)
 	if(!storage)
 		return
 	var/list/pending = evidence_pending[storage]
@@ -1576,15 +1603,18 @@
 	if(length(notes) > 16)
 		notes.Cut(1, 2)
 
-/// Everything the Host was asked to mirror has been confirmed, and the catalog is installed.
+/// Everything the Host was asked to mirror has been confirmed, the catalog is installed, and no event of
+/// a web the ledger would take over was lost or refused. Authority never switches over an incomplete
+/// mirror: the legacy balance would be projected away without the ledger holding its points.
 /datum/netdm_research_shadow/proc/synchronized()
-	return catalog_ready && !sending && !length(outbox)
+	return catalog_ready && !sending && !length(outbox) && !mirror_lost
 
 /datum/netdm_research_shadow/proc/state()
 	var/list/reasons = list()
 	for(var/reason in mismatch_reasons)
 		reasons += "[reason]:[mismatch_reasons[reason]]"
-	return "research mode=[authoritative ? "ledger" : "shadow"] catalog=[catalog_error ? "refused" : (catalog_ready ? copytext(catalog_hash, 1, 13) : "[catalog_next - 1]/[length(catalog_chunks)]")] \
+	return "research mode=[authoritative ? "ledger" : "shadow"] mirror=[mirror_lost ? "incomplete" : "complete"] \
+		catalog=[catalog_error ? "refused" : (catalog_ready ? copytext(catalog_hash, 1, 13) : "[catalog_next - 1]/[length(catalog_chunks)]")] \
 		storages=[length(storages)] treasuries=[length(treasuries)] outbox=[length(outbox)] events=[counters["events"]] \
 		confirmed=[counters["confirmed"]] rejected=[counters["rejected"]] dropped=[counters["dropped"]] unmirrored=[counters["unmirrored"]] \
 		purchases=[counters["purchases"]] matched=[counters["matched"]] mismatched=[counters["mismatched"]] unanswered=[counters["unanswered"]] \
