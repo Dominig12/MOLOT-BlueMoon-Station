@@ -174,7 +174,13 @@
 	var/datum/netdm_effect_handler/handler = kind == "result" \
 		? (result_handlers["[item["serviceType"]]/[item["command"]]"] || result_handlers[item["command"]]) : handlers[item["schema"]]
 	if(!handler)
-		return observed ? list("applied" = TRUE) : list("applied" = FALSE, "reason" = "unsupported_schema")
+		// A subscription created by a resident Host program is not necessarily
+		// declared in DM's service lane. The packet was still delivered and the
+		// recipient identity verified. Pure data may be consumed without a handler.
+		// It MUST NOT execute a game effect; commands are validated above.
+		if(kind == "event" && target)
+			return list("applied" = TRUE, "reason" = observed ? "observed" : "received")
+		return list("applied" = FALSE, "reason" = "unsupported_schema")
 	if(!target)
 		return list("applied" = FALSE, "reason" = "receiver_gone")
 	var/applied = handler.apply(target, item)
