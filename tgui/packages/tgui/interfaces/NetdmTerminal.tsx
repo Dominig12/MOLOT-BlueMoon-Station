@@ -402,6 +402,7 @@ export const NetdmTerminal = () => {
                 events={data.events?.length ?? 0}
                 watches={data.watches?.length ?? 0}
                 watchKeys={data.watches ?? []}
+                eventFeed={data.events ?? []}
                 onDiscover={() => run('services')}
                 onAlarms={() => run('services -type atmos.alarm')}
                 onMap={() => act('open_space')}
