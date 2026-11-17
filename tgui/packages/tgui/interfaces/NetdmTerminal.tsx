@@ -20,8 +20,20 @@ type Entry = {
   records: Field[][];
 };
 
+type NetworkEvent = {
+  delivery: string;
+  key: string;
+  instance: string;
+  schema: string;
+  payload: string;
+  truncated: BooleanLike;
+  at: number;
+};
+
 type Data = {
   title: string;
+  events?: NetworkEvent[];
+  watches?: string[];
   entries: Entry[];
   limit: number;
   scriptLimit: number;
@@ -208,6 +220,7 @@ export const NetdmTerminal = () => {
   const [keepProgram, setKeepProgram] = useState(false);
   const [editingScript, setEditingScript] = useState(false);
   const [helpTopic, setHelpTopic] = useState<string | null>(null);
+  const [eventView, setEventView] = useState(false);
   const commandInput = useRef<HTMLInputElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const followLog = useRef(true);
@@ -254,6 +267,7 @@ export const NetdmTerminal = () => {
   });
 
   const run = (command: string) => {
+    setEventView(false);
     followLog.current = true;
     act('run', { line: command });
   };
@@ -305,6 +319,11 @@ export const NetdmTerminal = () => {
               <Button icon="list" content="Команды" onClick={() => { setHelpTopic(null); run('commands'); }} />
               <Button icon="tachometer-alt" content="Атмосфера" onClick={() => { setHelpTopic(null); run('services -type atmos.alarm'); }} />
               <Button icon="tasks" content="Доставка" onClick={() => { setHelpTopic(null); run('jobs'); }} />
+              <Button icon="bell" content={`События (${data.events?.length ?? 0})`}
+                selected={eventView && helpTopic === null} onClick={() => {
+                  setHelpTopic(null);
+                  setEventView(!eventView);
+                }} />
               {!!data.programsEnabled && <Button icon="list" content="Программы" onClick={() => { setHelpTopic(null); run('programs'); }} />}
             </Section>
           </Stack.Item>
@@ -321,6 +340,34 @@ export const NetdmTerminal = () => {
                   setEditingScript(false);
                   setHelpTopic(null);
                 }} />
+            ) : eventView ? (
+              <Section key="terminal-events" fill scrollable title="Доставленные события"
+                buttons={<Button icon="list" content="Журнал" onClick={() => setEventView(false)} />}>
+                <Box color="label" mb={1}>
+                  Здесь отображаются только события, доставленные на ваш endpoint по активным подпискам.
+                  Подписка не выполняет никаких действий с игровыми объектами.
+                </Box>
+                {(data.watches ?? []).length > 0 && (
+                  <Box mb={1}>
+                    <Box color="label" inline mr={1}>Подписки:</Box>
+                    {(data.watches ?? []).filter(key => SERVICE_NAME.test(key)).map(key => (
+                      <Button key={key} icon="times" content={key} tooltip="Отписаться"
+                        onClick={() => run(`unwatch ${key}`)} />
+                    ))}
+                  </Box>
+                )}
+                {(data.events ?? []).length === 0 && (
+                  <Box color="label">Событий пока нет. Найдите сервис и выполните watch.</Box>
+                )}
+                {(data.events ?? []).map(event => (
+                  <Section key={event.delivery} title={`${event.instance} · ${event.schema}`}>
+                    <Box color="label">Подписка: {event.key} · Доставка: {event.delivery}</Box>
+                    <Box fontFamily="monospace" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                      {event.payload}{!!event.truncated && ' … (обрезано)'}
+                    </Box>
+                  </Section>
+                ))}
+              </Section>
             ) : (
               <Section
                 key="terminal-log"
