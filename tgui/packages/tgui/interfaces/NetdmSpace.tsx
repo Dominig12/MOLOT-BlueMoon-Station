@@ -4,11 +4,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
+import { nodeTravelChoice, NodeTravelChoice, isSelectedPreview } from './netdmNodeTravel';
 import { nearbyDestinations, NearbyDestination } from './netdmPresenceNavigation';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
 import { TopologyCanvas } from './NetdmTopology';
 import { MapChrome } from './NetdmTopology/MapChrome';
-import { countActivityNodes, FLAG_APC, FLAG_UNPOWERED, parseView, View } from './NetdmTopology/model';
+import { countActivityNodes, FLAG_APC, FLAG_UNPOWERED, isOffline, parseView, View } from './NetdmTopology/model';
 import { NodePresenceCounts, SceneFilters, SceneOperator, SceneRoute } from './NetdmTopology/scene';
 
 // PixiJS resizes its canvas from a ResizeObserver; when the browser coalesces a layout pass it reports
@@ -267,25 +268,43 @@ const CHAT_STATUS: Record<string, string> = {
 
 /** What the operator knows of one node: its kind, freshness and the services seen there. */
 const NodePanel = (props: { view: View; id: string | null; services: Service[]; presenceHost: string | null;
-  otherPresences: number;
+  otherPresences: number; travel: NodeTravelChoice;
   active: boolean; alarmPending: boolean; machinePending: boolean; routePending: boolean; watchedAlarm: string | null;
   onPreview: (instance: string) => void; onTrace: (id: string) => void; onWatchAlarm: (instance: string) => void;
   onReadAlarm: (instance: string) => void; onSetAlarm: (instance: string, enabled: boolean) => void }) => {
-  const { id, view, services, presenceHost, otherPresences, active, alarmPending, machinePending, routePending, watchedAlarm,
+  const { id, view, services, otherPresences, travel, active, alarmPending, machinePending, routePending, watchedAlarm,
     onPreview, onTrace, onReadAlarm, onWatchAlarm, onSetAlarm } = props;
   const node = id ? view.nodes.get(id) : undefined;
   if (!id || !node) {
     return <Section title="Узел">Выберите узел на карте.</Section>;
   }
   const here = services.filter(service => service.node === id);
-  const stale = !!(node.flags & FLAG_UNPOWERED);
+  const stale = isOffline(node.flags);
+  const travelHint = {
+    here: 'Вы на этом узле.',
+    unknown: 'Этот узел ещё не обнаружен.',
+    offline: 'Узел не работает — переход пока невозможен.',
+    no_shell: 'Точка входа на этом узле пока не обнаружена.',
+    stale: 'Сведения о точке входа устарели. Обновите карту.',
+    ready: 'Точка входа известна. Маршрут нужно проверить.',
+  }[travel.state];
   return (
     <Section
       title={`Узел ${id}`}
       buttons={(
-        <Button icon="route" disabled={!active} onClick={() => onTrace(id)}>
-          Проверить связь
-        </Button>
+        <>
+          {travel.state === 'ready' && (
+            <Button icon="route" color="good"
+              disabled={!active || routePending}
+              tooltip="Запросить у Host маршрут. Для подтверждения перехода нажмите Enter после ответа."
+              onClick={() => travel.instance && onPreview(travel.instance)}>
+              Проверить переход · G
+            </Button>
+          )}
+          <Button icon="signal" disabled={!active} onClick={() => onTrace(id)}>
+            Проверить связь
+          </Button>
+        </>
       )}>
       <LabeledList>
         <LabeledList.Item label="Тип">{node.flags & FLAG_APC ? 'ретранслятор (АПЦ)' : 'устройство'}</LabeledList.Item>
@@ -297,6 +316,7 @@ const NodePanel = (props: { view: View; id: string | null; services: Service[]; 
           </LabeledList.Item>
         )}
       </LabeledList>
+      <Box color={travel.state === 'here' ? 'good' : 'label'} mt={0.5}>{travelHint}</Box>
       {here.length === 0 && <Box color="label" mt={0.5}>Известных сервисов нет.</Box>}
       {here.map(service => (
         <Box key={service.instance} mt={0.5}>
@@ -320,16 +340,6 @@ const NodePanel = (props: { view: View; id: string | null; services: Service[]; 
                   disabled={!active || stale || !!service.stale || watchedAlarm === service.instance}
                   onClick={() => onWatchAlarm(service.instance)}>
                   {watchedAlarm === service.instance ? 'Под наблюдением' : 'Следить'}
-                </Button>
-              </Stack.Item>
-            )}
-            {service.type === 'network.shell' && service.instance !== presenceHost && (
-              <Stack.Item>
-                <Button
-                  icon="route"
-                  disabled={!active || stale || !!service.stale || routePending}
-                  onClick={() => onPreview(service.instance)}>
-                  Маршрут перехода
                 </Button>
               </Stack.Item>
             )}
@@ -1123,6 +1133,10 @@ export const NetdmSpace = () => {
   const canResume = inside && presence.state === 'suspended' && presence.reason === 'operator_away';
   const canScan = !inside || active;
   const shown = selected ?? data.hostNode ?? null;
+  const selectedTravel = useMemo(
+    () => nodeTravelChoice(view, shown, data.hostNode, data.services),
+    [view, shown, data.hostNode, data.services],
+  );
   const otherPresences = data.otherPresences;
   const moving = presence?.state === 'moving';
   const foundTarget = active && data.routePreview ? data.services.find(service => (
@@ -1365,6 +1379,7 @@ export const NetdmSpace = () => {
                       id={shown}
                       services={data.services}
                       presenceHost={inside ? presence!.host ?? null : null}
+                      travel={selectedTravel}
                       otherPresences={shown ? otherPresences?.[shown] ?? 0 : 0}
                       active={active}
                       alarmPending={!!data.alarmPending}
