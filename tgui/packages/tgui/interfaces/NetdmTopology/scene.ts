@@ -74,6 +74,8 @@ export interface TopologyScene {
   setRoute(route: SceneRoute | null): void;
   setFilters(filters: SceneFilters): void;
   fit(): void;
+  /** Explicitly center a known node at the current zoom, without changing network knowledge. */
+  focusNode?(id: string): void;
   destroy(): void;
 }
 
@@ -372,6 +374,26 @@ class PixiTopologyScene implements TopologyScene {
     this.placeMarkers();
     this.drawOtherPresences();
     this.requestRender();
+  }
+
+  /** Camera navigation is visual only. It never moves the presence or discovers nodes. */
+  focusNode(id: string) {
+    const node = this.nodes.get(id)?.data;
+    if (!node) {
+      return;
+    }
+    this.syncSize();
+    const point = toWorld(node);
+    this.view = {
+      ...this.view,
+      x: this.app.screen.width / 2 - point.x * this.view.scale,
+      y: this.app.screen.height / 2 - point.y * this.view.scale,
+    };
+    this.fitted = true;
+    this.autoFit = false;
+    this.applyView();
+    this.drawRoute();
+    this.drawOtherPresences();
   }
 
   fit() {
