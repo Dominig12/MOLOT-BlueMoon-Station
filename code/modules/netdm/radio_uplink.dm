@@ -261,9 +261,13 @@
 
 /// In authoritative mode a radio's subspace transmission reaches receivers over the network.
 /datum/signal/subspace/vocal/send_to_receivers()
-	var/datum/netdm_radio_shadow/radio = SSnetdm_observe.radio
-	if(!radio?.authoritative || !radio.uplink(src))
+	// Non-subspace analogue transmission is not a network service.
+	if(transmission_method != TRANSMISSION_SUBSPACE)
 		return ..()
+	var/datum/netdm_radio_shadow/radio = SSnetdm_observe.radio
+	// Telecomms cannot deliver a subspace signal when the Host or endpoint is absent.
+	// The uplink either enters the packet network or is lost.
+	radio?.uplink(src)
 
 #undef NETDM_UPLINK_CONTEXT
 #undef NETDM_UPLINK_CONTEXTS

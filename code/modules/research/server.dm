@@ -39,7 +39,9 @@
 /obj/machinery/rnd/server/Initialize(mapload)
 	. = ..()
 	if(. != INITIALIZE_HINT_QDEL)
-		netdm_make_node(src)
+		var/datum/component/netdm_node/node = netdm_make_node(src)
+		if(node)
+			SSnetdm_observe.research?.add_server(src, node)
 	GLOB.rndservers_list += src
 	SSresearch.servers |= src
 	alarmloop = new(src, !working)

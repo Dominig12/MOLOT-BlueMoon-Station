@@ -6,14 +6,6 @@
 // Ledger (after authorize()): for a web with a server the Host ledger decides; the hooks turn legacy
 // writes into ledger events and the legacy web is only the projection of its servers.
 
-/obj/machinery/rnd/server/Initialize(mapload)
-	. = ..()
-	if(. == INITIALIZE_HINT_QDEL)
-		return
-	var/datum/component/netdm_node/node = netdm_make_node(src)
-	if(node)
-		SSnetdm_observe.research?.add_server(src, node)
-
 /obj/machinery/rnd/server/Destroy()
 	SSnetdm_observe.research?.remove_server(src)
 	return ..()
@@ -22,30 +14,18 @@
 /obj/machinery/computer/rdconsole
 	var/datum/netdm_terminal/local/console/netdm_window
 
-/obj/machinery/computer/rdconsole/Initialize(mapload)
-	. = ..()
-	if(. == INITIALIZE_HINT_QDEL)
-		return
-	var/datum/component/netdm_node/node = netdm_make_node(src)
-	if(node)
-		SSnetdm_observe.research?.add_console(src, node)
-
 /obj/machinery/computer/rdconsole/research_node(id, mob/user)
-	var/datum/netdm_research_shadow/shadow = SSnetdm_observe.research
+	var/datum/netdm_research_shadow/research = SSnetdm_observe.research
 	var/datum/techweb/web = stored_research
-	if(!shadow || !web)
-		return ..()
-	if(shadow.owns(web))
-		// Only the network purchase on the bound server; the legacy web learns the node from the answer.
-		if(!web.available_nodes[id] || web.researched_nodes[id])
-			say("Node unlock failed: Either already researched or not available!")
-			return FALSE
-		return shadow.console_research(src, web, id, user)
-	var/list/before = web.research_points.Copy()
-	shadow.console_purchase++
-	. = ..()
-	shadow.console_purchase--
-	shadow.console_purchased(src, web, id, ., before)
+	// Research is a remote service operation. Never spend or unlock a node locally when
+	// the Host is missing, the catalog is bootstrapping or no server is reachable.
+	if(!research || !web || !research.owns(web))
+		say("Исследование недоступно: нет подключённого сетевого R&D-сервера.")
+		return FALSE
+	if(!web.available_nodes[id] || web.researched_nodes[id])
+		say("Node unlock failed: Either already researched or not available!")
+		return FALSE
+	return research.console_research(src, web, id, user)
 
 /// Disk buttons of a console under the ledger go to its bound server (P6, §13.8).
 /obj/machinery/computer/rdconsole/Destroy()
@@ -69,10 +49,14 @@
 /obj/machinery/computer/rdconsole/ui_act(action, list/params)
 	if(action == "open_network")
 		return netdm_open_space(usr)
-	var/datum/netdm_research_shadow/shadow = SSnetdm_observe.research
-	if(shadow?.owns(stored_research) && !locked && !(machine_stat & (NOPOWER|BROKEN)) && (action in list("loadTech", "uploadDisk")))
-		if(shadow.console_disk(src, action, params))
+	var/datum/netdm_research_shadow/research = SSnetdm_observe.research
+	if(action in list("loadTech", "uploadDisk"))
+		if(!research || !research.owns(stored_research))
+			say("Операция с R&D-диском недоступна: нет связи с сетевым сервером.")
 			return TRUE
+		if(locked || machine_stat & (NOPOWER|BROKEN))
+			return TRUE
+		return research.console_disk(src, action, params)
 	return ..()
 
 /obj/machinery/computer/rdconsole/ui_data(mob/user)

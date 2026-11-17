@@ -155,7 +155,7 @@
 	lane.dispatcher.allow_result("sync", new /datum/netdm_effect_handler/research_sync)
 	lane.dispatcher.allow_result("backup", new /datum/netdm_effect_handler/research_disk)
 	lane.dispatcher.allow_result("restore", new /datum/netdm_effect_handler/research_disk)
-	authority_requested = world.GetConfig("env", "NETDM_RESEARCH_MODE") == "authoritative"
+	authority_requested = TRUE // The Host ledger is the only authority after initial synchronization.
 
 /// A new Host session: the catalog is installed again and every storage registered again (both duplicates
 /// for the same round); unconfirmed mirror events stay in order and are sent again.
@@ -881,7 +881,9 @@
 			server_queries[console_ref] = search
 			counters["server_queries"]++
 			return TRUE
-	return bind_by_distance(console)
+	// Discovery must be answered by the network, never inferred from map distance.
+	mark_no_server(console_ref, bindings[console_ref])
+	return FALSE
 
 /datum/netdm_research_shadow/proc/request_server_page(datum/weakref/console_ref, list/search, datum/component/netdm_node/node, obj/machinery/power/apc/apc, cursor)
 	return SSnetdm_observe.diagnostics?.query_services(node, apc, "research.server",
@@ -937,9 +939,8 @@
 			mark_no_server(console_ref, binding)
 			return
 	server_queries -= console_ref
-	// The directory did not answer completely. Keep the existing distance fallback and require a status round trip.
-	if(!bind_by_distance(console))
-		mark_no_server(console_ref, binding)
+	// An incomplete network directory is not a route. Fail closed and retry discovery later.
+	mark_no_server(console_ref, binding)
 
 /datum/netdm_research_shadow/proc/consider_server_page(list/search, list/page, datum/techweb/web)
 	for(var/list/row in page?["items"])
@@ -1485,7 +1486,8 @@
 		console.say("No tech disk inserted!")
 		return TRUE
 	if(action == "uploadDisk" && !disk.netdm_disk)
-		return FALSE
+		console.say("Диск не содержит сетевой резервной копии. Локальная загрузка в общую базу отключена.")
+		return TRUE
 	var/list/binding = bindings[WEAKREF(console)]
 	var/datum/component/netdm_node/node = console.GetComponent(/datum/component/netdm_node)
 	if(!binding?["bound"] || !node)

@@ -36,7 +36,7 @@
  */
 /datum/netdm_door_shadow
 	/// NETDM_DOOR_MODE=authoritative, or set_authoritative() at runtime: doors move only by network command.
-	var/authoritative = FALSE
+	var/authoritative = TRUE
 	/// Door weakref -> its instance door.<endpoint>, and back.
 	var/list/instances = list()
 	var/list/by_instance = list()
@@ -65,12 +65,12 @@
 /datum/netdm_door_shadow/proc/setup(datum/netdm_service_lane/lane)
 	lane.dispatcher.allow_command("machine.door", "set_state", new /datum/netdm_command_handler/door_set_state)
 	lane.dispatcher.allow_result("set_state", new /datum/netdm_effect_handler/door_state, "machine.door")
-	if(world.GetConfig("env", "NETDM_DOOR_MODE") == "authoritative")
-		set_authoritative(TRUE)
+	// Machine control is always a network command, not a second legacy path.
 
 /// Switches who moves the doors. A command keeps the mode of the press that sent it.
 /datum/netdm_door_shadow/proc/set_authoritative(enabled)
-	authoritative = !!enabled
+	// Retained for old callers: switching back to a bypass is not supported.
+	return !!enabled
 
 /datum/netdm_door_shadow/proc/reset_session()
 	// Receipts of the old session never arrive; those presses are compared with what arrived so far.
@@ -567,30 +567,29 @@
 	SSnetdm_observe.doors?.remove_door(src)
 	return ..()
 
+// A control assembly represents a remote command, including when the network is down.
+// Planning fails closed; no invocation of the legacy global-airlock broadcast is allowed.
 /obj/item/assembly/control/activate()
-	var/datum/netdm_door_shadow/shadow = SSnetdm_observe.doors
-	var/list/plan = shadow?.plan(src)
-	if(plan && shadow.authoritative)
-		// The doors move when the commands reach them; the button only keeps its cooldown.
-		cooldown = TRUE
-		addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
-		shadow.mirror(plan)
+	var/datum/netdm_door_shadow/controller = SSnetdm_observe.doors
+	var/list/plan = controller?.plan(src)
+	if(!plan)
+		if(usr)
+			to_chat(usr, span_warning("Сетевой контроллер не отправил команду: устройство или маршрут недоступны."))
 		return
-	. = ..()
-	if(plan)
-		shadow.mirror(plan)
+	cooldown = TRUE
+	addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
+	controller.mirror(plan)
 
 /obj/item/assembly/control/airlock/activate()
-	var/datum/netdm_door_shadow/shadow = SSnetdm_observe.doors
-	var/list/plan = shadow?.plan(src)
-	if(plan && shadow.authoritative)
-		cooldown = TRUE
-		addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
-		shadow.mirror(plan)
+	var/datum/netdm_door_shadow/controller = SSnetdm_observe.doors
+	var/list/plan = controller?.plan(src)
+	if(!plan)
+		if(usr)
+			to_chat(usr, span_warning("Сетевой контроллер шлюзов не отправил команду."))
 		return
-	. = ..()
-	if(plan)
-		shadow.mirror(plan)
+	cooldown = TRUE
+	addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
+	controller.mirror(plan)
 
 #undef NETDM_DOORS_SETTLE
 #undef NETDM_DOORS_ATTACH

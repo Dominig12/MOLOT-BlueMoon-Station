@@ -23,7 +23,7 @@
  */
 /datum/netdm_messenger_shadow
 	/// NETDM_MESSENGER_MODE=authoritative, or set_authoritative() at runtime.
-	var/authoritative = FALSE
+	var/authoritative = TRUE
 	/// Server instance -> server weakref, and back.
 	var/list/servers = list()
 	var/list/server_instances = list()
@@ -52,14 +52,13 @@
 	lane.dispatcher.allow_result("relay", new /datum/netdm_effect_handler/pda_relay_answer, "pda.server")
 	lane.dispatcher.allow_command("pda.messenger", "status", new /datum/netdm_command_handler/pda_status)
 	lane.dispatcher.allow_result("status", new /datum/netdm_effect_handler/pda_status_receipt, "pda.messenger")
-	if(world.GetConfig("env", "NETDM_MESSENGER_MODE") == "authoritative")
-		set_authoritative(TRUE)
+	// All tablet messages must pass through the addressable message server.
 
 /// Switches the delivery owner. Shadow again: messages already on their way finish or time out.
 /datum/netdm_messenger_shadow/proc/set_authoritative(enabled)
-	authoritative = !!enabled
-	if(!authoritative)
-		return
+	// Legacy bypass is not a supported delivery mode.
+	if(!enabled)
+		return FALSE
 	for(var/obj/machinery/telecomms/message_server/server in GLOB.telecomms_list)
 		add_server(server)
 
@@ -126,17 +125,18 @@
 	var/id = signal.data["netdm_id"]
 	var/datum/computer_file/program/messenger/sender = current_sender
 	if(!id || id != current_id || !sender)
-		return "legacy"
+		return "failed"
 	var/list/targets = signal.data["targets"]
 	var/text = signal.data["message"]
 	if(signal.data["rigged"] || signal.data["everyone"] || signal.data["photo"] || signal.data["automated"] \
 		|| !length(targets) || length(targets) > NETDM_MESSENGER_FANOUT || length(text) > NETDM_MESSENGER_TEXT)
-		return "legacy"
+		return "failed"
 	var/list/names = list()
 	for(var/datum/computer_file/program/messenger/target as anything in targets)
 		var/target_instance = instances[WEAKREF(target)]
 		if(!target_instance)
-			return "legacy" // Not a network messenger yet; telecomms still reaches it.
+			reasons["relay_target_unregistered"]++
+			return "failed" // A missing endpoint cannot be delivered through a second transport.
 		names[target_instance] = get_messenger_name(target) || "Unknown"
 	var/instance = instances[WEAKREF(sender)]
 	var/datum/component/netdm_node/node = sender.computer?.GetComponent(/datum/component/netdm_node)
@@ -464,14 +464,15 @@
 
 /// In authoritative mode an eligible message leaves through a message server instead of telecomms.
 /datum/signal/subspace/messaging/tablet_message/send_to_receivers()
-	var/datum/netdm_messenger_shadow/shadow = SSnetdm_observe.messenger
-	if(!shadow?.authoritative)
-		return ..()
-	switch(shadow.relay(src))
-		if("legacy")
-			return ..()
+	var/datum/netdm_messenger_shadow/messenger = SSnetdm_observe.messenger
+	// The absence of a network is not permission to use telecomms.
+	if(!messenger)
+		return
+	switch(messenger.relay(src))
 		if("sent")
 			mark_done()
+		if("failed")
+			messenger.notify(messenger.current_sender, "ERROR: Network message could not be sent.")
 
 #undef NETDM_RELAY_ANSWER
 #undef NETDM_RELAY_STATUS_WAIT
