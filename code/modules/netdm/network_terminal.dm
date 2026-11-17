@@ -337,6 +337,8 @@
 			return submit(line)
 		if("run_script")
 			return submit(params["source"], TRUE)
+		if("check_script")
+			return check_script(params["source"], params["name"], params["tag"])
 		if("start_program")
 			return start_program(params["name"], params["source"], !!params["keep"])
 		if("forget_program")
@@ -431,6 +433,17 @@
 		arguments["ensure"] = TRUE
 		disk_notice = "[name] хранится на устройстве и запускается при каждом подключении."
 	return submit_request("start [name]", "start", arguments)
+
+/// Validate the same source as start_program, without assigning an entity or executing a phase.
+/// The monotonically increasing UI tag keeps async diagnostics paired with their editor revision.
+/datum/netdm_terminal/proc/check_script(source, program_name, tag)
+	if(!valid_source(source, NETDM_TERMINAL_SCRIPT_LENGTH))
+		return FALSE
+	var/name = istext(program_name) && length(program_name) && length_char(program_name) <= 32 ? program_name : "draft"
+	if(!istext(name) || !length(name) || length_char(name) > 32)
+		return FALSE
+	var/id = isnum(tag) ? clamp(round(tag), 0, 1000000000) : 0
+	return submit_request("check [id]", "check", list("name" = name, "source" = source))
 
 /datum/netdm_terminal/proc/supports_programs()
 	return TRUE
