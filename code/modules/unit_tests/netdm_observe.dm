@@ -2608,3 +2608,30 @@
 	TEST_ASSERT(!station_apc.operating, "The breaker is off after the intrusion.")
 	TEST_ASSERT(!SSnetdm_observe.netdm_sabotage(station_apc, node), "Sabotage respects its cooldown.")
 	station_apc.operating = TRUE
+
+
+/// Host-accepted shell watches are declarations, not local subscriptions.
+/// They survive a Host reset, retain delivery settings, and disappear on unwatch.
+/datum/unit_test/netdm_shell_watch_reconnect/Run()
+	var/datum/netdm_service_lane/lane = new
+	var/datum/netdm_service_endpoint/endpoint = new
+	endpoint.id = "watch-test"
+	lane.endpoints[endpoint.id] = endpoint
+	TEST_ASSERT(lane.remember_shell_watch(endpoint, "oxygen", "atmos.sensor",
+		"atmos.sample", 1, "full", "queue", 4), "Accepted watch should be remembered.")
+	var/list/declaration = endpoint.subscriptions["oxygen"]
+	TEST_ASSERT_EQUAL(declaration["schema"], "atmos.sample", "Reconciliation must keep the authorized schema.")
+	TEST_ASSERT_EQUAL(declaration["mode"], "queue", "Reconciliation must keep the queue delivery mode.")
+	TEST_ASSERT_EQUAL(declaration["pending"], 4, "Reconciliation must keep the pending queue limit.")
+	TEST_ASSERT(endpoint.subscribed["oxygen"], "A Host-accepted watch must not be subscribed twice.")
+	endpoint.event_journal += list(list("key" = "oxygen"))
+	lane.reset_session()
+	TEST_ASSERT(endpoint.event_watches["oxygen"], "Host reset must retain the player's watch declaration.")
+	TEST_ASSERT(endpoint.subscriptions["oxygen"], "Host reset must retain the reconciliation specification.")
+	TEST_ASSERT(!endpoint.subscribed["oxygen"], "Host reset must invalidate prior transport acceptance.")
+	TEST_ASSERT(!length(endpoint.event_journal), "Events from the old transport must not be replayed.")
+	TEST_ASSERT(lane.forget_shell_watch(endpoint, "oxygen"), "Unwatch should forget accepted shell watch.")
+	TEST_ASSERT(!endpoint.subscriptions["oxygen"] && !endpoint.event_watches["oxygen"],
+		"Unwatch must not allow subscription resurrection after reconnect.")
+	TEST_ASSERT(!lane.wanted_by["atmos.sensor"], "Unwatch must remove provider tracking.")
+	qdel(lane)
