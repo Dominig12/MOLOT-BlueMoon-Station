@@ -311,8 +311,9 @@
 	var/list/media = disk ? list("id" = REF(disk), "name" = disk.name, "file" = file ? REF(file) : "") : null
 	var/datum/netdm_service_endpoint/endpoint = SSnetdm_observe.services?.by_node[node_ref?.resolve()]
 	var/list/watches = list()
-	for(var/key in endpoint?.event_watches)
-		watches += key
+	if(endpoint)
+		for(var/key in endpoint.event_watches)
+			watches += key
 	return list("title" = device ? device_title(device) : "нет связи", "entries" = entries,
 		"events" = endpoint ? endpoint.event_journal : list(), "watches" = watches,
 		"limit" = NETDM_TERMINAL_LINE_LENGTH, "scriptLimit" = NETDM_TERMINAL_SCRIPT_LENGTH,
