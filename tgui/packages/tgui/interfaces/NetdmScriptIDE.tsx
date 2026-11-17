@@ -86,7 +86,7 @@ type Props = {
 
 export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }: Props) => {
   const caret = useRef(source.length);
-  const editor = useRef<{ textareaRef: { current: HTMLTextAreaElement | null } } | null>(null);
+  const editor = useRef<TextArea | null>(null);
   const [preview, setPreview] = useState(false);
   const lines = source.split('\n');
   const outline = useMemo(() => scriptOutline(source), [source]);
@@ -118,12 +118,14 @@ export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }
   return (
     <Section
       title="IDE · Network Shell"
-      buttons={<>
-        <Button icon="check-circle" content="Проверить код" onClick={onCheck}
-          disabled={!source.trim() || source.length > limit || !!check?.pending} />
-        <Button icon="eye" selected={preview} onClick={() => setPreview(!preview)}
-          tooltip="Обзор структуры программы" content={preview ? 'Редактор' : 'Структура'} />
-      </>}>
+      buttons={
+        <>
+          <Button icon="check-circle" content="Проверить код" onClick={onCheck}
+            disabled={!source.trim() || source.length > limit || !!check?.pending} />
+          <Button icon="eye" selected={preview} onClick={() => setPreview(!preview)}
+            tooltip="Обзор структуры программы" content={preview ? 'Редактор' : 'Структура'} />
+        </>
+      }>
       <Stack>
         <Stack.Item grow basis={0}>
           <Box color="label" mb={0.5}>Код исполняется на устройстве. Проверка не запускает команды и не меняет сеть.</Box>
@@ -196,9 +198,11 @@ export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }
       </Stack>
       {!!check?.pending && <NoticeBox info mt={0.5}>Исходник отправлен на проверку через network.shell.</NoticeBox>}
       {!!check?.stale && <Box color="label" mt={0.5}>Исходник изменён после проверки — проверьте новую версию.</Box>}
-      {!check?.stale && check?.status === 'valid' && <NoticeBox success mt={0.5}>
-        Компиляция успешна. Сетевые команды не выполнялись.
-      </NoticeBox>}
+      {!check?.stale && check?.status === 'valid' && (
+        <NoticeBox success mt={0.5}>
+          Компиляция успешна. Сетевые команды не выполнялись.
+        </NoticeBox>
+      )}
       {!check?.stale && !!check?.status && check.status !== 'valid' && !check.pending && (
         <NoticeBox danger mt={0.5}>
           {check.error || check.status}
