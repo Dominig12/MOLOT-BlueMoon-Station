@@ -112,9 +112,8 @@ test('доставленные события отображаются без с
 test('IDE validates source through Host without running or starting the program', () => {
   const { actions, push } = setup();
   fireEvent.click(screen.getByText('Редактор'));
-  const editor = screen.getByPlaceholderText<HTMLTextAreaElement>(
-    'observe atmos.sensor -key air\non events -key air | where pressureKPa -gt 130\n$event | count',
-  );
+  const editor = document.querySelector('textarea') as HTMLTextAreaElement;
+  expect(editor).toBeTruthy();
   fireEvent.input(editor, { target: { value: 'self | select node' } });
   fireEvent.click(screen.getByText('Проверить код'));
   expect(actions()).toContain('act/check_script');
