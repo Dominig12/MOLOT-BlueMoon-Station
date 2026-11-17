@@ -1,7 +1,6 @@
 import { useState } from 'react';
 
 import { Box, Button, Icon } from '../components';
-import { NetdmServiceActions } from './NetdmServiceActions';
 import {
   alarmStateLabel,
   AtmosReading,
@@ -10,6 +9,7 @@ import {
   deviceLastEvent,
   deviceReadState,
 } from './NetdmDeviceState';
+import { NetdmServiceActions } from './NetdmServiceActions';
 
 type Props = {
   instance: string;
