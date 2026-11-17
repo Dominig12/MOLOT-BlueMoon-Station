@@ -154,10 +154,10 @@ test('поиск в обзоре использует штатную сеть и
   expect(screen.getByText('Подключено')).toBeTruthy();
   // Discovery alone never reads, watches or controls a physical device.
   expect(commands()).toEqual(['services']);
-  // Expensive controls only appear after the player selects a device.
-  expect(screen.queryByText('Получить показания')).toBeNull();
+  // Controls only appear after choosing a device.
+  expect(screen.queryByText('Запросить показания')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство atmos.alarm.e42' }));
-  fireEvent.click(screen.getByText('Получить показания'));
+  fireEvent.click(screen.getByText('Запросить показания'));
   fireEvent.click(screen.getByText('Следить за событиями'));
   expect(commands()).toEqual([
     'services',
@@ -229,9 +229,11 @@ test('technical service details open only after an explicit click', () => {
     id: 1, line: 'services', status: 'ok', pending: false, error: null,
     records: [fields({ instance: 'machine.test', type: 'machine.control', hops: '1' })],
   }]);
-  expect(screen.queryByText('Технические сведения')).toBeNull();
+  expect(screen.queryByText('Описание API')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство machine.test' }));
-  fireEvent.click(screen.getByText('Технические сведения'));
+  expect(screen.queryByText('Описание API')).toBeNull();
+  fireEvent.click(screen.getByText('Технические возможности'));
+  fireEvent.click(screen.getByText('Описание API'));
   expect(commands()).toEqual(['api machine.control']);
   expect(screen.getByRole('textbox', { name: 'Командная строка' })).toBeTruthy();
 });
