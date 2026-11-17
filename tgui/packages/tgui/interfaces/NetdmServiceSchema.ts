@@ -99,8 +99,9 @@ export const argumentError = (field: ServiceField, raw: string): string | null =
     if (!Number.isFinite(number) || !Number.isSafeInteger(number) && field.type === 'integer') {
       return 'Число вне допустимого диапазона';
     }
-    if (field.min !== null && number < field.min || field.max !== null && number > field.max)
+    if (field.min !== null && number < field.min || field.max !== null && number > field.max) {
       return 'Число вне разрешённых границ';
+    }
     return null;
   }
   if (field.maxLength !== null && raw.length > field.maxLength) return 'Слишком длинное значение';
