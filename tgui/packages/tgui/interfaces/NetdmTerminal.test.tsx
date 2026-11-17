@@ -193,20 +193,26 @@ test('карта и входящие события доступны без из
 
 test('простые показания не путают принятие запроса с доставленным ответом', () => {
   const { push, commands } = setup('home');
+  const listing = {
+    id: 1, line: 'services', status: 'ok', pending: false, error: null,
+    records: [fields({ instance: 'atmos.alarm.e42', type: 'atmos.alarm', hops: '1' })],
+  };
   const request = {
-    id: 1, line: 'invoke atmos.alarm.e42 read reason=inspect', status: 'ok', pending: false, error: null,
+    id: 2, line: 'invoke atmos.alarm.e42 read reason=inspect', status: 'ok', pending: false, error: null,
     records: [fields({ instance: 'atmos.alarm.e42', command: 'read', status: 'sent', operation: '987' })],
   };
-  push([request]);
+  push([listing, request]);
   expect(screen.getByText(/Запрос принят в сеть/)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство atmos.alarm.e42' }));
+  expect(screen.queryByText('101.3')).toBeNull();
   fireEvent.click(screen.getByText('Получить ответ'));
   expect(commands()).toEqual(['result 987']);
-  push([request, {
-    id: 2, line: 'result 987', status: 'ok', pending: false, error: null,
+  push([listing, request, {
+    id: 3, line: 'result 987', status: 'ok', pending: false, error: null,
     records: [fields({ pressureKPa: '101.3', temperatureK: '293', alarm: 'false', danger: '0' })],
   }]);
-  expect(screen.getByText(/101.3/)).toBeTruthy();
-  expect(screen.getByText(/Тревоги нет/)).toBeTruthy();
+  expect(screen.getByText('101.3')).toBeTruthy();
+  expect(screen.getByText('Без тревоги')).toBeTruthy();
 });
 
 
