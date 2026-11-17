@@ -27,14 +27,19 @@ type ServiceInfo = {
 
 export const visibleServices = (entries: HomeEntry[]): {
   query: HomeEntry | null;
+  source: HomeEntry | null;
   services: ServiceInfo[];
 } => {
-  const query = [...entries].reverse().find(entry => /^services(?:\s|$)/.test(entry.line)) ?? null;
-  if (!query || !!query.pending || query.status !== 'ok') {
-    return { query, services: [] };
+  const queries = [...entries].reverse().filter(entry => /^services(?:\s|$)/.test(entry.line));
+  const query = queries[0] ?? null;
+  // Keep the last acknowledged directory snapshot while a newer search is in flight.
+  // The UI marks it as earlier data; it must never be mistaken for a fresh discovery.
+  const source = queries.find(entry => !entry.pending && entry.status === 'ok') ?? null;
+  if (!source) {
+    return { query, source: null, services: [] };
   }
   const seen = new Set<string>();
-  const services = query.records.flatMap(fields => {
+  const services = source.records.flatMap(fields => {
     const value = (name: string) => fields.find(field => field.name === name)?.value;
     const instance = value('instance');
     const type = value('type');
@@ -44,7 +49,7 @@ export const visibleServices = (entries: HomeEntry[]): {
     seen.add(instance);
     return [{ instance, type, hops: value('hops') ?? null }];
   });
-  return { query, services };
+  return { query, source, services };
 };
 
 export const networkIssue = (status: string | null, error?: string | null): string => {
@@ -155,7 +160,7 @@ type Props = {
 
 export const NetdmHome = (props: Props) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const { query, services } = visibleServices(props.entries);
+  const { query, source, services } = visibleServices(props.entries);
   const latest = props.entries[props.entries.length - 1];
   const limited = services.slice(0, 6);
   const selected = limited.find(service => service.instance === selectedId) ?? null;
@@ -164,6 +169,7 @@ export const NetdmHome = (props: Props) => {
     !!entry.pending && (entry.line === `watch ${selected.instance} -key ${selected.instance}` ||
       entry.line === `unwatch ${selected.instance}`));
   const pending = !!query?.pending;
+  const previousResults = !!source && !!query && source.id !== query.id;
 
   return (
     <div className="NetdmHome">
@@ -210,6 +216,17 @@ export const NetdmHome = (props: Props) => {
             </div>
             {services.length > 0 && <span className="NetdmHome__count">{services.length}</span>}
           </div>
+          {previousResults && (
+            <div className="NetdmHome__previous" role="status">
+              <Icon name={pending ? 'sync' : 'exclamation-circle'} />
+              <span>
+                {pending ? 'Идёт обновление. Ниже результаты прошлого поиска.'
+                  : 'Новый поиск не завершился. Ниже предыдущие результаты — доступность могла измениться.'}
+              </span>
+              {!pending && query && <Button icon="redo" content="Повторить"
+                onClick={() => props.onCommand(query.line)} />}
+            </div>
+          )}
           {!query && (
             <div className="NetdmHome__empty">
               <Icon name="satellite-dish" size={2} />
@@ -217,14 +234,14 @@ export const NetdmHome = (props: Props) => {
               <div>Нажмите «Найти устройства», чтобы увидеть доступные сервисы.</div>
             </div>
           )}
-          {pending && (
+          {pending && !previousResults && (
             <div className="NetdmHome__empty">
               <Icon name="circle-notch" spin size={2} />
               <div className="NetdmHome__emptyTitle">Ищем через сеть…</div>
               <div>Результат появится после ответа Host.</div>
             </div>
           )}
-          {query && !pending && query.status !== 'ok' && (
+          {query && !pending && query.status !== 'ok' && !previousResults && (
             <div className="NetdmHome__empty">
               <Icon name="unplug" size={2} />
               <div className="NetdmHome__emptyTitle">Не удалось получить список</div>
