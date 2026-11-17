@@ -38,6 +38,8 @@
 
 /obj/machinery/rnd/production/Initialize(mapload)
 	. = ..()
+	if(. != INITIALIZE_HINT_QDEL)
+		netdm_make_node(src)
 	create_reagents(0, OPENCONTAINER | NO_REACT)
 	gen_access()
 	stored_research = new

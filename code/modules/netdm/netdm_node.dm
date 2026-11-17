@@ -133,20 +133,3 @@
 	if(!SSnetdm_observe?.observing())
 		return null
 	return target.AddComponent(/datum/component/netdm_node, mount, radio_range)
-
-// Research machines are the first network nodes: servers carry knowledge and points in P5,
-// consoles and fabricators reach them over this network.
-/obj/machinery/rnd/server/Initialize(mapload)
-	. = ..()
-	if(. != INITIALIZE_HINT_QDEL)
-		netdm_make_node(src)
-
-/obj/machinery/computer/rdconsole/Initialize(mapload)
-	. = ..()
-	if(. != INITIALIZE_HINT_QDEL)
-		netdm_make_node(src)
-
-/obj/machinery/rnd/production/Initialize(mapload)
-	. = ..()
-	if(. != INITIALIZE_HINT_QDEL)
-		netdm_make_node(src)

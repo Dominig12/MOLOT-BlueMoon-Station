@@ -38,6 +38,8 @@
 
 /obj/machinery/rnd/server/Initialize(mapload)
 	. = ..()
+	if(. != INITIALIZE_HINT_QDEL)
+		netdm_make_node(src)
 	GLOB.rndservers_list += src
 	SSresearch.servers |= src
 	alarmloop = new(src, !working)

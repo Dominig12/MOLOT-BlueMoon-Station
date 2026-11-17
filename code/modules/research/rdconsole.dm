@@ -102,6 +102,8 @@ Nothing else in the console has ID requirements.
 
 /obj/machinery/computer/rdconsole/Initialize(mapload)
 	. = ..()
+	if(. != INITIALIZE_HINT_QDEL)
+		netdm_make_node(src)
 	SyncRDevices()
 
 /obj/machinery/computer/rdconsole/LateInitialize()
