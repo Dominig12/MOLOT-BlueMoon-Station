@@ -2,9 +2,10 @@ import { BooleanLike } from 'common/react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackend } from '../backend';
-import { Box, Button, Dropdown, Input, NoticeBox, Section, Stack, Table, TextArea } from '../components';
+import { Box, Button, Dropdown, Input, NoticeBox, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
 import { SHELL_COMMANDS, tabComplete } from './netdmShell';
+import { NetdmScriptIDE } from './NetdmScriptIDE';
 
 type Field = { name: string; value: string };
 
@@ -220,6 +221,9 @@ export const NetdmTerminal = () => {
   const [programName, setProgramName] = useState('');
   const [keepProgram, setKeepProgram] = useState(false);
   const [editingScript, setEditingScript] = useState(false);
+  const [checkedSource, setCheckedSource] = useState('');
+  const [checkTag, setCheckTag] = useState<number | null>(null);
+  const checkSerial = useRef(0);
   const [helpTopic, setHelpTopic] = useState<string | null>(null);
   const [eventView, setEventView] = useState(false);
   const commandInput = useRef<HTMLInputElement>(null);
@@ -234,6 +238,15 @@ export const NetdmTerminal = () => {
     }
   }, [loadedId, loadedSource]);
   const canRun = !!script.trim() && script.length <= data.scriptLimit;
+  const canRunOnce = canRun && !/^(observe|on|every)\b/.test(script.trimStart());
+  const checkEntry = checkTag === null ? null : [...data.entries].reverse().find(entry => entry.line === `check ${checkTag}`);
+  const checkState = checkTag === null ? undefined : {
+    status: checkEntry?.status ?? null,
+    error: checkEntry?.error,
+    position: checkEntry?.position,
+    pending: !checkEntry || !!checkEntry.pending,
+    stale: checkedSource !== script,
+  };
   const helpEntry = helpTopic === null ? undefined : [...data.entries].reverse().find(entry => entry.line === helpLine(helpTopic));
   // Dynamic completion pools: instances from the last `services`, nodes from the last `nodes`/`trace`.
   const completion = useMemo(() => {
@@ -407,23 +420,26 @@ export const NetdmTerminal = () => {
                     <Button
                       icon="play"
                       content="Запустить"
-                      disabled={!canRun}
+                      disabled={!canRunOnce}
+                      tooltip="Однократный скрипт не допускает on/observe/every; запустите его как программу."
                       onClick={() => act('run_script', { source: script })}
                     />
                   </>
                 }
               >
-                <Box color="label" mb={0.5}>Условие if выполняет блок, если конвейер вернул хотя бы одну запись. Закройте блок командой end.</Box>
-                <TextArea
+                <NetdmScriptIDE
                   key={loadedId}
-                  fluid
-                  scrollbar
-                  height={7}
-                  maxLength={data.scriptLimit}
-                  placeholder={'if links | where state -eq up\n  services | first 1\nend'}
-                  value={script}
-                  onInput={(_event: unknown, value: string) => setScript(value)}
-                  onChange={(_event: unknown, value: string) => setScript(value)}
+                  source={script}
+                  onChange={setScript}
+                  limit={data.scriptLimit}
+                  pool={completion}
+                  check={checkState}
+                  onCheck={() => {
+                    const tag = ++checkSerial.current;
+                    setCheckTag(tag);
+                    setCheckedSource(script);
+                    act('check_script', { source: script, name: SERVICE_NAME.test(programName) ? programName : 'draft', tag });
+                  }}
                 />
                 {!!data.programsEnabled && (
                   <Stack mt={0.5}>
