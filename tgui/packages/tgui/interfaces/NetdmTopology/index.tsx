@@ -86,6 +86,9 @@ type CanvasProps = {
   route?: SceneRoute | null;
   filters: SceneFilters;
   fitRequest: number;
+  /** Camera-only navigation request; no network traffic or selection reset. */
+  focusRequest?: number;
+  focusTarget?: string | null;
   onSelect: (id: string | null) => void;
   onFailure: (reason: string) => void;
   onReport: (report: RendererReport) => void;
@@ -178,6 +181,9 @@ export const TopologyCanvas = (props: CanvasProps) => {
         created.setPresence(current.presenceNode ?? null);
         created.setOtherPresences(current.otherPresences ?? null);
         created.setRoute(current.route ?? null);
+        if (current.focusRequest && current.focusTarget) {
+          created.focusNode?.(current.focusTarget);
+        }
       })
       .catch(error => {
         if (!cancelled && !(error instanceof SceneCancelled)) {
@@ -227,6 +233,11 @@ export const TopologyCanvas = (props: CanvasProps) => {
       scene.current?.fit();
     }
   }, [props.fitRequest]);
+  useEffect(() => {
+    if (props.focusRequest && props.focusTarget) {
+      scene.current?.focusNode?.(props.focusTarget);
+    }
+  }, [props.focusRequest]);
 
   return <div ref={host} style={{ width: '100%', height: '100%', overflow: 'hidden' }} />;
 };
