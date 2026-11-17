@@ -315,6 +315,9 @@
 		for(var/key in endpoint.event_watches)
 			watches += key
 	return list("title" = device ? device_title(device) : "нет связи", "entries" = entries,
+		// A genuine Host + endpoint acknowledgement; the UI must not guess connectivity
+		// from the existence of cached logs or a registered node.
+		"connectionReady" = !!(SSnetdm_observe.bridge?.ready && endpoint?.attached_node),
 		"events" = endpoint ? endpoint.event_journal : list(), "watches" = watches,
 		"limit" = NETDM_TERMINAL_LINE_LENGTH, "scriptLimit" = NETDM_TERMINAL_SCRIPT_LENGTH,
 		"disk" = media, "diskNotice" = disk_notice, "loadedScript" = loaded_script, "programsEnabled" = supports_programs(),
