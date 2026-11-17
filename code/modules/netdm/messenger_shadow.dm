@@ -332,32 +332,6 @@
 	if(. && istype(F, /datum/computer_file/program/messenger))
 		SSnetdm_observe.messenger?.add_messenger(F)
 
-/datum/computer_file/program/messenger/on_install()
-	. = ..()
-	SSnetdm_observe.messenger?.add_messenger(src)
-
-/datum/computer_file/program/messenger/run_program(mob/living/user)
-	. = ..()
-	if(.)
-		SSnetdm_observe.messenger?.add_messenger(src)
-
-/datum/computer_file/program/messenger/Destroy(force)
-	SSnetdm_observe.messenger?.remove_messenger(src)
-	return ..()
-
-/datum/computer_file/program/messenger/send_message_signal(atom/source, message, list/datum/computer_file/program/messenger/targets, photo_path = null, everyone = FALSE, rigged = FALSE, fake_name = null, fake_job = null)
-	var/datum/netdm_messenger_shadow/shadow = SSnetdm_observe.messenger
-	if(!shadow)
-		return ..()
-	var/id = shadow.begin_send(src)
-	var/list/sent_targets = targets?.Copy()
-	. = ..()
-	shadow.end_send(src, id, ., message, sent_targets, photo_path, everyone, rigged, fake_name, fake_job)
-
-/datum/computer_file/program/messenger/receive_message(datum/signal/subspace/messaging/tablet_message/signal)
-	. = ..()
-	SSnetdm_observe.messenger?.legacy_received(src, signal)
-
 /datum/signal/subspace/messaging/New(init_source, init_data)
 	. = ..()
 	SSnetdm_observe.messenger?.stamp(src)

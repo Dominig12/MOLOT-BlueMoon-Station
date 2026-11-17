@@ -80,6 +80,8 @@
 	air_update_turf(TRUE)
 	register_context()
 	GLOB.airlocks += src
+	if(mapload && . != INITIALIZE_HINT_QDEL && SSnetdm_observe?.doors?.mapped_door_channel(src))
+		SSnetdm_observe.doors.prewarm_doors += WEAKREF(src)
 	if(elevator_mode)
 		if(transport_linked_id)
 			elevator_status = LIFT_PLATFORM_LOCKED
@@ -104,6 +106,7 @@
 	update_icon()
 
 /obj/machinery/door/Destroy()
+	SSnetdm_observe.doors?.remove_door(src)
 	update_freelook_sight()
 	GLOB.airlocks -= src
 	if(elevator_mode)

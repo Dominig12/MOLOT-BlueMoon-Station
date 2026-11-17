@@ -138,6 +138,7 @@
 
 	for(var/ch_name in channels)
 		secure_radio_connections[ch_name] = add_radio(src, GLOB.radiochannels[ch_name])
+	SSnetdm_observe.radio?.add_radio(src)
 
 /obj/item/radio/ComponentInitialize()
 	. = ..()

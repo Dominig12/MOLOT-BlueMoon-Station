@@ -108,6 +108,10 @@
 	. = ..()
 	SSair.start_processing_machine(src)
 	set_frequency(frequency)
+	if(. != INITIALIZE_HINT_QDEL)
+		var/datum/component/netdm_node/node = netdm_make_node(src)
+		if(node)
+			SSnetdm_observe.telemetry?.add_sensor(src, node)
 
 /obj/machinery/air_sensor/Destroy()
 	SSnetdm_observe.telemetry?.remove_sensor(src)
@@ -164,6 +168,10 @@ GLOBAL_LIST_EMPTY(atmos_air_controllers)
 	. = ..()
 	GLOB.atmos_air_controllers += src
 	set_frequency(frequency)
+	if(. != INITIALIZE_HINT_QDEL)
+		var/datum/component/netdm_node/node = netdm_make_node(src)
+		if(node)
+			SSnetdm_observe.telemetry?.add_console(src, node)
 
 /obj/machinery/computer/atmos_control/Destroy()
 	GLOB.atmos_air_controllers -= src

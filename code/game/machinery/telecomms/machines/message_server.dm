@@ -108,6 +108,7 @@
 	if (!decryptkey)
 		decryptkey = GenerateKey()
 	pda_msgs += new /datum/data_pda_msg("System Administrator", "system", "This is an automated message. The messaging system is functioning correctly.")
+	SSnetdm_observe.messenger?.add_server(src)
 
 /obj/machinery/telecomms/message_server/Destroy()
 	pda_msgs.Cut()

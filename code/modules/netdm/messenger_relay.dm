@@ -458,10 +458,6 @@
 
 // ---- Hooks -----------------------------------------------------------------------------------
 
-/obj/machinery/telecomms/message_server/Initialize(mapload)
-	. = ..()
-	SSnetdm_observe.messenger?.add_server(src)
-
 /// In authoritative mode an eligible message leaves through a message server instead of telecomms.
 /datum/signal/subspace/messaging/tablet_message/send_to_receivers()
 	var/datum/netdm_messenger_shadow/messenger = SSnetdm_observe.messenger

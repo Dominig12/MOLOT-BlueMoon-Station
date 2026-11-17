@@ -549,48 +549,6 @@
 		return "no_doors"
 	return SSnetdm_observe.doors.receipt(target, item)
 
-// ---- Hooks; without Observe they add nothing but a null check --------------------------------
-
-/obj/machinery/button/Initialize(mapload, ndir = 0, built = 0)
-	. = ..()
-	var/datum/netdm_door_shadow/shadow = SSnetdm_observe?.doors
-	if(mapload && . != INITIALIZE_HINT_QDEL && shadow?.mapped_button_channel(src))
-		shadow.prewarm_buttons += WEAKREF(src)
-
-/obj/machinery/door/Initialize(mapload)
-	. = ..()
-	var/datum/netdm_door_shadow/shadow = SSnetdm_observe?.doors
-	if(mapload && . != INITIALIZE_HINT_QDEL && shadow?.mapped_door_channel(src))
-		shadow.prewarm_doors += WEAKREF(src)
-
-/obj/machinery/door/Destroy()
-	SSnetdm_observe.doors?.remove_door(src)
-	return ..()
-
-// A control assembly represents a remote command, including when the network is down.
-// Planning fails closed; no invocation of the legacy global-airlock broadcast is allowed.
-/obj/item/assembly/control/activate()
-	var/datum/netdm_door_shadow/controller = SSnetdm_observe.doors
-	var/list/plan = controller?.plan(src)
-	if(!plan)
-		if(usr)
-			to_chat(usr, span_warning("Сетевой контроллер не отправил команду: устройство или маршрут недоступны."))
-		return
-	cooldown = TRUE
-	addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
-	controller.mirror(plan)
-
-/obj/item/assembly/control/airlock/activate()
-	var/datum/netdm_door_shadow/controller = SSnetdm_observe.doors
-	var/list/plan = controller?.plan(src)
-	if(!plan)
-		if(usr)
-			to_chat(usr, span_warning("Сетевой контроллер шлюзов не отправил команду."))
-		return
-	cooldown = TRUE
-	addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
-	controller.mirror(plan)
-
 #undef NETDM_DOORS_SETTLE
 #undef NETDM_DOORS_ATTACH
 #undef NETDM_DOORS_MOTION

@@ -524,22 +524,6 @@
 	return TRUE
 
 // The pilot devices. Without Observe nothing below adds a component or a call.
-/obj/machinery/air_sensor/Initialize(mapload)
-	. = ..()
-	if(. == INITIALIZE_HINT_QDEL)
-		return
-	var/datum/component/netdm_node/node = netdm_make_node(src)
-	if(node)
-		SSnetdm_observe.telemetry?.add_sensor(src, node)
-
-/obj/machinery/computer/atmos_control/Initialize(mapload)
-	. = ..()
-	if(. == INITIALIZE_HINT_QDEL)
-		return
-	var/datum/component/netdm_node/node = netdm_make_node(src)
-	if(node)
-		SSnetdm_observe.telemetry?.add_console(src, node)
-
 #undef NETDM_TELEMETRY_SETTLE
 #undef NETDM_TELEMETRY_REPORTS
 #undef NETDM_TELEMETRY_SAMPLES

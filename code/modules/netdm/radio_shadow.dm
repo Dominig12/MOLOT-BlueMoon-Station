@@ -226,14 +226,6 @@
 
 // ---- Hooks; without Observe they add nothing but a null check --------------------------------
 
-/obj/item/radio/Initialize(mapload)
-	. = ..()
-	SSnetdm_observe.radio?.add_radio(src)
-
-/obj/machinery/telecomms/Initialize(mapload)
-	. = ..()
-	SSnetdm_observe.radio?.add_telecomms(src)
-
 /datum/signal/subspace/vocal/New(obj/source, frequency, atom/movable/virtualspeaker/speaker, datum/language/language, message, spans)
 	. = ..()
 	SSnetdm_observe.radio?.stamp(src)

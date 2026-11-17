@@ -92,11 +92,13 @@
 	RegisterSignal(computer, COMSIG_MODULAR_PDA_IMPRINT_UPDATED, PROC_REF(on_imprint_added))
 	RegisterSignal(computer, COMSIG_MODULAR_PDA_IMPRINT_RESET, PROC_REF(on_imprint_reset))
 	add_messenger(src)
+	SSnetdm_observe.messenger?.add_messenger(src)
 
 /datum/computer_file/program/messenger/run_program(mob/living/user)
 	. = ..()
 	if(.)
 		add_messenger(src)
+		SSnetdm_observe.messenger?.add_messenger(src)
 
 /datum/computer_file/program/messenger/proc/on_imprint_added(sender)
 	SIGNAL_HANDLER
@@ -110,6 +112,7 @@
 	viewing_messages_of = null
 
 /datum/computer_file/program/messenger/Destroy(force)
+	SSnetdm_observe.messenger?.remove_messenger(src)
 	if(!QDELETED(computer))
 		UnregisterSignal(computer, list(
 			COMSIG_MODULAR_PDA_IMPRINT_UPDATED,
@@ -1146,3 +1149,17 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 
 #undef PDA_MESSAGE_TIMESTAMP_FORMAT
 #undef MAX_PDA_MESSAGE_LEN
+
+// The messenger owns its remote-network send and receive entry points.
+/datum/computer_file/program/messenger/send_message_signal(atom/source, message, list/datum/computer_file/program/messenger/targets, photo_path = null, everyone = FALSE, rigged = FALSE, fake_name = null, fake_job = null)
+	var/datum/netdm_messenger_shadow/shadow = SSnetdm_observe.messenger
+	if(!shadow)
+		return ..()
+	var/id = shadow.begin_send(src)
+	var/list/sent_targets = targets?.Copy()
+	. = ..()
+	shadow.end_send(src, id, ., message, sent_targets, photo_path, everyone, rigged, fake_name, fake_job)
+
+/datum/computer_file/program/messenger/receive_message(datum/signal/subspace/messaging/tablet_message/signal)
+	. = ..()
+	SSnetdm_observe.messenger?.legacy_received(src, signal)

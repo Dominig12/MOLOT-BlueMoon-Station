@@ -92,6 +92,7 @@ GLOBAL_LIST_EMPTY(telecomms_list)
 /obj/machinery/telecomms/Initialize(mapload)
 	. = ..()
 	GLOB.telecomms_list += src
+	SSnetdm_observe.radio?.add_telecomms(src)
 	if(mapload && autolinkers.len)
 		return INITIALIZE_HINT_LATELOAD
 
