@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { Box, Button, Icon } from '../components';
+import { NetdmServiceActions } from './NetdmServiceActions';
 import {
   alarmStateLabel,
   AtmosReading,
@@ -115,6 +116,8 @@ export const NetdmDevicePanel = ({
           <span>Новых данных об устройстве нет. Доступные действия зависят от типа сервиса.</span>
         </div>
       )}
+      <NetdmServiceActions key={instance} instance={instance} type={type}
+        entries={entries} onCommand={onCommand} />
       <div className="NetdmHome__detailsActions">
         {observable && (
           <Button icon={subscribed ? 'bell-slash' : 'bell'}
