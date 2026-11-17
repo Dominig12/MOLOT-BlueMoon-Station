@@ -24,6 +24,7 @@ const setup = () => {
     },
     commands: () => topic.mock.calls.filter(([message]) => message.type === 'act/run')
       .map(([message]) => JSON.parse(message.payload).line),
+    actions: () => topic.mock.calls.map(([message]) => message.type),
   };
 };
 
@@ -105,4 +106,23 @@ test('доставленные события отображаются без с
   expect(commands()).toEqual([]);
   fireEvent.click(screen.getByText('oxygen'));
   expect(commands()).toEqual(['unwatch oxygen']);
+});
+
+
+test('IDE validates source through Host without running or starting the program', () => {
+  const { actions, push } = setup();
+  fireEvent.click(screen.getByText('Редактор'));
+  const editor = screen.getByPlaceholderText<HTMLTextAreaElement>(
+    'observe atmos.sensor -key air\non events -key air | where pressureKPa -gt 130\n$event | count',
+  );
+  fireEvent.input(editor, { target: { value: 'self | select node' } });
+  fireEvent.click(screen.getByText('Проверить код'));
+  expect(actions()).toContain('act/check_script');
+  expect(actions()).not.toContain('act/run_script');
+  expect(actions()).not.toContain('act/start_program');
+  push([{
+    id: 1, line: 'check 1', status: 'valid', pending: false, error: null,
+    position: null, records: [],
+  }]);
+  expect(screen.getByText(/Компиляция успешна/)).toBeTruthy();
 });
