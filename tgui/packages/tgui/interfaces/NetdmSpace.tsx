@@ -18,6 +18,7 @@ import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
 import { TopologyCanvas } from './NetdmTopology';
+import { MapChrome } from './NetdmTopology/MapChrome';
 import { countActivityNodes, FLAG_APC, FLAG_UNPOWERED, parseView, View } from './NetdmTopology/model';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
 import { NodePresenceCounts, SceneFilters, SceneOperator, SceneRoute } from './NetdmTopology/scene';
@@ -1026,6 +1027,7 @@ export const NetdmSpace = () => {
   const [failure, setFailure] = useState<string | null>(null);
   const [radius, setRadius] = useState(3);
   const [fitRequest, setFitRequest] = useState(0);
+  const [showMapLegend, setShowMapLegend] = useState(false);
   const [line, setLine] = useState('');
   const [advanced, setAdvanced] = useState(false);
   const [chatOpening, setChatOpening] = useState<ChatOpening | null>(null);
@@ -1199,6 +1201,7 @@ export const NetdmSpace = () => {
                     onSelect={setSelected}
                     onRetry={() => setFailure(null)} />
                 ) : (
+                  <div style={{ position: 'relative', width: '100%', height: '100%' }}>
                   <TopologyCanvas
                     view={view}
                     levelKey={String(data.z)}
@@ -1214,6 +1217,15 @@ export const NetdmSpace = () => {
                     onSelect={setSelected}
                     onFailure={setFailure}
                     onReport={() => undefined} />
+                    <MapChrome
+                      level={data.z}
+                      nodeCount={view.nodes.size}
+                      linkCount={view.links.size}
+                      selected={shown ? view.nodes.get(shown) : undefined}
+                      view={view}
+                      showLegend={showMapLegend}
+                      onToggleLegend={() => setShowMapLegend(value => !value)} />
+                  </div>
                 )}
                 {!failure && view.nodes.size > 0 && otherPresences && Object.keys(otherPresences).length > 0 && (
                   <Box
