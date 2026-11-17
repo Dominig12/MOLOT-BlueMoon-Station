@@ -4,8 +4,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
-import { nodeTravelChoice, NodeTravelChoice, isSelectedPreview } from './netdmNodeTravel';
-import { nearbyDestinations, NearbyDestination } from './netdmPresenceNavigation';
+import { isSelectedPreview, nodeTravelChoice, NodeTravelChoice } from './netdmNodeTravel';
+import { NearbyDestination, nearbyDestinations } from './netdmPresenceNavigation';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
 import { TopologyCanvas } from './NetdmTopology';
 import { MapChrome } from './NetdmTopology/MapChrome';
