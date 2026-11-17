@@ -180,7 +180,7 @@ test('обзор позволяет углубиться в инструмент
 
 test('карта и входящие события доступны без изучения командной строки', () => {
   const { actions, commands } = setup('home');
-  fireEvent.click(screen.getByText('Карта сети'));
+  fireEvent.click(screen.getAllByText('Карта сети')[0]);
   expect(actions()).toContain('act/open_space');
   fireEvent.click(screen.getByText('Открыть события'));
   expect(screen.getByText('Доставленные события')).toBeTruthy();
