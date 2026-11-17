@@ -8,7 +8,7 @@ import { NetdmSpace } from './NetdmSpace';
 // Keep the real screen logic, but avoid constructing a GPU renderer in jsdom.
 jest.mock('./NetdmTopology', () => ({
   TopologyCanvas: ({ onSelect }: { onSelect: (id: string) => void }) => (
-    <button onClick={() => onSelect('2')}>Выбрать удалённый узел</button>
+    <button type="button" onClick={() => onSelect('2')}>Выбрать удалённый узел</button>
   ),
 }));
 
