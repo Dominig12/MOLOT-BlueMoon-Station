@@ -35,6 +35,12 @@
 	var/attached_node
 	var/list/registered = list()
 	var/list/subscribed = list()
+	/// Subscriptions explicitly created by the player's shell (key -> TRUE).
+	/// Only these unknown-schema event deliveries may enter the generic UI journal.
+	var/list/event_watches = list()
+	/// Recent delivered events for this endpoint alone; never a station-wide feed.
+	var/list/event_journal = list()
+	var/list/terminal_listeners = list()
 	/// Refused for good in this session: instance or key -> Host reason.
 	var/list/refused = list()
 	/// key -> world.time before which a refused-for-now subscription is not retried.
@@ -46,6 +52,41 @@
 	var/list/acknowledged_at = list()
 	/// Request in flight for this endpoint: one at a time keeps attach, register and subscribe in order.
 	var/busy
+
+
+/// Opt-in UI capture: a wire event has already reached this endpoint and passed Host authorization.
+/// No command handler or game effect may be invoked from its payload.
+/datum/netdm_service_endpoint/proc/capture_event(list/item)
+	var/key = item?["subscriptionKey"]
+	if(!istext(key) || !event_watches[key] || !islist(item["payload"]))
+		return FALSE
+	var/encoded = json_encode(item["payload"])
+	var/cut = length_char(encoded) > 1200
+	var/list/event = list("delivery" = "[item["deliveryId"]]", "key" = key,
+		"instance" = "[item["instance"]]", "schema" = "[item["schema"]]",
+		"payload" = cut ? copytext_char(encoded, 1, 1201) : encoded,
+		"truncated" = cut, "at" = world.time)
+	event_journal += list(event)
+	if(length(event_journal) > 32)
+		event_journal.Cut(1, length(event_journal) - 32 + 1)
+	// Weak references do not keep a closed terminal alive; stale ones are removed.
+	for(var/datum/weakref/observer as anything in terminal_listeners.Copy())
+		var/datum/netdm_terminal/terminal = observer?.resolve()
+		if(QDELETED(terminal))
+			terminal_listeners -= observer
+		else
+			SStgui.update_uis(terminal)
+	return TRUE
+
+/datum/netdm_service_endpoint/proc/observe_terminal(datum/netdm_terminal/terminal)
+	if(QDELETED(terminal))
+		return
+	for(var/datum/weakref/observer as anything in terminal_listeners.Copy())
+		if(QDELETED(observer?.resolve()))
+			terminal_listeners -= observer
+	if(length(terminal_listeners) >= 8)
+		terminal_listeners.Cut(1, 2)
+	terminal_listeners += WEAKREF(terminal)
 
 /**
  * Service control plane of the observing session. Game code declares what an endpoint offers and
@@ -284,6 +325,8 @@
 		endpoint.attached_node = null
 		endpoint.registered.Cut()
 		endpoint.subscribed.Cut()
+		endpoint.event_watches.Cut()
+		endpoint.event_journal.Cut()
 		endpoint.refused.Cut()
 		endpoint.retry_at.Cut()
 		endpoint.retry_delay.Cut()
@@ -401,7 +444,7 @@
 /datum/netdm_service_lane/proc/receiving()
 	for(var/id in endpoints)
 		var/datum/netdm_service_endpoint/endpoint = endpoints[id]
-		if(length(endpoint.subscribed) || length(endpoint.registered))
+		if(length(endpoint.subscribed) || length(endpoint.registered) || length(endpoint.event_watches))
 			return TRUE
 	return FALSE
 
