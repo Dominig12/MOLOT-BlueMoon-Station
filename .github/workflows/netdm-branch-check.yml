@@ -1,0 +1,49 @@
+name: netDM integration checks
+
+on:
+  push:
+    branches:
+      - net-feature-dmcore-new
+  pull_request:
+    branches:
+      - net-feature-dmcore-new
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netdm-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dm-compile:
+    name: Compile DM network integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup_ci
+        with:
+          byond: 'true'
+      - name: Verify include ordering
+        run: python3 tools/ci/check_dme_order.py tgstation.dme
+      - name: Compile DM
+        run: |
+          set -o pipefail
+          tools/build/build --ci dm-test-build -DCITESTING --warnings-as-errors 2>&1 | tee netdm-compile.log
+      - name: Annotate compile errors
+        if: ${{ failure() && hashFiles('netdm-compile.log') != '' }}
+        run: node tools/ci/annotate.mjs dm netdm-compile.log
+
+  tgui-check:
+    name: Lint and test TGUI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup_ci
+        with:
+          yarn-cache: 'true'
+      - name: Check TGUI
+        run: tools/build/build --ci lint
