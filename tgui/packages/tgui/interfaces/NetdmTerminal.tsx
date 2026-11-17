@@ -4,8 +4,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, NoticeBox, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
-import { SHELL_COMMANDS, tabComplete } from './netdmShell';
 import { NetdmScriptIDE } from './NetdmScriptIDE';
+import { SHELL_COMMANDS, tabComplete } from './netdmShell';
 
 type Field = { name: string; value: string };
 
