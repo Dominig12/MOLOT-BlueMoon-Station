@@ -311,7 +311,7 @@ export const NetdmTerminal = () => {
     }
   };
   return (
-    <Window title={`Сетевой модуль: ${data.title}`} width={760} height={560}>
+    <Window title={`Сетевой модуль: ${data.title}`} width={editingScript ? 940 : 760} height={editingScript ? 720 : 560}>
       <Window.Content>
         <Stack vertical fill>
           <Stack.Item>
