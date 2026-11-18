@@ -34,7 +34,10 @@
  * after 5 minutes away). It refreshes every NETDM_SPACE_REFRESH while open.
  */
 /datum/netdm_space
-	var/datum/netdm_terminal/terminal
+	/// Source of authority and network transport; no assumption of a physical terminal.
+	var/datum/netdm_space_actor/actor
+	/// An adapter constructed for a legacy terminal is owned by this window.
+	var/owns_actor = FALSE
 	var/opening = FALSE
 	/// Item key -> fields. Keys: "n|id", "l|a|b", "s|instance".
 	var/list/items = list()
@@ -94,34 +97,43 @@
 	/// The last intruder named by the presence, so one warning is played per newcomer.
 	var/last_threat = ""
 
-/datum/netdm_space/New(datum/netdm_terminal/opener)
-	terminal = opener
-	terminal.space = src
+/datum/netdm_space/New(datum/source)
+	if(istype(source, /datum/netdm_terminal))
+		// Existing callers keep new(terminal), but the window only sees the actor interface.
+		var/datum/netdm_terminal/opener = source
+		actor = new /datum/netdm_space_actor/terminal(opener)
+		owns_actor = TRUE
+	else if(istype(source, /datum/netdm_space_actor))
+		actor = source
+	if(!actor?.attach_window(src))
+		if(owns_actor)
+			QDEL_NULL(actor)
+		else
+			actor = null
+		return
 	refresh()
 
 /datum/netdm_space/Destroy()
 	deltimer(refresh_timer)
 	forget_machine_ticket()
-	// Р6: a closed window leaves the presence suspended where it stands.
-	var/datum/netdm_apc_operator/operator = terminal?.node_ref?.resolve()
-	if(istype(operator))
-		// The terminal can be closing too. Queue from the durable actor while its own endpoint still exists.
-		operator.detach_needed = TRUE
-	else if(presence && presence["state"] != "ended" && presence["status"] != "none")
-		send("detach", list("note" = "window"), CALLBACK(SSnetdm_observe.diagnostics, TYPE_PROC_REF(/datum/netdm_diagnostics, space_ignored)))
-	if(terminal?.space == src)
-		terminal.space = null
-	terminal = null
+	// Close the authenticated view; independently owned actors may outlive it.
+	var/datum/netdm_space_actor/source = actor
+	if(source && !QDELETED(source))
+		source.on_window_close(src, presence)
+		source.release_window(src)
+		if(owns_actor)
+			qdel(source)
+	actor = null
 	return ..()
 
 /datum/netdm_space/ui_host(mob/user)
-	return terminal?.ui_host(user) || src
+	return actor?.ui_host(user) || src
 
 /datum/netdm_space/ui_state(mob/user)
-	return terminal ? terminal.ui_state(user) : GLOB.never_state
+	return actor ? actor.ui_state(user) : GLOB.never_state
 
 /datum/netdm_space/ui_status(mob/user, datum/ui_state/state)
-	return terminal && !QDELETED(terminal) ? terminal.ui_status(user, state) : UI_CLOSE
+	return actor && !QDELETED(actor) ? actor.ui_status(user, state) : UI_CLOSE
 
 /datum/netdm_space/ui_interact(mob/user, datum/tgui/ui)
 	if(opening)
@@ -139,14 +151,10 @@
 	immersion_closed()
 	qdel(src)
 
-/// Sends one network.shell command from the terminal's node. FALSE when it cannot even be queued. An empty DM list
-/// encodes as a JSON array, so commands without arguments send the optional "note".
+/// All network actions go through the owning actor's authenticated Host command path.
+/// An empty DM list encodes as an array, so argument-free commands retain their "note".
 /datum/netdm_space/proc/send(command, list/arguments, datum/callback/on_answer, datum/callback/can_send)
-	var/datum/node = terminal?.node_ref?.resolve()
-	var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe.diagnostics
-	if(!node || !diagnostics || !terminal.can_submit())
-		return FALSE
-	return diagnostics.queue_shell_request(node, terminal.shell_provider(), command, arguments, on_answer, can_send || terminal.send_guard())
+	return actor?.send(command, arguments, on_answer, can_send) || FALSE
 
 /// Reads the knowledge changed since the last revision and the presence; re-arms itself.
 /datum/netdm_space/proc/refresh()
@@ -180,7 +188,7 @@
 /datum/netdm_space/proc/restore_persona()
 	if(persona_restored || !islist(presence))
 		return
-	var/obj/item/implant/netdm_terminal/implant = terminal?.device_ref?.resolve()
+	var/obj/item/implant/netdm_terminal/implant = actor?.neural_implant()
 	if(!istype(implant) || !implant.imp_in || !islist(implant.netdm_persona))
 		return
 	var/list/identity = implant.netdm_persona
@@ -220,7 +228,7 @@
 			presence["personaColour"] = output["personaColour"]
 		presence["personaStatus"] = output["personaStatus"]
 		presence["personaRole"] = output["personaRole"]
-		var/obj/item/implant/netdm_terminal/implant = terminal?.device_ref?.resolve()
+		var/obj/item/implant/netdm_terminal/implant = actor?.neural_implant()
 		if(istype(implant))
 			implant.netdm_persona = list("name" = "[output["personaName"]]", "signature" = "[output["personaSignature"]]",
 				"colour" = text2num("[output["personaColour"]]"))
@@ -293,8 +301,7 @@
 	// The dive hears the network: a newcomer on the operator's node is a sound and a warning, once.
 	var/current_threat = islist(presence) ? "[presence["threat"]]" : ""
 	if(immersed && current_threat != "" && current_threat != last_threat)
-		var/datum/netdm_terminal/local/local_terminal = terminal
-		var/mob/living/diver = local_terminal?.user_ref?.resolve()
+		var/mob/living/diver = actor?.physical_body()
 		if(diver)
 			SEND_SOUND(diver, sound('sound/machines/warning-buzzer.ogg'))
 			to_chat(diver, span_warning("Вторжение в сеть: [current_threat] на вашем узле."))
@@ -518,7 +525,7 @@
 	return TRUE
 
 /datum/netdm_space/proc/can_send_chat(epoch)
-	return !QDELETED(src) && chat_epoch == epoch && has_current_chat() && terminal?.can_submit()
+	return !QDELETED(src) && chat_epoch == epoch && has_current_chat() && actor?.can_submit()
 
 /datum/netdm_space/proc/chat_send_answered(epoch, stream, list/output)
 	pending = max(0, pending - 1)
@@ -638,10 +645,7 @@
 	return status == "sending" || status == "sent"
 
 /datum/netdm_space/proc/can_operate_alarm(mob/living/operator)
-	if(!istype(operator) || !operator.client || operator.stat || operator.incapacitated() || !terminal?.can_submit() || ui_status(operator, ui_state(operator)) != UI_INTERACTIVE)
-		return FALSE
-	var/obj/machinery/power/apc/apc = terminal.device_ref?.resolve()
-	return !istype(apc) || SSnetdm_observe.diagnostics?.terminal_access(apc, operator)
+	return actor?.can_operate_alarm(operator) || FALSE
 
 /datum/netdm_space/proc/alarm_for_service(instance)
 	if(!istext(instance) || copytext(instance, 1, 13) != "atmos.alarm.")
@@ -663,7 +667,7 @@
 	if(!can_operate_alarm(operator) || !alarm?.netdm_can_set_alert(operator))
 		machine_command = list("instance" = instance, "enabled" = enabled, "status" = "rejected", "reason" = alarm ? "access_denied" : "alarm_offline")
 		return TRUE
-	var/datum/node = terminal.node_ref?.resolve()
+	var/datum/node = actor?.network_node()
 	var/datum/netdm_service_endpoint/endpoint = node ? SSnetdm_observe.services?.by_node[node] : null
 	var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe.diagnostics
 	if(!endpoint?.attached_node || !diagnostics || length(diagnostics.alarm_actions) >= NETDM_SPACE_ACTION_LIMIT)
@@ -737,7 +741,7 @@
 	if(!request["operation"] || world.time < request["next_query"])
 		return
 	request["next_query"] = world.time + 3 SECONDS
-	var/datum/node = terminal?.node_ref?.resolve()
+	var/datum/node = actor?.network_node()
 	SSnetdm_observe.services?.query_command(node, request["operation"], CALLBACK(src, PROC_REF(machine_status_answered), request))
 
 /datum/netdm_space/proc/machine_status_answered(list/request, list/reply)
@@ -775,7 +779,7 @@
 	var/list/service = items["s|[instance]"]
 	if(service?["type"] != "atmos.alarm" || is_stale(service))
 		return FALSE
-	var/datum/node = terminal?.node_ref?.resolve()
+	var/datum/node = actor?.network_node()
 	var/datum/netdm_service_endpoint/endpoint = node ? SSnetdm_observe.services?.by_node[node] : null
 	if(!endpoint)
 		return FALSE
@@ -787,7 +791,7 @@
 	return TRUE
 
 /datum/netdm_space/proc/watch_alarm(instance, mob/user)
-	if(!istext(instance) || length(instance) > 64 || presence?["state"] != "active" || !terminal?.can_submit())
+	if(!istext(instance) || length(instance) > 64 || presence?["state"] != "active" || !actor?.can_submit())
 		return FALSE
 	var/list/service = items["s|[instance]"]
 	if(service?["type"] != "atmos.alarm" || is_stale(service))
@@ -811,9 +815,9 @@
 	return TRUE
 
 /datum/netdm_space/proc/poll_alarm_watch()
-	if(!alarm_watch || alarm_request || world.time < next_alarm_watch || presence?["state"] != "active" || !terminal?.can_submit())
+	if(!alarm_watch || alarm_request || world.time < next_alarm_watch || presence?["state"] != "active" || !actor?.can_submit())
 		return
-	var/datum/node = terminal.node_ref?.resolve()
+	var/datum/node = actor?.network_node()
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
 	var/datum/netdm_service_endpoint/endpoint = node ? lane?.by_node[node] : null
 	if(!endpoint?.attached_node)
@@ -881,7 +885,7 @@
 	if(!alarm_request)
 		return
 	var/list/watch = alarm_request["watch"]
-	if(!terminal?.can_submit() || (watch && presence?["state"] != "active"))
+	if(!actor?.can_submit() || (watch && presence?["state"] != "active"))
 		alarm_request = null
 		return
 	if(alarm_request["stream"] != SSnetdm_observe.bridge?.stream_id)
@@ -962,7 +966,7 @@
 	var/list/watch_data
 	if(alarm_watch)
 		watch_data = list("instance" = alarm_watch["instance"], "node" = alarm_watch["node"], "z" = alarm_watch["z"],
-			"state" = presence?["state"] == "active" && terminal?.can_submit() ? alarm_watch["state"] : "paused",
+			"state" = presence?["state"] == "active" && actor?.can_submit() ? alarm_watch["state"] : "paused",
 			"sample" = alarm_watch["sample"], "age" = isnull(alarm_watch["at"]) ? null : floor((world.time - alarm_watch["at"]) / 10))
 	var/list/command_data
 	if(machine_command)
@@ -974,7 +978,7 @@
 		// The UI can identify a visit across missed polls without receiving its write scope.
 		chat_data = list("node" = chat_node, "channel" = chat_channel, "visit" = chat_channel ? "channel" : md5(chat_scope), "received" = chat_received,
 			"messages" = chat_messages, "status" = chat_status)
-	return list("title" = terminal ? terminal.device_title(terminal.device_ref?.resolve()) : "нет связи", "z" = z, "levels" = levels,
+	return list("title" = actor?.title() || "нет связи", "z" = z, "levels" = levels,
 		"nodes" = nodes, "edges" = edges, "down" = down, "services" = services, "presence" = presence, "hostNode" = host,
 		"otherPresences" = occupants_on_level,
 		"immersed" = immersed, "immersionEnabled" = netdm_immersion_enabled(), "immersionReason" = immersed_reason,
