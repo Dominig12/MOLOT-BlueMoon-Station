@@ -130,7 +130,11 @@ export const NetdmServiceActions = ({ instance, type, entries, onCommand, disabl
       {open && (
         <div className="NetdmHome__actionsExplorer">
           <div className="NetdmHome__sectionLabel">КОМАНДЫ УСТРОЙСТВА</div>
-          {!catalogue || catalogue.pending ? (
+          {disabled && !catalogue ? (
+            <div className="NetdmHome__minor">
+              Сервис недоступен или присутствие неактивно. Запрос команд не отправлялся.
+            </div>
+          ) : !catalogue || catalogue.pending ? (
             <div className="NetdmHome__minor">Запрашиваем список команд через сеть…</div>
           ) : catalogue.status !== 'ok' ? (
             <NoticeBox warning>

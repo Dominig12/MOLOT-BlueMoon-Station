@@ -6,7 +6,7 @@ import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Sect
 import { Window } from '../layouts';
 import { DeviceEntry } from './NetdmDeviceState';
 import { isSelectedPreview, NodeTravelChoice, nodeTravelChoice } from './netdmNodeTravel';
-import { knownAdjacentNodes, NearbyDestination, NearbyNode, nearbyDestinations } from './netdmPresenceNavigation';
+import { knownAdjacentNodes, NearbyDestination, nearbyDestinations, NearbyNode } from './netdmPresenceNavigation';
 import { NetdmServiceActions } from './NetdmServiceActions';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
 import { TopologyCanvas } from './NetdmTopology';
