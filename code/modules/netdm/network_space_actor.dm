@@ -134,7 +134,7 @@
 
 /datum/netdm_space_actor/terminal/physical_body()
 	var/datum/netdm_terminal/local/local_terminal = terminal
-	return local_terminal?.user_ref?.resolve()
+	return istype(local_terminal) ? local_terminal.user_ref?.resolve() : null
 
 /datum/netdm_space_actor/terminal/neural_implant()
 	var/obj/item/implant/netdm_terminal/implant = physical_device()
