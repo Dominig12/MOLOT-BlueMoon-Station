@@ -2654,4 +2654,7 @@
 	TEST_ASSERT(!space.enter() && !space.scan(1), "UI requests cannot acquire missing source authority.")
 	qdel(space)
 	TEST_ASSERT(!QDELETED(source) && !source.window, "Closing a window releases, but does not destroy, an independently owned actor.")
+	var/datum/netdm_space/second_window = new(source)
+	TEST_ASSERT(source.window == second_window, "An independent actor may open another view after its old view closed.")
 	qdel(source)
+	TEST_ASSERT(QDELETED(second_window), "Retiring a network actor closes its existing UI rather than leaving an orphaned window.")
