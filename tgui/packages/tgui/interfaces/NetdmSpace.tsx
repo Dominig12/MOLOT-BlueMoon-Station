@@ -4,6 +4,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
+import { DeviceEntry } from './NetdmDeviceState';
+import { NetdmServiceActions } from './NetdmServiceActions';
 import { isSelectedPreview, NodeTravelChoice, nodeTravelChoice } from './netdmNodeTravel';
 import { knownAdjacentNodes, NearbyDestination, NearbyNode, nearbyDestinations } from './netdmPresenceNavigation';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
@@ -146,6 +148,7 @@ type Data = {
   edges: unknown[];
   down: unknown[];
   services: Service[];
+  actionEntries?: DeviceEntry[];
   presence: Presence | null;
   hostNode: string | null;
   otherPresences?: NodePresenceCounts;
@@ -267,19 +270,29 @@ const CHAT_STATUS: Record<string, string> = {
 };
 
 /** What the operator knows of one node: its kind, freshness and the services seen there. */
-const NodePanel = (props: { view: View; id: string | null; services: Service[];
-  otherPresences: number; travel: NodeTravelChoice;
-  active: boolean; alarmPending: boolean; machinePending: boolean; routePending: boolean; watchedAlarm: string | null;
-  onPreview: (instance: string) => void; onTrace: (id: string) => void; onWatchAlarm: (instance: string) => void;
-  onReadAlarm: (instance: string) => void; onSetAlarm: (instance: string, enabled: boolean) => void }) => {
-  const { id, view, services, otherPresences, travel, active, alarmPending, machinePending, routePending, watchedAlarm,
-    onPreview, onTrace, onReadAlarm, onWatchAlarm, onSetAlarm } = props;
+/** Actor-scoped context; selecting a service never sends a network command. */
+const NodePanel = (props: {
+  view: View; id: string | null; services: Service[]; entries: DeviceEntry[]; activity: LifeEvent[];
+  otherPresences: number; travel: NodeTravelChoice; active: boolean; alarmPending: boolean;
+  machinePending: boolean; routePending: boolean; watchedAlarm: string | null;
+  onPreview: (instance: string) => void; onTrace: (id: string) => void;
+  onWatchAlarm: (instance: string) => void; onReadAlarm: (instance: string) => void;
+  onSetAlarm: (instance: string, enabled: boolean) => void; onCommand: (line: string) => void;
+}) => {
+  const { id, view, services, entries, activity, otherPresences, travel, active, alarmPending,
+    machinePending, routePending, watchedAlarm, onPreview, onTrace, onWatchAlarm, onReadAlarm,
+    onSetAlarm, onCommand } = props;
+  const [selectedService, setSelectedService] = useState<string | null>(null);
   const node = id ? view.nodes.get(id) : undefined;
   if (!id || !node) {
     return <Section title="Узел">Выберите узел на карте.</Section>;
   }
   const here = services.filter(service => service.node === id);
+  const current = here.find(service => service.instance === selectedService) ??
+    here.find(service => service.type !== 'network.shell') ?? here[0] ?? null;
   const stale = isOffline(node.flags);
+  const disabled = !active || stale || !!current?.stale;
+  const recent = activity.filter(item => item.node === id).slice(-3).reverse();
   const travelHint = {
     here: 'Вы на этом узле.',
     unknown: 'Этот узел ещё не обнаружен.',
@@ -288,15 +301,16 @@ const NodePanel = (props: { view: View; id: string | null; services: Service[];
     stale: 'Сведения о точке входа устарели. Обновите карту.',
     ready: 'Точка входа известна. Маршрут нужно проверить.',
   }[travel.state];
+  const serviceName = (service: Service) =>
+    service.type === 'atmos.alarm' ? 'Датчик атмосферы'
+      : service.type === 'network.shell' ? 'Оболочка узла' : service.type.replace(/\./g, ' ');
   return (
-    <Section
-      title={`Узел ${id}`}
+    <Section title={`Узел ${id}`}
       buttons={(
         <>
           {travel.state === 'ready' && (
-            <Button icon="route" color="good"
-              disabled={!active || routePending}
-              tooltip="Запросить у Host маршрут. Для подтверждения перехода нажмите Enter после ответа."
+            <Button icon="route" color="good" disabled={!active || routePending}
+              tooltip="Запросить маршрут у Host. Переход подтверждается отдельно."
               onClick={() => travel.instance && onPreview(travel.instance)}>
               Проверить переход · G
             </Button>
@@ -317,54 +331,87 @@ const NodePanel = (props: { view: View; id: string | null; services: Service[];
         )}
       </LabeledList>
       <Box color={travel.state === 'here' ? 'good' : 'label'} mt={0.5}>{travelHint}</Box>
-      {here.length === 0 && <Box color="label" mt={0.5}>Известных сервисов нет.</Box>}
-      {here.map(service => (
-        <Box key={service.instance} mt={0.5}>
-          <Stack align="center" wrap>
-            <Stack.Item grow color={service.stale ? 'label' : undefined}>
-              <Box title={service.instance}>
-                {service.type === 'atmos.alarm' ? 'Датчик атмосферы' : service.type === 'network.shell' ? 'Оболочка узла' : `${service.instance} · ${service.type}`}
-              </Box>
-            </Stack.Item>
-            {service.type === 'atmos.alarm' && (
-              <Stack.Item>
-                <Button
-                  icon="tachometer-alt"
-                  disabled={!active || stale || !!service.stale || alarmPending}
-                  onClick={() => onReadAlarm(service.instance)}>
-                  Замер
-                </Button>
-                <Button
-                  icon="bell"
-                  selected={watchedAlarm === service.instance}
-                  disabled={!active || stale || !!service.stale || watchedAlarm === service.instance}
-                  onClick={() => onWatchAlarm(service.instance)}>
-                  {watchedAlarm === service.instance ? 'Под наблюдением' : 'Следить'}
+      <div className="NetdmSpaceContext">
+        <Box bold mb={0.5}>Обнаруженные сервисы · {here.length}</Box>
+        {here.length === 0 ? (
+          <Box color="label">Известных сервисов нет. Можно обновить карту сканированием.</Box>
+        ) : here.length > 8 ? (
+          <Dropdown width="100%" selected={current?.instance}
+            options={here.map(service => ({
+              value: service.instance,
+              displayText: `${serviceName(service)} · ${service.instance}${service.stale ? ' (устарел)' : ''}`,
+            }))}
+            onSelected={(instance: string) => setSelectedService(instance)} />
+        ) : (
+          <Stack wrap>
+            {here.map(service => (
+              <Stack.Item key={service.instance}>
+                <Button selected={current?.instance === service.instance}
+                  tooltip={`${service.instance} · ${service.type}${service.stale ? ' · устарел' : ''}`}
+                  onClick={() => setSelectedService(service.instance)}>
+                  {serviceName(service)}{service.stale ? ' · устарел' : ''}
                 </Button>
               </Stack.Item>
-            )}
+            ))}
           </Stack>
-          {service.type === 'atmos.alarm' && !!service.canControlAlarm && (
-            <Box mt={0.5}>
-              <Button.Confirm
-                icon="exclamation-circle"
-                content="Поднять тревогу"
-                confirmContent="Поднять тревогу панели?"
-                disabled={!active || stale || !!service.stale || machinePending}
-                onClick={() => onSetAlarm(service.instance, true)} />
-              <Button.Confirm
-                icon="bell-slash"
-                content="Снять тревогу панели"
-                confirmContent="Снять тревогу панели?"
-                disabled={!active || stale || !!service.stale || machinePending}
-                onClick={() => onSetAlarm(service.instance, false)} />
+        )}
+        {!!current && (
+          <div className="NetdmSpaceContext__selected">
+            <Box bold>{serviceName(current)}</Box>
+            <Box color="label" style={{ overflowWrap: 'anywhere' }}>
+              {current.instance} · {current.type}{current.stale ? ' · устарел' : ''}
             </Box>
-          )}
-          {service.type === 'atmos.alarm' && active && !stale && !service.stale && !service.canControlAlarm && (
-            <Box color="label">Для управления нужны доступ и разблокированная панель.</Box>
-          )}
-        </Box>
-      ))}
+            {current.type === 'atmos.alarm' && (
+              <Stack wrap mt={1}>
+                <Stack.Item>
+                  <Button icon="tachometer-alt" disabled={disabled || alarmPending}
+                    onClick={() => onReadAlarm(current.instance)}>Замер</Button>
+                </Stack.Item>
+                <Stack.Item>
+                  <Button icon="bell" selected={watchedAlarm === current.instance}
+                    disabled={disabled || watchedAlarm === current.instance}
+                    onClick={() => onWatchAlarm(current.instance)}>
+                    {watchedAlarm === current.instance ? 'Под наблюдением' : 'Следить'}
+                  </Button>
+                </Stack.Item>
+                {!!current.canControlAlarm && (
+                  <>
+                    <Stack.Item>
+                      <Button.Confirm icon="exclamation-circle" content="Поднять тревогу"
+                        confirmContent="Поднять тревогу панели?"
+                        disabled={disabled || machinePending}
+                        onClick={() => onSetAlarm(current.instance, true)} />
+                    </Stack.Item>
+                    <Stack.Item>
+                      <Button.Confirm icon="bell-slash" content="Снять тревогу"
+                        confirmContent="Снять тревогу панели?"
+                        disabled={disabled || machinePending}
+                        onClick={() => onSetAlarm(current.instance, false)} />
+                    </Stack.Item>
+                  </>
+                )}
+              </Stack>
+            )}
+            {current.type === 'atmos.alarm' && active && !disabled && !current.canControlAlarm && (
+              <Box color="label" mt={0.5}>Для управления нужна разблокированная панель и доступ.</Box>
+            )}
+            <NetdmServiceActions key={current.instance} instance={current.instance}
+              type={current.type} entries={entries} disabled={disabled} onCommand={onCommand} />
+          </div>
+        )}
+        {recent.length > 0 && (
+          <div className="NetdmSpaceContext__activity">
+            <Box bold>Известная активность узла</Box>
+            {recent.map(item => (
+              <Box key={`${item.seq}-${item.kind}-${item.node}`} color="label" mt={0.5}
+                style={{ overflowWrap: 'anywhere' }}>
+                {item.name ? `${item.name}: ` : ''}{item.text || item.kind}
+              </Box>
+            ))}
+            <Box color="label" mt={0.5}>История событий, не гарантия текущего состояния.</Box>
+          </div>
+        )}
+      </div>
     </Section>
   );
 };
@@ -1416,9 +1463,12 @@ export const NetdmSpace = () => {
                   )}
                   <Stack.Item>
                     <NodePanel
+                      key={shown ?? 'unknown'}
                       view={view}
                       id={shown}
                       services={data.services}
+                      entries={data.actionEntries ?? []}
+                      activity={life.activity}
                       travel={selectedTravel}
                       otherPresences={shown ? otherPresences?.[shown] ?? 0 : 0}
                       active={active}
@@ -1430,7 +1480,12 @@ export const NetdmSpace = () => {
                       onReadAlarm={instance => act('read_alarm', { instance })}
                       onWatchAlarm={instance => act('watch_alarm', { instance })}
                       onSetAlarm={(instance, enabled) => act('machine_alert', { instance, enabled: enabled ? 1 : 0 })}
-                      onTrace={trace} />
+                      onTrace={trace}
+                      onCommand={command => {
+                        if (active && command.length <= 1024) {
+                          act('act', { line: command });
+                        }
+                      }} />
                   </Stack.Item>
                   {inside && (
                     <Stack.Item>

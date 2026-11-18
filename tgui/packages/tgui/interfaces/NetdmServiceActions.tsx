@@ -18,6 +18,7 @@ type Props = {
   type: string;
   entries: DeviceEntry[];
   onCommand: (line: string) => void;
+  disabled?: boolean;
 };
 
 const fieldValue = (values: Record<string, string>, key: string) => values[key] ?? '';
@@ -94,7 +95,7 @@ const ActionResult = ({ entry, onCommand }: {
  * 3) Player enters validated values; dangerous actions require confirmation.
  * All traffic goes through the existing shell, never through a UI-specific shortcut.
  */
-export const NetdmServiceActions = ({ instance, type, entries, onCommand }: Props) => {
+export const NetdmServiceActions = ({ instance, type, entries, onCommand, disabled = false }: Props) => {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -111,14 +112,14 @@ export const NetdmServiceActions = ({ instance, type, entries, onCommand }: Prop
   const lastExecution = line ? latestApiReply(entries, line) : undefined;
 
   const toggle = () => {
-    if (!open && !catalogue) onCommand(catalogueLine);
+    if (!open && !catalogue && !disabled) onCommand(catalogueLine);
     setOpen(!open);
   };
   const choose = (command: string) => {
     setSelected(command);
     setValues({});
     // Re-read metadata at explicit selection; no controls are generated from guesses.
-    onCommand(`api ${type} ${command}`);
+    if (!disabled) onCommand(`api ${type} ${command}`);
   };
 
   return (
@@ -140,10 +141,15 @@ export const NetdmServiceActions = ({ instance, type, entries, onCommand }: Prop
             <div className="NetdmHome__minor">Для этого сервиса нет доступных команд в каталоге.</div>
           ) : (
             <>
+              <Box mt={0.5}>
+                <Button icon="sync" disabled={disabled} content="Обновить список"
+                  onClick={() => onCommand(catalogueLine)} />
+              </Box>
               <div className="NetdmHome__actionChoices">
                 {actions.map(action => (
                   <Button key={action.command} content={actionLabel(action.command)}
                     selected={selected === action.command}
+                    disabled={disabled}
                     onClick={() => choose(action.command)} />
                 ))}
               </div>
@@ -170,13 +176,13 @@ export const NetdmServiceActions = ({ instance, type, entries, onCommand }: Prop
                       )}
                       {isReadAction(chosen.command) ? (
                         <Button icon="search" content="Отправить запрос"
-                          disabled={!line}
+                          disabled={disabled || !line}
                           onClick={() => line && onCommand(line)} />
                       ) : (
                         <Button.Confirm icon="exclamation-triangle" color="average"
                           content="Отправить команду"
                           confirmContent="Подтвердить сетевую команду?"
-                          disabled={!line}
+                          disabled={disabled || !line}
                           onClick={() => line && onCommand(line)} />
                       )}
                       <div className="NetdmHome__minor">

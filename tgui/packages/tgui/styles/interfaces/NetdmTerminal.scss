@@ -313,3 +313,33 @@
     &__deep { grid-column: 1 / -1; }
   }
 }
+
+/* Network-presence service explorer: shared Host schema controls in a compact sidebar. */
+.NetdmSpaceContext {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(132, 178, 189, 0.25);
+  &__selected {
+    margin-top: 9px;
+    padding: 10px 11px;
+    background: #1b303b;
+    border: 1px solid #385462;
+    border-radius: 6px;
+  }
+  &__activity {
+    margin-top: 9px;
+    padding: 9px 10px;
+    border-left: 2px solid #557b8a;
+    background: rgba(26, 49, 61, 0.6);
+  }
+  .NetdmHome__actionsSection { margin-top: 10px; }
+  .NetdmHome__actionsExplorer { margin-top: 8px; padding: 10px; background: #182c37; border: 1px solid #355462; border-radius: 6px; }
+  .NetdmHome__sectionLabel { font-size: 10px; font-weight: bold; color: #91c4cf; }
+  .NetdmHome__minor { margin: 7px 0; font-size: 11px; color: #a0bac4; }
+  .NetdmHome__actionChoices { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .NetdmHome__actionForm { margin-top: 10px; padding-top: 8px; border-top: 1px solid #405e6a; }
+  .NetdmHome__formField { margin: 9px 0; padding: 8px; border-radius: 5px; background: #243c47; }
+  .NetdmHome__formLabel { margin-bottom: 5px; font-size: 12px; font-weight: 600; }
+  .NetdmHome__formLabel span { display: block; margin-top: 4px; font-size: 10px; color: #b1c6cd; }
+  .NetdmHome__actionResult { margin-top: 9px; padding: 9px; border-left: 3px solid #70b1aa; background: #27404a; }
+}

@@ -36,6 +36,7 @@ const base = {
   },
   otherPresences: {},
   log: [],
+  actionEntries: [],
   revision: 1,
   alarmPending: false,
   alarmWatch: null,
@@ -140,5 +141,67 @@ test('an inactive operator may inspect an offline neighbor without a shell comma
   });
   fireEvent.click(screen.getByText(/Осмотреть узел 2/));
   expect(screen.getByTestId('camera-target').textContent).toBe('2');
+  expect(actions()).toEqual([]);
+});
+
+test('switching service is local and opening its schema is an explicit Host request', () => {
+  const { actions } = setup({
+    services: [
+      { node: '1', type: 'network.shell', instance: 'shell.home', stale: false },
+      { node: '1', type: 'machine.control', instance: 'machine.switch', stale: false },
+    ],
+  });
+  fireEvent.click(screen.getByText('Оболочка узла'));
+  fireEvent.click(screen.getByText('machine control'));
+  expect(actions()).toEqual([]);
+  fireEvent.click(screen.getByText('Доступные действия'));
+  expect(actions()).toEqual([{ type: 'act/act', payload: { line: 'api machine.control' } }]);
+});
+
+test('Host schema drives ordinary read-only action through the same shell transport', () => {
+  const { push, actions } = setup({
+    services: [
+      { node: '1', type: 'machine.control', instance: 'machine.switch', stale: false },
+    ],
+  });
+  const fields = (record: Record<string, string>) =>
+    Object.entries(record).map(([name, value]) => ({ name, value }));
+  fireEvent.click(screen.getByText('Доступные действия'));
+  const catalogue = {
+    id: 1, line: 'api machine.control', pending: false, status: 'ok', error: null,
+    records: [fields({ type: 'machine.control', command: 'status', request: 'machine.status' })],
+  };
+  push({ actionEntries: [catalogue] });
+  fireEvent.click(screen.getByText('Получить состояние'));
+  expect(actions().filter(item => item.type === 'act/act').map(item => item.payload.line))
+    .toEqual(['api machine.control', 'api machine.control status']);
+  push({ actionEntries: [catalogue, {
+    id: 2, line: 'api machine.control status', pending: false, status: 'ok', error: null, records: [],
+  }] });
+  fireEvent.click(screen.getByText('Отправить запрос'));
+  expect(actions().filter(item => item.type === 'act/act').map(item => item.payload.line))
+    .toEqual(['api machine.control', 'api machine.control status', 'invoke machine.switch status']);
+});
+
+test('stale service remains inspectable but sends no typed commands', () => {
+  const { actions } = setup({
+    services: [{ node: '1', type: 'machine.control', instance: 'machine.switch', stale: true }],
+  });
+  fireEvent.click(screen.getByText('Доступные действия'));
+  expect(actions()).toEqual([]);
+});
+
+test('context shows recent activity for its node only without network requests', () => {
+  const { actions } = setup({
+    life: { bots: [], operators: [], activity: [
+      { seq: 1, node: '1', kind: 'presence', name: 'Station bot', text: 'Прибыл' },
+      { seq: 2, node: '2', kind: 'presence', name: 'Other bot', text: 'Ушел' },
+    ] },
+  });
+  expect(screen.getByText(/Station bot: Прибыл/)).toBeTruthy();
+  expect(screen.queryByText(/Other bot: Ушел/)).toBeNull();
+  fireEvent.click(screen.getByText('Выбрать удалённый узел'));
+  expect(screen.getByText(/Other bot: Ушел/)).toBeTruthy();
+  expect(screen.queryByText(/Station bot: Прибыл/)).toBeNull();
   expect(actions()).toEqual([]);
 });

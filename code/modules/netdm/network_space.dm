@@ -10,6 +10,10 @@
 #define NETDM_SPACE_ITEMS 2048
 /// Lines of the window's action log.
 #define NETDM_SPACE_LOG 12
+/// Bounded replies for the schema-backed context panel.
+#define NETDM_SPACE_ACTION_ENTRIES 16
+#define NETDM_SPACE_ACTION_RECORDS 64
+#define NETDM_SPACE_ACTION_FIELDS 16
 /// Requests of one window in flight at once.
 #define NETDM_SPACE_PENDING 4
 /// A read can wait for the outer shell command and the inner typed result.
@@ -51,6 +55,9 @@
 	var/list/route_preview
 	var/route_request = 0
 	var/list/log = list()
+	/// Per-window Host replies, never persisted across actors.
+	var/list/action_entries = list()
+	var/action_serial = 0
 	var/z
 	var/pending = 0
 	var/refresh_timer
@@ -619,18 +626,61 @@
 /datum/netdm_space/proc/act_line(line)
 	if(!istext(line) || !length(trim(line)) || length_char(line) > 1024)
 		return FALSE
-	return send("act", list("line" = trim(line)), CALLBACK(src, PROC_REF(acted), trim(line)))
+	line = trim(line)
+	var/entry_id = 0
+	var/list/entry
+	// Capture structured answers only for explicit API discovery and invocation.
+	if(findtext(line, "api ") == 1 || findtext(line, "invoke ") == 1)
+		entry_id = ++action_serial
+		entry = list("id" = entry_id, "line" = line, "pending" = TRUE, "status" = null,
+			"error" = null, "records" = list())
+		action_entries += list(entry)
+		if(length(action_entries) > NETDM_SPACE_ACTION_ENTRIES)
+			action_entries.Cut(1, 2)
+	var/queued = send("act", list("line" = line), CALLBACK(src, PROC_REF(acted), line, entry_id))
+	if(!queued && entry)
+		entry["pending"] = FALSE
+		entry["status"] = "refused"
+		entry["error"] = "Запрос не принят сетевым транспортом."
+		SStgui.update_uis(src)
+	return queued
 
-/datum/netdm_space/proc/acted(line, list/output)
+/datum/netdm_space/proc/acted(line, entry_id, list/output)
 	var/status = output?["status"]
+	if(entry_id)
+		for(var/list/entry in action_entries)
+			if(entry["id"] != entry_id)
+				continue
+			entry["pending"] = FALSE
+			entry["status"] = status || "no_answer"
+			entry["error"] = copytext("[output?["error"]]", 1, 257)
+			var/list/rows = list()
+			var/list/reply_records = output?["records"]
+			if(islist(reply_records))
+				for(var/list/record in reply_records)
+					if(length(rows) >= NETDM_SPACE_ACTION_RECORDS)
+						break
+					if(!islist(record))
+						continue
+					var/list/pairs = list()
+					for(var/list/pair in record)
+						if(length(pairs) >= NETDM_SPACE_ACTION_FIELDS)
+							break
+						if(!islist(pair))
+							continue
+						pairs += list(list("name" = copytext("[pair["name"]]", 1, 81),
+							"value" = copytext("[pair["value"]]", 1, 257)))
+					rows += list(pairs)
+			entry["records"] = rows
+			break
 	if(status == "ok")
-		var/list/rows = list()
+		var/list/log_rows = list()
 		for(var/list/record in output["records"])
 			var/list/pairs = list()
 			for(var/list/pair in record)
 				pairs += "[pair["name"]]=[pair["value"]]"
-			rows += jointext(pairs, " ")
-		note("> [line]: [length(rows) ? jointext(rows, "; ") : "пусто"]")
+			log_rows += jointext(pairs, " ")
+		note("> [line]: [length(log_rows) ? jointext(log_rows, "; ") : "пусто"]")
 	else
 		note("> [line]: [status || "нет ответа"] [output?["error"]]")
 
@@ -987,7 +1037,7 @@
 		"immersedSeconds" = (immersed && immersed_at) ? round((world.time - immersed_at) / 10) : 0,
 		"life" = life, "incidents" = SSnetdm_observe?.netdm_incidents || list(), "hack" = list("status" = hack_status, "code" = hack_code, "target" = hack_target, "expires" = hack_expires, "keys" = hack_keys, "masked" = hack_masked), "persona" = islist(presence) ? list("name" = presence["personaName"], "signature" = presence["personaSignature"], "status" = presence["personaStatus"], "role" = presence["personaRole"], "colour" = text2num("[presence["personaColour"]]")) : null,
 		"chat" = chat_data,
-		"log" = log, "revision" = revision, "alarmPending" = !!alarm_request, "alarmWatch" = watch_data,
+		"log" = log, "actionEntries" = action_entries, "revision" = revision, "alarmPending" = !!alarm_request, "alarmWatch" = watch_data,
 		"routePreview" = route_preview, "machineCommand" = command_data)
 
 /datum/netdm_space/ui_act(action, list/params, datum/tgui/ui, datum/ui_state/state)
