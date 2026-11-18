@@ -319,6 +319,10 @@
   margin-top: 9px;
   padding-top: 9px;
   border-top: 1px solid rgba(132, 178, 189, 0.25);
+  /* Forms may have many Host-defined fields; never displace the map or chat. */
+  max-height: 300px;
+  overflow-y: auto;
+  scrollbar-color: #496c77 transparent;
   &__selected {
     margin-top: 9px;
     padding: 10px 11px;

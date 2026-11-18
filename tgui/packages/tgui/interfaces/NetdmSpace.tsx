@@ -5,9 +5,9 @@ import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
 import { DeviceEntry } from './NetdmDeviceState';
-import { NetdmServiceActions } from './NetdmServiceActions';
 import { isSelectedPreview, NodeTravelChoice, nodeTravelChoice } from './netdmNodeTravel';
 import { knownAdjacentNodes, NearbyDestination, NearbyNode, nearbyDestinations } from './netdmPresenceNavigation';
+import { NetdmServiceActions } from './NetdmServiceActions';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
 import { TopologyCanvas } from './NetdmTopology';
 import { MapChrome } from './NetdmTopology/MapChrome';
@@ -365,7 +365,9 @@ const NodePanel = (props: {
               <Stack wrap mt={1}>
                 <Stack.Item>
                   <Button icon="tachometer-alt" disabled={disabled || alarmPending}
-                    onClick={() => onReadAlarm(current.instance)}>Замер</Button>
+                    onClick={() => onReadAlarm(current.instance)}>
+                    Замер
+                  </Button>
                 </Stack.Item>
                 <Stack.Item>
                   <Button icon="bell" selected={watchedAlarm === current.instance}

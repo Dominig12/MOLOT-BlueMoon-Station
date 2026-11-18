@@ -58,7 +58,7 @@ const setup = (initial: Record<string, unknown> = {}) => {
   setGlobalStore(store);
   const push = (changes: Record<string, unknown>) => store.dispatch(backendUpdate({
     config: { interface: 'NetdmSpace' },
-    data: { ...base, ...changes },
+    data: { ...base, ...initial, ...changes },
   }));
   push(initial);
   const ui = render(<NetdmSpace />);
@@ -67,9 +67,10 @@ const setup = (initial: Record<string, unknown> = {}) => {
       push(changes);
       ui.rerender(<NetdmSpace />);
     },
+    // HackPanel refreshes keys on mount; it is not caused by map or service selection.
     actions: () => topic.mock.calls.map(([message]) => ({
       type: message.type, payload: message.payload ? JSON.parse(message.payload) : {},
-    })),
+    })).filter(item => item.type !== 'act/hack_keys'),
     ...ui,
   };
 };
