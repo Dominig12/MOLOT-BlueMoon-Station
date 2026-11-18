@@ -173,9 +173,9 @@
 	if(!netdm_immersion_enabled())
 		note("Погружение выключено на этом раунде.")
 		return FALSE
-	var/datum/netdm_terminal/local/implant/lens = terminal
-	var/mob/living/user = lens?.user_ref?.resolve()
-	var/obj/item/implant/netdm_terminal/implant = lens?.device_ref?.resolve()
+	// The source may be bodyless; only an implanted human controller can start this dive.
+	var/mob/living/user = actor?.physical_body()
+	var/obj/item/implant/netdm_terminal/implant = actor?.neural_implant()
 	if(!user || !implant || implant.imp_in != user || !implant.neural)
 		note("Нужен исправный нейролинк в голове.")
 		return FALSE
