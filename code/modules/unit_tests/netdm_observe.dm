@@ -2415,6 +2415,9 @@
 
 	// P12.4: the network window of the APC terminal. The APC is the operator; its presence stands on its shell.
 	var/datum/netdm_space/space = new(terminal)
+	var/datum/netdm_space_actor/terminal/source = space.actor
+	TEST_ASSERT(istype(source) && source.window == space && source.network_node() == terminal.node_ref?.resolve() && source.shell_provider() == terminal.shell_provider(),
+		"A legacy terminal is adapted into a network-space actor without changing its real endpoint.")
 	TEST_ASSERT(terminal.space == space && space.enter(), "The window sends the presence command.")
 	deadline = world.time + 20 SECONDS
 	while(world.time < deadline && space.presence?["state"] != "active")
@@ -2635,3 +2638,20 @@
 		"Unwatch must not allow subscription resurrection after reconnect.")
 	TEST_ASSERT(!lane.wanted_by["atmos.sensor"], "Unwatch must remove provider tracking.")
 	qdel(lane)
+
+
+/// A new network-space source has no implicit rights, and survives the destruction
+/// of a UI window that it did not create. Digital entities must supply their own
+/// authenticated endpoint and UI policy rather than borrowing an APC terminal.
+/datum/unit_test/netdm_space_actor_default_denied/Run()
+	var/datum/netdm_space_actor/source = new
+	TEST_ASSERT(!source.can_submit() && !source.network_node() && !source.shell_provider(), "Unbound actors cannot issue commands.")
+	TEST_ASSERT(!source.send("enter", list("note" = "test"), null), "An unbound actor cannot send packets to Host.")
+	TEST_ASSERT_EQUAL(source.ui_status(null, GLOB.never_state), UI_CLOSE, "Unbound actors cannot expose an interactive UI.")
+	TEST_ASSERT(!source.can_operate_alarm(null), "Unbound actors have no world-action permission.")
+	var/datum/netdm_space/space = new(source)
+	TEST_ASSERT(space.actor == source && source.window == space && !space.owns_actor, "Externally owned actors may attach one network view.")
+	TEST_ASSERT(!space.enter() && !space.scan(1), "UI requests cannot acquire missing source authority.")
+	qdel(space)
+	TEST_ASSERT(!QDELETED(source) && !source.window, "Closing a window releases, but does not destroy, an independently owned actor.")
+	qdel(source)
