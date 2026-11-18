@@ -11,6 +11,14 @@
 	/// At most one interactive view; owned by the actor, but never kept alive by its window.
 	var/datum/netdm_space/window
 
+/datum/netdm_space_actor/Destroy()
+	// A retired digital actor must not leave an orphaned, still-refreshing UI.
+	var/datum/netdm_space/space = window
+	window = null
+	if(space && !QDELETED(space))
+		qdel(space)
+	return ..()
+
 /datum/netdm_space_actor/proc/attach_window(datum/netdm_space/space)
 	if(QDELETED(src) || !space || QDELETED(space) || (window && window != space))
 		return FALSE
