@@ -983,7 +983,7 @@
 	return list("title" = actor?.title() || "нет связи", "z" = z, "levels" = levels,
 		"nodes" = nodes, "edges" = edges, "down" = down, "services" = services, "presence" = presence, "hostNode" = host,
 		"otherPresences" = occupants_on_level,
-		"immersed" = immersed, "immersionEnabled" = netdm_immersion_enabled(), "immersionReason" = immersed_reason,
+		"immersed" = immersed, "immersionEnabled" = netdm_immersion_enabled() && !!actor?.neural_implant(), "immersionReason" = immersed_reason,
 		"immersedSeconds" = (immersed && immersed_at) ? round((world.time - immersed_at) / 10) : 0,
 		"life" = life, "incidents" = SSnetdm_observe?.netdm_incidents || list(), "hack" = list("status" = hack_status, "code" = hack_code, "target" = hack_target, "expires" = hack_expires, "keys" = hack_keys, "masked" = hack_masked), "persona" = islist(presence) ? list("name" = presence["personaName"], "signature" = presence["personaSignature"], "status" = presence["personaStatus"], "role" = presence["personaRole"], "colour" = text2num("[presence["personaColour"]]")) : null,
 		"chat" = chat_data,
