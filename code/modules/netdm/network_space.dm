@@ -154,7 +154,9 @@
 /// All network actions go through the owning actor's authenticated Host command path.
 /// An empty DM list encodes as an array, so argument-free commands retain their "note".
 /datum/netdm_space/proc/send(command, list/arguments, datum/callback/on_answer, datum/callback/can_send)
-	return actor?.send(command, arguments, on_answer, can_send) || FALSE
+	if(!actor || QDELETED(actor))
+		return FALSE
+	return actor.send(command, arguments, on_answer, can_send) || FALSE
 
 /// Reads the knowledge changed since the last revision and the presence; re-arms itself.
 /datum/netdm_space/proc/refresh()
