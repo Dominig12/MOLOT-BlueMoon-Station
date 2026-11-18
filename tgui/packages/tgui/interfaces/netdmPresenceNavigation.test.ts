@@ -1,4 +1,4 @@
-import { nearbyDestinations } from './netdmPresenceNavigation';
+import { knownAdjacentNodes, nearbyDestinations } from './netdmPresenceNavigation';
 import { parseView } from './NetdmTopology/model';
 
 test('only currently known adjacent shells appear as local movement candidates', () => {
@@ -43,4 +43,31 @@ test('ordinary devices never become move targets without an actual shell service
   expect(nearbyDestinations(view, '1', [
     { instance: 'atmos.two', type: 'atmos.alarm', node: '2', stale: false },
   ])).toEqual([]);
+});
+
+test('inspection includes known neighbors even without network.shell and marks offline links', () => {
+  const view = parseView({
+    nodes: [['1', 1, 1, 0], ['2', 2, 1, 0], ['3', 1, 2, 32], ['4', 3, 1, 0]],
+    edges: [['1', '2']],
+    down: [['1', '3']],
+  });
+  expect(knownAdjacentNodes(view, '1')).toEqual([
+    { node: '2', radio: false, unavailable: false },
+    { node: '3', radio: false, unavailable: true },
+  ]);
+  expect(knownAdjacentNodes(view, '4')).toEqual([]);
+  expect(knownAdjacentNodes(view, null)).toEqual([]);
+});
+
+test('inspection prefers live radio over down wire and deduplicates mixed links', () => {
+  const view = parseView({
+    nodes: [['1', 1, 1, 0], ['2', 2, 1, 0], ['3', 1, 2, 0]],
+    radio: [['1', '2'], ['1', '3']],
+    down: [['1', '2']],
+    edges: [['1', '3']],
+  });
+  expect(knownAdjacentNodes(view, '1')).toEqual([
+    { node: '3', radio: false, unavailable: false },
+    { node: '2', radio: true, unavailable: false },
+  ]);
 });

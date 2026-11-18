@@ -68,3 +68,41 @@ export const nearbyDestinations = (
       Number(a.radio) - Number(b.radio) || a.node.localeCompare(b.node, undefined, { numeric: true }))
     .slice(0, Math.max(0, Math.min(12, max)));
 };
+
+/** Known adjacent nodes can always be inspected; adjacency does not establish reachability. */
+export type NearbyNode = { node: string; radio: boolean; unavailable: boolean };
+
+export const knownAdjacentNodes = (view: View, anchor: string | null, max = 8): NearbyNode[] => {
+  const source = anchor ? view.nodes.get(anchor) : undefined;
+  if (!source) {
+    return [];
+  }
+  const adjacent = new Map<string, { value: NearbyNode; down: boolean }>();
+  for (const link of view.links.values()) {
+    if (link.a !== anchor && link.b !== anchor) {
+      continue;
+    }
+    const id = link.a === anchor ? link.b : link.a;
+    const node = view.nodes.get(id);
+    if (!node) {
+      continue;
+    }
+    const value: NearbyNode = {
+      node: id,
+      radio: link.radio,
+      unavailable: link.down || isOffline(source.flags) || isOffline(node.flags),
+    };
+    const previous = adjacent.get(id);
+    // Prefer live radio over a broken wire; no link here grants permission to travel.
+    if (!previous || (previous.down && !link.down) ||
+        (previous.down === link.down && previous.value.unavailable && !value.unavailable) ||
+        (previous.down === link.down && previous.value.unavailable === value.unavailable &&
+          previous.value.radio && !value.radio)) {
+      adjacent.set(id, { value, down: link.down });
+    }
+  }
+  return [...adjacent.values()].map(entry => entry.value)
+    .sort((a, b) => Number(a.unavailable) - Number(b.unavailable) ||
+      Number(a.radio) - Number(b.radio) || a.node.localeCompare(b.node, undefined, { numeric: true }))
+    .slice(0, Math.max(0, Math.min(12, max)));
+};

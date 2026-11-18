@@ -7,8 +7,15 @@ import { NetdmSpace } from './NetdmSpace';
 
 // Keep the real screen logic, but avoid constructing a GPU renderer in jsdom.
 jest.mock('./NetdmTopology', () => ({
-  TopologyCanvas: ({ onSelect }: { onSelect: (id: string) => void }) => (
-    <button type="button" onClick={() => onSelect('2')}>Выбрать удалённый узел</button>
+  TopologyCanvas: ({ onSelect, focusRequest, focusTarget }: {
+    onSelect: (id: string) => void;
+    focusRequest: number;
+    focusTarget: string | null;
+  }) => (
+    <>
+      <button type="button" onClick={() => onSelect('2')}>Выбрать удалённый узел</button>
+      <span data-testid="camera-target">{focusRequest ? focusTarget : 'none'}</span>
+    </>
   ),
 }));
 
@@ -106,4 +113,32 @@ test('wrong target, inactive presence and chat do not enable movement hotkeys', 
   });
   fireEvent.keyDown(document.body, { key: 'g' });
   expect(actions().filter(item => item.type === 'act/preview_move')).toEqual([]);
+});
+
+test('keyboard inspects known neighbors without sending travel or route requests', () => {
+  const { actions } = setup({
+    nodes: [['1', 10, 10, 16], ['2', 11, 10, 8], ['3', 10, 11, 40]],
+    edges: [['1', '2']],
+    down: [['1', '3']],
+  });
+  fireEvent.keyDown(document.body, { key: 'ArrowRight' });
+  expect(screen.getByTestId('camera-target').textContent).toBe('2');
+  fireEvent.keyDown(document.body, { key: 'ArrowRight' });
+  expect(screen.getByTestId('camera-target').textContent).toBe('3');
+  expect(actions()).toEqual([]);
+  fireEvent.keyDown(document.body, { key: 'f' });
+  expect(screen.getByTestId('camera-target').textContent).toBe('1');
+  expect(actions()).toEqual([]);
+});
+
+test('an inactive operator may inspect an offline neighbor without a shell command', () => {
+  const { actions } = setup({
+    nodes: [['1', 10, 10, 16], ['2', 11, 10, 40]],
+    edges: [],
+    down: [['1', '2']],
+    presence: { presence: 10, host: 'shell.home', generation: 1, state: 'suspended' },
+  });
+  fireEvent.click(screen.getByText(/Осмотреть узел 2/));
+  expect(screen.getByTestId('camera-target').textContent).toBe('2');
+  expect(actions()).toEqual([]);
 });

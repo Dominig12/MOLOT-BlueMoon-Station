@@ -5,7 +5,7 @@ import { useBackend } from '../backend';
 import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
 import { isSelectedPreview, NodeTravelChoice, nodeTravelChoice } from './netdmNodeTravel';
-import { NearbyDestination, nearbyDestinations } from './netdmPresenceNavigation';
+import { knownAdjacentNodes, NearbyDestination, NearbyNode, nearbyDestinations } from './netdmPresenceNavigation';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
 import { TopologyCanvas } from './NetdmTopology';
 import { MapChrome } from './NetdmTopology/MapChrome';
@@ -446,43 +446,65 @@ const RoutePanel = (props: { preview: RoutePreview | null; presence: Presence | 
 /** A fast hop selector for players who live inside the network.
  * These are known links only: the server must still approve preview_move and move.
  */
+
 const NearbyMovementPanel = (props: {
+  nodes: NearbyNode[];
   destinations: NearbyDestination[];
+  anchor: string | null;
+  selected: string | null;
   active: boolean;
   moving: boolean;
   pending: boolean;
+  onInspect: (node: string) => void;
   onPreview: (destination: NearbyDestination) => void;
 }) => (
-  <Section title="Известные переходы рядом">
-    {props.destinations.length === 0 ? (
-      <Box color="label">
-        Рядом не обнаружены точки перехода. Просканируйте сеть или выберите узел на карте.
-      </Box>
+  <Section title="Соседние узлы">
+    <Box color="label" mb={0.5}>
+      Окружение узла {props.anchor ?? '—'}. Осмотр не перемещает персонажа. ← / → выбирают соседей вашего присутствия.
+    </Box>
+    {props.nodes.length === 0 ? (
+      <Box color="label">Известных соседей нет. Можно сканировать сеть.</Box>
     ) : (
-      <>
-        <Box color="label" mb={0.5}>
-          Выберите точку, чтобы проверить маршрут. Переход не начинается автоматически.
-        </Box>
-        <Stack wrap>
-          {props.destinations.map(destination => (
-            <Stack.Item key={destination.node}>
-              <Button
-                icon={destination.radio ? 'wifi' : 'network-wired'}
-                disabled={!props.active || props.moving || props.pending || destination.unavailable}
-                tooltip={destination.unavailable
-                  ? 'Известная связь или точка перехода сейчас недоступна'
-                  : 'Запросить маршрут к этому узлу'}
-                onClick={() => props.onPreview(destination)}>
-                Узел {destination.node}{destination.radio ? ' · радио' : ''}
-              </Button>
+      <Stack vertical>
+        {props.nodes.map(node => {
+          const destination = props.destinations.find(item => item.node === node.node);
+          return (
+            <Stack.Item key={node.node}>
+              <Stack align="center" wrap>
+                <Stack.Item grow>
+                  <Button
+                    fluid
+                    icon={node.radio ? 'wifi' : 'network-wired'}
+                    selected={props.selected === node.node}
+                    tooltip={node.unavailable
+                      ? 'Связь не работает, но можно осмотреть известный узел'
+                      : 'Выбрать и центрировать на карте; сетевых команд нет'}
+                    onClick={() => props.onInspect(node.node)}>
+                    Осмотреть узел {node.node}{node.unavailable ? ' · нет связи' : ''}
+                  </Button>
+                </Stack.Item>
+                {!!destination && (
+                  <Stack.Item>
+                    <Button
+                      icon="route"
+                      disabled={!props.active || props.moving || props.pending || destination.unavailable}
+                      tooltip={destination.unavailable
+                        ? 'Переход недоступен'
+                        : 'Запросить подтверждённый маршрут у Host, без перемещения'}
+                      onClick={() => props.onPreview(destination)}>
+                      Маршрут
+                    </Button>
+                  </Stack.Item>
+                )}
+              </Stack>
             </Stack.Item>
-          ))}
-        </Stack>
-        {props.destinations.some(destination => destination.unavailable) && (
-          <Box color="label" mt={0.5}>Недоступные точки показаны, но переход к ним заблокирован.</Box>
-        )}
-      </>
+          );
+        })}
+      </Stack>
     )}
+    <Box color="label" mt={0.5}>
+      Маршрут доступен только для обнаруженной сетевой оболочки рядом с присутствием.
+    </Box>
   </Section>
 );
 
@@ -1086,6 +1108,7 @@ export const NetdmSpace = () => {
   const [radius, setRadius] = useState(3);
   const [fitRequest, setFitRequest] = useState(0);
   const [focusRequest, setFocusRequest] = useState(0);
+  const [focusTarget, setFocusTarget] = useState<string | null>(null);
   const [showMapLegend, setShowMapLegend] = useState(false);
   const [line, setLine] = useState('');
   const [advanced, setAdvanced] = useState(false);
@@ -1166,6 +1189,8 @@ export const NetdmSpace = () => {
     () => nearbyDestinations(view, data.hostNode, data.services),
     [view, data.hostNode, data.services],
   );
+  const inspectNeighbors = useMemo(() => knownAdjacentNodes(view, shown), [view, shown]);
+  const homeNeighbors = useMemo(() => knownAdjacentNodes(view, data.hostNode), [view, data.hostNode]);
   const targetNode = foundTarget && view.nodes.get(foundTarget.node);
   const canMove = active && !!foundTarget && !!targetNode && !foundTarget.stale && !isOffline(targetNode.flags);
   const reason = presence?.reason ? REASON_TEXT[presence.reason] ?? presence.reason : null;
@@ -1173,9 +1198,17 @@ export const NetdmSpace = () => {
   const focusHome = useCallback(() => {
     if (data.hostNode && view.nodes.has(data.hostNode)) {
       setSelected(data.hostNode);
+      setFocusTarget(data.hostNode);
       setFocusRequest(request => request + 1);
     }
   }, [data.hostNode, view]);
+  const focusKnown = useCallback((id: string) => {
+    if (view.nodes.has(id)) {
+      setSelected(id);
+      setFocusTarget(id);
+      setFocusRequest(request => request + 1);
+    }
+  }, [view]);
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
       if (!inside || event.altKey || event.ctrlKey || event.metaKey || event.repeat) {
@@ -1195,6 +1228,14 @@ export const NetdmSpace = () => {
         focusHome();
       } else if (event.key === 'Escape') {
         setSelected(null);
+      } else if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && homeNeighbors.length > 0) {
+        // Camera-only navigation among discovered one-hop neighbors.
+        const step = event.key === 'ArrowRight' ? 1 : -1;
+        const index = homeNeighbors.findIndex(item => item.node === selected);
+        const next = index < 0 ? (step > 0 ? 0 : homeNeighbors.length - 1)
+          : (index + step + homeNeighbors.length) % homeNeighbors.length;
+        event.preventDefault();
+        focusKnown(homeNeighbors[next].node);
       } else if (event.key.toLowerCase() === 'g' && active && !moving && !routePending &&
                  selected && selectedTravel.state === 'ready' && selectedTravel.instance) {
         event.preventDefault();
@@ -1209,7 +1250,7 @@ export const NetdmSpace = () => {
     };
     window.addEventListener('keydown', keyboard);
     return () => window.removeEventListener('keydown', keyboard);
-  }, [inside, showChat, focusHome, active, moving, routePending, selected,
+  }, [inside, showChat, focusHome, focusKnown, homeNeighbors, active, moving, routePending, selected,
     selectedTravel, canMove, preview, act]);
   const send = () => {
     const trimmed = line.trim();
@@ -1331,7 +1372,7 @@ export const NetdmSpace = () => {
                     filters={FILTERS}
                     fitRequest={fitRequest}
                     focusRequest={focusRequest}
-                    focusTarget={data.hostNode}
+                    focusTarget={focusTarget ?? data.hostNode}
                     onSelect={setSelected}
                     onFailure={setFailure}
                     onReport={() => undefined} />
@@ -1394,12 +1435,16 @@ export const NetdmSpace = () => {
                   {inside && (
                     <Stack.Item>
                       <NearbyMovementPanel
+                        nodes={inspectNeighbors}
                         destinations={nearby}
+                        anchor={shown}
+                        selected={selected}
                         active={active}
                         moving={moving}
                         pending={routePending}
+                        onInspect={focusKnown}
                         onPreview={destination => {
-                          setSelected(destination.node);
+                          focusKnown(destination.node);
                           act('preview_move', { to: destination.instance });
                         }} />
                     </Stack.Item>
