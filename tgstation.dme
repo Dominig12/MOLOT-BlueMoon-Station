@@ -3841,6 +3841,7 @@
 #include "code\modules\netdm\netdm_services.dm"
 #include "code\modules\netdm\network_diagnostics.dm"
 #include "code\modules\netdm\network_immersion.dm"
+#include "code\modules\netdm\network_space_actor.dm"
 #include "code\modules\netdm\network_space.dm"
 #include "code\modules\netdm\network_terminal.dm"
 #include "code\modules\netdm\radio_shadow.dm"
