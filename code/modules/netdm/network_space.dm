@@ -22,6 +22,7 @@
 #define NETDM_SPACE_ALARM_INTERVAL (15 SECONDS)
 #define NETDM_SPACE_ACTION_WAIT (22 SECONDS)
 #define NETDM_SPACE_ACTION_LIMIT 64
+#define NETDM_SPACE_HACK_WINDOW (15 SECONDS)
 
 /// Topology screen flags reused by the window's map (tgui NetdmTopology/model.ts).
 #define NETDM_SPACE_FLAG_DEVICE 8
@@ -57,6 +58,7 @@
 	var/list/log = list()
 	/// Per-window Host replies, never persisted across actors.
 	var/list/action_entries = list()
+	var/list/action_queries = list()
 	var/action_serial = 0
 	var/z
 	var/pending = 0
@@ -75,6 +77,7 @@
 	var/hack_expires = 0
 	var/list/hack_keys = list()
 	var/hack_masked = FALSE
+	var/hack_use_pending = FALSE
 	var/pending_departures = 0
 	var/next_chat_poll = 0
 	var/chat_read_pending = FALSE
@@ -178,6 +181,7 @@
 	check_alarm()
 	poll_alarm_watch()
 	check_machine_command()
+	check_action_delivery()
 	if(pending >= NETDM_SPACE_PENDING)
 		return
 	if(send("knowledge", list("since" = revision), CALLBACK(src, PROC_REF(knowledge_answered))))
@@ -629,15 +633,17 @@
 	line = trim(line)
 	var/entry_id = 0
 	var/list/entry
-	// Capture structured answers only for explicit API discovery and invocation.
-	if(findtext(line, "api ") == 1 || findtext(line, "invoke ") == 1)
+	// Capture structured answers for service discovery, commands and their replies.
+	if(findtext(line, "api ") == 1 || findtext(line, "invoke ") == 1 || findtext(line, "result ") == 1)
 		entry_id = ++action_serial
 		entry = list("id" = entry_id, "line" = line, "pending" = TRUE, "status" = null,
 			"error" = null, "records" = list())
 		action_entries += list(entry)
 		if(length(action_entries) > NETDM_SPACE_ACTION_ENTRIES)
+			var/list/oldest = action_entries[1]
+			action_queries -= "[oldest["id"]]"
 			action_entries.Cut(1, 2)
-	var/queued = send("act", list("line" = line), CALLBACK(src, PROC_REF(acted), line, entry_id))
+	var/queued = send("act", list("line" = line), CALLBACK(src, PROC_REF(acted), line, entry_id, SSnetdm_observe.bridge?.stream_id))
 	if(!queued && entry)
 		entry["pending"] = FALSE
 		entry["status"] = "refused"
@@ -645,7 +651,7 @@
 		SStgui.update_uis(src)
 	return queued
 
-/datum/netdm_space/proc/acted(line, entry_id, list/output)
+/datum/netdm_space/proc/acted(line, entry_id, stream, list/output)
 	var/status = output?["status"]
 	if(entry_id)
 		for(var/list/entry in action_entries)
@@ -672,6 +678,8 @@
 							"value" = copytext("[pair["value"]]", 1, 257)))
 					rows += list(pairs)
 			entry["records"] = rows
+			if(status == "ok" && findtext(line, "invoke ") == 1)
+				track_action_delivery(entry, stream, first_record(output))
 			break
 	if(status == "ok")
 		var/list/log_rows = list()
@@ -683,6 +691,64 @@
 		note("> [line]: [length(log_rows) ? jointext(log_rows, "; ") : "пусто"]")
 	else
 		note("> [line]: [status || "нет ответа"] [output?["error"]]")
+
+/datum/netdm_space/proc/track_action_delivery(list/entry, stream, list/fields)
+	var/operation = fields["operation"]
+	var/instance = fields["instance"]
+	if(fields["status"] != "sent" || !istext(operation) || !length(operation) || !istext(instance) || !length(instance))
+		return
+	var/list/delivery = list("operation" = operation, "instance" = instance, "state" = "queued", "reason" = null)
+	entry["delivery"] = delivery
+	var/key = "[entry["id"]]"
+	if(!stream || stream != SSnetdm_observe.bridge?.stream_id)
+		delivery["state"] = "unknown"
+		return
+	action_queries[key] = list("delivery" = delivery, "stream" = stream, "deadline" = world.time + NETDM_SPACE_ACTION_WAIT, "next_query" = world.time)
+
+/datum/netdm_space/proc/check_action_delivery()
+	var/stream = SSnetdm_observe.bridge?.stream_id
+	var/datum/node = actor?.network_node()
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	for(var/key in action_queries)
+		var/list/query = action_queries[key]
+		if(query["stream"] != stream || world.time >= query["deadline"])
+			var/list/delivery = query["delivery"]
+			finish_action_delivery(key, query["stream"] == stream && delivery["state"] == "applied" ? "applied" : "unknown", "no_answer")
+		if(action_queries[key] && node && world.time >= query["next_query"])
+			var/list/delivery = query["delivery"]
+			query["next_query"] = world.time + 3 SECONDS
+			if(lane?.query_command(node, delivery["operation"], CALLBACK(src, PROC_REF(action_delivery_answered), key)))
+				break
+
+/datum/netdm_space/proc/action_delivery_answered(key, list/reply)
+	var/list/query = action_queries[key]
+	if(!query || query["stream"] != SSnetdm_observe.bridge?.stream_id)
+		return
+	var/list/status = reply?["result"]?["value"]
+	var/list/delivery = query["delivery"]
+	switch(status?["outcome"])
+		if("not_applied")
+			finish_action_delivery(key, "not_delivered", status["outcomeReason"])
+		if("rejected_by_world")
+			finish_action_delivery(key, "rejected", status["outcomeReason"])
+		if("unknown")
+			finish_action_delivery(key, "unknown", status["outcomeReason"])
+		if("applied")
+			if(status["result"] == "delivered")
+				finish_action_delivery(key, "delivered")
+			else if(status["result"] == "none")
+				finish_action_delivery(key, "applied")
+			else if(delivery["state"] != "applied")
+				delivery["state"] = "applied"
+				SStgui.update_uis(src)
+
+/datum/netdm_space/proc/finish_action_delivery(key, state, reason)
+	var/list/query = action_queries[key]
+	var/list/delivery = query["delivery"]
+	delivery["state"] = state
+	delivery["reason"] = reason
+	action_queries -= key
+	SStgui.update_uis(src)
 
 /datum/netdm_space/proc/first_record(list/output)
 	var/list/rows = output?["records"]
@@ -708,6 +774,38 @@
 		return null
 	var/obj/machinery/airalarm/alarm = lane.registry.resolve(endpoint.id, endpoint.generation)
 	return istype(alarm) ? alarm : null
+
+/datum/netdm_space/proc/active_camera_console(mob/living/user)
+	var/obj/machinery/computer/security/console = actor?.physical_device()
+	if(!istype(console) || !istype(user) || !user.client || !netdm_cameras_enabled() || !actor.can_submit())
+		return null
+	if(!(REF(user) in console.netdm_camera_viewers) || console.ui_status(user, console.ui_state(user)) != UI_INTERACTIVE)
+		return null
+	return console
+
+/datum/netdm_space/proc/camera_for_service(instance)
+	if(!istext(instance) || copytext(instance, 1, 8) != "camera.")
+		return null
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	var/datum/netdm_service_endpoint/endpoint = lane?.endpoints[copytext(instance, 8)]
+	if(!endpoint?.services[instance])
+		return null
+	var/obj/machinery/camera/camera = lane.registry.resolve(endpoint.id, endpoint.generation)
+	return istype(camera) ? camera : null
+
+/// Reuse the user's open security console and its ordinary, routed acquisition.
+/datum/netdm_space/proc/select_camera(instance, mob/living/user)
+	var/list/service = items["s|[instance]"]
+	if(service?["type"] != "camera.access" || is_stale(service))
+		return FALSE
+	var/obj/machinery/computer/security/console = active_camera_console(user)
+	var/obj/machinery/camera/camera = camera_for_service(instance)
+	if(!console || !console.netdm_camera_allowed(camera))
+		return FALSE
+	if(!console.netdm_camera_select(camera))
+		return FALSE
+	SStgui.update_uis(console)
+	return TRUE
 
 /datum/netdm_space/proc/operate_alarm(instance, enabled, mob/living/operator)
 	if(!istext(instance) || length(instance) > 64 || !isnum(enabled) || !(enabled in list(0, 1)) || machine_pending() || presence?["state"] != "active")
@@ -1000,6 +1098,7 @@
 	var/list/down = list()
 	var/list/services = list()
 	var/may_control_alarm = presence?["state"] == "active" && can_operate_alarm(user)
+	var/obj/machinery/computer/security/console = active_camera_console(user)
 	for(var/key in items)
 		var/list/fields = items[key]
 		switch(fields["kind"])
@@ -1013,8 +1112,12 @@
 				var/obj/machinery/airalarm/alarm
 				if(may_control_alarm && on_level[fields["node"]] && fields["type"] == "atmos.alarm" && !is_stale(fields))
 					alarm = alarm_for_service(fields["instance"])
+				var/obj/machinery/camera/camera
+				if(console && on_level[fields["node"]] && fields["type"] == "camera.access" && !is_stale(fields))
+					camera = camera_for_service(fields["instance"])
 				services += list(list("instance" = fields["instance"], "type" = fields["type"], "node" = fields["node"],
-					"stale" = is_stale(fields), "canControlAlarm" = !!alarm?.netdm_can_set_alert(user)))
+					"stale" = is_stale(fields), "canControlAlarm" = !!alarm?.netdm_can_set_alert(user),
+					"cameraName" = camera && console.netdm_camera_allowed(camera) ? camera.c_tag : null))
 	var/list/watch_data
 	if(alarm_watch)
 		watch_data = list("instance" = alarm_watch["instance"], "node" = alarm_watch["node"], "z" = alarm_watch["z"],
@@ -1030,12 +1133,12 @@
 		// The UI can identify a visit across missed polls without receiving its write scope.
 		chat_data = list("node" = chat_node, "channel" = chat_channel, "visit" = chat_channel ? "channel" : md5(chat_scope), "received" = chat_received,
 			"messages" = chat_messages, "status" = chat_status)
-	return list("title" = actor?.title() || "нет связи", "z" = z, "levels" = levels,
+	return list("title" = actor?.title() || "нет связи", "entityRole" = istype(actor, /datum/netdm_space_actor/entity), "z" = z, "levels" = levels,
 		"nodes" = nodes, "edges" = edges, "down" = down, "services" = services, "presence" = presence, "hostNode" = host,
 		"otherPresences" = occupants_on_level,
 		"immersed" = immersed, "immersionEnabled" = netdm_immersion_enabled() && !!actor?.neural_implant(), "immersionReason" = immersed_reason,
 		"immersedSeconds" = (immersed && immersed_at) ? round((world.time - immersed_at) / 10) : 0,
-		"life" = life, "incidents" = SSnetdm_observe?.netdm_incidents || list(), "hack" = list("status" = hack_status, "code" = hack_code, "target" = hack_target, "expires" = hack_expires, "keys" = hack_keys, "masked" = hack_masked), "persona" = islist(presence) ? list("name" = presence["personaName"], "signature" = presence["personaSignature"], "status" = presence["personaStatus"], "role" = presence["personaRole"], "colour" = text2num("[presence["personaColour"]]")) : null,
+		"life" = life, "incidents" = SSnetdm_observe?.netdm_incidents || list(), "hack" = list("status" = hack_status, "code" = hack_code, "target" = hack_target, "remaining" = max(0, (hack_expires - world.time) / (1 SECONDS)), "keys" = hack_keys, "masked" = hack_masked), "persona" = islist(presence) ? list("name" = presence["personaName"], "signature" = presence["personaSignature"], "status" = presence["personaStatus"], "role" = presence["personaRole"], "colour" = text2num("[presence["personaColour"]]")) : null,
 		"chat" = chat_data,
 		"log" = log, "actionEntries" = action_entries, "revision" = revision, "alarmPending" = !!alarm_request, "alarmWatch" = watch_data,
 		"routePreview" = route_preview, "machineCommand" = command_data)
@@ -1051,6 +1154,13 @@
 			return enter()
 		if("leave")
 			return leave()
+		if("leave_role")
+			var/datum/netdm_space_actor/entity/entity = actor
+			if(istype(entity) && entity.ui_status(ui.user, state) == UI_INTERACTIVE)
+				var/mob/dead/netdm_entity/controller = ui.user
+				INVOKE_ASYNC(controller, TYPE_PROC_REF(/mob/dead/netdm_entity, return_to_observer))
+				return TRUE
+			return FALSE
 		if("move")
 			return move(params["to"])
 		if("preview_move")
@@ -1062,6 +1172,8 @@
 				return send("abort_move", list("note" = "window"), CALLBACK(src, PROC_REF(presence_changed), "Отмена перехода"))
 		if("act")
 			return act_line("[params["line"]]")
+		if("select_camera")
+			return select_camera(params["instance"], ui.user)
 		if("send_chat")
 			return send_chat(ui.user, params["node"], params["text"])
 		if("read_alarm")
@@ -1217,26 +1329,34 @@
 			title = "[user.job]"
 	return copytext(title, 1, 25)
 
-/// P13.5: starts a breach against a known node. The Host answers with a code to type back.
+/// Starts a breach against a known APC, the type whose key can operate a machine.
 /datum/netdm_space/proc/hack_start(node)
 	if(!SSnetdm_observe?.services || !islist(presence))
 		note("Сеть занята.")
 		return FALSE
-	if("[node]" == "" || !isnum(text2num("[node]")))
-		note("Выберите узел на карте.")
+	if(hack_status == "waiting" || hack_status == "checking" || (hack_code && world.time < hack_expires))
 		return FALSE
+	if(pending_departures || presence["state"] != "active" || "[presence["node"]]" != node)
+		return FALSE
+	var/list/known_node = items["n|[node]"]
+	if(!known_node || is_stale(known_node) || !SSnetdm_observe.apc_by_node_id(node))
+		return FALSE
+	hack_target = node
+	hack_code = null
 	if(!send("hack_start", list("node" = "[node]"), CALLBACK(src, PROC_REF(hack_start_answered))))
+		hack_status = "busy"
 		note("Сеть занята: повторите через секунду.")
 		return FALSE
+	hack_status = "waiting"
+	// The UI budgets from submission, so time spent delivering the challenge counts.
+	hack_expires = world.time + NETDM_SPACE_HACK_WINDOW
 	return TRUE
 
 /datum/netdm_space/proc/hack_start_answered(list/output)
-	hack_status = "[output["status"]]"
+	hack_status = output?["status"] || "no_answer"
 	if(hack_status == "challenge")
 		hack_code = "[output["code"]]"
 		hack_target = "[output["target"]]"
-		hack_expires = netdm_number(output["expires"])
-		note("Взлом: введите код [hack_code] до конца окна.")
 	else if(hack_status == "cooldown")
 		note("Взлом на перезарядке: ещё [output["retryIn"] || 0] с.")
 	else if(hack_status == "no_knowledge")
@@ -1249,16 +1369,25 @@
 	if(!SSnetdm_observe?.services || !islist(presence))
 		note("Сеть занята.")
 		return FALSE
-	if(!istext(code) || !length(trim(code)))
-		note("Введите код из окна взлома.")
+	if(hack_status != "challenge" || !hack_code || length(code) != length(hack_code))
 		return FALSE
-	if(!send("hack_answer", list("code" = trim(code)), CALLBACK(src, PROC_REF(hack_answer_answered))))
+	if(pending_departures || presence["state"] != "active" || "[presence["node"]]" != hack_target)
+		return FALSE
+	if(world.time >= hack_expires)
+		hack_status = "expired"
+		hack_code = null
+		SStgui.update_uis(src)
+		return FALSE
+	if(!send("hack_answer", list("code" = code), CALLBACK(src, PROC_REF(hack_answer_answered))))
+		hack_status = "busy"
+		hack_code = null
 		note("Сеть занята: повторите через секунду.")
 		return FALSE
+	hack_status = "checking"
 	return TRUE
 
 /datum/netdm_space/proc/hack_answer_answered(list/output)
-	hack_status = "[output["status"]]"
+	hack_status = output?["status"] || "no_answer"
 	if(hack_status == "ok")
 		hack_code = null
 		hack_target = "[output["node"]]"
@@ -1310,17 +1439,23 @@
 	if(!SSnetdm_observe?.services || !islist(presence))
 		note("Сеть занята.")
 		return FALSE
-	if("[node]" == "")
-		note("Выберите узел на карте.")
+	if(hack_use_pending || pending_departures || presence["state"] != "active" || "[presence["node"]]" != node)
 		return FALSE
-	if(!send("hack_use", list("node" = "[node]", "purpose" = "breaker"), CALLBACK(src, PROC_REF(hack_use_answered), "[node]")))
+	if(!send("hack_use", list("node" = node, "purpose" = "breaker"),
+			CALLBACK(src, PROC_REF(hack_use_answered), node, presence["presence"], presence["generation"])))
 		note("Сеть занята: повторите через секунду.")
 		return FALSE
+	hack_use_pending = TRUE
 	return TRUE
 
-/datum/netdm_space/proc/hack_use_answered(list/reply, node)
-	if(reply?["status"] != "ok")
+/datum/netdm_space/proc/hack_use_answered(node, presence_id, generation, list/reply)
+	hack_use_pending = FALSE
+	if(reply?["status"] != "ok" || reply["node"] != node || reply["purpose"] != "breaker")
 		note("Доступ к узлу не подтверждён: [reply?["status"] || "нет ответа"].")
+		return
+	if(pending_departures || presence?["state"] != "active" || "[presence["node"]]" != node || \
+			presence["presence"] != presence_id || presence["generation"] != generation)
+		note("Команда отменена: присутствие сменило узел.")
 		return
 	var/obj/machinery/power/apc/apc = SSnetdm_observe.apc_by_node_id(node)
 	if(!apc)
@@ -1343,3 +1478,5 @@
 			continue
 		result += list(list("node" = parts[1], "label" = parts[2], "ttl" = text2num(parts[3])))
 	return result
+
+#undef NETDM_SPACE_HACK_WINDOW

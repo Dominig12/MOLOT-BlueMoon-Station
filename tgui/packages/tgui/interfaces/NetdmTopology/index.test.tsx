@@ -3,7 +3,8 @@ import { combineReducers, createStore, setGlobalStore } from 'common/redux';
 
 import { backendReducer, backendUpdate } from '../../backend';
 import { debugReducer } from '../../debug';
-import { NetdmTopology } from '.';
+import { NetdmTopology, TopologyCanvas } from '.';
+import { parseView } from './model';
 import { createScene, TopologyScene } from './scene';
 
 // jsdom has no GPU: the renderer is replaced, the screen logic around it is real.
@@ -17,6 +18,7 @@ const mockedCreate = createScene as jest.MockedFunction<typeof createScene>;
 const fakeScene = (): jest.Mocked<TopologyScene> => ({
   backend: 'webgl',
   update: jest.fn(),
+  setDeviceKinds: jest.fn(),
   setSelection: jest.fn(),
   setPresence: jest.fn(),
   setOtherPresences: jest.fn(),
@@ -24,6 +26,7 @@ const fakeScene = (): jest.Mocked<TopologyScene> => ({
   setAgents: jest.fn(),
   setOperators: jest.fn(),
   setRoute: jest.fn(),
+  setSignal: jest.fn(),
   setFilters: jest.fn(),
   fit: jest.fn(),
   destroy: jest.fn(),
@@ -69,6 +72,7 @@ test('один renderer на всё время окна: обновления д
   await flush(async () => {});
   expect(mockedCreate).toHaveBeenCalledTimes(1);
   expect(scene.update).toHaveBeenCalledTimes(1);
+  expect(scene.setDeviceKinds).not.toHaveBeenCalled();
   const [first, level] = scene.update.mock.calls[0];
   expect(first.nodes.size).toBe(2);
   expect(level).toBe('2');
@@ -98,6 +102,72 @@ test('отчёт drawn уходит, когда в сцену впервые п�
   expect(rendererReports()).toHaveLength(2);
   expect(rendererReports()[1]).toMatchObject({ event: 'drawn', nodes: 2, links: 1, level: '2' });
   expect(rendererReports()[1].updateMs).toEqual(expect.any(Number));
+});
+
+test('игровая карта передаёт состояние операции на существующую сцену', async () => {
+  const scene = fakeScene();
+  mockedCreate.mockResolvedValue(scene);
+  const props = {
+    view: parseView(baseData),
+    levelKey: '2',
+    selected: null,
+    filters: { radio: true, devices: true },
+    fitRequest: 0,
+    onSelect: jest.fn(),
+    onFailure: jest.fn(),
+    onReport: jest.fn(),
+    playerMap: true,
+  };
+  const queued = { id: '76', node: '50', outcome: 'queued' } as const;
+  const ui = render(<TopologyCanvas {...props} signal={queued} />);
+  await flush(async () => {});
+  expect(mockedCreate.mock.calls[0][3]).toBe(true);
+  expect(scene.setSignal).toHaveBeenLastCalledWith(queued);
+
+  const delivered = { ...queued, outcome: 'delivered' } as const;
+  ui.rerender(<TopologyCanvas {...props} signal={delivered} />);
+  expect(mockedCreate.mock.calls).toHaveLength(1);
+  expect(scene.setSignal).toHaveBeenLastCalledWith(delivered);
+
+  ui.rerender(<TopologyCanvas {...props} signal={null} />);
+  expect(scene.setSignal).toHaveBeenLastCalledWith(null);
+});
+
+test('игровая карта обновляет значок после обнаружения сервиса в существующей сцене', async () => {
+  const scene = fakeScene();
+  mockedCreate.mockResolvedValue(scene);
+  const props = {
+    view: parseView(baseData),
+    levelKey: '2',
+    selected: null,
+    filters: { radio: true, devices: true },
+    fitRequest: 0,
+    onSelect: jest.fn(),
+    onFailure: jest.fn(),
+    onReport: jest.fn(),
+    playerMap: true,
+  };
+  const ui = render(<TopologyCanvas {...props} />);
+  await flush(async () => {});
+  expect(scene.setDeviceKinds.mock.lastCall?.[0].get('50')?.kind).toBe('generic');
+
+  ui.rerender(<TopologyCanvas {...props}
+    deviceServices={[
+      { node: '50', type: 'network.shell' },
+      { node: '50', type: 'camera.access' },
+      { node: '1', type: 'machine.control' },
+      { node: '51', type: 'pda.server' },
+    ]} />);
+  const known = scene.setDeviceKinds.mock.lastCall?.[0];
+  expect(known?.get('50')).toEqual({ kind: 'camera', stale: false });
+  expect(known?.get('1')?.kind).toBe('apc');
+  expect(known?.has('51')).toBe(false);
+
+  ui.rerender(<TopologyCanvas {...props}
+    deviceServices={[{ node: '50', type: 'camera.access', stale: 1 }]} />);
+  expect(scene.setDeviceKinds.mock.lastCall?.[0].get('50')).toEqual({ kind: 'camera', stale: true });
+  expect(mockedCreate).toHaveBeenCalledTimes(1);
+  expect(scene.fit).not.toHaveBeenCalled();
 });
 
 test('булевы поля DM приходят как 0 и 1 и не выводятся числом', async () => {

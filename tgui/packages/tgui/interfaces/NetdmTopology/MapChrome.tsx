@@ -1,4 +1,5 @@
-import { Button } from '../../components';
+import { Button, Icon } from '../../components';
+import { classifyDevices, DEVICE_TYPES, DeviceService } from './devices';
 import {
   FLAG_ACCESS_POINT, FLAG_APC, FLAG_BROKEN, FLAG_DEVICE, FLAG_RADIO, FLAG_RELAY,
   FLAG_UNPOWERED, View, ViewNode,
@@ -15,6 +16,8 @@ type MapChromeProps = {
   selected?: ViewNode;
   view: View;
   showLegend: boolean;
+  playerMap?: boolean;
+  deviceServices?: readonly DeviceService[];
   onToggleLegend: () => void;
 };
 
@@ -62,39 +65,54 @@ const nodeLabel = (flags: number) => {
 };
 
 export const MapChrome = ({
-  level, nodeCount, linkCount, selected, view, showLegend, onToggleLegend,
+  level, nodeCount, linkCount, selected, view, showLegend, playerMap, deviceServices, onToggleLegend,
 }: MapChromeProps) => {
   const offline = selected && !!(selected.flags & (FLAG_BROKEN | FLAG_UNPOWERED));
   const wired = [...view.links.values()].filter(link => !link.radio && !link.down).length;
   const radio = [...view.links.values()].filter(link => link.radio).length;
   const down = [...view.links.values()].filter(link => link.down).length;
+  const shownKinds = playerMap && showLegend
+    ? new Set(Array.from(classifyDevices(view.nodes, deviceServices ?? []).values(), entry => entry.kind))
+    : null;
 
   return (
     <>
       <div
         data-netdm-overlay="hud"
         aria-label="Состояние сетевой карты"
-        style={{ position: 'absolute', bottom: '14px', left: '14px', pointerEvents: 'none', ...panelStyle }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ textAlign: 'center', color: '#8eeafd', lineHeight: 1.2 }}>
-            <strong>С</strong>
-            <div style={{ fontSize: '19px' }}>↑</div>
-            <span style={{ color: COLORS.muted }}>Ю</span>
+        style={{
+          position: 'absolute',
+          ...(playerMap ? { top: '12px', left: '12px' } : { bottom: '14px', left: '14px' }),
+          pointerEvents: 'none',
+          ...panelStyle,
+        }}>
+        {playerMap ? (
+          <>
+            <strong>Z{level}</strong>
+            <span style={{ marginLeft: '10px', color: COLORS.muted }}>{nodeCount} узлов · {linkCount} связей</span>
+          </>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ textAlign: 'center', color: '#8eeafd', lineHeight: 1.2 }}>
+              <strong>С</strong>
+              <div style={{ fontSize: '19px' }}>↑</div>
+              <span style={{ color: COLORS.muted }}>Ю</span>
+            </div>
+            <div>
+              <div>Сеть · Z{level}</div>
+              <div style={{ color: COLORS.muted }}>{nodeCount} узлов · {linkCount} связей</div>
+              {selected && (
+                <div>
+                  {nodeLabel(selected.flags)} #{selected.id}
+                  <span style={{ color: offline ? '#ff9e9e' : '#91e5ad' }}>
+                    {offline ? ' · не отвечает' : ' · активно'}
+                  </span>
+                  <div style={{ color: COLORS.muted }}>X {selected.x} · Y {selected.y}</div>
+                </div>
+              )}
+            </div>
           </div>
-          <div>
-            <div>Сеть · Z{level}</div>
-            <div style={{ color: COLORS.muted }}>{nodeCount} узлов · {linkCount} связей</div>
-            {selected && (
-              <div>
-                {nodeLabel(selected.flags)} #{selected.id}
-                <span style={{ color: offline ? '#ff9e9e' : '#91e5ad' }}>
-                  {offline ? ' · не отвечает' : ' · активно'}
-                </span>
-                <div style={{ color: COLORS.muted }}>X {selected.x} · Y {selected.y}</div>
-              </div>
-            )}
-          </div>
-        </div>
+        )}
       </div>
       <div style={{ position: 'absolute', right: '12px', top: '12px' }}>
         <Button icon="info-circle" onClick={onToggleLegend}>
@@ -106,13 +124,32 @@ export const MapChrome = ({
           data-netdm-overlay="legend"
           role="dialog"
           aria-label="Легенда карты"
-          style={{ position: 'absolute', top: '50px', right: '12px', zIndex: 2, width: '245px', ...panelStyle }}>
+          style={{
+            position: 'absolute', top: '50px', right: '12px', zIndex: 2,
+            width: 'min(245px, calc(100% - 24px))', maxHeight: 'calc(100% - 62px)',
+            boxSizing: 'border-box', overflowY: 'auto', ...panelStyle,
+          }}>
           <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Устройства</div>
-          {legendEntries.map(entry => (
+          {shownKinds ? [...shownKinds].map(kind => {
+            const { color, icon, label } = DEVICE_TYPES[kind];
+            return (
+              <div key={kind} style={{ display: 'flex', alignItems: 'center', gap: '9px', marginBottom: '6px' }}>
+                <span aria-hidden="true" style={{
+                  display: 'inline-grid', placeItems: 'center', width: '18px', height: '18px', flexShrink: 0,
+                  color: `#${color.toString(16)}`, borderRadius: '5px', border: '1px solid currentColor',
+                  backgroundColor: '#101e2c',
+                }}>
+                  <Icon name={icon} />
+                </span>
+                {label}
+              </div>
+            );
+          }) : legendEntries.map(entry => (
             <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: '9px', marginBottom: '7px' }}>
               {symbol(entry.color, entry.shape)} {entry.name}
             </div>
           ))}
+          {shownKinds && <div style={{ color: COLORS.muted }}>Серые значки отмечают недоступные или устаревшие узлы.</div>}
           <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: '8px', marginTop: '8px' }}>
             <strong>Связи на уровне</strong>
             <div>Проводные: {wired}</div>
@@ -121,7 +158,7 @@ export const MapChrome = ({
           </div>
           <div style={{ color: COLORS.muted, marginTop: '10px' }}>
             ЛКМ — выбрать узел · перетаскивание — переместить карту · колесо — масштаб.
-            Север всегда сверху.
+            {!playerMap && ' Север всегда сверху.'}
           </div>
         </div>
       )}

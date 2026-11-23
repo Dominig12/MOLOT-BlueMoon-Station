@@ -21,3 +21,13 @@ test('HUD and legend are independent of PixiJS and game commands', () => {
     selected={view.nodes.get('2')} view={view} showLegend onToggleLegend={toggle} />);
   expect(screen.getByText(/Проводные: 1/)).toBeTruthy();
 });
+
+test('игровая легенда включает только известные типы устройств текущего уровня', () => {
+  const view = parseView({ nodes: [['1', 10, 12, 16], ['2', 11, 12, 8]] });
+  render(<MapChrome level={2} nodeCount={2} linkCount={0} view={view} showLegend playerMap
+    deviceServices={[{ node: '2', type: 'camera.access' }, { node: '3', type: 'machine.door' }]}
+    onToggleLegend={jest.fn()} />);
+  expect(screen.getByText('АПЦ')).toBeTruthy();
+  expect(screen.getByText('Камера')).toBeTruthy();
+  expect(screen.queryByText('Дверь или шлюз')).toBeNull();
+});

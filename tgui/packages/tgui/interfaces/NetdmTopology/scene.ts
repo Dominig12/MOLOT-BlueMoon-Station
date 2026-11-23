@@ -8,6 +8,7 @@
 // Named imports let the bundler drop the parts of PixiJS this screen does not use.
 import { Application, Container, Graphics, GraphicsContext, Text } from 'pixi.js';
 
+import { DeviceKinds } from './devices';
 import {
   diffById,
   fitView,
@@ -27,6 +28,7 @@ import {
   Viewport,
   zoomAt,
 } from './model';
+import { drawNodeBadge } from './nodeBadge';
 
 export type SceneCallbacks = {
   onSelect: (id: string | null) => void;
@@ -57,11 +59,19 @@ export type SceneRoute = {
   broken?: boolean;
 };
 
+/** A server-reported operation milestone on a discovered node. */
+export type SceneSignal = {
+  id: string;
+  node: string;
+  outcome: 'queued' | 'applied' | 'delivered' | 'rejected' | 'unknown';
+};
+
 export interface TopologyScene {
   /** Renderer backend the client actually got: 'webgl', 'webgpu' or 'canvas'. */
   readonly backend: string;
   /** Applies a snapshot as deltas; a new `levelKey` refits the viewport once. */
   update(view: View, levelKey: string): void;
+  setDeviceKinds(kinds: DeviceKinds): void;
   setSelection(id: string | null): void;
   setPresence(id: string | null): void;
   setOtherPresences(counts: NodePresenceCounts | null): void;
@@ -72,6 +82,7 @@ export interface TopologyScene {
   /** P13: other operators in the network on the visible level. */
   setOperators(operators: readonly SceneOperator[] | null): void;
   setRoute(route: SceneRoute | null): void;
+  setSignal(signal: SceneSignal | null): void;
   setFilters(filters: SceneFilters): void;
   fit(): void;
   /** Explicitly center a known node at the current zoom, without changing network knowledge. */
@@ -88,6 +99,15 @@ export class SceneCancelled extends Error {
 type Style = 'apc' | 'wired' | 'radio' | 'node' | 'apcOffline' | 'nodeOffline';
 
 const ACTIVITY_PULSE_MS = 6000;
+const SIGNAL_MS = 1600;
+
+const SIGNAL_COLORS: Record<SceneSignal['outcome'], number> = {
+  queued: 0x83baff,
+  applied: 0x50dcdf,
+  delivered: 0x75e7af,
+  rejected: 0xff8c93,
+  unknown: 0xffc779,
+};
 
 const COLORS = {
 
@@ -133,8 +153,11 @@ const CLICK_TRAVEL = 4;
 class PixiTopologyScene implements TopologyScene {
   private readonly nodes = new Map<string, { data: ViewNode; graphic: Graphics }>();
   private readonly links = new Map<string, { data: ViewLink; graphic: Graphics }>();
+  private readonly badgeContexts = new Map<string, GraphicsContext>();
+  private deviceKinds: DeviceKinds | null = null;
   private readonly otherPresenceGraphic = new Graphics();
   private readonly activityGraphic = new Graphics();
+  private readonly signalGraphic = new Graphics();
   private readonly agentGraphic = new Graphics();
   private readonly operatorGraphic = new Graphics();
   private readonly labelLayer = new Container();
@@ -145,6 +168,12 @@ class PixiTopologyScene implements TopologyScene {
   private pulseFrame = 0;
   private pulseStart = 0;
   private pulsePhase = 0;
+  private signal: SceneSignal | null = null;
+  private lastSignal: SceneSignal | null = null;
+  private signalStarted = 0;
+  private signalFrame = 0;
+  private signalTimeout = 0;
+  private readonly reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
   private view: Viewport = { x: 0, y: 0, scale: 1 };
   private levelKey: string | null = null;
   private fitted = false;
@@ -178,11 +207,13 @@ class PixiTopologyScene implements TopologyScene {
     private readonly selection: Graphics,
     private readonly presence: Graphics,
     private readonly contexts: Record<Style, GraphicsContext>,
+    private readonly playerMap: boolean,
   ) {
     world.addChild(this.otherPresenceGraphic);
     world.addChild(this.activityGraphic);
     world.addChild(this.agentGraphic);
     world.addChild(this.operatorGraphic);
+    world.addChild(this.signalGraphic);
     world.addChild(this.labelLayer);
     const canvas = app.canvas as HTMLCanvasElement;
     canvas.style.display = 'block';
@@ -239,7 +270,7 @@ class PixiTopologyScene implements TopologyScene {
       }
     }
     for (const node of nodeDelta.added) {
-      const graphic = new Graphics(this.contexts[styleOf(node.flags)]);
+      const graphic = new Graphics(this.nodeContext(node));
       this.nodeLayer.addChild(graphic);
       this.nodes.set(node.id, { data: node, graphic });
       this.placeNode(node, graphic);
@@ -249,9 +280,7 @@ class PixiTopologyScene implements TopologyScene {
       if (entry.data.x !== node.x || entry.data.y !== node.y) {
         moved.add(node.id);
       }
-      if (styleOf(entry.data.flags) !== styleOf(node.flags)) {
-        entry.graphic.context = this.contexts[styleOf(node.flags)];
-      }
+      this.updateNodeContext(node, entry.graphic);
       entry.data = node;
       this.placeNode(node, entry.graphic);
     }
@@ -287,7 +316,18 @@ class PixiTopologyScene implements TopologyScene {
     this.placeMarkers();
     this.drawLabels();
     this.drawOtherPresences();
+    this.drawActivity();
+    this.drawSignal(performance.now());
     this.requestRender();
+  }
+
+  setDeviceKinds(kinds: DeviceKinds) {
+    this.deviceKinds = kinds;
+    let changed = false;
+    for (const entry of this.nodes.values()) {
+      changed = this.updateNodeContext(entry.data, entry.graphic) || changed;
+    }
+    if (changed) this.requestRender();
   }
 
   setSelection(id: string | null) {
@@ -309,10 +349,12 @@ class PixiTopologyScene implements TopologyScene {
   }
 
   setActivity(counts: NodeActivityCounts | null) {
+    const changed = Object.entries(counts ?? {})
+      .some(([id, count]) => count > (this.activity?.[id] ?? 0));
     this.activity = counts;
     this.drawActivity();
     this.requestRender();
-    if (this.activity && Object.keys(this.activity).length > 0) {
+    if (changed && !this.reducedMotion?.matches) {
       this.startActivityPulse();
     }
   }
@@ -362,6 +404,29 @@ class PixiTopologyScene implements TopologyScene {
     this.requestRender();
   }
 
+  setSignal(signal: SceneSignal | null) {
+    if (!signal) {
+      this.clearSignal();
+      return;
+    }
+    if (this.lastSignal?.id === signal.id && this.lastSignal.outcome === signal.outcome) {
+      return;
+    }
+    this.clearSignal();
+    this.lastSignal = signal;
+    if (!this.nodes.get(signal.node)?.graphic.visible) {
+      return;
+    }
+    this.signal = signal;
+    this.signalStarted = performance.now();
+    this.drawSignal(this.signalStarted);
+    if (this.reducedMotion?.matches) {
+      this.signalTimeout = window.setTimeout(() => this.clearSignal(), SIGNAL_MS);
+    } else {
+      this.signalFrame = requestAnimationFrame(this.playSignal);
+    }
+  }
+
   setFilters(filters: SceneFilters) {
     this.filters = filters;
     for (const entry of this.nodes.values()) {
@@ -373,6 +438,8 @@ class PixiTopologyScene implements TopologyScene {
     this.drawRoute();
     this.placeMarkers();
     this.drawOtherPresences();
+    this.drawActivity();
+    this.drawSignal(performance.now());
     this.requestRender();
   }
 
@@ -440,6 +507,9 @@ class PixiTopologyScene implements TopologyScene {
     this.presence.destroy();
     this.otherPresenceGraphic.destroy();
     this.activityGraphic.destroy();
+    cancelAnimationFrame(this.signalFrame);
+    window.clearTimeout(this.signalTimeout);
+    this.signalGraphic.destroy();
     this.agentGraphic.destroy();
     this.operatorGraphic.destroy();
     this.labelLayer.destroy({ children: true });
@@ -450,12 +520,40 @@ class PixiTopologyScene implements TopologyScene {
     for (const context of Object.values(this.contexts)) {
       context.destroy();
     }
+    for (const context of this.badgeContexts.values()) {
+      context.destroy();
+    }
     this.world.destroy({ children: true });
     this.app.destroy(true);
   }
 
   private nodeVisible(node: ViewNode) {
     return this.filters.devices || !(node.flags & FLAG_DEVICE);
+  }
+
+  private nodeContext(node: ViewNode) {
+    if (!this.playerMap) {
+      return this.contexts[styleOf(node.flags)];
+    }
+    const device = this.deviceKinds?.get(node.id);
+    const kind = device?.kind ?? (kindOf(node.flags) === 'apc' ? 'apc' : 'generic');
+    const muted = isOffline(node.flags) || !!device?.stale;
+    const key = `${kind}:${muted}`;
+    let context = this.badgeContexts.get(key);
+    if (!context) {
+      context = drawNodeBadge(kind, muted);
+      this.badgeContexts.set(key, context);
+    }
+    return context;
+  }
+
+  private updateNodeContext(node: ViewNode, graphic: Graphics) {
+    const context = this.nodeContext(node);
+    if (graphic.context === context) {
+      return false;
+    }
+    graphic.context = context;
+    return true;
   }
 
   private linkVisible(link: ViewLink) {
@@ -484,14 +582,30 @@ class PixiTopologyScene implements TopologyScene {
     }
     const from = toWorld(a);
     const to = toWorld(b);
-    graphic
-      .moveTo(from.x, from.y)
-      .lineTo(to.x, to.y)
-      .stroke(link.radio
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    if (this.playerMap && (link.down || link.radio)) {
+      const dashes = Math.min(48, Math.max(1, Math.ceil(Math.hypot(dx, dy) / TILE)));
+      for (let dash = 0; dash < dashes; dash++) {
+        const a = dash / dashes;
+        const b = (dash + 0.55) / dashes;
+        graphic.moveTo(from.x + a * dx, from.y + a * dy)
+          .lineTo(from.x + b * dx, from.y + b * dy);
+      }
+    } else {
+      graphic.moveTo(from.x, from.y).lineTo(to.x, to.y);
+    }
+    if (this.playerMap && !link.down && !link.radio) {
+      graphic.stroke({ width: 2.5, color: 0x42afd9, alpha: 0.15 });
+      graphic.moveTo(from.x, from.y).lineTo(to.x, to.y)
+        .stroke({ width: 0.7, color: 0x87b9ce, alpha: 0.8 });
+    } else {
+      graphic.stroke(link.radio
         ? { width: 1, color: COLORS.air, alpha: 0.55 }
         : link.down
-          ? { width: 1, color: COLORS.silent, alpha: 0.3 }
+          ? { width: 1, color: COLORS.silent, alpha: this.playerMap ? 0.45 : 0.3 }
           : { width: 1.5, color: COLORS.wire, alpha: 0.9 });
+    }
     graphic.visible = this.linkVisible(link);
   }
 
@@ -562,6 +676,68 @@ class PixiTopologyScene implements TopologyScene {
     }
   }
 
+  private clearSignal() {
+    if (!this.signal) {
+      return;
+    }
+    this.signal = null;
+    cancelAnimationFrame(this.signalFrame);
+    window.clearTimeout(this.signalTimeout);
+    this.signalFrame = 0;
+    this.signalTimeout = 0;
+    this.signalGraphic.clear();
+    this.requestRender();
+  }
+
+  private playSignal = (now: number) => {
+    if (now - this.signalStarted >= SIGNAL_MS) {
+      this.clearSignal();
+      return;
+    }
+    this.drawSignal(now);
+    this.signalFrame = requestAnimationFrame(this.playSignal);
+  };
+
+  private drawSignal(now: number) {
+    const signal = this.signal;
+    if (!signal) {
+      return;
+    }
+    const graphic = this.signalGraphic.clear();
+    const node = this.nodes.get(signal.node)?.graphic;
+    if (!node?.visible) {
+      return;
+    }
+    const { x, y } = node.position;
+    const color = SIGNAL_COLORS[signal.outcome];
+    const pixel = 1 / this.view.scale;
+    const progress = this.reducedMotion?.matches ? 0 : Math.max(0, Math.min(1, (now - this.signalStarted) / SIGNAL_MS));
+    const radius = (11 + 23 * progress) * pixel;
+    graphic.circle(x, y, radius)
+      .stroke({ width: 2 * pixel, color, alpha: 0.8 * (1 - progress) });
+    const badgeX = x + 10 * pixel;
+    const badgeY = y - 10 * pixel;
+    const alpha = 1 - progress;
+    graphic.circle(badgeX, badgeY, 5.5 * pixel)
+      .fill({ color: COLORS.background, alpha })
+      .stroke({ width: pixel, color, alpha });
+    if (signal.outcome === 'delivered') {
+      graphic.moveTo(badgeX - 2.5 * pixel, badgeY)
+        .lineTo(badgeX - 0.5 * pixel, badgeY + 2 * pixel)
+        .lineTo(badgeX + 2.8 * pixel, badgeY - 2 * pixel)
+        .stroke({ width: 1.4 * pixel, color, alpha });
+    } else if (signal.outcome === 'rejected') {
+      graphic.moveTo(badgeX - 2 * pixel, badgeY - 2 * pixel)
+        .lineTo(badgeX + 2 * pixel, badgeY + 2 * pixel)
+        .moveTo(badgeX + 2 * pixel, badgeY - 2 * pixel)
+        .lineTo(badgeX - 2 * pixel, badgeY + 2 * pixel)
+        .stroke({ width: 1.4 * pixel, color, alpha });
+    } else {
+      graphic.circle(badgeX, badgeY, 1.6 * pixel).fill({ color, alpha });
+    }
+    this.requestRender();
+  }
+
   /** P13: agents standing on visible nodes: a diamond per entity, coloured by its goal. */
   private drawAgents() {
     const graphic = this.agentGraphic.clear();
@@ -629,6 +805,7 @@ class PixiTopologyScene implements TopologyScene {
         this.labels.delete(key);
       }
     }
+    const pixel = this.playerMap ? 1 / this.view.scale : 1;
     for (const [key, entry] of desired) {
       const node = this.nodes.get(entry.node)?.graphic;
       let label = this.labels.get(key);
@@ -653,7 +830,8 @@ class PixiTopologyScene implements TopologyScene {
         this.labelLayer.addChild(label);
       }
       label.visible = true;
-      label.position.set(node.position.x + 9, node.position.y - 7);
+      label.scale.set(pixel);
+      label.position.set(node.position.x + (this.playerMap ? 12 : 9) * pixel, node.position.y - 7 * pixel);
     }
   }
 
@@ -682,10 +860,15 @@ class PixiTopologyScene implements TopologyScene {
 
   /** Node graphics are drawn at 1 world unit per pixel; this keeps them NODE_PIXELS wide on screen. */
   private nodeScale() {
-    return Math.max(TILE * 0.5, NODE_PIXELS / this.view.scale) / (TILE * 0.5);
+    const half = TILE * 0.5;
+    if (this.playerMap) {
+      return NODE_PIXELS * 1.5 / (half * this.view.scale);
+    }
+    return Math.max(half, NODE_PIXELS / this.view.scale) / half;
   }
 
   private applyView() {
+    const zoomChanged = this.world.scale.x !== this.view.scale;
     this.world.position.set(this.view.x, this.view.y);
     this.world.scale.set(this.view.scale);
     const scale = this.nodeScale();
@@ -693,6 +876,11 @@ class PixiTopologyScene implements TopologyScene {
       entry.graphic.scale.set(scale);
     }
     this.placeMarkers();
+    this.drawActivity();
+    if (this.playerMap && zoomChanged) {
+      this.drawLabels();
+    }
+    this.drawSignal(performance.now());
     this.requestRender();
   }
 
@@ -764,7 +952,7 @@ class PixiTopologyScene implements TopologyScene {
       return;
     }
     const point = screenToWorld(this.view, event.offsetX, event.offsetY);
-    const radius = (NODE_PIXELS * 2) / this.view.scale;
+    const radius = (this.playerMap ? 12 : NODE_PIXELS * 2) / this.view.scale;
     const visible = [...this.nodes.values()].filter(entry => entry.graphic.visible).map(entry => entry.data);
     this.callbacks.onSelect(nearestNode(visible, point.x, point.y, radius)?.id ?? null);
   };
@@ -787,6 +975,7 @@ export const createScene = async (
   host: HTMLElement,
   callbacks: SceneCallbacks,
   isCancelled: () => boolean,
+  playerMap = false,
 ): Promise<TopologyScene> => {
   const app = new Application();
   await app.init({
@@ -794,6 +983,7 @@ export const createScene = async (
     height: Math.max(1, host.clientHeight),
     preference: ['webgl', 'canvas'],
     background: COLORS.background,
+    backgroundAlpha: playerMap ? 0 : 1,
     antialias: true,
     autoStart: false,
     autoDensity: true,
@@ -804,12 +994,15 @@ export const createScene = async (
     throw new SceneCancelled();
   }
   const half = TILE * 0.5;
+  const apcNode = () => playerMap
+    ? new GraphicsContext().roundRect(-half, -half, TILE, TILE, half * 0.25)
+    : new GraphicsContext().rect(-half, -half, TILE, TILE);
   const contexts: Record<Style, GraphicsContext> = {
-    apc: new GraphicsContext().rect(-half, -half, half * 2, half * 2).fill(COLORS.apc),
+    apc: apcNode().fill(COLORS.apc),
     wired: new GraphicsContext().circle(0, 0, half * 0.8).fill(COLORS.wired),
     radio: new GraphicsContext().circle(0, 0, half * 0.8).fill(COLORS.radio),
     node: new GraphicsContext().circle(0, 0, half * 0.6).fill(COLORS.node),
-    apcOffline: new GraphicsContext().rect(-half, -half, half * 2, half * 2).fill(COLORS.offline),
+    apcOffline: apcNode().fill(COLORS.offline),
     nodeOffline: new GraphicsContext().circle(0, 0, half * 0.8).fill(COLORS.offline),
   };
   const world = new Container();
@@ -822,5 +1015,5 @@ export const createScene = async (
   presence.visible = false;
   world.addChild(linkLayer, route, nodeLayer, selection, presence);
   app.stage.addChild(world);
-  return new PixiTopologyScene(app, host, callbacks, world, linkLayer, nodeLayer, route, selection, presence, contexts);
+  return new PixiTopologyScene(app, host, callbacks, world, linkLayer, nodeLayer, route, selection, presence, contexts, playerMap);
 };

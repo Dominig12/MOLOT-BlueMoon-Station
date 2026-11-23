@@ -2,6 +2,8 @@
 /// so the budget leaves room for a station's sensors reporting in the same tick: with 4, the last of
 /// nine publications waited three more fires (Box Station p95 550 ms against 250-350 ms).
 #define NETDM_LANE_INFLIGHT 16
+/// Leave this much room for commands when queued alongside reconciliation or telemetry.
+#define NETDM_LANE_COMMAND_SLOTS 2
 /// Inbox poll cadence while nothing was sent lately; right after a publish or command the
 /// inbox is polled every fire, so a delivery does not wait for the idle cadence.
 #define NETDM_LANE_POLL (1 SECONDS)
@@ -121,6 +123,7 @@
 	/// Own command status queries waiting to be sent: list(endpoint, operation ID, callback).
 	var/list/command_queries = list()
 	var/list/pending_acks = list()
+	var/ack_inflight = FALSE
 	var/next_poll = 0
 	var/poll_inflight = FALSE
 	/// Until then the inbox is polled every fire: something was sent and a delivery is due.
@@ -319,7 +322,7 @@
 	var/datum/netdm_service_endpoint/endpoint = by_node[node]
 	if(!endpoint?.attached_node || length(invokes) >= 64)
 		return null
-	var/list/entry = list("endpoint" = endpoint, "instance" = instance, "command" = command, "key" = idempotency_key,
+	var/list/entry = list("endpoint" = endpoint, "generation" = endpoint.generation, "instance" = instance, "command" = command, "key" = idempotency_key,
 		"arguments" = arguments, "callback" = on_accept, "timeout" = timeout_ticks)
 	invokes += list(entry)
 	return entry
@@ -359,6 +362,7 @@
 	controls.Cut()
 	command_queries.Cut()
 	pending_acks.Cut()
+	ack_inflight = FALSE
 	poll_inflight = FALSE
 	next_poll = 0
 	last_poll_us = 0
@@ -388,6 +392,10 @@
 		return apc ? SSnetdm_observe.apc_node_id(apc) : null
 	return SSnetdm_observe.node_facts[node] ? SSnetdm_observe.node_ids[node] : null
 
+/// Leave one slot for each inbox operation that isn't in flight. Commands and bulk work share the rest.
+/datum/netdm_service_lane/proc/work_limit()
+	return NETDM_LANE_INFLIGHT - !ack_inflight - !poll_inflight
+
 /// Sends what the Host misses, within the in-flight budget. Returns the number of requests sent,
 /// or -1 after a lost reply started a new session.
 /datum/netdm_service_lane/proc/pump(datum/netdm_bridge/v1/staged/bridge)
@@ -397,10 +405,11 @@
 		if(REALTIMEOFDAY >= op["deadline"])
 			SSnetdm_observe.resynchronize("service_ack_timeout in [op["op"]]")
 			return -1
-	if(length(pending_acks))
+	if(length(pending_acks) && !ack_inflight && length(inflight) < NETDM_LANE_INFLIGHT)
 		var/list/batch = pending_acks.Copy(1, min(length(pending_acks), NETDM_LANE_ACK_BATCH) + 1)
 		if(!send(bridge.delivery_ack(batch), list("op" = "ack", "acks" = batch)))
 			return
+		ack_inflight = TRUE
 		pending_acks.Cut(1, length(batch) + 1)
 		.++
 	// The inbox comes before new work: what waits there is already delivered, and only a poll hands it over.
@@ -414,7 +423,9 @@
 				max_poll_gap_us = max(max_poll_gap_us, now - last_poll_us)
 			last_poll_us = now
 			.++
-	while(length(pending_detaches) && length(inflight) < NETDM_LANE_INFLIGHT)
+	var/send_limit = work_limit()
+	var/maintenance_limit = send_limit - min(length(invokes), NETDM_LANE_COMMAND_SLOTS) - (length(command_queries) ? 1 : 0)
+	while(length(pending_detaches) && length(inflight) < maintenance_limit)
 		var/id = pending_detaches[1]
 		var/generation = pending_detaches[id]
 		if(!send(bridge.endpoint_detach(id, generation), list("op" = "detach", "id" = id, "generation" = generation)))
@@ -424,7 +435,7 @@
 	if(length(unsettled))
 		var/list/settled = list()
 		for(var/id in unsettled)
-			if(length(inflight) >= NETDM_LANE_INFLIGHT)
+			if(length(inflight) >= maintenance_limit)
 				break
 			var/datum/netdm_service_endpoint/endpoint = endpoints[id]
 			if(!endpoint)
@@ -438,20 +449,19 @@
 			else if(step == NETDM_LANE_SETTLED)
 				settled += id
 		unsettled -= settled
-		if(length(inflight) >= NETDM_LANE_INFLIGHT)
-			return
-	while(length(publishes) && length(inflight) < NETDM_LANE_INFLIGHT)
+	while(length(publishes) && length(inflight) < maintenance_limit)
 		var/instance = publishes[1]
 		var/list/entry = publishes[instance]
-		publishes.Cut(1, 2)
 		var/datum/netdm_service_endpoint/endpoint = entry["endpoint"]
-		if(!endpoint.registered[instance])
+		if(!endpoint.registered[instance] || endpoint.attached_node != node_id(endpoint.node))
+			publishes.Cut(1, 2)
 			counters["not_ready"]++
 			continue
 		entry["sent_us"] = netdm_now_us()
 		entry["sent_at"] = world.time
 		if(!send(bridge.publish(endpoint.id, endpoint.generation, instance, entry["sequence"], entry["payload"]), list("op" = "publish", "entry" = entry)))
 			return
+		publishes.Cut(1, 2)
 		counters["published"]++
 		hot_until = world.time + NETDM_LANE_HOT
 		.++
@@ -459,7 +469,14 @@
 	if(invoked < 0)
 		return
 	. += invoked
-	while(length(controls) && length(inflight) < NETDM_LANE_INFLIGHT)
+	while(length(command_queries) && length(inflight) < send_limit)
+		var/list/command_query = command_queries[1]
+		var/datum/netdm_service_endpoint/asker = command_query[1]
+		if(!send(bridge.command_status(asker.id, asker.generation, command_query[2]), list("op" = "status", "callback" = command_query[3])))
+			return
+		command_queries.Cut(1, 2)
+		.++
+	while(length(controls) && length(inflight) < send_limit)
 		var/list/control = controls[1]
 		controls.Cut(1, 2)
 		var/request_id = copytext(control[1], 1, 7) == "radio_" ? bridge.radio(control[1], control[2]) : bridge.research(control[1], control[2])
@@ -469,18 +486,11 @@
 			controls.Insert(1, list(control))
 			return
 		.++
-	while(length(command_queries) && length(inflight) < NETDM_LANE_INFLIGHT)
-		var/list/command_query = command_queries[1]
-		command_queries.Cut(1, 2)
-		var/datum/netdm_service_endpoint/asker = command_query[1]
-		if(!send(bridge.command_status(asker.id, asker.generation, command_query[2]), list("op" = "status", "callback" = command_query[3])))
-			return
-		.++
-	while(length(queries) && length(inflight) < NETDM_LANE_INFLIGHT)
+	while(length(queries) && length(inflight) < send_limit)
 		var/list/query = queries[1]
-		queries.Cut(1, 2)
 		if(!send(bridge.delivery_status_message(query[1]), list("op" = "status", "callback" = query[2])))
 			return
+		queries.Cut(1, 2)
 		.++
 
 /// Anything that can receive an inbox item: a subscription or a provider of a service.
@@ -548,11 +558,12 @@
 /// Sends queued commands within the in-flight budget. Returns how many, or -1 when the bridge refused one.
 /datum/netdm_service_lane/proc/send_invokes(datum/netdm_bridge/v1/staged/bridge)
 	. = 0
-	while(length(invokes) && length(inflight) < NETDM_LANE_INFLIGHT)
+	var/limit = work_limit() - (length(command_queries) ? 1 : 0)
+	while(length(invokes) && length(inflight) < limit)
 		var/list/entry = invokes[1]
 		invokes.Cut(1, 2)
 		var/datum/netdm_service_endpoint/endpoint = entry["endpoint"]
-		if(!endpoint.attached_node)
+		if(endpoints[endpoint.id] != endpoint || !endpoint.attached_node || endpoint.generation != entry["generation"] || endpoint.attached_node != node_id(endpoint.node))
 			var/datum/callback/on_detached = entry["callback"]
 			on_detached?.Invoke(entry, list("ok" = FALSE, "error" = "detached"))
 			continue
@@ -593,6 +604,8 @@
 	var/ok = reply["ok"]
 	var/error = reply["error"]
 	switch(op["op"])
+		if("ack")
+			ack_inflight = FALSE
 		if("detach")
 			if(!ok && error != "unknown_endpoint" && error != "stale_generation")
 				pending_detaches[op["id"]] = op["generation"]

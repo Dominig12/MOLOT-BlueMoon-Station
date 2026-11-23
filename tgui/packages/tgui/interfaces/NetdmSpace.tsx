@@ -2,17 +2,20 @@ import { BooleanLike } from 'common/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useBackend } from '../backend';
-import { Box, Button, Dropdown, Input, LabeledList, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
+import { Box, Button, Icon, NoticeBox, ProgressBar, Section, Stack, Table } from '../components';
 import { Window } from '../layouts';
+import { HackState, NetdmBreach } from './NetdmBreach';
+import { NetdmDeliveryActivity } from './NetdmDelivery';
 import { DeviceEntry } from './NetdmDeviceState';
 import { isSelectedPreview, NodeTravelChoice, nodeTravelChoice } from './netdmNodeTravel';
 import { knownAdjacentNodes, NearbyDestination, nearbyDestinations, NearbyNode } from './netdmPresenceNavigation';
 import { NetdmServiceActions } from './NetdmServiceActions';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
+import { NetdmSpaceDock, SpaceTab } from './NetdmSpaceDock';
 import { TopologyCanvas } from './NetdmTopology';
 import { MapChrome } from './NetdmTopology/MapChrome';
 import { countActivityNodes, FLAG_APC, FLAG_UNPOWERED, isOffline, parseView, View } from './NetdmTopology/model';
-import { NodePresenceCounts, SceneFilters, SceneOperator, SceneRoute } from './NetdmTopology/scene';
+import { NodePresenceCounts, SceneFilters, SceneOperator, SceneRoute, SceneSignal } from './NetdmTopology/scene';
 
 // PixiJS resizes its canvas from a ResizeObserver; when the browser coalesces a layout pass it reports
 // "ResizeObserver loop completed with undelivered notifications" as a window error, and TGUI turns any
@@ -27,7 +30,10 @@ if (typeof window !== 'undefined') {
   }, true);
 }
 
-type Service = { instance: string; type: string; node: string; stale: BooleanLike; canControlAlarm?: BooleanLike };
+type Service = {
+  instance: string; type: string; node: string; stale: BooleanLike;
+  canControlAlarm?: BooleanLike; cameraName?: string | null;
+};
 
 type Presence = {
   status: string;
@@ -71,20 +77,6 @@ type LifeOperator = {
   colour: number;
   state: string;
   threat: string;
-};
-
-type HackKey = {
-  node: string;
-  label: string;
-  ttl: number;
-};
-
-type HackState = {
-  status?: string | null;
-  code?: string | null;
-  target?: string | null;
-  keys?: HackKey[] | null;
-  masked?: BooleanLike;
 };
 
 type LifeIncident = {
@@ -142,6 +134,7 @@ type ChatOpening = { previousRead: ChatProgress | null; snapshot: ChatProgress |
 /** DM sends its booleans as 0/1: render them only through `!!`. */
 type Data = {
   title: string;
+  entityRole?: BooleanLike;
   z: number;
   levels: number[];
   nodes: unknown[];
@@ -171,6 +164,7 @@ type Data = {
 
 const FILTERS: SceneFilters = { radio: true, devices: true };
 const FALLBACK_ROWS = 200;
+const EMPTY_ACTIONS: DeviceEntry[] = [];
 const OTHER_PRESENCE_COLOR = '#d19aff';
 const CHAT_LIMIT = 160;
 
@@ -274,18 +268,20 @@ const CHAT_STATUS: Record<string, string> = {
 const NodePanel = (props: {
   view: View; id: string | null; services: Service[]; entries: DeviceEntry[]; activity: LifeEvent[];
   otherPresences: number; travel: NodeTravelChoice; active: boolean; alarmPending: boolean;
-  machinePending: boolean; routePending: boolean; watchedAlarm: string | null;
+  machinePending: boolean; routePending: boolean; watchedAlarm: string | null; hack?: HackState | null;
   onPreview: (instance: string) => void; onTrace: (id: string) => void;
   onWatchAlarm: (instance: string) => void; onReadAlarm: (instance: string) => void;
   onSetAlarm: (instance: string, enabled: boolean) => void; onCommand: (line: string) => void;
+  onHack: (node: string) => void; onHackAnswer: (answer: string) => void; onHackUse: (node: string) => void;
+  onSelectCamera: (instance: string) => void;
 }) => {
   const { id, view, services, entries, activity, otherPresences, travel, active, alarmPending,
     machinePending, routePending, watchedAlarm, onPreview, onTrace, onWatchAlarm, onReadAlarm,
-    onSetAlarm, onCommand } = props;
+    onSetAlarm, onCommand, hack, onHack, onHackAnswer, onHackUse, onSelectCamera } = props;
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const node = id ? view.nodes.get(id) : undefined;
   if (!id || !node) {
-    return <Section title="Узел">Выберите узел на карте.</Section>;
+    return <Box className="NetdmDock__empty">Выберите узел на карте.</Box>;
   }
   const here = services.filter(service => service.node === id);
   const current = here.find(service => service.instance === selectedService) ??
@@ -301,120 +297,113 @@ const NodePanel = (props: {
     stale: 'Сведения о точке входа устарели. Обновите карту.',
     ready: 'Точка входа известна. Маршрут нужно проверить.',
   }[travel.state];
-  const serviceName = (service: Service) =>
-    service.type === 'atmos.alarm' ? 'Датчик атмосферы'
-      : service.type === 'network.shell' ? 'Оболочка узла' : service.type.replace(/\./g, ' ');
+  const serviceName = (service: Service) => ({
+    'atmos.alarm': 'Панель атмосферы',
+    'atmos.telemetry': 'Датчик атмосферы',
+    'camera.access': 'Камера',
+    'machine.control': 'Управление питанием',
+    'machine.door': 'Шлюз',
+    'network.shell': 'Оболочка узла',
+    'pda.messenger': 'Сервер сообщений',
+    'research.server': 'Сервер исследований',
+  }[service.type] ?? service.type.replace(/\./g, ' '));
   return (
-    <Section title={`Узел ${id}`}
-      buttons={(
-        <>
-          {travel.state === 'ready' && (
-            <Button icon="route" color="good" disabled={!active || routePending}
-              tooltip="Запросить маршрут у Host. Переход подтверждается отдельно."
-              onClick={() => travel.instance && onPreview(travel.instance)}>
-              Проверить переход · G
+    <>
+      <div className="NetdmDock__card NetdmDock__node">
+        <div className="NetdmDock__meta">
+          <strong>{node.flags & FLAG_APC ? 'АПЦ' : 'Устройство'}</strong>
+          <span>{node.x}, {node.y}{otherPresences > 0 ? ` · ◆ ${otherPresences}` : ''}</span>
+        </div>
+        <Box color={stale ? 'average' : travel.state === 'here' ? 'good' : 'label'}>
+          {stale ? 'Сведения устарели' : travelHint}
+        </Box>
+        {travel.state === 'ready' && (
+          <div className="NetdmDock__actions">
+            <Button icon="route" disabled={!active || routePending}
+              onClick={() => travel.instance && onPreview(travel.instance)}>Проверить переход
             </Button>
-          )}
-          <Button icon="signal" disabled={!active} onClick={() => onTrace(id)}>
-            Проверить связь
-          </Button>
-        </>
-      )}>
-      <LabeledList>
-        <LabeledList.Item label="Тип">{node.flags & FLAG_APC ? 'ретранслятор (АПЦ)' : 'устройство'}</LabeledList.Item>
-        <LabeledList.Item label="Сведения">{stale ? 'устарели' : 'свежие'}</LabeledList.Item>
-        <LabeledList.Item label="Клетка">{node.x}, {node.y}</LabeledList.Item>
-        {otherPresences > 0 && (
-          <LabeledList.Item label="Чужие присутствия">
-            <Box color={OTHER_PRESENCE_COLOR}>◆ {otherPresences}</Box>
-          </LabeledList.Item>
-        )}
-      </LabeledList>
-      <Box color={travel.state === 'here' ? 'good' : 'label'} mt={0.5}>{travelHint}</Box>
-      <div className="NetdmSpaceContext">
-        <Box bold mb={0.5}>Обнаруженные сервисы · {here.length}</Box>
-        {here.length === 0 ? (
-          <Box color="label">Известных сервисов нет. Можно обновить карту сканированием.</Box>
-        ) : here.length > 8 ? (
-          <Dropdown width="100%" selected={current?.instance}
-            options={here.map(service => ({
-              value: service.instance,
-              displayText: `${serviceName(service)} · ${service.instance}${service.stale ? ' (устарел)' : ''}`,
-            }))}
-            onSelected={(instance: string) => setSelectedService(instance)} />
-        ) : (
-          <Stack wrap>
-            {here.map(service => (
-              <Stack.Item key={service.instance}>
-                <Button selected={current?.instance === service.instance}
-                  tooltip={`${service.instance} · ${service.type}${service.stale ? ' · устарел' : ''}`}
-                  onClick={() => setSelectedService(service.instance)}>
-                  {serviceName(service)}{service.stale ? ' · устарел' : ''}
-                </Button>
-              </Stack.Item>
-            ))}
-          </Stack>
-        )}
-        {!!current && (
-          <div className="NetdmSpaceContext__selected">
-            <Box bold>{serviceName(current)}</Box>
-            <Box color="label" style={{ overflowWrap: 'anywhere' }}>
-              {current.instance} · {current.type}{current.stale ? ' · устарел' : ''}
-            </Box>
-            {current.type === 'atmos.alarm' && (
-              <Stack wrap mt={1}>
-                <Stack.Item>
-                  <Button icon="tachometer-alt" disabled={disabled || alarmPending}
-                    onClick={() => onReadAlarm(current.instance)}>
-                    Замер
-                  </Button>
-                </Stack.Item>
-                <Stack.Item>
-                  <Button icon="bell" selected={watchedAlarm === current.instance}
-                    disabled={disabled || watchedAlarm === current.instance}
-                    onClick={() => onWatchAlarm(current.instance)}>
-                    {watchedAlarm === current.instance ? 'Под наблюдением' : 'Следить'}
-                  </Button>
-                </Stack.Item>
-                {!!current.canControlAlarm && (
-                  <>
-                    <Stack.Item>
-                      <Button.Confirm icon="exclamation-circle" content="Поднять тревогу"
-                        confirmContent="Поднять тревогу панели?"
-                        disabled={disabled || machinePending}
-                        onClick={() => onSetAlarm(current.instance, true)} />
-                    </Stack.Item>
-                    <Stack.Item>
-                      <Button.Confirm icon="bell-slash" content="Снять тревогу"
-                        confirmContent="Снять тревогу панели?"
-                        disabled={disabled || machinePending}
-                        onClick={() => onSetAlarm(current.instance, false)} />
-                    </Stack.Item>
-                  </>
-                )}
-              </Stack>
-            )}
-            {current.type === 'atmos.alarm' && active && !disabled && !current.canControlAlarm && (
-              <Box color="label" mt={0.5}>Для управления нужна разблокированная панель и доступ.</Box>
-            )}
-            <NetdmServiceActions key={current.instance} instance={current.instance}
-              type={current.type} entries={entries} disabled={disabled} onCommand={onCommand} />
-          </div>
-        )}
-        {recent.length > 0 && (
-          <div className="NetdmSpaceContext__activity">
-            <Box bold>Известная активность узла</Box>
-            {recent.map(item => (
-              <Box key={`${item.seq}-${item.kind}-${item.node}`} color="label" mt={0.5}
-                style={{ overflowWrap: 'anywhere' }}>
-                {item.name ? `${item.name}: ` : ''}{item.text || item.kind}
-              </Box>
-            ))}
-            <Box color="label" mt={0.5}>История событий, не гарантия текущего состояния.</Box>
           </div>
         )}
       </div>
-    </Section>
+      {current ? (
+        <div className="NetdmDock__card NetdmSpaceContext">
+          {here.length > 1 ? (
+            <label className="NetdmDock__field">
+              <span>Сервис</span>
+              <select value={current.instance} onChange={event => setSelectedService(event.currentTarget.value)}>
+                {here.map(service => (
+                  <option key={service.instance} value={service.instance}>
+                    {service.cameraName || serviceName(service)}{service.stale ? ' · устарел' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : <strong>{current.cameraName || serviceName(current)}</strong>}
+          <div className="NetdmDock__mono">{current.instance}{current.stale ? ' · устарел' : ''}</div>
+          {!!current.cameraName && (
+            <div className="NetdmDock__actions">
+              <Button icon="video" disabled={stale || !!current.stale}
+                onClick={() => onSelectCamera(current.instance)}>Подключить на консоли
+              </Button>
+            </div>
+          )}
+          {current.type === 'camera.access' && !current.cameraName && (
+            <Box color="label">Изображение доступно на охранной консоли с доступом к этой камере.</Box>
+          )}
+          {current.type === 'atmos.alarm' && (
+            <>
+              <div className="NetdmDock__actions">
+                <Button icon="tachometer-alt" disabled={disabled || alarmPending}
+                  onClick={() => onReadAlarm(current.instance)}>Замер
+                </Button>
+                <Button icon="bell" selected={watchedAlarm === current.instance}
+                  disabled={disabled || watchedAlarm === current.instance}
+                  onClick={() => onWatchAlarm(current.instance)}>
+                  {watchedAlarm === current.instance ? 'Под наблюдением' : 'Следить'}
+                </Button>
+              </div>
+              {!!current.canControlAlarm && (
+                <details className="NetdmDock__disclosure">
+                  <summary>Управление тревогой</summary>
+                  <div className="NetdmDock__actions">
+                    <Button.Confirm icon="exclamation-circle" content="Поднять тревогу"
+                      confirmContent="Поднять тревогу панели?"
+                      disabled={disabled || machinePending} onClick={() => onSetAlarm(current.instance, true)} />
+                    <Button.Confirm icon="bell-slash" content="Снять тревогу"
+                      confirmContent="Снять тревогу панели?"
+                      disabled={disabled || machinePending} onClick={() => onSetAlarm(current.instance, false)} />
+                  </div>
+                </details>
+              )}
+            </>
+          )}
+          <NetdmServiceActions key={current.instance} instance={current.instance}
+            type={current.type} entries={entries} disabled={disabled} onCommand={onCommand} />
+        </div>
+      ) : <Box color="label" className="NetdmDock__card">Известных сервисов пока нет.</Box>}
+      {(node.flags & FLAG_APC) !== 0 && travel.state === 'here' && (
+        <div className="NetdmDock__card NetdmBreach">
+          <NetdmBreach hack={hack} selected={id} enabled={active && !stale}
+            onStart={() => onHack(id)} onAnswer={onHackAnswer} onUse={() => onHackUse(id)} />
+        </div>
+      )}
+      {recent.length > 0 && (
+        <div className="NetdmDock__card">
+          <strong>Активность узла</strong>
+          {recent.map(item => (
+            <Box key={`${item.seq}-${item.kind}-${item.node}`} className="NetdmDock__event" color="label">
+              {item.name ? `${item.name}: ` : ''}{item.text || item.kind}
+            </Box>
+          ))}
+        </div>
+      )}
+      <details className="NetdmDock__card NetdmDock__disclosure">
+        <summary>Диагностика</summary>
+        <div className="NetdmDock__actions">
+          <Button icon="signal" disabled={!active} onClick={() => onTrace(id)}>Проверить связь</Button>
+        </div>
+      </details>
+    </>
   );
 };
 
@@ -507,10 +496,7 @@ const NearbyMovementPanel = (props: {
   onInspect: (node: string) => void;
   onPreview: (destination: NearbyDestination) => void;
 }) => (
-  <Section title="Соседние узлы">
-    <Box color="label" mb={0.5}>
-      Окружение узла {props.anchor ?? '—'}. Осмотр не перемещает персонажа. ← / → выбирают соседей вашего присутствия.
-    </Box>
+  <Section title={props.anchor ? `Соседи узла ${props.anchor}` : 'Соседние узлы'}>
     {props.nodes.length === 0 ? (
       <Box color="label">Известных соседей нет. Можно сканировать сеть.</Box>
     ) : (
@@ -551,9 +537,6 @@ const NearbyMovementPanel = (props: {
         })}
       </Stack>
     )}
-    <Box color="label" mt={0.5}>
-      Маршрут доступен только для обнаруженной сетевой оболочки рядом с присутствием.
-    </Box>
   </Section>
 );
 
@@ -746,9 +729,9 @@ const firstUnreadMessage = (chat: NodeChat, readThrough: number, openedThrough: 
 const isAtChatEnd = (list: HTMLDivElement) => list.scrollHeight - list.scrollTop - list.clientHeight <= 2;
 
 const NodeChatPanel = (props: { chat: NodeChat | null; state?: string; firstUnread: string | null;
-  onJournal: () => void; onRead: (visit: string, received: number) => void; onSend: (node: string, text: string) => void;
+  onRead: (visit: string, received: number) => void; onSend: (node: string, text: string) => void;
   onChannel: () => void }) => {
-  const { chat, state, firstUnread, onJournal, onRead, onSend, onChannel } = props;
+  const { chat, state, firstUnread, onRead, onSend, onChannel } = props;
   const [draft, setDraft] = useState('');
   const [heldHistory, setHeldHistory] = useState<{ chat: NodeChat; firstUnread: string | null } | null>(null);
   const submitted = useRef<string | null>(null);
@@ -820,84 +803,60 @@ const NodeChatPanel = (props: { chat: NodeChat | null; state?: string; firstUnre
   };
   const unavailable = state === 'active' ? 'Подключаемся к чату…' : CHAT_STATUS[state ?? ''] ?? 'Войдите в сеть, чтобы открыть чат узла.';
   return (
-    <>
-      <Stack.Item grow position="relative">
-        <Section
-          fill
-          scrollable
-          scrollableRef={scrollable}
-          onScroll={handleScroll}
-          title={chat?.channel ? 'Общий канал сети' : chat ? `Чат узла ${chat.node}` : 'Чат узла'}
-          buttons={(
-            <>
-              <Button icon={chat?.channel ? 'map-marker-alt' : 'satellite-dish'} onClick={onChannel}>
-                {chat?.channel ? 'К узлу' : 'Канал'}
-              </Button>
-              <Button icon="list" onClick={onJournal}>Журнал</Button>
-            </>
-          )}>
+    <div className="NetdmDock__chat">
+      <div className="NetdmDock__chatToolbar">
+        <Button icon={chat?.channel ? 'map-marker-alt' : 'satellite-dish'} disabled={!chat} onClick={onChannel}>
+          {chat?.channel ? 'К чату узла' : 'Общий канал'}
+        </Button>
+      </div>
+      <div className="NetdmDock__chatViewport">
+        <div className="NetdmDock__chatHistory" ref={scrollable} onScroll={handleScroll}>
           {!chat && <Box color="label">{unavailable}</Box>}
           {messages?.length === 0 && <Box color="label">Сообщений пока нет.</Box>}
           {messages?.map(message => (
-            <Box key={message.id} data-chat-message-id={message.id} mb={0.5} style={{ overflowWrap: 'anywhere' }}>
+            <div key={message.id} data-chat-message-id={message.id}>
               {message.id === dividerMessage && (
-                <div ref={unreadDivider} role="separator" aria-label="Новые сообщения">
-                  <Box bold color="average" my={0.5} pt={0.5} style={{ borderTop: '1px solid currentColor' }}>
-                    Новые сообщения
-                  </Box>
+                <div ref={unreadDivider} className="NetdmDock__divider" role="separator" aria-label="Новые сообщения">
+                  Новые сообщения
                 </div>
               )}
-              <Box color={message.own ? 'good' : 'label'}>{message.own ? 'Вы' : message.sender}</Box>
-              {message.text}
-            </Box>
+              <div className="NetdmDock__message" data-own={!!message.own}>
+                <strong>{message.own ? 'Вы' : message.sender}</strong>
+                <div>{message.text}</div>
+              </div>
+            </div>
           ))}
-        </Section>
-        <Box position="absolute" bottom={0.75} right={0.75} style={{ zIndex: 1 }} aria-live="polite">
-          {newCount > 0 && (
-            <Button
-              icon="arrow-down"
-              color="average"
-              aria-label={`К новым сообщениям, непрочитанных ${newCount}`}
-              onClick={showNewMessages}>
-              К новым сообщениям · {newCount > 99 ? '99+' : newCount}
+        </div>
+        {newCount > 0 && (
+          <div className="NetdmDock__jump" aria-live="polite">
+            <Button icon="arrow-down" aria-label={`К новым сообщениям, непрочитанных ${newCount}`}
+              onClick={showNewMessages}>К новым · {newCount > 99 ? '99+' : newCount}
             </Button>
-          )}
-        </Box>
-      </Stack.Item>
+          </div>
+        )}
+      </div>
       {!!chat && (
-        <Stack.Item>
-          <Section>
-            <Stack align="center">
-              <Stack.Item grow>
-                <div className="Input Input--fluid">
-                  <div className="Input__baseline" aria-hidden="true">.</div>
-                  <input
-                    className="Input__input"
-                    aria-label="Сообщение в чат узла"
-                    autoComplete="off"
-                    maxLength={CHAT_LIMIT}
-                    placeholder={chat?.channel ? 'Сообщение в общий канал' : 'Сообщение на узел'}
-                    value={draft}
-                    onChange={event => setDraft(event.currentTarget.value)}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                        event.preventDefault();
-                        send();
-                      }
-                    }} />
-                </div>
-              </Stack.Item>
-              <Stack.Item>
-                <Button icon="paper-plane" disabled={pending || !text} onClick={send}>Отправить</Button>
-              </Stack.Item>
-            </Stack>
-            {!!chat.status && CHAT_STATUS[chat.status] && (
-              <Box mt={0.5} color={pending || chat.status === 'sent' ? 'label' : 'average'}>{CHAT_STATUS[chat.status]}</Box>
-            )}
-          </Section>
-        </Stack.Item>
+        <div className="NetdmDock__compose">
+          <div className="NetdmDock__composer">
+            <input aria-label="Сообщение в чат узла" autoComplete="off" maxLength={CHAT_LIMIT}
+              placeholder={chat.channel ? 'В общий канал' : 'Сообщение на узел'}
+              value={draft} onChange={event => setDraft(event.currentTarget.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  send();
+                }
+              }} />
+            <button type="button" aria-label="Отправить сообщение" disabled={pending || !text} onClick={send}>
+              <Icon name="paper-plane" />
+            </button>
+          </div>
+          {!!chat.status && CHAT_STATUS[chat.status] && (
+            <Box mt={0.5} color={pending || chat.status === 'sent' ? 'label' : 'average'}>{CHAT_STATUS[chat.status]}</Box>
+          )}
+        </div>
       )}
-    </>
+    </div>
   );
 };
 
@@ -933,217 +892,120 @@ const LIFE_KIND: Record<string, string> = {
   persona: 'личность',
 };
 
-/** P13: the operator's identity, the dive switch and the life of the network. */
-const NetworkLifePanel = (props: {
+const NetworkLifePanel = ({ persona, bots, operators, immersed, enabled, onPersona, onImmerse, onSummon }: {
   persona: Persona | null;
   bots: LifeBot[];
-  activity: LifeEvent[];
   operators: LifeOperator[];
-  incidents: LifeIncident[];
   immersed: BooleanLike;
   enabled: BooleanLike;
   onPersona: (name: string, signature: string, status: string, colour: number) => void;
   onImmerse: () => void;
-  onSurface: () => void;
   onSummon: (goal: string) => void;
 }) => {
-  const { persona, bots, activity, operators, incidents, immersed, enabled, onPersona, onImmerse, onSurface, onSummon } = props;
   const [summonLabel, setSummonLabel] = useState('Курьер');
   const [name, setName] = useState(persona?.name ?? '');
   const [signature, setSignature] = useState(persona?.signature ?? '');
   const [status, setStatus] = useState(persona?.status ?? '');
   const [colour, setColour] = useState(persona?.colour ?? 0);
   return (
-    <Section
-      title="Личность и сеть"
-      buttons={(
-        <Button
-          icon={immersed ? 'sign-out-alt' : 'brain'}
-          color={immersed ? 'bad' : 'good'}
-          disabled={!enabled || immersed === 1}
-          tooltip={enabled ? undefined : 'Погружение выключено на этом раунде'}
-          onClick={onImmerse}>
-          {immersed ? 'Выйти' : 'Погрузиться'}
-        </Button>
-      )}>
-      <LabeledList>
-        <LabeledList.Item label="Позывной">
-          <Input
-            value={name}
-            maxLength={24}
-            width="12rem"
-            placeholder="до 24 символов"
-            onChange={(e, value) => setName(value)} />
-        </LabeledList.Item>
-        <LabeledList.Item label="Знак">
-          <Input
-            value={signature}
-            maxLength={4}
-            width="5rem"
-            onChange={(e, value) => setSignature(value)} />
-        </LabeledList.Item>
-        <LabeledList.Item label="Должность">
-          <Box color="label">{persona?.role || 'определится при входе в сеть'}</Box>
-        </LabeledList.Item>
-        <LabeledList.Item label="Статус">
-          <Input
-            value={status}
-            maxLength={32}
-            width="20rem"
-            placeholder="строка о себе, до 32 символов"
-            onChange={(e, value) => setStatus(value)} />
-        </LabeledList.Item>
-        <LabeledList.Item label="Цвет">
-          <Stack>
-            {COLOURS.map((entry, index) => (
-              <Stack.Item key={entry}>
-                <Button
-                  selected={colour === index}
-                  color="transparent"
-                  style={{ backgroundColor: entry, width: '1.1rem', minWidth: '1.1rem', height: '1.1rem' }}
-                  tooltip={`Цвет ${index}`}
-                  onClick={() => setColour(index)} />
-              </Stack.Item>
-            ))}
-          </Stack>
-        </LabeledList.Item>
-        <LabeledList.Item label="Сохранить">
-          <Button icon="save" onClick={() => onPersona(name, signature, status, colour)}>
-            Применить
-          </Button>
-        </LabeledList.Item>
-        <LabeledList.Item label="Вызов агента">
-          <Dropdown
-            width="9rem"
-            selected={summonLabel}
-            options={['Курьер', 'Инженер', 'Страж', 'Наблюдатель', 'Архивист']}
-            onSelected={value => setSummonLabel(value)} />
-          <Button
-            ml={0.5}
-            icon="user-plus"
-            disabled={!enabled}
-            tooltip={enabled ? 'Вызвать сетевого агента к вашему узлу' : 'Слой сетевой жизни выключен'}
-            onClick={() => onSummon(SUMMON_GOALS[summonLabel] ?? 'courier')}>
-            Вызвать
-          </Button>
-        </LabeledList.Item>
-      </LabeledList>
-      <Box mt={0.5} color="label">
-        Агенты в сети: {bots.length === 0 ? 'не обнаружены' : bots.map(bot => (
-          `${bot.signature || '?'} ${bot.name} (${GOAL_TEXT[bot.goal] ?? bot.goal})`
-        )).join(', ')}
-      </Box>
-      <Box mt={0.5} color="label">
-        Операторы в сети: {operators.length === 0 ? 'только вы' : operators.map(operator => (
-          `${operator.role ? `${operator.role}: ` : ''}${operator.name || 'оператор'}${operator.status ? ` — ${operator.status}` : ''}`
-        )).join(', ')}
-      </Box>
-      <Box mt={0.5} color="label" fontSize="0.9em">
-        Легенда: ■ АПЦ · ● узел · ◯ оператор · ◆ агент · гало вокруг — недавняя активность
-      </Box>
-      <Section title="Происшествия сети" mt={0.5} scrollable height="6rem">
-        {incidents.length === 0 && <Box color="label">Сеть спокойна.</Box>}
-        {incidents.slice(-8).reverse().map((incident, index) => (
-          <Box key={`${incident.at}-${index}`} color={incident.kind === 'sabotage' || incident.kind === 'intrusion' ? 'average' : 'label'}>
-            {`${String(Math.floor(incident.at / 60)).padStart(2, '0')}:${String(incident.at % 60).padStart(2, '0')}`}
-            {' · '}
-            {incident.text}
-          </Box>
+    <>
+      <div className="NetdmDock__card">
+        <strong>{persona?.name || 'Сетевая личность'}</strong>
+        {!!persona?.role && <Box color="label">{persona.role}</Box>}
+        {!!persona?.status && <div>{persona.status}</div>}
+        {!!enabled && !immersed && (
+          <div className="NetdmDock__actions">
+            <Button icon="brain" onClick={onImmerse}>Погрузиться</Button>
+          </div>
+        )}
+      </div>
+      <details className="NetdmDock__card NetdmDock__disclosure">
+        <summary>Настроить профиль</summary>
+        <div className="NetdmDock__profile">
+          <label className="NetdmDock__field">
+            <span>Позывной</span>
+            <input value={name} maxLength={24} onChange={event => setName(event.currentTarget.value)} />
+          </label>
+          <label className="NetdmDock__field">
+            <span>Знак</span>
+            <input value={signature} maxLength={4} onChange={event => setSignature(event.currentTarget.value)} />
+          </label>
+          <label className="NetdmDock__field NetdmDock__wide">
+            <span>Статус</span>
+            <input value={status} maxLength={32} onChange={event => setStatus(event.currentTarget.value)} />
+          </label>
+        </div>
+        <div className="NetdmDock__swatches" aria-label="Цвет профиля">
+          {COLOURS.map((entry, index) => (
+            <button key={entry} type="button" aria-label={`Цвет ${index + 1}`} aria-pressed={colour === index}
+              style={{ backgroundColor: entry }} onClick={() => setColour(index)} />
+          ))}
+        </div>
+        <div className="NetdmDock__actions">
+          <Button icon="save" onClick={() => onPersona(name, signature, status, colour)}>Сохранить</Button>
+        </div>
+      </details>
+      <div className="NetdmDock__card">
+        <strong>Агенты и операторы</strong>
+        {bots.length === 0 && operators.length === 0 && <Box color="label">Других участников поблизости нет.</Box>}
+        {bots.map(bot => (
+          <div key={bot.bot} className="NetdmDock__event">
+            <strong>{bot.name}</strong> <Box inline color="label">· {GOAL_TEXT[bot.goal] ?? bot.goal}</Box>
+          </div>
         ))}
-      </Section>
-      <Section title="Активность сети" mt={0.5} scrollable height="8rem">
-        {activity.length === 0 && <Box color="label">Пока ничего не происходит.</Box>}
-        {[...activity].reverse().map(event => (
-          <Box key={event.seq}>
-            <Box as="span" color="label">[{LIFE_KIND[event.kind] ?? event.kind}] </Box>
-            {event.text}
-          </Box>
+        {operators.map((operator, index) => (
+          <div key={`${operator.node}-${index}`} className="NetdmDock__event">
+            <strong>{operator.name || 'Оператор'}</strong>
+            {!!operator.role && <Box inline color="label"> · {operator.role}</Box>}
+            {!!operator.status && <div>{operator.status}</div>}
+          </div>
         ))}
-      </Section>
-    </Section>
+      </div>
+      {!!enabled && (
+        <details className="NetdmDock__card NetdmDock__disclosure">
+          <summary>Вызвать агента</summary>
+          <div className="NetdmDock__paired">
+            <label className="NetdmDock__field">
+              <span>Роль агента</span>
+              <select value={summonLabel} onChange={event => setSummonLabel(event.currentTarget.value)}>
+                {Object.keys(SUMMON_GOALS).map(goal => <option key={goal}>{goal}</option>)}
+              </select>
+            </label>
+            <Button icon="user-plus" onClick={() => onSummon(SUMMON_GOALS[summonLabel] ?? 'courier')}>Вызвать</Button>
+          </div>
+        </details>
+      )}
+    </>
   );
 };
 
-const HackPanel = (props: { hack: HackState | null; selected: string | null }) => {
-  const { act } = useBackend();
-  const [answer, setAnswer] = useState('');
-  const hack = props.hack;
-  const actRef = useRef(act);
-  actRef.current = act;
-  useEffect(() => {
-    // One-shot load: `act` may get a new identity on every backend update, and re-running this
-    // effect on each render would hammer the Host with key queries for no reason.
-    actRef.current('hack_keys');
-  }, []);
-  const keys = hack?.keys ?? [];
-  return (
-    <Section title="Взлом и доступ">
-      <LabeledList>
-        <LabeledList.Item label="Анонимность">
-          <Button
-            icon={hack?.masked ? 'user-secret' : 'user'}
-            selected={!!hack?.masked}
-            onClick={() => act('hack_mask')}>
-            {hack?.masked ? 'личность скрыта' : 'личность видна'}
-          </Button>
-        </LabeledList.Item>
-        <LabeledList.Item label="Цель">
-          <Box inline color={props.selected ? 'label' : 'average'}>
-            {props.selected ? `узел ${props.selected}` : 'выберите узел на карте'}
-          </Box>
-          <Button
-            ml={1}
-            icon="user-secret"
-            disabled={!props.selected}
-            onClick={() => act('hack_start', { node: props.selected })}>
-            Взломать
-          </Button>
-        </LabeledList.Item>
-        {!!hack?.code && (
-          <LabeledList.Item label="Код взлома">
-            <Box inline bold color="average">{hack.code}</Box>
-            <Input
-              ml={1}
-              width="8rem"
-              value={answer}
-              maxLength={16}
-              placeholder="код из окна"
-              onChange={(event, value) => setAnswer(value)} />
-            <Button
-              ml={0.5}
-              icon="check"
-              disabled={!answer.trim()}
-              onClick={() => {
-                act('hack_answer', { code: answer });
-                setAnswer('');
-              }}>
-              Подтвердить
-            </Button>
-          </LabeledList.Item>
-        )}
-        <LabeledList.Item label="Украденные доступы">
-          {keys.length === 0 && <Box color="label">нет</Box>}
-          {keys.map(key => (
-            <Box key={key.node} mb={0.25}>
-              <Box inline>{key.label}</Box>
-              <Box inline color="label" ml={1}>{key.ttl} с</Box>
-              <Button
-                ml={1}
-                icon="bolt"
-                disabled={!key.node}
-                onClick={() => act('hack_use', { node: key.node })}>
-                Питание
-              </Button>
-            </Box>
-          ))}
-        </LabeledList.Item>
-      </LabeledList>
-      <Box mt={0.5} color="label" fontSize="0.9em">
-        Взлом: код виден только вам и живёт 15 секунд; провал поднимает тревогу и перезарядку.
-      </Box>
-    </Section>
-  );
-};
+const NetworkEventHistory = ({ activity, incidents }: { activity: LifeEvent[]; incidents: LifeIncident[] }) => (
+  <>
+    {incidents.length > 0 && (
+      <Section title="Происшествия">
+        {incidents.slice(-8).reverse().map((incident, index) => (
+          <div key={`${incident.at}-${index}`} className="NetdmDock__event">
+            <span className="NetdmDock__mono">
+              {`${String(Math.floor(incident.at / 60)).padStart(2, '0')}:${String(incident.at % 60).padStart(2, '0')}`}
+            </span>
+            {' · '}{incident.text}
+          </div>
+        ))}
+      </Section>
+    )}
+    {activity.length > 0 && (
+      <Section title="Активность сети">
+        {activity.slice(-12).reverse().map(event => (
+          <div key={event.seq} className="NetdmDock__event">
+            <span className="NetdmDock__mono">{LIFE_KIND[event.kind] ?? event.kind}</span>
+            {' · '}{event.text}
+          </div>
+        ))}
+      </Section>
+    )}
+  </>
+);
+
 // TODO(netdm-ui): split this stateful screen into feature panels and dedicated hooks.
 // eslint-disable-next-line complexity
 export const NetdmSpace = () => {
@@ -1161,13 +1023,15 @@ export const NetdmSpace = () => {
   const [showMapLegend, setShowMapLegend] = useState(false);
   const [line, setLine] = useState('');
   const [advanced, setAdvanced] = useState(false);
+  const [sideTab, setSideTab] = useState<SpaceTab>('node');
   const [chatOpening, setChatOpening] = useState<ChatOpening | null>(null);
   const [readChat, setReadChat] = useState<ChatProgress | null>(null);
-  const showChat = chatOpening !== null;
+  const showChat = sideTab === 'chat';
   const presence = data.presence;
   const life = data.life ?? { bots: [], activity: [], operators: [] };
   const persona = data.persona ?? presence?.persona ?? null;
   const immersed = !!data.immersed;
+  const entityRole = !!data.entityRole;
   const activity = useMemo(() => countActivityNodes(life.activity), [life.activity]);
   const agents = useMemo(() => life.bots.map(bot => ({ node: bot.node, goal: bot.goal, label: bot.name })), [life.bots]);
   const operators: SceneOperator[] = useMemo(() => (life.operators ?? []).map(operator => ({
@@ -1182,6 +1046,52 @@ export const NetdmSpace = () => {
   const machinePending = machineCommand?.status === 'sending' || machineCommand?.status === 'sent';
   const inside = !!presence?.presence && presence.state !== 'ended';
   const active = inside && presence.state === 'active';
+  const actRef = useRef(act);
+  actRef.current = act;
+  useEffect(() => {
+    if (active) {
+      actRef.current('hack_keys');
+    }
+  }, [active]);
+  const entries = data.actionEntries ?? EMPTY_ACTIONS;
+  const [signal, setSignal] = useState<SceneSignal | null>(null);
+  const shownSignals = useRef(new Map<string, SceneSignal['outcome']>());
+  useEffect(() => {
+    const signals = new Map<string, SceneSignal['outcome']>();
+    let changed: SceneSignal | null = null;
+    for (const entry of entries) {
+      const delivery = entry.delivery;
+      if (!delivery) continue;
+      const node = data.services.find(service => service.instance === delivery.instance)?.node;
+      if (!node || !view.nodes.has(node)) continue;
+      const id = `${entry.id}:${delivery.operation}`;
+      const outcome = delivery.state === 'not_delivered' ? 'rejected' : delivery.state;
+      signals.set(id, outcome);
+      if (shownSignals.current.get(id) !== outcome) {
+        changed = { id, node, outcome };
+      }
+    }
+    if (machineCommand?.operation && machineCommand.status !== 'sending') {
+      const node = data.services.find(service => service.instance === machineCommand.instance)?.node;
+      if (node && view.nodes.has(node)) {
+        const id = `alarm:${machineCommand.operation}`;
+        const outcome = {
+          sent: 'queued',
+          applied: 'delivered',
+          rejected: 'rejected',
+          not_delivered: 'rejected',
+          no_receipt: 'applied',
+          unknown: 'unknown',
+        }[machineCommand.status] as SceneSignal['outcome'];
+        signals.set(id, outcome);
+        if (shownSignals.current.get(id) !== outcome) {
+          changed = { id, node, outcome };
+        }
+      }
+    }
+    shownSignals.current = signals;
+    if (changed) setSignal(changed);
+  }, [entries, data.services, view.nodes, machineCommand]);
   const chat = active ? data.chat ?? null : null;
   const visit = chat?.visit;
   const received = chat?.received ?? 0;
@@ -1193,6 +1103,21 @@ export const NetdmSpace = () => {
   const firstUnread = chatOpening && chat && openingSnapshot && openingSnapshot.visit === chat.visit
     ? firstUnreadMessage(chat, readAtOpening, openingSnapshot.received)
     : null;
+  const selectTab = (tab: SpaceTab) => {
+    if (tab === sideTab) return;
+    setSideTab(tab);
+    setChatOpening(tab === 'chat'
+      ? { previousRead: readChat, snapshot: visit ? { visit, received } : null }
+      : null);
+  };
+  const inspectMap = (node: string | null) => {
+    setSelected(node);
+    if (node && !showChat) selectTab('node');
+  };
+  const requestRoute = useCallback((instance: string) => {
+    setSideTab('route');
+    act('preview_move', { to: instance });
+  }, [act]);
   const markChatRead = useCallback((visit: string, received: number) => {
     setReadChat(previous => (
       previous?.visit === visit && previous.received >= received ? previous : { visit, received }
@@ -1288,7 +1213,7 @@ export const NetdmSpace = () => {
       } else if (event.key.toLowerCase() === 'g' && active && !moving && !routePending &&
                  selected && selectedTravel.state === 'ready' && selectedTravel.instance) {
         event.preventDefault();
-        act('preview_move', { to: selectedTravel.instance });
+        requestRoute(selectedTravel.instance);
       } else if (event.key === 'Enter' && canMove && !moving &&
                  isSelectedPreview(selectedTravel, preview) && preview?.target) {
         // Enter only confirms a route returned by Host for this exact selected
@@ -1300,7 +1225,7 @@ export const NetdmSpace = () => {
     window.addEventListener('keydown', keyboard);
     return () => window.removeEventListener('keydown', keyboard);
   }, [inside, showChat, focusHome, focusKnown, homeNeighbors, active, moving, routePending, selected,
-    selectedTravel, canMove, preview, act]);
+    selectedTravel, canMove, preview, act, requestRoute]);
   const send = () => {
     const trimmed = line.trim();
     if (active && trimmed.length > 0 && trimmed.length <= 1024) {
@@ -1319,79 +1244,81 @@ export const NetdmSpace = () => {
       <Window.Content>
         <Stack fill vertical>
           <Stack.Item>
-            <Section>
-              <Stack align="center" wrap>
-                <Stack.Item grow>
-                  {inside ? (
-                    <Box>
-                      Присутствие №{presence!.presence}: {STATE_TEXT[presence!.state ?? ''] ?? presence!.state}
-                      {presence!.state === 'moving'
-                        ? ` → ${presence!.to}`
-                        : ` на ${presence!.host}`}
-                      {inside && presence?.state !== 'moving' && view.nodes.has(data.hostNode ?? '') && (
-                        <Box inline ml={0.5} color="#55e7d0" title="Ваше присутствие на карте">○</Box>
-                      )}
-                      {advanced && ` · поколение ${presence!.generation ?? 1}`}
-                      {reason && ` · ${reason}`}
-                    </Box>
-                  ) : (
-                    <Box color="label">
-                      Вы не в сети.{reason && ` Последнее присутствие: ${reason}.`}
-                    </Box>
+            <header className="NetdmToolbar">
+              <div className="NetdmToolbar__status" data-state={inside ? presence?.state : 'offline'} role="status">
+                <span className="NetdmToolbar__dot" aria-hidden="true" />
+                <div className="NetdmToolbar__statusText">
+                  <strong>{inside ? STATE_TEXT[presence.state ?? ''] ?? presence.state : 'Вне сети'}</strong>
+                  {inside && (
+                    <span>
+                      {presence.state === 'moving' ? ` → ${presence.to}` : data.hostNode ? ` · Узел ${data.hostNode}` : ''}
+                      {advanced && ` · Поколение ${presence.generation ?? 1}`}
+                    </span>
                   )}
-                </Stack.Item>
-                {canResume && (
-                  <Stack.Item>
-                    <Button icon="play" onClick={() => act('enter')}>Продолжить</Button>
-                  </Stack.Item>
-                )}
-                <Stack.Item>
-                  {inside ? (
-                    <Button.Confirm icon="sign-out-alt" content="Выйти" confirmContent="Завершить присутствие?" onClick={() => act('leave')} />
-                  ) : (
-                    <Button icon="sign-in-alt" onClick={() => act('enter')}>Войти</Button>
-                  )}
-                </Stack.Item>
-                <Stack.Item>
-                  <Dropdown
-                    width="90px"
-                    selected={radius}
-                    options={[1, 2, 3, 4, 5, 6, 7, 8].map(value => ({ value, displayText: `${value} хоп.` }))}
-                    onSelected={(value: number) => setRadius(value)} />
-                </Stack.Item>
-                <Stack.Item>
-                  <Button icon="satellite-dish" disabled={!canScan} onClick={() => act('scan', { radius })}>Сканировать</Button>
-                </Stack.Item>
-                {data.levels.length > 1 && (
-                  <Stack.Item>
-                    <Dropdown
-                      width="90px"
-                      selected={data.z}
-                      options={data.levels.map(level => ({ value: level, displayText: `Z${level}` }))}
-                      onSelected={(value: number) => {
+                  {!!reason && <small>{reason}</small>}
+                </div>
+              </div>
+              <div className="NetdmToolbar__controls">
+                <div className="NetdmToolbar__group">
+                  <select aria-label="Радиус сканирования" title="Радиус сканирования" value={radius}
+                    onChange={event => setRadius(Number(event.currentTarget.value))}>
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map(value => <option key={value} value={value}>{value} хоп.</option>)}
+                  </select>
+                  <button type="button" className="NetdmToolbar__scan" disabled={!canScan}
+                    onClick={() => act('scan', { radius })}>
+                    <Icon name="satellite-dish" /> Сканировать
+                  </button>
+                </div>
+                <div className="NetdmToolbar__group">
+                  {data.levels.length > 1 && (
+                    <select aria-label="Уровень карты" title="Уровень карты" value={data.z}
+                      onChange={event => {
                         setSelected(null);
-                        act('level', { z: value });
-                      }} />
-                  </Stack.Item>
-                )}
-                {inside && !!data.hostNode && view.nodes.has(data.hostNode) && (
-                  <Stack.Item>
-                    <Button icon="crosshairs" onClick={focusHome} tooltip="Показать своё местоположение (F)">
-                      Я здесь · F
+                        act('level', { z: Number(event.currentTarget.value) });
+                      }}>
+                      {data.levels.map(level => <option key={level} value={level}>Z{level}</option>)}
+                    </select>
+                  )}
+                  {inside && !!data.hostNode && view.nodes.has(data.hostNode) && (
+                    <button type="button" className="NetdmToolbar__icon" aria-label="Я здесь"
+                      title="Центрировать на себе (F)" onClick={focusHome}>
+                      <Icon name="crosshairs" />
+                    </button>
+                  )}
+                  {!failure && view.nodes.size > 0 && (
+                    <button type="button" className="NetdmToolbar__icon" aria-label="Вся карта"
+                      title="Показать всю карту" onClick={() => setFitRequest(current => current + 1)}>
+                      <Icon name="expand" />
+                    </button>
+                  )}
+                </div>
+                <div className="NetdmToolbar__group">
+                  {immersed && (
+                    <Button icon="power-off" color="average" tooltip="Вернуться в тело у точки доступа"
+                      onClick={() => act('surface')}>Выйти из погружения
                     </Button>
-                  </Stack.Item>
-                )}
-                {!failure && view.nodes.size > 0 && (
-                  <Stack.Item>
-                    <Button icon="expand" onClick={() => setFitRequest(current => current + 1)}>Вся карта</Button>
-                  </Stack.Item>
-                )}
-              </Stack>
-            </Section>
+                  )}
+                  {!!presence?.threat && (
+                    <Button icon="user-slash" color="bad" tooltip={`На узле: ${presence.threat}`}
+                      onClick={() => act('banish')}>Выгнать вторженца
+                    </Button>
+                  )}
+                  {canResume && <Button icon="play" onClick={() => act('enter')}>Продолжить</Button>}
+                  {!inside && <Button icon="sign-in-alt" onClick={() => act('enter')}>Войти</Button>}
+                  {entityRole ? (
+                    <Button.Confirm icon="ghost" content="Покинуть роль" confirmContent="Вернуться к призраку?"
+                      onClick={() => act('leave_role')} />
+                  ) : inside && (
+                    <Button.Confirm icon="sign-out-alt" content="Выйти" confirmContent="Завершить присутствие?"
+                      onClick={() => act('leave')} />
+                  )}
+                </div>
+              </div>
+            </header>
           </Stack.Item>
-          <Stack.Item grow>
+          <Stack.Item grow minHeight={0}>
             <Stack fill>
-              <Stack.Item grow position="relative">
+              <Stack.Item grow minWidth={0} position="relative">
                 {view.nodes.size === 0 ? (
                   <Section fill>
                     <Box color="label">Вы пока ничего не знаете о сети. Сканируйте, чтобы увидеть окрестность.</Box>
@@ -1404,11 +1331,13 @@ export const NetdmSpace = () => {
                     activity={activity}
                     agents={agents}
                     operators={operators}
-                    onSelect={setSelected}
+                    onSelect={inspectMap}
                     onRetry={() => setFailure(null)} />
                 ) : (
                   <div style={{ position: 'relative', width: '100%', height: '100%' }}>
                   <TopologyCanvas
+                    playerMap
+                    deviceServices={data.services}
                     view={view}
                     levelKey={String(data.z)}
                     selected={selected}
@@ -1418,14 +1347,17 @@ export const NetdmSpace = () => {
                     agents={agents}
                     operators={operators}
                     route={route}
+                    signal={signal}
                     filters={FILTERS}
                     fitRequest={fitRequest}
                     focusRequest={focusRequest}
                     focusTarget={focusTarget ?? data.hostNode}
-                    onSelect={setSelected}
+                    onSelect={inspectMap}
                     onFailure={setFailure}
                     onReport={() => undefined} />
                     <MapChrome
+                      playerMap
+                      deviceServices={data.services}
                       level={data.z}
                       nodeCount={view.nodes.size}
                       linkCount={view.links.size}
@@ -1449,169 +1381,158 @@ export const NetdmSpace = () => {
                   </Box>
                 )}
               </Stack.Item>
-              <Stack.Item basis={inside ? '340px' : '300px'}>
-                <Stack fill vertical>
-                  {(moving || preview || presence?.breakKind) && (
-                    <Stack.Item>
+              <Stack.Item minHeight={0} minWidth={0} shrink={0} basis="clamp(248px, 36vw, 376px)">
+                <NetdmSpaceDock tab={sideTab} onTab={selectTab} unread={unread}
+                  routeActive={moving || !!preview}
+                  title={sideTab === 'node' && shown ? `Узел ${shown}`
+                    : sideTab === 'operator' && entityRole ? 'Сущность'
+                    : sideTab === 'chat' && chat ? (chat.channel ? 'Общий канал' : `Чат узла ${chat.node}`) : undefined}>
+                  {sideTab === 'node' && (
+                    <>
+                      <NodePanel
+                        key={shown ?? 'unknown'}
+                        view={view}
+                        id={shown}
+                        services={data.services}
+                        entries={entries}
+                        activity={life.activity}
+                        travel={selectedTravel}
+                        otherPresences={shown ? otherPresences?.[shown] ?? 0 : 0}
+                        active={active}
+                        alarmPending={!!data.alarmPending}
+                        machinePending={machinePending}
+                        routePending={routePending}
+                        watchedAlarm={watch?.instance ?? null}
+                        hack={data.hack}
+                        onHack={node => act('hack_start', { node })}
+                        onHackAnswer={code => act('hack_answer', { code })}
+                        onHackUse={node => act('hack_use', { node })}
+                        onSelectCamera={instance => act('select_camera', { instance })}
+                        onPreview={requestRoute}
+                        onReadAlarm={instance => act('read_alarm', { instance })}
+                        onWatchAlarm={instance => act('watch_alarm', { instance })}
+                        onSetAlarm={(instance, enabled) => act('machine_alert', { instance, enabled: enabled ? 1 : 0 })}
+                        onTrace={trace}
+                        onCommand={command => {
+                          if (active && command.length <= 1024) {
+                            act('act', { line: command });
+                          }
+                        }} />
+                      {watch && (
+                        <AlarmWatchPanel
+                          watch={watch}
+                          onSelect={() => {
+                            setSelected(watch.node);
+                            if (watch.z !== null && watch.z !== data.z) {
+                              act('level', { z: watch.z });
+                            }
+                          }}
+                          onStop={() => act('stop_alarm_watch')} />
+                      )}
+                    </>
+                  )}
+                  {sideTab === 'route' && (
+                    <>
                       <RoutePanel
                         preview={preview}
                         presence={presence}
                         canMove={canMove}
                         onMove={target => act('move', { to: target })}
-                        onRetry={target => act('preview_move', { to: target })}
+                        onRetry={requestRoute}
                         onClear={() => act('clear_route_preview')}
                         onAbort={() => act('abort_move')} />
-                    </Stack.Item>
+                      {inside ? (
+                        <NearbyMovementPanel
+                          nodes={inspectNeighbors}
+                          destinations={nearby}
+                          anchor={shown}
+                          selected={selected}
+                          active={active}
+                          moving={moving}
+                          pending={routePending}
+                          onInspect={focusKnown}
+                          onPreview={destination => {
+                            focusKnown(destination.node);
+                            requestRoute(destination.instance);
+                          }} />
+                      ) : <Box className="NetdmDock__empty">Войдите в сеть, чтобы прокладывать маршруты.</Box>}
+                    </>
                   )}
-                  <Stack.Item>
-                    <NodePanel
-                      key={shown ?? 'unknown'}
-                      view={view}
-                      id={shown}
-                      services={data.services}
-                      entries={data.actionEntries ?? []}
-                      activity={life.activity}
-                      travel={selectedTravel}
-                      otherPresences={shown ? otherPresences?.[shown] ?? 0 : 0}
-                      active={active}
-                      alarmPending={!!data.alarmPending}
-                      machinePending={machinePending}
-                      routePending={routePending}
-                      watchedAlarm={watch?.instance ?? null}
-                      onPreview={instance => act('preview_move', { to: instance })}
-                      onReadAlarm={instance => act('read_alarm', { instance })}
-                      onWatchAlarm={instance => act('watch_alarm', { instance })}
-                      onSetAlarm={(instance, enabled) => act('machine_alert', { instance, enabled: enabled ? 1 : 0 })}
-                      onTrace={trace}
-                      onCommand={command => {
-                        if (active && command.length <= 1024) {
-                          act('act', { line: command });
-                        }
-                      }} />
-                  </Stack.Item>
-                  {inside && (
-                    <Stack.Item>
-                      <NearbyMovementPanel
-                        nodes={inspectNeighbors}
-                        destinations={nearby}
-                        anchor={shown}
-                        selected={selected}
-                        active={active}
-                        moving={moving}
-                        pending={routePending}
-                        onInspect={focusKnown}
-                        onPreview={destination => {
-                          focusKnown(destination.node);
-                          act('preview_move', { to: destination.instance });
-                        }} />
-                    </Stack.Item>
+                  {sideTab === 'operator' && (
+                    <>
+                      {immersed && (
+                        <NoticeBox warning>
+                          Тело оставлено у точки доступа.
+                          {!!data.immersedSeconds && ` · В сети ${Math.floor((data.immersedSeconds ?? 0) / 60)} мин ${(data.immersedSeconds ?? 0) % 60} с`}
+                          {!!data.immersionReason && ` · ${data.immersionReason}`}
+                        </NoticeBox>
+                      )}
+                      <NetworkLifePanel
+                        persona={persona}
+                        bots={life.bots}
+                        operators={life.operators ?? []}
+                        immersed={data.immersed}
+                        enabled={data.immersionEnabled}
+                        onPersona={(name, signature, status, colour) => act('persona', { name, signature, status, colour })}
+                        onImmerse={() => act('immerse')}
+                        onSummon={goal => act('call_agent', { goal })} />
+                      <details className="NetdmDock__card NetdmDock__disclosure">
+                        <summary>Приватность и ключи</summary>
+                        <div className="NetdmDock__actions">
+                          <Button icon={data.hack?.masked ? 'user-secret' : 'user'}
+                            selected={!!data.hack?.masked} disabled={!active} onClick={() => act('hack_mask')}>
+                            {data.hack?.masked ? 'Личность скрыта' : 'Скрыть личность'}
+                          </Button>
+                          <Button icon="sync" disabled={!active} onClick={() => act('hack_keys')}>Обновить ключи</Button>
+                        </div>
+                      </details>
+                    </>
                   )}
-                  {!!presence?.threat && (
-                    <Stack.Item>
-                      <NoticeBox danger>
-                        Враждебный агент на узле: {presence.threat}
-                        <Button ml={1} icon="user-slash" onClick={() => act('banish')}>
-                          Выгнать
-                        </Button>
-                      </NoticeBox>
-                    </Stack.Item>
-                  )}
-                  {immersed && (
-                    <Stack.Item>
-                      <NoticeBox danger>
-                        ПОГРУЖЕНИЕ: тело оставлено у точки доступа.
-                        {!!data.immersedSeconds && ` · в сети ${Math.floor((data.immersedSeconds ?? 0) / 60)} мин ${(data.immersedSeconds ?? 0) % 60} с`}
-                        {!!data.immersionReason && ` Причина выхода: ${data.immersionReason}`}
-                        <Button ml={1} icon="sign-out-alt" onClick={() => act('surface')}>
-                          Выйти
-                        </Button>
-                      </NoticeBox>
-                    </Stack.Item>
-                  )}
-                  <Stack.Item>
-                    <NetworkLifePanel
-                      persona={persona}
-                      bots={life.bots}
-                      activity={life.activity}
-                      operators={life.operators ?? []}
-                      incidents={data.incidents ?? []}
-                      immersed={data.immersed}
-                      enabled={data.immersionEnabled}
-                      onPersona={(name, signature, status, colour) => act('persona', { name, signature, status, colour })}
-                      onImmerse={() => act('immerse')}
-                      onSurface={() => act('surface')}
-                      onSummon={goal => act('call_agent', { goal })} />
-                  </Stack.Item>
-                  <Stack.Item>
-                    <HackPanel hack={data.hack ?? null} selected={selected} />
-                  </Stack.Item>
-                  {machineCommand && (
-                    <Stack.Item><MachineCommandPanel command={machineCommand} /></Stack.Item>
-                  )}
-                  {watch && (
-                    <Stack.Item>
-                      <AlarmWatchPanel
-                        watch={watch}
-                        onSelect={() => {
-                          setSelected(watch.node);
-                          if (watch.z !== null && watch.z !== data.z) {
-                            act('level', { z: watch.z });
+                  {sideTab === 'activity' && (
+                    <>
+                      <Section title="Журнал"
+                        buttons={<Button icon="terminal" selected={advanced} onClick={() => setAdvanced(current => !current)}>Команды</Button>}>
+                        <NetdmDeliveryActivity entries={entries} onSelect={instance => {
+                          const node = data.services.find(service => service.instance === instance)?.node;
+                          if (node && view.nodes.has(node)) {
+                            focusKnown(node);
+                            selectTab('node');
                           }
-                        }}
-                        onStop={() => act('stop_alarm_watch')} />
-                    </Stack.Item>
+                        }} />
+                        {machineCommand && <MachineCommandPanel command={machineCommand} />}
+                        {data.log.length === 0 && !entries.some(entry => entry.delivery) && !machineCommand && (
+                          <Box color="label">Событий пока нет.</Box>
+                        )}
+                        {[...data.log].reverse().map((entry, index) => (
+                          <div className="NetdmDock__event" key={index}>{entry}</div>
+                        ))}
+                      </Section>
+                      {advanced && (
+                        <ActionBox
+                          line={line}
+                          enabled={active}
+                          dynamic={{
+                            instances: data.services.map(service => service.instance),
+                            nodes: [...view.nodes.keys()],
+                            types: [...new Set(data.services.map(service => service.type))],
+                          }}
+                          onLine={setLine}
+                          onSend={send} />
+                      )}
+                      <NetworkEventHistory activity={life.activity} incidents={data.incidents ?? []} />
+                    </>
                   )}
-                  {showChat ? (
+                  {showChat && (
                     <NodeChatPanel
                       key={chat?.visit ?? 'connecting'}
                       chat={chat}
                       state={presence?.state}
                       firstUnread={firstUnread}
-                      onJournal={() => setChatOpening(null)}
                       onRead={markChatRead}
                       onSend={(node, text) => act('send_chat', { node, text })}
-    onChannel={() => act('chat_channel')} />
-                  ) : (
-                    <Stack.Item grow>
-                      <Section
-                        fill
-                        scrollable
-                        title="Журнал"
-                        buttons={(
-                          <>
-                            <Button
-                              icon="comments"
-                              color={unread ? 'average' : undefined}
-                              aria-label={unread ? `Чат узла, непрочитанных сообщений ${unread}` : 'Чат узла'}
-                              onClick={() => setChatOpening({ previousRead: readChat, snapshot: visit ? { visit, received } : null })}>
-                              Чат узла
-                              {unread > 0 && <Box as="span" bold ml={0.5}>{unread > 99 ? '99+' : unread}</Box>}
-                            </Button>
-                            <Button icon="terminal" selected={advanced} onClick={() => setAdvanced(current => !current)}>Команды</Button>
-                          </>
-                        )}>
-                        {data.log.length === 0 && <Box color="label">Пусто.</Box>}
-                        {[...data.log].reverse().map((entry, index) => (
-                          <Box key={index}>{entry}</Box>
-                        ))}
-                      </Section>
-                    </Stack.Item>
+                      onChannel={() => act('chat_channel')} />
                   )}
-                  {!showChat && advanced && (
-                    <Stack.Item>
-                      <ActionBox
-                        line={line}
-                        enabled={active}
-                        dynamic={{
-                          instances: data.services.map(service => service.instance),
-                          nodes: [...view.nodes.keys()],
-                          types: [...new Set(data.services.map(service => service.type))],
-                        }}
-                        onLine={setLine}
-                        onSend={send} />
-                    </Stack.Item>
-                  )}
-                </Stack>
+                </NetdmSpaceDock>
               </Stack.Item>
             </Stack>
           </Stack.Item>

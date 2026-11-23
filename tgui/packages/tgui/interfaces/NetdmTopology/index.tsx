@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useBackend } from '../../backend';
 import { Box, Button, Dropdown, LabeledList, NoticeBox, Section, Stack, Table } from '../../components';
 import { Window } from '../../layouts';
+import { classifyDevices, DeviceService } from './devices';
 import { MapChrome } from './MapChrome';
 import {
   FLAG_ACCESS_POINT,
@@ -17,7 +18,7 @@ import {
   View,
   ViewNode,
 } from './model';
-import { createScene, NodeActivityCounts, NodePresenceCounts, SceneAgent, SceneCancelled, SceneFilters, SceneOperator, SceneRoute, TopologyScene } from './scene';
+import { createScene, NodeActivityCounts, NodePresenceCounts, SceneAgent, SceneCancelled, SceneFilters, SceneOperator, SceneRoute, SceneSignal, TopologyScene } from './scene';
 
 
 // The scene resizes its canvas from a ResizeObserver; the browser's loop warning must not reach TGUI's crash handler.
@@ -84,6 +85,9 @@ type CanvasProps = {
   agents?: readonly SceneAgent[];
   operators?: readonly SceneOperator[];
   route?: SceneRoute | null;
+  signal?: SceneSignal | null;
+  playerMap?: boolean;
+  deviceServices?: readonly DeviceService[];
   filters: SceneFilters;
   fitRequest: number;
   /** Camera-only navigation request; no network traffic or selection reset. */
@@ -118,12 +122,26 @@ const report = (started: number, nodes: number, result: { backend?: string; fail
   agent: navigator.userAgent.slice(0, 200),
 });
 
+const PLAYER_MAP_BACKGROUND = {
+  backgroundColor: '#0d1822',
+  backgroundImage: [
+    'radial-gradient(ellipse at 48% 32%, rgba(56, 120, 150, .18), transparent 72%)',
+    'linear-gradient(rgba(136, 193, 220, .08) 1px, transparent 1px)',
+    'linear-gradient(90deg, rgba(136, 193, 220, .08) 1px, transparent 1px)',
+  ].join(', '),
+  backgroundSize: '100% 100%, 28px 28px, 28px 28px',
+};
+
 /**
  * Hosts one TopologyScene for the lifetime of the component. Data, selection and filters reach
  * the existing scene as updates; the renderer is never recreated by a data change.
  */
 export const TopologyCanvas = (props: CanvasProps) => {
   const { onSelect, onFailure, onReport } = props;
+  const deviceKinds = useMemo(
+    () => props.playerMap ? classifyDevices(props.view.nodes, props.deviceServices ?? []) : null,
+    [props.playerMap, props.deviceServices, props.view.nodes],
+  );
   const host = useRef<HTMLDivElement>(null);
   const scene = useRef<TopologyScene | null>(null);
   const latest = useRef(props);
@@ -163,7 +181,7 @@ export const TopologyCanvas = (props: CanvasProps) => {
         handlers.current.onReport(report(started, latest.current.view.nodes.size, { failure: reason }));
         handlers.current.onFailure(reason);
       },
-    }, () => cancelled)
+    }, () => cancelled, latest.current.playerMap)
       .then(created => {
         if (cancelled) {
           created.destroy();
@@ -172,15 +190,21 @@ export const TopologyCanvas = (props: CanvasProps) => {
         scene.current = created;
         const current = latest.current;
         created.setFilters(current.filters);
-      created.setActivity(current.activity ?? null);
-      created.setAgents(current.agents ?? null);
-      created.setOperators(current.operators ?? null);
+        if (current.playerMap) {
+          created.setDeviceKinds(classifyDevices(current.view.nodes, current.deviceServices ?? []));
+        }
         handlers.current.onReport(report(started, current.view.nodes.size, { backend: created.backend }));
         apply(created, current.view, current.levelKey);
         created.setSelection(current.selected);
         created.setPresence(current.presenceNode ?? null);
         created.setOtherPresences(current.otherPresences ?? null);
         created.setRoute(current.route ?? null);
+        created.setActivity(current.activity ?? null);
+        created.setAgents(current.agents ?? null);
+        created.setOperators(current.operators ?? null);
+        if (current.signal) {
+          created.setSignal(current.signal);
+        }
         if (current.focusRequest && current.focusTarget) {
           created.focusNode?.(current.focusTarget);
         }
@@ -205,6 +229,11 @@ export const TopologyCanvas = (props: CanvasProps) => {
     }
   }, [props.view, props.levelKey]);
   useEffect(() => {
+    if (deviceKinds) {
+      scene.current?.setDeviceKinds(deviceKinds);
+    }
+  }, [deviceKinds]);
+  useEffect(() => {
     scene.current?.setSelection(props.selected);
   }, [props.selected]);
   useEffect(() => {
@@ -216,6 +245,9 @@ export const TopologyCanvas = (props: CanvasProps) => {
   useEffect(() => {
     scene.current?.setRoute(props.route ?? null);
   }, [props.route]);
+  useEffect(() => {
+    scene.current?.setSignal(props.signal ?? null);
+  }, [props.signal]);
   useEffect(() => {
     scene.current?.setFilters(props.filters);
   }, [props.filters]);
@@ -239,7 +271,14 @@ export const TopologyCanvas = (props: CanvasProps) => {
     }
   }, [props.focusRequest]);
 
-  return <div ref={host} style={{ width: '100%', height: '100%', overflow: 'hidden' }} />;
+  return (
+    <div ref={host} style={{
+      width: '100%',
+      height: '100%',
+      overflow: 'hidden',
+      ...(props.playerMap ? PLAYER_MAP_BACKGROUND : {}),
+    }} />
+  );
 };
 
 const FallbackList = (props: { view: View; reason: string; selected: string | null;

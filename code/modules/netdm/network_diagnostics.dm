@@ -34,6 +34,7 @@
 	/// Logical APC sessions, indexed by the world objects of the APC and its operator.
 	var/list/apc_operators = list()
 	var/next_apc_operator_check = 0
+	var/next_entity_spawner_check = 0
 	/// A single-use player authorization awaiting a station device. The UI never receives these keys.
 	var/list/alarm_actions = list()
 	/// Watched query instance -> list("services", "digest", "partial", "at"): the last published state of the
@@ -53,8 +54,8 @@
 	lane.dispatcher.allow_result("start", new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow_result("stop", new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow_result("migrate", new /datum/netdm_effect_handler/network_query_page, "network.shell")
-	// P12 network space: the window's scans, knowledge, presence and actions.
-	for(var/space_command in list("scan", "knowledge", "enter", "detach", "leave", "presence", "act", "move", "preview_move", "abort_move", "poll_alarm", "alarm_action", "chat_read", "chat_send"))
+	// Network-space replies are routed to the original window through their queued query.
+	for(var/space_command in list("scan", "knowledge", "enter", "detach", "leave", "presence", "act", "move", "preview_move", "abort_move", "poll_alarm", "alarm_action", "chat_read", "chat_send", "persona", "life", "hack_start", "hack_answer", "hack_keys", "hack_use", "mask"))
 		lane.dispatcher.allow_result(space_command, new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow("query.directory", new /datum/netdm_effect_handler/network_directory_event)
 
@@ -287,6 +288,7 @@
 /datum/netdm_diagnostics/proc/tick()
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
 	check_apc_operators()
+	update_entity_spawner()
 	if(length(queries))
 		pump_queries(lane)
 	if(!length(pending))

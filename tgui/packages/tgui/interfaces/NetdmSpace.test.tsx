@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { combineReducers, createStore, setGlobalStore } from 'common/redux';
 
 import { backendReducer, backendUpdate } from '../backend';
@@ -7,14 +7,16 @@ import { NetdmSpace } from './NetdmSpace';
 
 // Keep the real screen logic, but avoid constructing a GPU renderer in jsdom.
 jest.mock('./NetdmTopology', () => ({
-  TopologyCanvas: ({ onSelect, focusRequest, focusTarget }: {
+  TopologyCanvas: ({ onSelect, focusRequest, focusTarget, signal }: {
     onSelect: (id: string) => void;
     focusRequest: number;
     focusTarget: string | null;
+    signal?: { node: string; outcome: string };
   }) => (
     <>
       <button type="button" onClick={() => onSelect('2')}>Выбрать удалённый узел</button>
       <span data-testid="camera-target">{focusRequest ? focusTarget : 'none'}</span>
+      <span data-testid="delivery-signal">{signal ? `${signal.node}:${signal.outcome}` : 'none'}</span>
     </>
   ),
 }));
@@ -82,6 +84,7 @@ test('selected map node offers an explicit Host route preview; Enter never skips
   fireEvent.keyDown(document.body, { key: 'Enter' });
   expect(actions().filter(item => item.type === 'act/move')).toEqual([]);
   fireEvent.keyDown(document.body, { key: 'g' });
+  expect(screen.getByRole('tab', { name: 'Маршруты' }).getAttribute('aria-selected')).toBe('true');
   expect(actions().filter(item => item.type === 'act/preview_move')).toEqual([{
     type: 'act/preview_move', payload: { to: 'shell.remote' },
   }]);
@@ -140,6 +143,7 @@ test('an inactive operator may inspect an offline neighbor without a shell comma
     down: [['1', '2']],
     presence: { presence: 10, host: 'shell.home', generation: 1, state: 'suspended' },
   });
+  fireEvent.click(screen.getByRole('tab', { name: 'Маршруты' }));
   fireEvent.click(screen.getByText(/Осмотреть узел 2/));
   expect(screen.getByTestId('camera-target').textContent).toBe('2');
   expect(actions()).toEqual([]);
@@ -152,11 +156,45 @@ test('switching service is local and opening its schema is an explicit Host requ
       { node: '1', type: 'machine.control', instance: 'machine.switch', stale: false },
     ],
   });
-  fireEvent.click(screen.getByText('Оболочка узла'));
-  fireEvent.click(screen.getByText('machine control'));
+  const service = screen.getByRole('combobox', { name: 'Сервис' });
+  fireEvent.change(service, { target: { value: 'shell.home' } });
+  fireEvent.change(service, { target: { value: 'machine.switch' } });
   expect(actions()).toEqual([]);
   fireEvent.click(screen.getByText('Доступные действия'));
   expect(actions()).toEqual([{ type: 'act/act', payload: { line: 'api machine.control' } }]);
+});
+
+test('the vertical tab rail switches and focuses panels without sending commands', () => {
+  const { actions } = setup();
+  const node = screen.getByRole('tab', { name: 'Узел' });
+  const routes = screen.getByRole('tab', { name: 'Маршруты' });
+  node.focus();
+  fireEvent.keyDown(node, { key: 'ArrowDown' });
+  expect(document.activeElement).toBe(routes);
+  expect(screen.getByRole('tabpanel', { name: 'Маршруты' }).id).toBe(routes.getAttribute('aria-controls'));
+  expect(screen.queryByRole('tabpanel', { name: 'Узел' })).toBeNull();
+  expect(actions()).toEqual([]);
+});
+
+test('a bodyless controller can explicitly leave the role', () => {
+  const { actions } = setup({ entityRole: true });
+  fireEvent.click(screen.getByText('Покинуть роль'));
+  expect(actions()).toEqual([]);
+  fireEvent.click(screen.getByText('Вернуться к призраку?'));
+  expect(actions()).toEqual([{ type: 'act/leave_role', payload: {} }]);
+});
+
+test('toolbar selects scan radius and level independently of camera actions', () => {
+  const { actions } = setup({ levels: [1, 2] });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Радиус сканирования' }), { target: { value: '5' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Сканировать' }));
+  fireEvent.change(screen.getByRole('combobox', { name: 'Уровень карты' }), { target: { value: '2' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Я здесь' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Вся карта' }));
+  expect(actions()).toEqual([
+    { type: 'act/scan', payload: { radius: 5 } },
+    { type: 'act/level', payload: { z: 2 } },
+  ]);
 });
 
 test('Host schema drives ordinary read-only action through the same shell transport', () => {
@@ -205,4 +243,55 @@ test('context shows recent activity for its node only without network requests',
   expect(screen.getByText(/Other bot: Ушел/)).toBeTruthy();
   expect(screen.queryByText(/Station bot: Прибыл/)).toBeNull();
   expect(actions()).toEqual([]);
+});
+
+test('receipt updates identify the actual service node without fabricating delivery', () => {
+  const { push, actions } = setup();
+  const entry = {
+    id: 1, line: 'invoke shell.remote check', pending: false,
+    status: 'ok', error: null, records: [],
+  };
+  push({ actionEntries: [entry] });
+  expect(screen.getByTestId('delivery-signal').textContent).toBe('none');
+  const delivery = { operation: '42', instance: 'shell.remote' };
+  push({ actionEntries: [{ ...entry, delivery: { ...delivery, state: 'queued' } }] });
+  expect(screen.getByTestId('delivery-signal').textContent).toBe('2:queued');
+  fireEvent.click(screen.getByRole('tab', { name: 'События' }));
+  expect(screen.getByText('В очереди')).toBeTruthy();
+  push({ actionEntries: [{ ...entry, delivery: { ...delivery, state: 'delivered' } }] });
+  expect(screen.getByTestId('delivery-signal').textContent).toBe('2:delivered');
+  expect(screen.getByText('Ответ получен')).toBeTruthy();
+  expect(actions()).toEqual([]);
+});
+
+test('camera discovery never selects a feed implicitly', () => {
+  const { actions } = setup({
+    services: [{ node: '2', instance: 'camera.7', type: 'camera.access', stale: false, cameraName: 'Бриг' }],
+  });
+  fireEvent.click(screen.getByText('Выбрать удалённый узел'));
+  expect(actions()).toEqual([]);
+  fireEvent.click(screen.getByText('Подключить на консоли'));
+  expect(actions()).toEqual([{ type: 'act/select_camera', payload: { instance: 'camera.7' } }]);
+});
+
+test('APC breach displays a short pattern and submits the reconstructed answer once', () => {
+  jest.useFakeTimers();
+  try {
+    const { push, actions } = setup();
+    fireEvent.click(screen.getByText('Взломать АПЦ'));
+    expect(actions()).toEqual([{ type: 'act/hack_start', payload: { node: '1' } }]);
+    push({ hack: { target: '1', status: 'challenge', code: 'ABABCD', remaining: 14 } });
+    const preview = within(screen.getByLabelText('Сигнал')).getAllByRole('img')
+      .map(button => button.getAttribute('aria-label')!);
+    expect(screen.queryByText('Ответить')).toBeNull();
+    act(() => { jest.advanceTimersByTime(2400); });
+    for (const label of preview) {
+      fireEvent.click(within(screen.getByLabelText('Варианты сигнала')).getByRole('button', { name: label }));
+    }
+    fireEvent.click(screen.getByText('Ответить'));
+    expect(actions().slice(1)).toEqual([{ type: 'act/hack_answer', payload: { code: 'ABABCD' } }]);
+    expect(screen.queryByText('Ответить')).toBeNull();
+  } finally {
+    jest.useRealTimers();
+  }
 });

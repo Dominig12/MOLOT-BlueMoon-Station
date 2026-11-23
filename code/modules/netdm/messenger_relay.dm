@@ -1,5 +1,7 @@
 /// The sender waits this long, in real time, for the server's answer before "Server is not responding".
 #define NETDM_RELAY_ANSWER (10 SECONDS)
+/// A status query may prove that a missing answer is safe to retry.
+#define NETDM_RELAY_STATUS_ANSWER (5 SECONDS)
 /// A sender's message keeps waiting for recipient statuses this long, in real time.
 #define NETDM_RELAY_STATUS_WAIT (60 SECONDS)
 /// Deliveries and statuses a message server holds before it refuses new messages.
@@ -81,10 +83,12 @@
 
 /// The server a PDA sends to: a registered one on its own level first. A PDA is configured with its
 /// server; whether that server is on is something it learns only from the answer.
-/datum/netdm_messenger_shadow/proc/choose_server(atom/computer)
+/datum/netdm_messenger_shadow/proc/choose_server(atom/computer, excluded_instance)
 	var/turf/position = get_turf(computer)
 	var/fallback
 	for(var/instance in servers)
+		if(instance == excluded_instance)
+			continue
 		var/datum/weakref/server_ref = servers[instance]
 		var/obj/machinery/telecomms/message_server/server = server_ref.resolve()
 		if(!server)
@@ -145,29 +149,51 @@
 		reasons["relay_no_server"]++
 		return "failed"
 	var/sender_name = copytext(get_messenger_name(sender) || "Unknown", 1, 128)
-	var/list/entry = SSnetdm_observe.services.invoke(node, server, "relay", id,
-		list("id" = id, "text" = text, "sender" = sender_name, "to" = jointext(names, ",")),
-		CALLBACK(src, PROC_REF(relay_accepted), id))
-	if(!entry)
+	var/list/record = list("id" = id, "sender" = WEAKREF(sender), "instance" = instance, "names" = names,
+		"statuses" = list(), "state" = "relaying", "sent_us" = netdm_now_us(), "stream" = SSnetdm_observe.bridge?.stream_id,
+		"arguments" = list("id" = id, "text" = text, "sender" = sender_name, "to" = jointext(names, ",")))
+	if(!queue_relay(record, node, server))
 		reasons["relay_lane_full"]++
 		return "failed"
-	outgoing[id] = list("id" = id, "sender" = WEAKREF(sender), "instance" = instance, "server" = server, "names" = names,
-		"statuses" = list(), "state" = "relaying", "sent_rt" = REALTIMEOFDAY, "sent_us" = netdm_now_us())
+	outgoing[id] = record
 	if(length(outgoing) > NETDM_RELAY_OUTGOING)
 		outgoing.Cut(1, 2)
 	current_relayed = TRUE
 	relay_counters["relayed"]++
 	return "sent"
 
+/datum/netdm_messenger_shadow/proc/queue_relay(list/record, datum/component/netdm_node/node, server)
+	var/id = record["id"]
+	if(!SSnetdm_observe.services.invoke(node, server, "relay", id, record["arguments"], CALLBACK(src, PROC_REF(relay_accepted), id)))
+		return FALSE
+	record["server"] = server
+	record["op"] = null
+	record["status_deadline"] = null
+	record["sent_rt"] = REALTIMEOFDAY
+	return TRUE
+
+/// The original relay must be known not to have taken effect before trying another provider.
+/datum/netdm_messenger_shadow/proc/try_backup_relay(list/record)
+	if(record["tried_backup"] || !record["stream"] || record["stream"] != SSnetdm_observe.bridge?.stream_id)
+		return FALSE
+	var/datum/weakref/sender_ref = record["sender"]
+	var/datum/computer_file/program/messenger/sender = sender_ref?.resolve()
+	var/datum/component/netdm_node/node = sender?.computer?.GetComponent(/datum/component/netdm_node)
+	var/backup = node ? choose_server(sender.computer, record["server"]) : null
+	if(!backup || !queue_relay(record, node, backup))
+		return FALSE
+	record["tried_backup"] = TRUE
+	return TRUE
+
 /datum/netdm_messenger_shadow/proc/relay_accepted(id, list/entry, list/reply)
 	var/list/record = outgoing[id]
-	if(!record)
+	if(!record || record["server"] != entry["instance"])
 		return
 	var/list/result = reply["result"]
 	var/list/value = islist(result) ? result["value"] : null
 	if(reply["ok"] && islist(value) && !isnull(value["operationId"]))
 		record["op"] = "[value["operationId"]]"
-	else
+	else if(reply["error"] != "unknown_service" || !try_backup_relay(record))
 		relay_failed(record, "host_[reply["error"] || "refused"]")
 
 /// The server's answer came back over the network.
@@ -181,13 +207,17 @@
 			if(candidate["op"] == "[item["operationId"]]")
 				record = candidate
 				break
-	if(!record || record["state"] != "relaying")
+	if(!record || record["state"] != "relaying" || record["stream"] != SSnetdm_observe.bridge?.stream_id \
+		|| "msgsrv.[item["producer"]]" != record["server"])
 		return TRUE
 	var/state = islist(payload) ? payload["state"] : null
 	if(state == "queued")
 		record["state"] = "queued"
+		record["arguments"] = null
 		relay_counters["queued"]++
 		push(relay_latencies, netdm_now_us() - record["sent_us"])
+		return TRUE
+	if(item["outcome"] == "rejected_by_world" && item["reason"] == "offline" && try_backup_relay(record))
 		return TRUE
 	relay_failed(record, state || item["reason"] || item["outcome"] || "refused")
 	return TRUE
@@ -202,18 +232,29 @@
 	var/datum/weakref/sender_ref = record["sender"]
 	notify(sender_ref?.resolve(), "ERROR: Server is not responding.")
 
-/// Diagnostics of a relay without an answer: the sender asks the Host about its own command.
+/// The Host can tell whether a timed-out relay ever reached the server.
 /datum/netdm_messenger_shadow/proc/explain_relay(list/record)
 	var/datum/weakref/sender_ref = record["sender"]
 	var/datum/computer_file/program/messenger/sender = sender_ref?.resolve()
 	var/datum/component/netdm_node/node = sender?.computer?.GetComponent(/datum/component/netdm_node)
-	if(!record["op"] || !node || !SSnetdm_observe.services.query_command(node, record["op"], CALLBACK(src, PROC_REF(relay_explained))))
+	if(!record["op"] || !node || !record["stream"] || record["stream"] != SSnetdm_observe.bridge?.stream_id \
+		|| !SSnetdm_observe.services.query_command(node, record["op"], CALLBACK(src, PROC_REF(relay_explained), record["id"], record["op"])))
 		reasons["relay_unexplained"]++
+		relay_failed(record, "no_answer")
+		return
+	record["status_deadline"] = REALTIMEOFDAY + NETDM_RELAY_STATUS_ANSWER
 
-/datum/netdm_messenger_shadow/proc/relay_explained(list/reply)
+/datum/netdm_messenger_shadow/proc/relay_explained(id, operation, list/reply)
+	var/list/record = outgoing[id]
+	if(!record || record["state"] != "relaying" || record["op"] != operation \
+		|| record["stream"] != SSnetdm_observe.bridge?.stream_id)
+		return
 	var/list/result = reply["result"]
 	var/list/value = islist(result) ? result["value"] : null
 	reasons["relay_route_[islist(value) ? (value["outcomeReason"] || value["outcome"] || "unknown") : "status_[reply["error"]]"]"]++
+	if(reply["ok"] && value?["outcome"] == "not_applied" && try_backup_relay(record))
+		return
+	relay_failed(record, "no_answer")
 
 /// A recipient's outcome, reported by the server that relayed the message.
 /datum/netdm_messenger_shadow/proc/status_received(atom/computer, list/item)
@@ -416,9 +457,12 @@
 			delivery_timed_out(operation, delivery)
 	for(var/id in outgoing)
 		var/list/record = outgoing[id]
-		if(record["state"] == "relaying" && now > record["sent_rt"] + NETDM_RELAY_ANSWER)
-			relay_failed(record, "no_answer")
-			explain_relay(record)
+		if(record["state"] == "relaying")
+			if(record["status_deadline"])
+				if(now > record["status_deadline"])
+					relay_failed(record, "no_answer")
+			else if(now > record["sent_rt"] + NETDM_RELAY_ANSWER)
+				explain_relay(record)
 		else if(record["state"] == "failed" || now > record["sent_rt"] + NETDM_RELAY_STATUS_WAIT)
 			if(record["state"] == "queued")
 				relay_counters["status_missing"] += length(record["names"]) - length(record["statuses"])
@@ -471,6 +515,7 @@
 			messenger.notify(messenger.current_sender, "ERROR: Network message could not be sent.")
 
 #undef NETDM_RELAY_ANSWER
+#undef NETDM_RELAY_STATUS_ANSWER
 #undef NETDM_RELAY_STATUS_WAIT
 #undef NETDM_RELAY_OUTBOX
 #undef NETDM_RELAY_OUTGOING

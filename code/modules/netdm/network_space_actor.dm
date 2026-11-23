@@ -54,13 +54,13 @@
 		return FALSE
 	return diagnostics.queue_shell_request(node, provider, command, arguments, on_answer, can_send || send_guard())
 
-/datum/netdm_space_actor/proc/ui_host(mob/user)
+/datum/netdm_space_actor/ui_host(mob/user)
 	return src
 
-/datum/netdm_space_actor/proc/ui_state(mob/user)
+/datum/netdm_space_actor/ui_state(mob/user)
 	return GLOB.never_state
 
-/datum/netdm_space_actor/proc/ui_status(mob/user, datum/ui_state/state)
+/datum/netdm_space_actor/ui_status(mob/user, datum/ui_state/state)
 	return UI_CLOSE
 
 /datum/netdm_space_actor/proc/title()
@@ -164,3 +164,217 @@
 		operator.detach_needed = TRUE
 		return
 	return ..()
+
+GLOBAL_DATUM(netdm_entity_spawner, /obj/effect/mob_spawn/netdm_entity)
+GLOBAL_DATUM(netdm_player_entity, /datum/netdm_space_actor/entity)
+
+/// The entity's entry endpoint uses the published APC wire ID and has its own Host identity.
+/datum/netdm_apc_operator/entity/authorized()
+	var/mob/dead/netdm_entity/controller = user_ref?.resolve()
+	return !QDELETED(src) && !QDELETED(apc_ref?.resolve()) && controller?.client && \
+		controller.client == operator_client && operator_client.mob == controller
+
+/datum/netdm_space_actor/entity
+	var/datum/netdm_apc_operator/entity/entry
+	var/datum/weakref/controller_ref
+	var/entered = FALSE
+
+/datum/netdm_space_actor/entity/New(mob/dead/netdm_entity/controller, obj/machinery/power/apc/apc, client/owner)
+	. = ..()
+	controller_ref = WEAKREF(controller)
+	entry = new(SSnetdm_observe.diagnostics, null, apc, controller)
+	entry.operator_client = owner
+	if(!SSnetdm_observe.services?.endpoint_for(entry))
+		QDEL_NULL(entry)
+
+/datum/netdm_space_actor/entity/Destroy()
+	if(GLOB.netdm_player_entity == src)
+		GLOB.netdm_player_entity = null
+	QDEL_NULL(entry)
+	controller_ref = null
+	return ..()
+
+/datum/netdm_space_actor/entity/proc/owns_view(mob/user)
+	return !QDELETED(src) && user && user == controller_ref?.resolve() && \
+		user.client && user.client == entry?.operator_client && user.client.mob == user
+
+/datum/netdm_space_actor/entity/ui_host(mob/user)
+	return controller_ref?.resolve()
+
+/datum/netdm_space_actor/entity/ui_state(mob/user)
+	// The actor is the full guard. There is no physical location for TGUI to test.
+	return GLOB.always_state
+
+/datum/netdm_space_actor/entity/ui_status(mob/user, datum/ui_state/state)
+	return owns_view(user) ? UI_INTERACTIVE : UI_CLOSE
+
+/datum/netdm_space_actor/entity/can_submit()
+	return SSticker?.IsRoundInProgress() && SSnetdm_observe?.published && entry?.authorized()
+
+/datum/netdm_space_actor/entity/network_node()
+	return entry
+
+/datum/netdm_space_actor/entity/shell_provider()
+	return entry?.apc_ref?.resolve()
+
+/datum/netdm_space_actor/entity/title()
+	return "Сетевая сущность"
+
+/datum/netdm_space_actor/entity/on_window_close(datum/netdm_space/space, list/last_presence)
+	// The entity still exists while its window is closed. Leaving the role retires its endpoint.
+	return
+
+/datum/netdm_space_actor/entity/proc/open_network(mob/dead/netdm_entity/controller)
+	if(!owns_view(controller))
+		return FALSE
+	var/datum/netdm_space/space = window || new /datum/netdm_space(src)
+	if(!space.ui_interact(controller))
+		qdel(space)
+		return FALSE
+	if(!entered && space.enter())
+		entered = TRUE
+		space.scan(3)
+	return TRUE
+
+/// A client holder in nullspace. The controlled character lives in the network, without ghost verbs.
+/mob/dead/netdm_entity
+	name = "сетевая сущность"
+	real_name = "сетевая сущность"
+	density = FALSE
+	anchored = TRUE
+	invisibility = INVISIBILITY_ABSTRACT
+	var/datum/netdm_space_actor/entity/role
+	var/leaving_role = FALSE
+
+/mob/dead/netdm_entity/Login()
+	. = ..()
+	if(client && role)
+		INVOKE_ASYNC(role, TYPE_PROC_REF(/datum/netdm_space_actor/entity, open_network), src)
+
+/mob/dead/netdm_entity/Logout()
+	. = ..()
+	QDEL_NULL(role)
+	QDEL_IN(src, 1)
+
+/mob/dead/netdm_entity/Destroy()
+	QDEL_NULL(role)
+	return ..()
+
+/mob/dead/netdm_entity/Move(NewLoc, direct, glide_size_override)
+	return FALSE
+
+/mob/dead/netdm_entity/forceMove(atom/destination)
+	return FALSE
+
+/mob/dead/netdm_entity/verb/open_network()
+	set name = "Открыть сеть"
+	set category = "Сеть"
+	role?.open_network(src)
+
+/mob/dead/netdm_entity/verb/leave_network_role()
+	set name = "Покинуть сетевую роль"
+	set category = "Сеть"
+	if(tgui_alert(src, "Вернуться к наблюдению? Сетевая сущность исчезнет.", "Сетевая роль", list("Да", "Нет")) == "Да")
+		return_to_observer()
+
+/mob/dead/netdm_entity/proc/return_to_observer()
+	if(!client || leaving_role)
+		return FALSE
+	leaving_role = TRUE
+	var/mob/dead/observer/observer = ghostize(FALSE)
+	if(!observer)
+		leaving_role = FALSE
+		return FALSE
+	qdel(src)
+	return TRUE
+
+/// A virtual option in the shared spawner listings for ghosts and lobby players.
+/obj/effect/mob_spawn/netdm_entity
+	name = "network entity entry"
+	job_description = "Сетевая сущность"
+	mob_name = "сетевая сущность"
+	mob_type = /mob/dead/netdm_entity
+	short_desc = "Самостоятельная роль внутри сети станции."
+	flavour_text = "Обнаруживайте узлы, проверяйте маршруты, подключайтесь к сервисам и взламывайте АПЦ из сетевого пространства."
+	important_info = "У сущности нет тела. Выход из роли возвращает в наблюдатели."
+	banType = ROLE_GHOSTROLE
+	roundstart = FALSE
+	death = FALSE
+	var/datum/weakref/entry_ref
+
+/obj/effect/mob_spawn/netdm_entity/Destroy()
+	if(GLOB.netdm_entity_spawner == src)
+		GLOB.netdm_entity_spawner = null
+	return ..()
+
+/obj/effect/mob_spawn/netdm_entity/can_latejoin()
+	var/obj/machinery/power/apc/apc = entry_ref?.resolve()
+	return SSticker?.IsRoundInProgress() && SSnetdm_observe?.published && QDELETED(GLOB.netdm_player_entity) && \
+		!QDELETED(apc) && SSnetdm_observe.apc_node_id(apc) && apc.netdm_state() == NETDM_STATE_UP
+
+/obj/effect/mob_spawn/netdm_entity/allow_spawn(mob/user, silent = FALSE)
+	if(!can_latejoin() || !user?.client || !user.ckey || user.key[1] == "@" || is_antag_training_atom(user))
+		return FALSE
+	if(jobban_isbanned(user, banType))
+		if(!silent)
+			to_chat(user, span_warning("Доступ к гост-ролям ограничен."))
+		return FALSE
+	return isnewplayer(user) || (isobserver(user) && user.can_reenter_round(silent))
+
+/obj/effect/mob_spawn/netdm_entity/attack_ghost(mob/user, latejoinercalling)
+	if((isnewplayer(user) && !latejoinercalling) || !allow_spawn(user))
+		return FALSE
+	var/client/owner = user.client
+	var/choice = tgui_alert(user, "Стать сетевой сущностью? При выходе вы вернётесь в наблюдатели.", "Сетевая роль", list("Да", "Нет"))
+	if(choice != "Да" || QDELETED(src) || QDELETED(user) || user.client != owner || !allow_spawn(user))
+		return FALSE
+	var/obj/machinery/power/apc/apc = entry_ref.resolve()
+	var/mob/dead/netdm_entity/controller = new(null)
+	var/datum/netdm_space_actor/entity/source = new(controller, apc, owner)
+	if(!source.entry)
+		qdel(source)
+		qdel(controller)
+		to_chat(user, span_warning("Сеть пока не может создать сущность."))
+		return FALSE
+	GLOB.netdm_player_entity = source
+	controller.role = source
+	var/mob/dead/new_player/lobby = user
+	if(istype(lobby))
+		lobby.spawning = TRUE
+		lobby.close_spawn_windows()
+		lobby.stop_sound_channel(CHANNEL_LOBBYMUSIC)
+	log_game("[key_name(user)] занял роль сетевой сущности.")
+	user.transfer_ckey(controller)
+	if(owner.mob != controller)
+		qdel(controller)
+		if(istype(lobby) && !QDELETED(lobby))
+			lobby.spawning = FALSE
+		return FALSE
+	qdel(src)
+	return TRUE
+
+/datum/netdm_diagnostics/proc/update_entity_spawner()
+	if(world.time < next_entity_spawner_check)
+		return
+	next_entity_spawner_check = world.time + 5 SECONDS
+	var/datum/netdm_space_actor/entity/entity = GLOB.netdm_player_entity
+	if(entity)
+		var/mob/dead/netdm_entity/controller = entity.controller_ref?.resolve()
+		if(!controller?.client)
+			qdel(entity)
+		else if(QDELETED(entity.entry) || !SSticker?.IsRoundInProgress())
+			INVOKE_ASYNC(controller, TYPE_PROC_REF(/mob/dead/netdm_entity, return_to_observer))
+		return
+	if(GLOB.netdm_entity_spawner?.can_latejoin())
+		return
+	QDEL_NULL(GLOB.netdm_entity_spawner)
+	if(!SSnetdm_observe?.published || !SSticker?.IsRoundInProgress())
+		return
+	for(var/obj/machinery/power/apc/apc as anything in GLOB.apcs_list)
+		if(QDELETED(apc) || !is_station_level(apc.z) || is_antag_training_atom(apc) || \
+				!SSnetdm_observe.apc_node_id(apc) || apc.netdm_state() != NETDM_STATE_UP)
+			continue
+		var/obj/effect/mob_spawn/netdm_entity/spawner = new(null)
+		spawner.entry_ref = WEAKREF(apc)
+		GLOB.netdm_entity_spawner = spawner
+		break

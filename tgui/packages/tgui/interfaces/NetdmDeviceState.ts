@@ -12,6 +12,12 @@ export type DeviceEntry = {
   status: string | null;
   error: string | null;
   records: DeviceRecord[][];
+  delivery?: {
+    state: 'queued' | 'applied' | 'delivered' | 'rejected' | 'not_delivered' | 'unknown';
+    operation: string;
+    instance: string;
+    reason?: string | null;
+  } | null;
 };
 export type DeviceEvent = {
   instance: string;

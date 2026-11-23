@@ -1234,7 +1234,11 @@
 /// A floor-or-space corner of the station level farther than any APC access point reaches.
 /datum/unit_test/netdm_observe/area_map/proc/isolated_turf()
 	var/z = SSmapping.levels_by_trait(ZTRAIT_STATION)[1]
-	for(var/list/corner in list(list(3, 3), list(world.maxx - 2, 3), list(3, world.maxy - 2), list(world.maxx - 2, world.maxy - 2)))
+	// The space edge can move a test actor again as soon as it enters, even via forceMove.
+	var/near_edge = TRANSITIONEDGE + 2
+	var/far_x = world.maxx - TRANSITIONEDGE - 1
+	var/far_y = world.maxy - TRANSITIONEDGE - 1
+	for(var/list/corner in list(list(near_edge, near_edge), list(far_x, near_edge), list(near_edge, far_y), list(far_x, far_y)))
 		var/turf/candidate = locate(corner[1], corner[2], z)
 		var/near = FALSE
 		for(var/obj/machinery/power/apc/apc as anything in GLOB.apcs_list)
@@ -1355,6 +1359,28 @@
 	TEST_ASSERT(alice.send_message(alice_pda, "netDM relay: Carol is away", list(carol)), "The message to Carol must leave.")
 	TEST_ASSERT(wait_counter(shadow, counters, "unreachable", unreachable, 30 SECONDS), "Alice must learn Carol is unreachable: [shadow.state()] [json_encode(shadow.reasons)]")
 	TEST_ASSERT_EQUAL(received(carol, alice), 0, "Carol shows nothing.")
+
+	// If the preferred server explicitly refuses before logging, a backup may relay the same message.
+	var/obj/machinery/telecomms/message_server/backup = allocate(/obj/machinery/telecomms/message_server, turfs[3])
+	shadow.add_server(backup)
+	var/backup_instance = shadow.server_instances[WEAKREF(backup)]
+	var/datum/component/netdm_node/backup_node = backup.GetComponent(/datum/component/netdm_node)
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && !lane.ready(backup_node, backup_instance))
+		sleep(2)
+	TEST_ASSERT(lane.ready(backup_node, backup_instance), "The backup message server registers.")
+	TEST_ASSERT_EQUAL(shadow.choose_server(alice_pda), server_instance, "The preferred server is tried first.")
+	server.toggled = FALSE
+	logged = length(server.pda_msgs)
+	var/backup_logged = length(backup.pda_msgs)
+	delivered = counters["delivered"]
+	TEST_ASSERT(alice.send_message(alice_pda, "netDM relay: backup server", list(bob)), "Alice can try sending with the preferred server off.")
+	TEST_ASSERT(wait_counter(shadow, counters, "delivered", delivered), "The backup server delivers after explicit refusal: [shadow.state()]")
+	TEST_ASSERT_EQUAL(received(bob, alice), 2, "Bob receives the backup delivery exactly once.")
+	TEST_ASSERT_EQUAL(length(server.pda_msgs), logged, "The preferred server did not log the refused message.")
+	TEST_ASSERT_EQUAL(length(backup.pda_msgs), backup_logged + 1, "The backup server logs the message once.")
+	server.toggled = TRUE
+
 	SSnetworks.ntnet_debug_global_signal = old_bypass
 	TEST_ASSERT_EQUAL(counters["duplicates"], 1, "Only the replayed delivery was a duplicate: [shadow.state()]")
 	log_world("netDM messenger authoritative: [shadow.state()] reasons=[json_encode(shadow.reasons)]")
@@ -2639,6 +2665,58 @@
 	TEST_ASSERT(!lane.wanted_by["atmos.sensor"], "Unwatch must remove provider tracking.")
 	qdel(lane)
 
+/datum/netdm_bridge/v1/staged/lane_test
+	var/block_publish = FALSE
+	var/list/requests = list()
+
+/datum/netdm_bridge/v1/staged/lane_test/request(list/fields)
+	if(block_publish && fields["op"] == "publish")
+		return null
+	requests += fields["op"]
+	return "lane-test-[length(requests)]"
+
+/datum/netdm_service_lane/test/node_id(datum/node)
+	return "1"
+
+/datum/unit_test/netdm_service_lane_progress/Run()
+	var/datum/netdm_service_lane/test/lane = new
+	var/datum/netdm_bridge/v1/staged/lane_test/bridge = new
+	var/datum/netdm_service_endpoint/endpoint = new
+	var/obj/item/device = allocate(/obj/item)
+	var/datum/component/netdm_node/node = device.AddComponent(/datum/component/netdm_node)
+	endpoint.node = node
+	endpoint.id = "lane-source"
+	endpoint.attached_node = "1"
+	lane.endpoints[endpoint.id] = endpoint
+	lane.by_node[node] = endpoint
+	lane.next_poll = world.time + 10 SECONDS
+
+	for(var/index in 1 to 16)
+		var/instance = "atmos.test.[index]"
+		endpoint.registered[instance] = TRUE
+		lane.publish(node, instance, list("pressureKPa" = index))
+	bridge.block_publish = TRUE
+	lane.pump(bridge)
+	TEST_ASSERT_EQUAL(length(lane.publishes), 16, "A native queue refusal must not discard the pending publication.")
+	TEST_ASSERT(!length(bridge.requests), "A refused publication must not count as an admitted request.")
+	bridge.block_publish = FALSE
+	TEST_ASSERT(lane.invoke(node, "camera.test", "acquire", "sample", list("request" = "sample")), "The command should queue.")
+	TEST_ASSERT(lane.query_command(node, "1", null), "The status query should queue.")
+	lane.pump(bridge)
+	TEST_ASSERT("invoke" in bridge.requests, "Queued telemetry must leave room to send the command.")
+	TEST_ASSERT("command_status" in bridge.requests, "Queued telemetry must leave room to confirm an operation.")
+	TEST_ASSERT(length(lane.publishes), "Only part of the telemetry backlog should be sent.")
+	TEST_ASSERT_EQUAL(length(lane.inflight), 14, "An ACK and poll must still fit in the in-flight budget.")
+
+	lane.pending_acks += list(list("deliveryId" = "1", "applied" = TRUE))
+	lane.pump(bridge)
+	TEST_ASSERT("delivery_ack" in bridge.requests, "An ACK must progress before ordinary requests are answered.")
+	TEST_ASSERT("delivery_poll" in bridge.requests, "A poll must progress before ordinary requests are answered.")
+	TEST_ASSERT_EQUAL(length(lane.inflight), 16, "Inbox work must respect the total in-flight budget.")
+	qdel(bridge)
+	qdel(lane)
+	qdel(endpoint)
+
 
 /// A new network-space source has no implicit rights, and survives the destruction
 /// of a UI window that it did not create. Digital entities must supply their own
@@ -2658,3 +2736,80 @@
 	TEST_ASSERT(source.window == second_window, "An independent actor may open another view after its old view closed.")
 	qdel(source)
 	TEST_ASSERT(QDELETED(second_window), "Retiring a network actor closes its existing UI rather than leaving an orphaned window.")
+
+/// DreamDaemon has no interactive client. Bypass only the client ownership check for this fixture.
+/datum/netdm_space_actor/entity/test/can_submit()
+	return !QDELETED(src) && !QDELETED(entry) && SSnetdm_observe?.published
+
+/datum/unit_test/netdm_observe/area_map/network_entity/Run()
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
+		return
+	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
+	TEST_ASSERT(wait_until_live(), "Observe must publish the initial map.")
+	var/turf/left = run_loc_floor_bottom_left
+	var/turf/right = get_step(left, EAST)
+	assign_area(left, test_zone(/area/netdm_test/first))
+	assign_area(right, test_zone(/area/netdm_test/second))
+	var/obj/machinery/power/apc/entry_apc = allocate(/obj/machinery/power/apc, left)
+	var/obj/machinery/power/apc/target_apc = allocate(/obj/machinery/power/apc, right)
+	var/list/entry_fact = wait_for_fact(WEAKREF(entry_apc), left)
+	var/list/target_fact = wait_for_fact(WEAKREF(target_apc), right)
+	TEST_ASSERT(entry_fact && target_fact, "Both APCs are published.")
+	var/entry_node = entry_fact["a"]
+	var/target_node = target_fact["a"]
+	TEST_ASSERT(wait_for_links(left.z, entry_node, 1, TRUE), "The entity has a real wired route.")
+	var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe.diagnostics
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	var/dest = diagnostics.offer_shell(target_apc)
+	TEST_ASSERT(dest, "The destination publishes its normal shell.")
+	var/mob/dead/netdm_entity/controller = new(null)
+	allocated += controller
+	var/datum/netdm_space_actor/entity/denied = allocate(/datum/netdm_space_actor/entity, controller, entry_apc, null)
+	TEST_ASSERT(!denied.can_submit() && denied.ui_status(controller, GLOB.always_state) == UI_CLOSE, "An unowned entity cannot submit or expose a UI.")
+	TEST_ASSERT(!controller.forceMove(left) && !controller.loc && !denied.physical_body() && !denied.can_operate_alarm(null), "The role has no physical position or authority.")
+	qdel(denied)
+	var/datum/netdm_space_actor/entity/test/source = allocate(/datum/netdm_space_actor/entity/test, controller, entry_apc, null)
+	var/datum/netdm_apc_operator/entity/entry = source.entry
+	var/datum/netdm_service_endpoint/owned_endpoint = lane.by_node[entry]
+	TEST_ASSERT(owned_endpoint && owned_endpoint != lane.by_node[entry_apc] && lane.node_id(entry) == entry_node, \
+		"The entity has a separate Host endpoint on the published wire node.")
+
+	var/datum/netdm_space/space = new(source)
+	var/list/view = space.ui_data(null)
+	TEST_ASSERT(view["entityRole"] && space.enter(), "The entity enters through its own network view.")
+	var/deadline = world.time + 25 SECONDS
+	while(world.time < deadline && space.presence?["state"] != "active")
+		sleep(2)
+	TEST_ASSERT_EQUAL(space.presence?["node"], entry_node, "Presence starts at the entry APC.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && !lane.ready(target_apc, dest))
+		sleep(2)
+	TEST_ASSERT(lane.ready(target_apc, dest) && space.scan(2), "The entity scans for the destination.")
+	deadline = world.time + 25 SECONDS
+	while(world.time < deadline && !space.items["s|[dest]"])
+		sleep(2)
+	TEST_ASSERT(space.items["s|[dest]"] && space.preview_move(dest), "The entity discovers the shell and checks a route.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && space.route_preview?["status"] == "pending")
+		sleep(2)
+	TEST_ASSERT(space.route_preview?["status"] == "ready" && space.move(dest), "Host verifies the path before the move.")
+	deadline = world.time + 25 SECONDS
+	while(world.time < deadline && (space.presence?["state"] != "active" || space.host_node() != target_node))
+		sleep(2)
+	TEST_ASSERT_EQUAL(space.host_node(), target_node, "The entity migrated to the target in the simulated network.")
+
+	TEST_ASSERT(space.hack_start(target_node), "The entity starts a challenge at its current APC.")
+	deadline = world.time + 15 SECONDS
+	while(world.time < deadline && !space.hack_code)
+		sleep(1)
+	TEST_ASSERT(space.hack_code && space.hack_submit(space.hack_code), "The routed challenge can be answered.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && space.hack_status == "checking")
+		sleep(2)
+	TEST_ASSERT(space.hack_status == "ok" && length(space.hack_keys) && space.hack_use(target_node), "Host grants a key for the target APC.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && target_apc.operating)
+		sleep(2)
+	TEST_ASSERT(!target_apc.operating && entry_apc.operating, "The Host-approved action flips only the target's physical breaker.")
+	qdel(source)
+	TEST_ASSERT(QDELETED(space) && !lane.by_node[entry], "Retirement closes the view and invalidates the entity endpoint.")

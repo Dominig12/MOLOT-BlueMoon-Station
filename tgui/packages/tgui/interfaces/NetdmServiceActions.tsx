@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { Box, Button, Dropdown, Input, NoticeBox, Stack } from '../components';
+import { DeliveryStatus } from './NetdmDelivery';
 import { DeviceEntry } from './NetdmDeviceState';
 import {
   actionFields,
@@ -62,8 +63,9 @@ const ActionField = ({
   );
 };
 
-const ActionResult = ({ entry, onCommand }: {
+const ActionResult = ({ entry, entries, onCommand }: {
   entry?: DeviceEntry;
+  entries: DeviceEntry[];
   onCommand: (line: string) => void;
 }) => {
   if (!entry) return null;
@@ -74,6 +76,28 @@ const ActionResult = ({ entry, onCommand }: {
   const sent = entry.status === 'ok' && status === 'sent';
   const started = !!entry.pending;
   const failed = !started && !sent && status !== 'ok';
+  if (entry.delivery) {
+    const operation = entry.delivery.operation;
+    const resultLine = /^[1-9][0-9]{0,18}$/.test(operation) ? `result ${operation}` : null;
+    const reply = resultLine ? latestApiReply(entries, resultLine) : undefined;
+    return (
+      <div className="NetdmHome__actionResult" role="status">
+        <DeliveryStatus delivery={entry.delivery} />
+        {entry.delivery.state === 'delivered' && resultLine && (
+          <Button icon="list-alt" disabled={!!reply?.pending} onClick={() => onCommand(resultLine)}>
+            Показать ответ
+          </Button>
+        )}
+        {reply && !reply.pending && (reply.status === 'ok' && reply.records.length > 0 ? (
+          <dl className="NetdmDeliveryActivity__fields">
+            {reply.records[0].map(field => (
+              <div key={field.name}><dt>{field.name}</dt><dd>{field.value}</dd></div>
+            ))}
+          </dl>
+        ) : <Box color="label">Содержимое ответа недоступно.</Box>)}
+      </div>
+    );
+  }
   return (
     <div className="NetdmHome__actionResult" role="status">
       {started ? 'Запрос отправляется по сети…'
@@ -193,7 +217,7 @@ export const NetdmServiceActions = ({ instance, type, entries, onCommand, disabl
                         Команда выполняется только после проверки прав, маршрута и состояния получателя.
                         Подтверждение отправки не означает применения.
                       </div>
-                      <ActionResult entry={lastExecution} onCommand={onCommand} />
+                      <ActionResult entry={lastExecution} entries={entries} onCommand={onCommand} />
                     </>
                   )}
                 </div>

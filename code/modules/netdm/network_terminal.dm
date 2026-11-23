@@ -146,7 +146,7 @@
 	var/idle_until
 	var/detach_needed = FALSE
 
-/datum/netdm_apc_operator/New(datum/netdm_diagnostics/owner, operator_key, obj/machinery/power/apc/apc, mob/living/user)
+/datum/netdm_apc_operator/New(datum/netdm_diagnostics/owner, operator_key, obj/machinery/power/apc/apc, mob/user)
 	diagnostics = owner
 	key = operator_key
 	apc_ref = WEAKREF(apc)
@@ -175,13 +175,13 @@
 		detach_needed = TRUE
 
 /datum/netdm_apc_operator/Destroy()
-	var/mob/living/user = user_ref?.resolve()
+	var/mob/user = user_ref?.resolve()
 	var/obj/machinery/power/apc/apc = apc_ref?.resolve()
 	if(user)
 		UnregisterSignal(user, list(COMSIG_PARENT_QDELETING, COMSIG_MOB_CLIENT_LOGOUT))
 	if(apc)
 		UnregisterSignal(apc, COMSIG_PARENT_QDELETING)
-	if(diagnostics?.apc_operators[key] == src)
+	if(key && diagnostics?.apc_operators[key] == src)
 		diagnostics.apc_operators -= key
 	SSnetdm_observe?.services?.drop(src)
 	qdel(terminal_ref?.resolve())

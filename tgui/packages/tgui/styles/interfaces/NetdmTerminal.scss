@@ -314,29 +314,413 @@
   }
 }
 
+.NetdmToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 7px 9px;
+  min-width: 0;
+  border: 1px solid #2c4152;
+  border-radius: 9px;
+  background: #152332;
+  color: #e3edf5;
+
+  &__status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    --status-color: #8599ae;
+
+    &[data-state='active'] { --status-color: #7edbd7; }
+    &[data-state='moving'] { --status-color: #8bbdff; }
+    &[data-state='suspended'] { --status-color: #ebbd7f; }
+  }
+  &__dot {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 7px;
+    border-radius: 50%;
+    background: var(--status-color);
+    box-shadow: 0 0 0 3px #233346;
+  }
+  &__statusText {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    strong { color: var(--status-color); font-weight: 600; }
+    span { color: #c1d2df; }
+    small { display: block; margin-top: 2px; color: #a4bacd; }
+  }
+
+  &__controls,
+  &__group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+  &__controls { gap: 7px; }
+  &__group {
+    padding: 3px;
+    border: 1px solid #2c4152;
+    border-radius: 7px;
+    background: #101a25;
+    &:empty { display: none; }
+  }
+
+  select,
+  button,
+  .Button {
+    margin: 0;
+    min-height: 25px;
+    padding: 3px 6px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    font: inherit;
+    color: inherit;
+    background: transparent;
+  }
+  select { cursor: pointer; color-scheme: dark; }
+  button:not(:disabled) { cursor: pointer; }
+  button:disabled { opacity: 0.5; }
+  &__icon { display: grid; place-items: center; width: 26px; }
+  & &__scan { border-color: #4c727d; background: #264b59; color: #e2f7fb; }
+  &__scan .Icon { margin-right: 2px; }
+  button:not(:disabled):hover,
+  select:hover,
+  .Button--color--default:not(.Button--disabled):hover { background: #2b4356; }
+  .Button--color--average { color: #ffd496; }
+  .Button--color--bad { color: #ff9a9a; }
+  :focus-visible { outline: 2px solid #7edbd7; outline-offset: -2px; }
+}
+
+.NetdmDock {
+  --dock-accent: #7edbd7;
+  --dock-edge: #2c4152;
+  --dock-label: #9eb5c6;
+  --dock-text: #e3edf5;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 46px;
+  height: 100%;
+  min-height: 0;
+  color: var(--dock-text);
+  border: 1px solid var(--dock-edge);
+  border-radius: 10px;
+  background: #101a25;
+  overflow: hidden;
+
+  &[data-tab='route'] { --dock-accent: #8bdcac; }
+  &[data-tab='activity'] { --dock-accent: #8bbdff; }
+  &[data-tab='operator'] { --dock-accent: #cabaef; }
+  &[data-tab='chat'] { --dock-accent: #83d6f4; }
+
+  &__rail {
+    grid-area: 1 / 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 0;
+    border-left: 1px solid var(--dock-edge);
+    background: #0c141e;
+    overflow: auto;
+    scrollbar-width: none;
+  }
+
+  &__tab {
+    position: relative;
+    flex: 0 0 35px;
+    width: 35px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--dock-label);
+    font-size: 15px;
+    cursor: pointer;
+
+    &:hover { background: #1b2937; color: var(--dock-text); }
+
+    &[aria-selected='true'] {
+      background: #1e3341;
+      border-color: #395768;
+      color: var(--dock-accent);
+
+      &::before {
+        content: '';
+        position: absolute;
+        right: -6px;
+        top: 8px;
+        bottom: 8px;
+        width: 2px;
+        background: currentColor;
+        border-radius: 2px 0 0 2px;
+      }
+    }
+  }
+
+  &__unread,
+  &__routeDot { position: absolute; top: -3px; right: -3px; z-index: 1; border: 1px solid #0c141e; }
+  &__unread {
+    min-width: 14px;
+    padding: 1px 3px;
+    border-radius: 12px;
+    background: #9feadc;
+    color: #132c32;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.1;
+    text-align: center;
+  }
+  &__routeDot { width: 8px; height: 8px; border-radius: 50%; background: #8bdcac; }
+
+  &__panel {
+    grid-area: 1 / 1;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    &[hidden] { display: none; }
+  }
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--dock-edge);
+    background: #152332;
+
+    h2 { margin: 0; min-width: 0; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
+  }
+  &__headerIcon {
+    display: grid;
+    place-items: center;
+    flex: 0 0 29px;
+    height: 29px;
+    border-radius: 7px;
+    background: #223749;
+    color: var(--dock-accent);
+  }
+
+  &__body {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    min-width: 0;
+    min-height: 0;
+    padding: 9px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #3f5e73 transparent;
+  }
+  &__body--chat { overflow: hidden; }
+  &__body > * { flex-shrink: 0; }
+  &__body--chat > * { flex: 1 1 auto; min-height: 0; }
+
+  &__card,
+  .Section {
+    min-width: 0;
+    margin: 0;
+    border: 1px solid #2a3e50;
+    border-radius: 7px;
+    background: #172534;
+    overflow-wrap: anywhere;
+  }
+
+  &__card { padding: 9px; }
+  &__card > * + * { margin-top: 6px; }
+  &__node { border-left: 2px solid var(--dock-accent); }
+  &__empty { padding: 13px 9px; color: var(--dock-label); }
+  &__meta { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 8px; }
+  &__meta > span,
+  &__mono { color: var(--dock-label); font-size: 11px; overflow-wrap: anywhere; }
+  &__mono { font-family: monospace; }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 7px;
+  }
+
+  &__field {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+    > span { color: var(--dock-label); }
+  }
+
+  input,
+  select {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+    height: 30px;
+    padding: 4px 7px;
+    font: inherit;
+    color: var(--dock-text);
+    border: 1px solid #3c556a;
+    border-radius: 5px;
+    background: #101c29;
+    color-scheme: dark;
+  }
+  &__profile { display: grid; grid-template-columns: minmax(0, 1fr) minmax(46px, 0.4fr); gap: 7px; }
+  &__wide { grid-column: 1 / -1; }
+  &__paired { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 7px; }
+
+  &__disclosure > summary { color: var(--dock-text); cursor: pointer; }
+  &__disclosure > summary::marker { color: var(--dock-accent); }
+  &__disclosure[open] > summary { margin-bottom: 7px; }
+  &__swatches { display: flex; flex-wrap: wrap; gap: 5px; }
+  &__swatches button {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #172534;
+    border-radius: 50%;
+    cursor: pointer;
+    &[aria-pressed='true'] { box-shadow: 0 0 0 1px var(--dock-text); }
+  }
+
+  &__event { padding: 6px 0; border-bottom: 1px solid #2a3e50; line-height: 1.4; }
+  &__event:last-child { border-bottom: 0; }
+
+  &__chat {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+  &__chatToolbar { display: flex; justify-content: flex-end; }
+  &__chatViewport { position: relative; min-height: 0; }
+  &__chatHistory { height: 100%; overflow: auto; padding: 2px; scrollbar-width: thin; }
+  &__message {
+    margin-bottom: 5px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: #182635;
+    overflow-wrap: anywhere;
+
+    strong { display: block; margin-bottom: 2px; color: var(--dock-label); font-size: 11px; }
+    &[data-own='true'] { background: #1e3745; }
+    &[data-own='true'] strong { color: var(--dock-accent); }
+  }
+  &__divider { margin: 6px 0; border-top: 1px solid #4d7690; color: var(--dock-accent); font-size: 11px; }
+  &__jump { position: absolute; right: 5px; bottom: 6px; }
+  &__compose { border-top: 1px solid var(--dock-edge); padding-top: 7px; }
+  &__composer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 34px;
+    gap: 5px;
+
+    button {
+      padding: 0;
+      border: 1px solid #416674;
+      border-radius: 6px;
+      background: #264b59;
+      color: var(--dock-text);
+      cursor: pointer;
+      &:disabled { opacity: 0.45; cursor: default; }
+    }
+  }
+
+  .Section__title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    padding: 7px 8px;
+    border-color: #2a3e50;
+    background: #1b2c3d;
+  }
+  .Section__titleText { min-width: 0; white-space: normal; }
+  .Section__buttons { display: flex; flex-wrap: wrap; gap: 5px; }
+  .Section__content { padding: 8px; }
+  .Button {
+    max-width: 100%;
+    margin: 0;
+    padding: 4px 7px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    line-height: 1.25;
+    white-space: normal;
+  }
+  .Button--color--default { border-color: #3b5267; background: #23384a; color: var(--dock-text); }
+  .Button--color--default:not(.Button--disabled):hover { background: #2c465a; }
+  .Button--selected { border-color: #5d91a2; color: var(--dock-accent); background: #28495c; }
+
+  :focus-visible { outline: 2px solid var(--dock-accent); outline-offset: -2px; }
+}
+
+.NetdmBreach {
+  margin-top: 8px;
+
+  &__cipher {
+    margin: 8px 0;
+    padding: 8px;
+    border: 1px solid #416875;
+    border-radius: 6px;
+    background: #142933;
+  }
+
+  &__sequence,
+  &__choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 7px 0;
+  }
+
+  &__sequence > span,
+  &__choices .Button {
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    margin: 0;
+    border-radius: 4px;
+  }
+
+  &__sequence > span { background: #243d47; }
+
+  &__sequence > &__tile {
+    border: 1px solid #4c8492;
+    color: #c5f7ff;
+  }
+}
+
+.NetdmDeliveryActivity {
+  margin-bottom: 8px;
+
+  &__entry {
+    padding: 5px 7px;
+    margin-bottom: 4px;
+    border-left: 2px solid #4b8191;
+    background: #172a33;
+    overflow-wrap: anywhere;
+  }
+
+  &__fields {
+    display: grid;
+    gap: 4px;
+    margin: 8px 0 0;
+
+    div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    dt { color: #a4bec8; overflow-wrap: anywhere; }
+  }
+}
+
 /* Network-presence service explorer: shared Host schema controls in a compact sidebar. */
 .NetdmSpaceContext {
-  margin-top: 9px;
-  padding-top: 9px;
-  border-top: 1px solid rgba(132, 178, 189, 0.25);
-  /* Forms may have many Host-defined fields; never displace the map or chat. */
-  max-height: 300px;
-  overflow-y: auto;
-  scrollbar-color: #496c77 transparent;
-  &__selected {
-    margin-top: 9px;
-    padding: 10px 11px;
-    background: #1b303b;
-    border: 1px solid #385462;
-    border-radius: 6px;
-  }
-  &__activity {
-    margin-top: 9px;
-    padding: 9px 10px;
-    border-left: 2px solid #557b8a;
-    background: rgba(26, 49, 61, 0.6);
-  }
-  .NetdmHome__actionsSection { margin-top: 10px; }
+  .NetdmHome__actionsSection { margin-top: 8px; }
   .NetdmHome__actionsExplorer { margin-top: 8px; padding: 10px; background: #182c37; border: 1px solid #355462; border-radius: 6px; }
   .NetdmHome__sectionLabel { font-size: 10px; font-weight: bold; color: #91c4cf; }
   .NetdmHome__minor { margin: 7px 0; font-size: 11px; color: #a0bac4; }
