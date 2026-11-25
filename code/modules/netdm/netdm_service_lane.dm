@@ -491,7 +491,7 @@
 	while(length(controls) && length(inflight) < send_limit)
 		var/list/control = controls[1]
 		controls.Cut(1, 2)
-		var/request_id = copytext(control[1], 1, 7) == "radio_" ? bridge.radio(control[1], control[2]) : bridge.research(control[1], control[2])
+		var/request_id = send_control(bridge, control)
 		if(!send(request_id, list("op" = "control", "callback" = control[3])))
 			// The bridge did not take it (a full queue): it stays first in line. Dropping it here would leave
 			// its owner waiting for a reply that never comes, until the next session.
@@ -669,6 +669,17 @@
 	entry["accepted_us"] = netdm_now_us()
 	var/datum/callback/on_accept = entry["callback"]
 	on_accept?.Invoke(entry, reply)
+
+
+/// Picks the bridge call for one queued control request. Each family validates its own prefix, so an
+/// unknown operation is refused there rather than being sent to the Host as something else.
+/datum/netdm_service_lane/proc/send_control(datum/netdm_bridge/v1/staged/bridge, list/control)
+	var/op = control[1]
+	if(copytext(op, 1, 7) == "radio_")
+		return bridge.radio(op, control[2])
+	if(copytext(op, 1, 8) == "netrun_")
+		return bridge.netrun(op, control[2])
+	return bridge.research(op, control[2])
 
 /datum/netdm_service_lane/proc/accept_callback(list/op, datum/netdm_service_endpoint/endpoint, list/reply)
 	var/datum/callback/on_reply = op["callback"]

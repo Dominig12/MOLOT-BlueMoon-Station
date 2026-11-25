@@ -226,6 +226,13 @@
 		return null
 	return request(list("op" = op, "payload" = payload))
 
+/// NETRUN control plane: one bounded projection or one action for the client window. The Host answers
+/// with the filtered payload, so the window never receives what the observer may not know.
+/datum/netdm_bridge/v1/staged/proc/netrun(op, list/payload)
+	if(!istext(op) || copytext(op, 1, 8) != "netrun_" || !islist(payload))
+		return null
+	return request(list("op" = op, "payload" = payload))
+
 /// P8 Shadow: analytic reach of a radio transmission (radio_reach); it changes nothing in the Host.
 /datum/netdm_bridge/v1/staged/proc/radio(op, list/payload)
 	if(op != "radio_reach" || !islist(payload))

@@ -3839,6 +3839,7 @@
 #include "code\modules\netdm\netdm_node.dm"
 #include "code\modules\netdm\netdm_service_lane.dm"
 #include "code\modules\netdm\netdm_services.dm"
+#include "code\modules\netdm\netrun_client.dm"
 #include "code\modules\netdm\network_diagnostics.dm"
 #include "code\modules\netdm\network_immersion.dm"
 #include "code\modules\netdm\network_space.dm"
