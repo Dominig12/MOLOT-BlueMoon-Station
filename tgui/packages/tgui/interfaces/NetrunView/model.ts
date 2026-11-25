@@ -42,6 +42,9 @@ export type OperationView = {
 
 export type LinkView = { a: number; b: number; cost: number };
 
+/** A starting program as text. It is data: importing it never carries rights or an old host identifier. */
+export type PresetView = { name: string; text: string };
+
 /** A running or finished program of this observer. It runs on the server, not in the window. */
 export type ProgramView = {
   process: number;
@@ -64,6 +67,7 @@ export type Panel = {
   actions: ActionView[];
   operations: OperationView[];
   programs: ProgramView[];
+  presets: PresetView[];
   knowledge: { known: number; stale: number; total: number };
 };
 

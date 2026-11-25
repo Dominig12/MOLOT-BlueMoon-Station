@@ -67,6 +67,12 @@ const panel = (overrides: Partial<Data['panel']> = {}) => ({
       lastOutcome: 'committed',
     },
   ],
+  presets: [
+    {
+      name: 'Inspector',
+      text: 'program "Inspector"\n  invoke net.inspect self\n  stop',
+    },
+  ],
   knowledge: { known: 2, stale: 1, total: 2 },
   ...overrides,
 });
@@ -114,6 +120,14 @@ test('вкладка «Программы» показывает запущен�
   fireEvent.click(screen.getByText('Программы'));
   expect(screen.getByText(/guardian/)).toBeTruthy();
   expect(screen.getByText('ожидание')).toBeTruthy();
+});
+
+test('библиотека программ показывает текст выбранного пресета и не выдаёт его за права', () => {
+  renderWindow({ panel: panel() as Data['panel'], error: null, notice: null });
+  fireEvent.click(screen.getByText('Программы'));
+  expect(screen.getByText(/чужие права/)).toBeTruthy();
+  fireEvent.click(screen.getByText('Inspector'));
+  expect(screen.getByText(/invoke net.inspect self/)).toBeTruthy();
 });
 
 test('вкладка «События» показывает итог операции', () => {

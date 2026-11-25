@@ -12,6 +12,7 @@ import {
   formatCooldown,
   HostView,
   OperationView,
+  PresetView,
   ProgramView,
   summarise,
   TabKey,
@@ -135,18 +136,51 @@ const programStateText: Record<string, string> = {
   cancelled: 'отменена',
 };
 
+const PresetLibrary = ({ presets }: { presets: PresetView[] }) => {
+  const [chosen, setChosen] = useState<string | null>(null);
+  const current = presets.find(preset => preset.name === chosen) ?? null;
+  return (
+    <Section title="Библиотека программ">
+      <Stack wrap>
+        {presets.map(preset => (
+          <Stack.Item key={preset.name}>
+            <Button selected={chosen === preset.name} onClick={() => setChosen(preset.name)}>
+              {preset.name}
+            </Button>
+          </Stack.Item>
+        ))}
+      </Stack>
+      {current ? (
+        <Box mt={1} style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 11 }}>
+          {current.text}
+        </Box>
+      ) : (
+        <Box mt={1} color="label" fontSize={11}>
+          Выберите программу, чтобы увидеть её текст. Это данные: чужие права и старые адреса с ними не
+          передаются.
+        </Box>
+      )}
+    </Section>
+  );
+};
+
 const ProgramsTab = ({
   actions,
   programs,
+  presets,
   selected,
   onExecute,
 }: {
   actions: ActionView[];
   programs: ProgramView[];
+  presets: PresetView[];
   selected: number | null;
   onExecute: (action: string) => void;
 }) => (
   <Stack vertical fill>
+    <Stack.Item>
+      <PresetLibrary presets={presets} />
+    </Stack.Item>
     <Stack.Item>
       <Section title="Запущенные программы">
         <Table>
@@ -306,6 +340,7 @@ export const NetrunContent = ({
                 <ProgramsTab
                   actions={panel.actions}
                   programs={panel.programs}
+                  presets={panel.presets}
                   selected={selected}
                   onExecute={execute}
                 />
