@@ -1,6 +1,15 @@
 import { BooleanLike } from 'common/react';
 
 /** What one observer may see of one digital host. Names arrive only once the identity is established. */
+/** A stored copy of a core: what it holds, how intact it is and when it was taken. */
+export type BackupView = {
+  id: number;
+  host: number;
+  integrity: number;
+  control: number;
+  takenAt: number;
+};
+
 /** One digital core of the observer: what it is, how hurt it is and which generation controls it. */
 export type LifeView = {
   identity: number;
@@ -88,6 +97,8 @@ export type Panel = {
   actions: ActionView[];
   operations: OperationView[];
   programs: ProgramView[];
+  /** Copies of the observer's own core, newest first. */
+  backups: BackupView[];
   /** The observer's own cores: their lives are not somebody else's business either. */
   lives: LifeView[];
   /** Only the observer's own presence: another runner's is not this window's business. */

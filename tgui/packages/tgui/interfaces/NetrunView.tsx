@@ -10,6 +10,7 @@ import {
   findHost,
   formatAge,
   formatCooldown,
+  BackupView,
   HostView,
   LifeView,
   OperationView,
@@ -63,11 +64,15 @@ const Sidebar = ({ tab, onTab }: { tab: TabKey; onTab: (key: TabKey) => void }) 
  */
 const LifeTab = ({
   core,
+  backups,
   presence,
   selected,
   onLife,
+  onRestore,
 }: {
   core?: LifeView;
+  backups: BackupView[];
+  onRestore: (backup: number) => void;
   presence?: PresenceView;
   selected: number | null;
   onLife: (action: string, target?: number) => void;
@@ -122,6 +127,33 @@ const LifeTab = ({
           </Table.Cell>
         </Table.Row>
       </Table>
+      {backups.length > 0 && (
+        <Section title="Копии" mt={1}>
+          <Table>
+            <Table.Row header>
+              <Table.Cell>#</Table.Cell>
+              <Table.Cell>Целостность</Table.Cell>
+              <Table.Cell>Поколение</Table.Cell>
+              <Table.Cell />
+            </Table.Row>
+            {backups.map(backup => (
+              <Table.Row key={backup.id}>
+                <Table.Cell>{backup.id}</Table.Cell>
+                <Table.Cell>{backup.integrity}</Table.Cell>
+                <Table.Cell>{backup.control}</Table.Cell>
+                <Table.Cell>
+                  <Button
+                    compact
+                    icon="undo"
+                    content="Восстановить"
+                    onClick={() => onRestore(backup.id)}
+                  />
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table>
+        </Section>
+      )}
       <Stack mt={1}>
         <Stack.Item>
           <Button
@@ -138,9 +170,6 @@ const LifeTab = ({
             disabled={!selected || core.migrating}
             onClick={() => onLife('migrate', selected ?? undefined)}
           />
-        </Stack.Item>
-        <Stack.Item>
-          <Button icon="undo" content="Восстановить" disabled={!selected} onClick={() => onLife('restore_backup', selected ?? undefined)} />
         </Stack.Item>
       </Stack>
     </Section>
@@ -525,7 +554,14 @@ export const NetrunContent = ({
                 />
               )}
               {panel && tab === 'life' && (
-        <LifeTab core={panel.lives?.[0]} presence={panel.presence ?? undefined} selected={selected} onLife={(action, target) => act('life', { action, target })} />
+        <LifeTab
+          core={panel.lives?.[0]}
+          backups={panel.backups ?? []}
+          presence={panel.presence ?? undefined}
+          selected={selected}
+          onLife={(action, target) => act('life', { action, target })}
+          onRestore={backup => act('life', { action: 'restore_backup', backup, target: selected })}
+        />
       )}
       {panel && tab === 'events' && <EventsTab operations={panel.operations} />}
             </Section>

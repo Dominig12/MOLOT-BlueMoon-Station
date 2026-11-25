@@ -76,6 +76,7 @@ const panel = (overrides: Partial<Data['panel']> = {}) => ({
   knowledge: { known: 2, stale: 1, total: 2 },
   presence: null,
   lives: [],
+  backups: [],
   presences: [],
   ...overrides,
 });
@@ -131,6 +132,18 @@ it('offers to create a core when the observer has none', () => {
   expect(screen.getByText(/нет цифрового ядра/)).toBeTruthy();
   fireEvent.click(screen.getByText('Создать ядро на выбранном хосте'));
   expect(act).toHaveBeenCalledWith('life', { action: 'create', target: 1 });
+});
+
+it('lists the stored copies of the core and restores one of them', () => {
+  const act = jest.fn();
+  const core = { identity: 9, host: 2, state: 'degraded', integrity: 40, control: 3, migrating: false, destination: 0 };
+  const backups = [{ id: 7, host: 2, integrity: 80, control: 2, takenAt: 1_000 }];
+  render(<NetrunWindow data={{ panel: panel({ lives: [core], backups }), error: null, notice: null }} act={act} />);
+  fireEvent.click(screen.getAllByText('deck.1')[0]);
+  fireEvent.click(screen.getByText('Ядро'));
+  expect(screen.getByText('Копии')).toBeTruthy();
+  fireEvent.click(screen.getByText('Восстановить'));
+  expect(act).toHaveBeenCalledWith('life', { action: 'restore_backup', backup: 7, target: 1 });
 });
 
 const renderWindow = (data: Data) => {
