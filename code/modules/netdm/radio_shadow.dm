@@ -84,7 +84,7 @@
 	var/id = signal.data["netdm_radio"]
 	if(!id)
 		return
-	if(authoritative)
+	if(contexts[id])
 		// The uplink went over the network; the broadcast that follows is the legacy subspace one.
 		var/list/context = contexts[id]
 		if(context && !context["heard"] && signal.transmission_method == TRANSMISSION_SUBSPACE)

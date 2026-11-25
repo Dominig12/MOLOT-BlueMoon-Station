@@ -1285,7 +1285,6 @@
 	add_messenger(bob)
 	add_messenger(carol)
 
-	shadow.set_authoritative(TRUE)
 	var/server_instance = shadow.server_instances[WEAKREF(server)]
 	TEST_ASSERT(server_instance, "The message server offers msgsrv: [shadow.state()]")
 	var/datum/component/netdm_node/server_node = server.GetComponent(/datum/component/netdm_node)
@@ -1426,7 +1425,6 @@
 	var/turf/corner = isolated_turf()
 	TEST_ASSERT(corner, "The station level needs a corner without an APC nearby.")
 	away.forceMove(corner)
-	shadow.set_authoritative(TRUE)
 	var/instance = shadow.rx_instances[WEAKREF(mainframe)]
 	TEST_ASSERT(instance, "The mainframe takes uplinks: [shadow.state()]")
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
@@ -1464,82 +1462,6 @@
 	TEST_ASSERT(islist(expired) && expired["result"]["state"] == "expired", "An unknown context has expired.")
 	log_world("netDM radio uplink: [shadow.state()]")
 
-/// Authoritative uplink on the station: the speakers reach the map's receivers over the network and
-/// the legacy broadcast follows. Writes netdm_radio_station.json.
-/datum/unit_test/netdm_observe/area_map/radio_station/proc/authoritative_station(datum/netdm_radio_shadow/shadow, list/speakers, ready, unpublished)
-	var/list/counters = shadow.uplink_counters
-	// First words attach each radio's endpoint; they are measured apart from the steady window.
-	var/first_start = length(shadow.uplink_latencies)
-	for(var/obj/item/radio/radio as anything in speakers)
-		var/obj/item/paper/warmup = allocate(/obj/item/paper, get_turf(radio))
-		var/datum/signal/subspace/vocal/first = new(radio, FREQ_COMMON, new /atom/movable/virtualspeaker(null, warmup, radio),
-			/datum/language/common, "netDM uplink first word [REF(radio)]", list()) // Broadcasters drop repeats within a second.
-		first.send_to_receivers()
-		sleep(3)
-	var/settle = world.time + 30 SECONDS
-	while(world.time < settle && length(shadow.contexts))
-		sleep(5)
-	var/list/first_words = list()
-	for(var/sample in shadow.uplink_latencies.Copy(max(1, first_start + 1)))
-		first_words += round(sample / 1000)
-	sleep(2 SECONDS) // Out of the cooldown of each radio and the last result legs.
-	var/list/before = counters.Copy()
-	var/latency_start = length(shadow.uplink_latencies)
-	var/list/signals = list()
-	for(var/index in 1 to length(speakers))
-		var/obj/item/radio/radio = speakers[index]
-		var/obj/item/paper/someone = allocate(/obj/item/paper, get_turf(radio))
-		var/atom/movable/virtualspeaker/voice = new(null, someone, radio)
-		var/datum/signal/subspace/vocal/signal = new(radio, FREQ_COMMON, voice, /datum/language/common, "netDM uplink test [index]", list())
-		signal.send_to_receivers()
-		signals += signal
-		sleep(3)
-	var/deadline = world.time + 30 SECONDS
-	while(world.time < deadline && length(shadow.contexts))
-		sleep(5)
-	var/list/delta = list()
-	for(var/name in counters)
-		if(counters[name] != before[name])
-			delta[name] = counters[name] - before[name]
-	var/broadcast = 0
-	for(var/datum/signal/subspace/vocal/signal as anything in signals)
-		if(signal.data["done"])
-			broadcast++
-	var/list/window = shadow.uplink_latencies.Copy(max(1, latency_start + 1))
-	var/list/sorted = sortTim(window.Copy(), GLOBAL_PROC_REF(cmp_numeric_asc))
-	var/p50 = length(sorted) ? round(sorted[clamp(CEILING(length(sorted) * 0.5, 1), 1, length(sorted))] / 1000, 0.1) : null
-	var/p95 = length(sorted) ? round(sorted[clamp(CEILING(length(sorted) * 0.95, 1), 1, length(sorted))] / 1000, 0.1) : null
-	var/list/latency_ms = list()
-	for(var/sample in sorted)
-		latency_ms += round(sample / 1000)
-	var/datum/http_response/status_response = world_safe_http_get("[http_base]/api/game/status", 5 SECONDS)
-	var/list/host_status = status_response?.status_code == 200 ? json_decode(status_response.body) : null
-	var/list/report = list(
-		"map" = SSmapping.config?.map_name,
-		"mode" = "authoritative",
-		"speakers" = length(speakers),
-		"ready" = ready,
-		"unpublished_radios" = unpublished,
-		"receivers_offered" = length(shadow.rx_instances),
-		"broadcast" = broadcast,
-		"counters" = delta,
-		"uplink_p50_ms" = p50,
-		"uplink_p95_ms" = p95,
-		"uplink_ms" = latency_ms,
-		"first_word_ms" = sortTim(first_words, GLOBAL_PROC_REF(cmp_numeric_asc)),
-		"apc_bridges" = host_status?["apcBridges"],
-		"host_runner" = host_status?["runner"],
-		"host_process" = host_status?["process"],
-		"lane" = SSnetdm_observe.services.state(),
-	)
-	var/path = "[GLOB.log_directory]/netdm_radio_station.json"
-	fdel(path)
-	text2file(json_encode(report), path)
-	log_world("netDM radio station: [report["map"]] authoritative speakers=[length(speakers)] broadcast=[broadcast] \
-		counters=[json_encode(delta)] uplink p50=[p50]ms p95=[p95]ms [shadow.uplink_state()]")
-	TEST_ASSERT_EQUAL(delta["transmissions"], length(speakers), "Every speaker's transmission goes to the network: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(broadcast, length(speakers), "Every transmission reaches a receiver and is broadcast: [json_encode(report)]")
-	TEST_ASSERT_EQUAL(delta["lost"], null, "No speech is lost on the way to telecomms: [json_encode(report)]")
 
 /**
  * Audit of the APC network on the loaded station map.

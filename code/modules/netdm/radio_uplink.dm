@@ -26,8 +26,6 @@
  * broadcast, a walk over every radio on the frequency, run from a queue within the tick budget.
  */
 /datum/netdm_radio_shadow
-	/// NETDM_RADIO_MODE=authoritative, or set_authoritative() at runtime.
-	var/authoritative = FALSE
 	/// Receiver weakref -> its instance rx.<endpoint>, and back.
 	var/list/rx_instances = list()
 	var/list/rx_by_instance = list()
@@ -50,19 +48,9 @@
 /datum/netdm_radio_shadow/setup(datum/netdm_service_lane/lane)
 	lane.dispatcher.allow_command("radio.receiver", "uplink", new /datum/netdm_command_handler/radio_uplink)
 	lane.dispatcher.allow_result("uplink", new /datum/netdm_effect_handler/radio_uplink_receipt, "radio.receiver")
-	if(world.GetConfig("env", "NETDM_RADIO_MODE") == "authoritative")
-		set_authoritative(TRUE)
 
-/datum/netdm_radio_shadow/proc/set_authoritative(enabled)
-	authoritative = !!enabled
-	if(!authoritative)
-		return
-	for(var/datum/weakref/receiver_ref as anything in receivers)
-		offer_receiver(receiver_ref.resolve())
-
-/// A receiver takes uplinks as the provider of rx.<endpoint>.
 /datum/netdm_radio_shadow/proc/offer_receiver(obj/machinery/telecomms/receiver)
-	if(!authoritative || QDELETED(receiver) || rx_instances[WEAKREF(receiver)])
+	if(QDELETED(receiver) || rx_instances[WEAKREF(receiver)])
 		return
 	var/datum/component/netdm_node/node = receiver.GetComponent(/datum/component/netdm_node)
 	var/datum/netdm_service_endpoint/endpoint = node ? SSnetdm_observe.services?.endpoint_for(node) : null
@@ -94,7 +82,9 @@
 			targets += rx_instances[receiver_ref]
 	if(!length(targets))
 		uplink_counters["no_receiver"]++
-		return TRUE // Nothing on the network serves this frequency; as with no receiver at all, nothing happens.
+		// No network receiver serves this frequency: the physical chain must deliver, so the network says it did
+		// not take the transmission instead of swallowing the speech (INT-001, INT-002).
+		return FALSE
 	contexts[id] = list("signal" = signal, "source" = WEAKREF(source), "created_rt" = REALTIMEOFDAY, "created_us" = netdm_now_us(),
 		"targets" = targets, "states" = list())
 	if(length(contexts) > NETDM_UPLINK_CONTEXTS)
@@ -244,7 +234,7 @@
 	return round(sorted[clamp(CEILING(length(sorted) * fraction, 1), 1, length(sorted))] / 1000, 0.1)
 
 /datum/netdm_radio_shadow/proc/uplink_state()
-	return "mode=[authoritative ? "authoritative" : "shadow"] receivers_offered=[length(rx_instances)] \
+	return "receivers_offered=[length(rx_instances)] \
 		uplinks=[uplink_counters["transmissions"]] sent=[uplink_counters["sent"]] relayed=[uplink_counters["relayed"]] \
 		heard=[uplink_counters["heard"]] ignored=[uplink_counters["ignored"]] duplicate=[uplink_counters["duplicate"]] \
 		late=[uplink_counters["late"]] expired=[uplink_counters["expired"]] lost=[uplink_counters["lost"]] \
@@ -263,7 +253,7 @@
 	SSnetdm_observe.radio?.uplink_counters["receipts"]++
 	return TRUE
 
-/// In authoritative mode a radio's subspace transmission reaches receivers over the network.
+/// A radio's subspace transmission reaches receivers over the network.
 /datum/signal/subspace/vocal/send_to_receivers()
 	// Non-subspace analogue transmission is not a network service.
 	if(transmission_method != TRANSMISSION_SUBSPACE)
