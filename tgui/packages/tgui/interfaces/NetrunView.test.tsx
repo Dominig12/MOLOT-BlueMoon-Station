@@ -75,13 +75,14 @@ const panel = (overrides: Partial<Data['panel']> = {}) => ({
   ],
   knowledge: { known: 2, stale: 1, total: 2 },
   presence: null,
+  lives: [],
   presences: [],
   ...overrides,
 });
 
 it('offers travel from the selected host and reports where the presence stands', () => {
   const act = jest.fn();
-  render(<NetrunWindow data={{ panel: panel() }} act={act} />);
+  render(<NetrunWindow data={{ panel: panel(), error: null, notice: null }} act={act} />);
   fireEvent.click(screen.getAllByText('deck.1')[0]);
   const enter = screen.getByText('Войти');
   expect(screen.getByText('Присутствие не активно')).toBeTruthy();
@@ -92,7 +93,7 @@ it('offers travel from the selected host and reports where the presence stands',
 it('shows the move and its abort once a presence exists elsewhere', () => {
   const act = jest.fn();
   const presence = { identity: 9, host: 2, state: 'idle', destination: 0, hops: 0, arriveAt: 0 };
-  render(<NetrunWindow data={{ panel: panel({ presence, presences: [presence] }) }} act={act} />);
+  render(<NetrunWindow data={{ panel: panel({ presence, presences: [presence] }), error: null, notice: null }} act={act} />);
   fireEvent.click(screen.getAllByText('deck.1')[0]);
   expect(screen.getByText('Стою на хосте 2')).toBeTruthy();
   fireEvent.click(screen.getByText('Идти сюда'));
@@ -102,11 +103,34 @@ it('shows the move and its abort once a presence exists elsewhere', () => {
 it('offers an abort while the presence is in transit', () => {
   const act = jest.fn();
   const presence = { identity: 9, host: 2, state: 'traveling', destination: 1, hops: 3, arriveAt: 4000 };
-  render(<NetrunWindow data={{ panel: panel({ presence, presences: [presence] }) }} act={act} />);
+  render(<NetrunWindow data={{ panel: panel({ presence, presences: [presence] }), error: null, notice: null }} act={act} />);
   fireEvent.click(screen.getAllByText('deck.1')[0]);
   expect(screen.getByText('В пути: 3 переходов')).toBeTruthy();
   fireEvent.click(screen.getByText('Прервать переход'));
   expect(act).toHaveBeenCalledWith('travel', { mode: 'abort' });
+});
+
+it('shows the core, its integrity and the three operations it supports', () => {
+  const act = jest.fn();
+  const core = { identity: 9, host: 2, state: 'degraded', integrity: 40, control: 3, migrating: false, destination: 0 };
+  render(<NetrunWindow data={{ panel: panel({ lives: [core] }), error: null, notice: null }} act={act} />);
+  fireEvent.click(screen.getAllByText('deck.1')[0]);
+  fireEvent.click(screen.getByText('Ядро'));
+  expect(screen.getByText('degraded')).toBeTruthy();
+  fireEvent.click(screen.getByText('Копия на выбранном хосте'));
+  expect(act).toHaveBeenCalledWith('life', { action: 'backup', target: 1 });
+  fireEvent.click(screen.getByText('Перенести ядро'));
+  expect(act).toHaveBeenCalledWith('life', { action: 'migrate', target: 1 });
+});
+
+it('offers to create a core when the observer has none', () => {
+  const act = jest.fn();
+  render(<NetrunWindow data={{ panel: panel(), error: null, notice: null }} act={act} />);
+  fireEvent.click(screen.getAllByText('deck.1')[0]);
+  fireEvent.click(screen.getByText('Ядро'));
+  expect(screen.getByText(/нет цифрового ядра/)).toBeTruthy();
+  fireEvent.click(screen.getByText('Создать ядро на выбранном хосте'));
+  expect(act).toHaveBeenCalledWith('life', { action: 'create', target: 1 });
 });
 
 const renderWindow = (data: Data) => {

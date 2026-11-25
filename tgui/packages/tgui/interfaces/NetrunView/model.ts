@@ -1,6 +1,17 @@
 import { BooleanLike } from 'common/react';
 
 /** What one observer may see of one digital host. Names arrive only once the identity is established. */
+/** One digital core of the observer: what it is, how hurt it is and which generation controls it. */
+export type LifeView = {
+  identity: number;
+  host: number;
+  state: string;
+  integrity: number;
+  control: number;
+  migrating: BooleanLike;
+  destination: number;
+};
+
 /** Where the operator's own presence stands, as the Host reports it. */
 export type PresenceView = {
   identity: number;
@@ -77,6 +88,8 @@ export type Panel = {
   actions: ActionView[];
   operations: OperationView[];
   programs: ProgramView[];
+  /** The observer's own cores: their lives are not somebody else's business either. */
+  lives: LifeView[];
   /** Only the observer's own presence: another runner's is not this window's business. */
   presence: PresenceView | null;
   presences: PresenceView[];
@@ -86,12 +99,13 @@ export type Panel = {
 
 export type Data = { panel: Panel | null; error: string | null; notice: string | null };
 
-export type TabKey = 'network' | 'hosts' | 'programs' | 'events';
+export type TabKey = 'network' | 'hosts' | 'programs' | 'life' | 'events';
 
 export const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'network', label: 'Сеть', icon: 'diagram-project' },
   { key: 'hosts', label: 'Хосты', icon: 'server' },
   { key: 'programs', label: 'Программы', icon: 'code' },
+  { key: 'life', label: 'Ядро', icon: 'brain' },
   { key: 'events', label: 'События', icon: 'list' },
 ];
 

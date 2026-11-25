@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { useBackend } from '../backend';
-import { Box, Button, Icon, NoticeBox, Section, Stack, Table, TextArea } from '../components';
+import { Box, Button, Icon, NoticeBox, ProgressBar, Section, Stack, Table, TextArea } from '../components';
 import { Window } from '../layouts';
 import { NetrunMap } from './NetrunView/Map';
 import {
@@ -11,7 +11,9 @@ import {
   formatAge,
   formatCooldown,
   HostView,
+  LifeView,
   OperationView,
+  PresenceView,
   PresetView,
   ProgramView,
   summarise,
@@ -54,6 +56,96 @@ const Sidebar = ({ tab, onTab }: { tab: TabKey; onTab: (key: TabKey) => void }) 
     ))}
   </Stack>
 );
+
+/**
+ * The digital core of the operator: what it is, how damaged it is, which generation controls it, and the three
+ * operations that matter — make a copy, move the core, restore it. Everything here is a request to the Host.
+ */
+const LifeTab = ({
+  core,
+  presence,
+  selected,
+  onLife,
+}: {
+  core?: LifeView;
+  presence?: PresenceView;
+  selected: number | null;
+  onLife: (action: string, target?: number) => void;
+}) => {
+  if (!core) {
+    return (
+      <Section>
+        <NoticeBox info>
+          У вас нет цифрового ядра. Выберите хост и создайте его: ядро живёт только там, где хватает вычислений
+          и памяти.
+        </NoticeBox>
+        <Button
+          mt={1}
+          icon="plus"
+          content="Создать ядро на выбранном хосте"
+          disabled={!selected}
+          onClick={() => onLife('create', selected ?? undefined)}
+        />
+      </Section>
+    );
+  }
+  const integrity = Math.max(0, Math.min(100, core.integrity));
+  return (
+    <Section title="Цифровое ядро">
+      <Table>
+        <Table.Row>
+          <Table.Cell color="label">Состояние</Table.Cell>
+          <Table.Cell>{core.state}</Table.Cell>
+        </Table.Row>
+        <Table.Row>
+          <Table.Cell color="label">Целостность</Table.Cell>
+          <Table.Cell>
+            <ProgressBar value={integrity} minValue={0} maxValue={100} ranges={{ bad: [0, 33], average: [33, 66], good: [66, 100] }} />
+          </Table.Cell>
+        </Table.Row>
+        <Table.Row>
+          <Table.Cell color="label">Поколение управления</Table.Cell>
+          <Table.Cell>{core.control}</Table.Cell>
+        </Table.Row>
+        <Table.Row>
+          <Table.Cell color="label">Хост</Table.Cell>
+          <Table.Cell>{core.host}</Table.Cell>
+        </Table.Row>
+        <Table.Row>
+          <Table.Cell color="label">Присутствие</Table.Cell>
+          <Table.Cell>
+            {!presence
+              ? 'не активно'
+              : presence.state === 'traveling'
+                ? `в пути (${presence.hops})`
+                : `на хосте ${presence.host}`}
+          </Table.Cell>
+        </Table.Row>
+      </Table>
+      <Stack mt={1}>
+        <Stack.Item>
+          <Button
+            icon="copy"
+            content="Копия на выбранном хосте"
+            disabled={!selected}
+            onClick={() => onLife('backup', selected ?? undefined)}
+          />
+        </Stack.Item>
+        <Stack.Item>
+          <Button
+            icon="share"
+            content="Перенести ядро"
+            disabled={!selected || core.migrating}
+            onClick={() => onLife('migrate', selected ?? undefined)}
+          />
+        </Stack.Item>
+        <Stack.Item>
+          <Button icon="undo" content="Восстановить" disabled={!selected} onClick={() => onLife('restore_backup', selected ?? undefined)} />
+        </Stack.Item>
+      </Stack>
+    </Section>
+  );
+};
 
 const HostContext = ({
   host,
@@ -432,7 +524,10 @@ export const NetrunContent = ({
                   onImport={text => act('import', { source: text, target: selected })}
                 />
               )}
-              {panel && tab === 'events' && <EventsTab operations={panel.operations} />}
+              {panel && tab === 'life' && (
+        <LifeTab core={panel.lives?.[0]} presence={panel.presence ?? undefined} selected={selected} onLife={(action, target) => act('life', { action, target })} />
+      )}
+      {panel && tab === 'events' && <EventsTab operations={panel.operations} />}
             </Section>
           </Stack.Item>
           <Stack.Item>

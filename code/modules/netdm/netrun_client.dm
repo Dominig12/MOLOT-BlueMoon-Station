@@ -88,6 +88,8 @@
 			return import_program(params)
 		if("travel")
 			return travel(params)
+		if("life")
+			return life(params)
 
 /**
  * Runs one action from this window. It travels as the operator's own network identity, so the Host
@@ -126,6 +128,65 @@
  * Presence and travel: enter where this device's host stands, move to another host over a route the transport
  * plans, or abort a move that has not landed. The answer carries where the presence stands and when it arrives.
  */
+/**
+ * Digital life from the window: make a backup on the selected host, move the core there, or restore it from a
+ * backup. The Host decides everything; the window only names the intent and shows the answer.
+ */
+/datum/netrun_client/proc/life(list/params)
+	var/verb = params["action"]
+	var/target = text2num(params["target"])
+	if(!istext(verb))
+		return TRUE
+	if(!SSnetdm_observe?.services)
+		notice = "Сеть недоступна."
+		return TRUE
+	var/presence = panel?["presence"]
+	var/identity = text2num(presence?["identity"])
+	var/core = panel?["lives"]?[1]
+	var/list/payload = list("action" = verb)
+	if(verb == "create")
+		payload["principal"] = principal
+		payload["host"] = target
+	else if(identity)
+		payload["identity"] = identity
+	else if(core)
+		payload["identity"] = core["identity"]
+	else
+		notice = "Нет цифрового ядра: сначала создайте его на выбранном хосте."
+		return TRUE
+	if(verb != "create")
+		if(!target)
+			notice = "Выберите хост."
+			return TRUE
+		payload["host"] = target
+		if(verb == "migrate")
+			payload["destination"] = target
+	if(!SSnetdm_observe.services.control("netrun_life", payload, CALLBACK(src, PROC_REF(on_life))))
+		notice = "Канал занят, повторю позже."
+		return TRUE
+	notice = verb == "create" ? "Создаю ядро..." : (verb == "migrate" ? "Переношу ядро..." : "Работаю с копией...")
+	return TRUE
+
+/datum/netrun_client/proc/on_life(list/reply)
+	if(QDELETED(src) || !islist(reply))
+		return
+	var/list/result = reply["result"]
+	if(!reply["ok"] || !islist(result))
+		notice = "Сеть отказала: [reply["error"] || "нет ответа"]"
+		SStgui.update_uis(src)
+		return
+	switch(result["status"])
+		if("ok")
+			notice = "Ядро: [result["state"]], целостность [result["integrity"]], поколение [result["control"]]."
+		if("insufficient_resources")
+			notice = "Не хватает ресурсов на этом хосте."
+		if("unknown_identity")
+			notice = "Ядро не найдено."
+		else
+			notice = "Отказ: [result["status"]]"
+	next_poll = 0
+	SStgui.update_uis(src)
+
 /datum/netrun_client/proc/travel(list/params)
 	var/verb = params["mode"]
 	var/destination = text2num(params["target"])
