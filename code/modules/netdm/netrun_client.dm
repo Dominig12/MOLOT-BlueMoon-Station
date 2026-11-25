@@ -27,6 +27,11 @@
 	var/notice
 	/// When the next request may be sent; keeps one refresh per window per interval.
 	var/next_poll = 0
+	/// Service instance of the device this window was opened from, when there is one.
+	var/device_instance
+	/// Network identity the actions travel as; null until the device is on the network.
+	var/endpoint_id
+	var/endpoint_generation = 0
 
 /datum/netrun_client/New(mob/user)
 	owner = user
@@ -78,8 +83,67 @@
 			notice = null
 			return TRUE
 		if("execute")
-			notice = "Действия недоступны: терминал не привязан к цифровому хосту."
-			return TRUE
+			return execute(params)
+
+/**
+ * Runs one action from this window. It travels as the operator's own network identity, so the Host
+ * authorizes the same subject that the window shows, and the outcome is reported as a notice.
+ */
+/datum/netrun_client/proc/execute(list/params)
+	var/action_id = params["action"]
+	var/target = text2num(params["target"])
+	if(!istext(action_id) || !target)
+		return TRUE
+	var/datum/controller/subsystem/netdm_observe/network = SSnetdm_observe
+	if(!network?.services)
+		notice = "Сеть недоступна."
+		return TRUE
+	var/list/execution = netrun_execution_host()
+	if(!execution)
+		notice = "Действия недоступны: терминал не привязан к цифровому хосту."
+		return TRUE
+	var/list/payload = list(
+		"principal" = principal,
+		"action" = action_id,
+		"execution" = execution["id"],
+		"target" = target,
+		"key" = "ui-[world.time]-[rand(1, 1000000)]",
+	)
+	if(endpoint_id)
+		payload["endpoint"] = endpoint_id
+		payload["generation"] = endpoint_generation
+	if(!network.services.control("netrun_execute", payload, CALLBACK(src, PROC_REF(on_action))))
+		notice = "Канал занят, повторю позже."
+		return TRUE
+	notice = "Действие отправлено: [action_id]"
+	return TRUE
+
+/datum/netrun_client/proc/on_action(list/reply)
+	if(QDELETED(src) || !islist(reply))
+		return
+	var/list/result = reply["result"]
+	if(!reply["ok"] || !islist(result))
+		notice = "Сеть отказала: [reply["error"] || "нет ответа"]"
+		return
+	notice = "Итог: [result["status"]]"
+	next_poll = 0
+	SStgui.update_uis(src)
+
+/// The digital host this window acts from: the one declared for the device it was opened on.
+/datum/netrun_client/proc/netrun_execution_host()
+	var/datum/netrun_adapter/adapter = SSnetdm_observe?.netrun
+	if(!adapter || !device_instance)
+		return null
+	return adapter.host_of(device_instance)
+
+/// Binds the window to the device it was opened from and to the operator's network identity.
+/datum/netrun_client/proc/bind_device(datum/netdm_service_lane/lane, datum/node, instance)
+	device_instance = instance
+	var/datum/netdm_service_endpoint/endpoint = lane?.endpoint_for(node)
+	if(endpoint)
+		endpoint_id = endpoint.id
+		endpoint_generation = endpoint.generation
+	return endpoint
 
 /// Asks the Host for one projection. FALSE when the network cannot take the request right now.
 /datum/netrun_client/proc/request_panel()
@@ -132,3 +196,38 @@
 #undef NETRUN_CLIENT_HOSTS
 #undef NETRUN_CLIENT_ACTIONS
 #undef NETRUN_CLIENT_OPERATIONS
+
+
+/**
+ * Opens the NETRUN window from a PDA that is already on the network. The window acts as the owner of the
+ * device: it declares the device's host, gives the operator the rights of its own equipment and shows what
+ * that operator may see.
+ */
+/obj/item/modular_computer/pda/verb/netrun_console()
+	set name = "NETRUN"
+	set category = "Object"
+	set src in usr
+	if(!usr || usr.incapacitated())
+		return
+	var/datum/controller/subsystem/netdm_observe/network = SSnetdm_observe
+	if(!network?.observing())
+		to_chat(usr, span_warning("Сеть недоступна на этом устройстве."))
+		return
+	var/datum/netdm_service_lane/lane = network.services
+	if(!lane)
+		to_chat(usr, span_warning("Сетевой канал ещё не готов."))
+		return
+	var/datum/netrun_adapter/adapter = network.netrun
+	if(!adapter)
+		to_chat(usr, span_warning("Цифровой слой ещё не готов."))
+		return
+	var/datum/node = adapter.node_for_device(src)
+	var/instance = adapter.instance_for_node(node)
+	if(!node || !instance)
+		to_chat(usr, span_warning("Устройство не публикует сетевых сервисов."))
+		return
+	var/datum/netrun_client/window = new(usr)
+	window.bind_device(lane, node, instance)
+	var/principal = window.principal
+	adapter.grant_operator(lane, principal, instance)
+	window.ui_interact(usr)

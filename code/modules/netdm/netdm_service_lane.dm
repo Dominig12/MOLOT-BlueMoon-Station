@@ -639,6 +639,8 @@
 		return
 	endpoint.registered[instance] = TRUE
 	endpoint.acknowledged_at[instance] = op["sent_at"]
+	// The service is reachable now, so the game layer may treat the device as a digital host.
+	SSnetdm_observe?.netrun?.service_registered(src, endpoint, instance)
 	// Subscribers waiting out a retry delay for this instance ask now.
 	provider_changed(instance)
 

@@ -118,6 +118,8 @@ SUBSYSTEM_DEF(netdm_observe)
 	var/list/fire_marks = list()
 	/// Service control plane of the session: endpoints, services, subscriptions and the inbox.
 	var/datum/netdm_service_lane/services
+	/// NETRUN device adapter: turns accepted services into digital hosts of the game layer.
+	var/datum/netrun_adapter/netrun
 	/// Feature adapters run in registration order for both session resets and processing.
 	var/list/integrations = list()
 	/// atmos.telemetry pilot in Shadow mode: radio and netDM recipients compared report by report.
@@ -145,6 +147,7 @@ SUBSYSTEM_DEF(netdm_observe)
 		flags &= ~SS_NO_FIRE
 		// Devices declare their services while atoms initialize, before this subsystem does.
 		services = new
+		netrun = new
 		integrations.Cut()
 		telemetry = new
 		register_integration(telemetry)
