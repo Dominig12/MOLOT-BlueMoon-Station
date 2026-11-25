@@ -3054,3 +3054,83 @@
 	TEST_ASSERT_EQUAL(adapter.pending, 0, "a refused declaration leaves nothing pending")
 	TEST_ASSERT(isnull(adapter.host_of("door.a")), "an undeclared instance has no host")
 	qdel(adapter)
+/**
+ * The NETRUN client in a real world: the window asks the Host for one filtered projection, the operator is
+ * given the rights of its own device, and an action started from the window is reported back. This is the
+ * whole player-facing path of the digital layer, not a compile check.
+ */
+/datum/unit_test/netdm_observe/netrun_client
+
+/datum/unit_test/netdm_observe/netrun_client/Run()
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
+		return
+	TEST_ASSERT(wait_until_live(), "Observe must publish the initial map ([SSnetdm_observe.observe_state()]).")
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	TEST_ASSERT(lane, "The service lane must exist.")
+	var/datum/netrun_adapter/adapter = SSnetdm_observe.netrun
+	TEST_ASSERT(adapter, "The NETRUN adapter must exist.")
+
+	// A device that publishes a service becomes a digital host. Wait for the first one the Host confirmed.
+	var/deadline = world.time + 60 SECONDS
+	var/datum/device_node = null
+	var/instance = null
+	while(world.time < deadline && !instance)
+		for(var/datum/node as anything in adapter.devices)
+			var/candidate = adapter.devices[node]
+			if(!adapter.host_of(candidate))
+				continue
+			device_node = node
+			instance = candidate
+			break
+		if(!instance)
+			sleep(5)
+	TEST_ASSERT(instance, "At least one device must be declared as a digital host.")
+	TEST_ASSERT(adapter.host_of(instance), "The declaration must be confirmed by the Host.")
+
+	var/mob/operator = allocate(/mob)
+	var/datum/netrun_client/window = new(operator)
+	window.bind_device(lane, device_node, instance)
+	TEST_ASSERT_EQUAL(window.principal, netrun_principal_of(operator), "The window derives its principal from the operator.")
+	TEST_ASSERT(window.endpoint_id, "The window knows which endpoint speaks for it.")
+
+	// The operator gets the rights of its own equipment. Knowledge is separate: it starts with an action.
+	TEST_ASSERT(adapter.grant_operator(lane, window.principal, instance), "The operator is granted the rights of its device.")
+	var/id = adapter.host_of(instance)["id"]
+	window.notice = null
+	TEST_ASSERT(window.execute(list("action" = "net.inspect", "target" = id)), "The window sends the first action.")
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && window.notice == null)
+		sleep(5)
+	TEST_ASSERT(window.notice, "The Host reports the outcome of the first action.")
+
+	window.next_poll = 0
+	TEST_ASSERT(window.request_panel(), "The window asks the Host for a projection.")
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && !islist(window.panel))
+		sleep(5)
+	TEST_ASSERT(islist(window.panel), "The Host answers with a projection: [window.error]")
+	var/list/hosts = window.panel["hosts"]
+	var/list/actions = window.panel["actions"]
+	TEST_ASSERT(islist(hosts) && length(hosts) > 0, "The projection carries the host the operator may see.")
+	TEST_ASSERT(islist(actions) && length(actions) > 0, "The projection carries the action catalogue.")
+	var/list/own = null
+	for(var/list/host as anything in hosts)
+		if("[host["host"]]" == "[id]")
+			own = host
+			break
+	TEST_ASSERT(own, "The operator's own device is in its view.")
+	TEST_ASSERT(own["identified"], "A device the operator owns is identified, so it is shown by name.")
+
+	// A second action from the same window: discovery, which needs no prior knowledge of the neighbourhood.
+	window.notice = null
+	TEST_ASSERT(window.execute(list("action" = "net.scan", "target" = id)), "The window sends the action.")
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && window.notice == null)
+		sleep(5)
+	TEST_ASSERT(window.notice, "The Host reports the outcome of the action.")
+	TEST_ASSERT(findtext(window.notice, "Итог") || findtext(window.notice, "отправлено") || findtext(window.notice, "запущена"),
+		"The notice is an outcome, not a silent success: [window.notice]")
+
+	// Leave nothing behind: the next tests share this world.
+	qdel(window)
+	qdel(operator)

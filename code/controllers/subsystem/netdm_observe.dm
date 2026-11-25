@@ -606,6 +606,8 @@ SUBSYSTEM_DEF(netdm_observe)
 			return
 		for(var/datum/netdm_integration/integration as anything in integrations)
 			integration.tick()
+		// Device declarations wait for a published session; one refused request must not block the queue.
+		netrun?.tick()
 		mark("services")
 
 	if(pending)

@@ -5,66 +5,124 @@
  * `netdm_service_lane.offer()`. This adapter turns each accepted service into a digital host of NETRUN, so a
  * door, a sensor, a research server or a terminal becomes something a runner can see, inspect and use.
  *
+ * Declarations are queued, not fired at registration time: a device registers its services while the world
+ * is still being exported, and the control channel only exists once a session is published. One refused
+ * request must never block the queue other features share, so a declaration is retried from `tick()` with a
+ * bounded attempt count.
+ *
  * It is a translation layer and nothing else: it declares hosts, hands out the rights that come from owning
  * a device, and forwards an action. Every decision still happens in the Host, where the action pipeline
  * checks rights, cost and cooldown (ARCH-001).
  */
+#define NETRUN_DECLARE_BATCH 8
+#define NETRUN_DECLARE_BACKOFF (2 SECONDS)
+#define NETRUN_DECLARE_ATTEMPTS 5
+
 /datum/netrun_adapter
-	/// "instance" -> host id declared for it in this round.
+	/// "instance" -> host id declared for it in this round; 0 while a declaration is in flight.
 	var/list/hosts = list()
 	/// "instance" -> TRUE when the declaration was acknowledged by the Host.
 	var/list/confirmed = list()
+	/// "instance" -> list("type" = service type, "tries" = attempts). Waiting to be declared.
+	var/list/wanted = list()
 	/// Declarations sent but not yet answered, bounded: a busy round must not queue forever.
 	var/pending = 0
+	/// When the next attempt may run; a failed attempt backs off instead of spinning.
+	var/next_try = 0
 	/// Upper bound of declarations per round, matching the Host's endpoint budget.
 	var/max_hosts = 4096
-	/// Rights handed to an operator on its own device; the rest is won or granted by the game.
-	var/own_rights = list("execution", "discovery", "read")
 	/// netDM node datum -> first service instance it publishes. Lets a device find its own host.
 	var/list/devices = list()
+	/// Rights handed to an operator on its own device; the rest is won or granted by the game.
+	var/own_rights = list("execution", "discovery", "read")
 
-/// A service became reachable on the network: it is now a host of the digital world.
+/// A service became reachable on the network: it becomes a host of the digital world once a session exists.
 /datum/netrun_adapter/proc/service_registered(datum/netdm_service_lane/lane, datum/netdm_service_endpoint/endpoint, instance)
 	if(!istext(instance) || !length(instance))
 		return
-	if(hosts[instance] || pending >= 64 || length(hosts) >= max_hosts)
+	if(hosts[instance] || wanted[instance] || length(hosts) + length(wanted) >= max_hosts)
 		return
 	var/list/service = endpoint?.services[instance]
-	if(!islist(service))
+	if(!islist(service) || !istext(service["type"]))
 		return
-	var/service_type = service["type"]
-	if(endpoint?.node && !devices[endpoint.node])
+	if(endpoint.node && !devices[endpoint.node])
 		devices[endpoint.node] = instance
-	var/name = netrun_host_name(instance)
-	pending++
-	hosts[instance] = 0
-	var/sent = lane.control("netrun_host", list(
-		"name" = name,
-		"class" = netrun_host_class(service_type),
-		"capacityCu" = 2,
-		"rateCu" = 1,
-		"memorySlots" = 1,
-		"services" = list(service_type = instance),
-	), CALLBACK(src, PROC_REF(on_host_declared), instance))
+	wanted[instance] = list("type" = service["type"], "tries" = 0)
+	declare()
+
+/**
+ * Sends pending declarations. Does nothing before the world is published, which is the whole reason the
+ * queue exists: a request sent too early is refused by the bridge and would block every later control
+ * message behind it.
+ */
+/datum/netrun_adapter/proc/declare()
+	if(!length(wanted) || pending >= NETRUN_DECLARE_BATCH || world.time < next_try)
+		return 0
+	var/datum/controller/subsystem/netdm_observe/network = SSnetdm_observe
+	if(!network?.published)
+		return 0
+	var/datum/netdm_service_lane/lane = network.services
+	if(!lane)
+		return 0
+	var/sent = 0
+	for(var/instance as anything in wanted.Copy())
+		if(sent >= NETRUN_DECLARE_BATCH || pending >= NETRUN_DECLARE_BATCH)
+			break
+		if(hosts[instance])
+			wanted -= instance
+			continue
+		var/list/entry = wanted[instance]
+		if(!islist(entry))
+			wanted -= instance
+			continue
+		entry["tries"]++
+		pending++
+		hosts[instance] = 0
+		var/accepted = lane.control("netrun_host", list(
+			"name" = netrun_host_name(instance),
+			"class" = netrun_host_class(entry["type"]),
+			"capacityCu" = 2,
+			"rateCu" = 1,
+			"memorySlots" = 1,
+			"services" = list(entry["type"] = instance),
+		), CALLBACK(src, PROC_REF(on_host_declared), instance))
+		if(!accepted)
+			// The channel did not take it at all: keep the queue moving and try again later.
+			pending--
+			hosts -= instance
+			entry["tries"]--
+			break
+		sent++
 	if(!sent)
-		pending--
-		hosts -= instance
+		next_try = world.time + NETRUN_DECLARE_BACKOFF
+	return sent
+
+/// Called from the subsystem fire: retries whatever is still waiting for a session or a lost answer.
+/datum/netrun_adapter/proc/tick()
+	declare()
 
 /datum/netrun_adapter/proc/on_host_declared(instance, list/reply)
 	pending = max(0, pending - 1)
 	if(!islist(reply) || !reply["ok"])
-		// A refused or lost declaration may be tried again when the service is re-registered.
 		hosts -= instance
+		var/list/entry = wanted[instance]
+		if(!islist(entry) || entry["tries"] >= NETRUN_DECLARE_ATTEMPTS)
+			wanted -= instance
+		else
+			next_try = world.time + NETRUN_DECLARE_BACKOFF
 		return
 	var/list/result = reply["result"]
 	if(!islist(result))
+		hosts -= instance
 		return
 	var/id = text2num(result["host"])
 	var/generation = text2num(result["generation"])
 	if(!id || !generation)
+		hosts -= instance
 		return
 	hosts[instance] = id
 	confirmed[instance] = generation
+	wanted -= instance
 
 /// The netDM node a device is on, if this adapter has seen it publish a service.
 /datum/netrun_adapter/proc/node_for_device(atom/thing)
@@ -80,7 +138,7 @@
 /datum/netrun_adapter/proc/instance_for_node(datum/node)
 	return devices[node]
 
-/// The host declared for one service instance, or null when it is unknown yet.
+/// The host declared for one service instance, or null when it is unknown or still pending.
 /datum/netrun_adapter/proc/host_of(instance)
 	var/id = hosts[instance]
 	return id ? list("id" = id, "generation" = confirmed[instance]) : null
@@ -114,12 +172,8 @@
 	var/type = "[service_type]"
 	if(copytext(type, 1, 9) == "research")
 		return "Server"
-	if(copytext(type, 1, 6) == "camera")
-		return "Terminal"
-	if(copytext(type, 1, 7) == "atmos.")
-		return "Terminal"
-	if(copytext(type, 1, 7) == "machine")
-		return "Terminal"
-	if(copytext(type, 1, 7) == "pda.mes")
-		return "Terminal"
 	return "Terminal"
+
+#undef NETRUN_DECLARE_BATCH
+#undef NETRUN_DECLARE_BACKOFF
+#undef NETRUN_DECLARE_ATTEMPTS
