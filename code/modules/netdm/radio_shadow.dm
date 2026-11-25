@@ -27,6 +27,7 @@
  * radios, and the syndicate-compatible extras of well-known channels.
  */
 /datum/netdm_radio_shadow
+	parent_type = /datum/netdm_integration
 	/// Radio weakrefs that are network nodes, and the telecomms machines that are.
 	var/list/radios = list()
 	var/list/receivers = list()
@@ -45,7 +46,7 @@
 	var/list/latencies = list()
 	var/list/notes = list()
 
-/datum/netdm_radio_shadow/proc/reset_session()
+/datum/netdm_radio_shadow/reset_session()
 	// Answers of the old session never come; those transmissions are dropped.
 	pending.Cut()
 	inflight = 0
@@ -125,7 +126,7 @@
 		if(radio.can_receive(signal.frequency, signal.levels) && (!length(GLOB.antag_training_z) || is_antag_training_atom(radio) == signal.from_antag_training))
 			listeners[WEAKREF(radio)] = TRUE
 
-/datum/netdm_radio_shadow/proc/tick()
+/datum/netdm_radio_shadow/tick()
 	uplink_tick()
 	for(var/id in pending)
 		var/list/record = pending[id]

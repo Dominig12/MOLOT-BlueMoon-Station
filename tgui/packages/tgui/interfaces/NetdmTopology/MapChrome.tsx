@@ -115,9 +115,16 @@ export const MapChrome = ({
         )}
       </div>
       <div style={{ position: 'absolute', right: '12px', top: '12px' }}>
-        <Button icon="info-circle" onClick={onToggleLegend}>
-          {showLegend ? 'Закрыть легенду' : 'Легенда'}
-        </Button>
+        {playerMap ? (
+          <button type="button" className="NetdmUnifiedGrid__legend"
+            aria-label="Легенда" aria-expanded={showLegend} title="Легенда" onClick={onToggleLegend}>
+            <Icon name="info-circle" />
+          </button>
+        ) : (
+          <Button icon="info-circle" onClick={onToggleLegend}>
+            {showLegend ? 'Закрыть легенду' : 'Легенда'}
+          </Button>
+        )}
       </div>
       {showLegend && (
         <div
@@ -149,7 +156,12 @@ export const MapChrome = ({
               {symbol(entry.color, entry.shape)} {entry.name}
             </div>
           ))}
-          {shownKinds && <div style={{ color: COLORS.muted }}>Серые значки отмечают недоступные или устаревшие узлы.</div>}
+          {shownKinds && (
+            <>
+              <div><span style={{ color: '#d19aff' }}>◆</span> Другие присутствия</div>
+              <div style={{ color: COLORS.muted }}>Серые значки отмечают недоступные или устаревшие узлы.</div>
+            </>
+          )}
           <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: '8px', marginTop: '8px' }}>
             <strong>Связи на уровне</strong>
             <div>Проводные: {wired}</div>

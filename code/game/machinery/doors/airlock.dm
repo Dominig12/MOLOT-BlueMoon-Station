@@ -1784,10 +1784,7 @@
 			action_text = emergency ? "enabled emergency access on" : "disabled emergency access on"
 			. = TRUE
 		if("bolt-toggle")
-			var/was_locked = locked
-			toggle_bolt(usr)
-			if(locked != was_locked)
-				action_text = locked ? "bolted" : "unbolted"
+			apply_panel_action(locked ? "unbolt" : "bolt", usr, remote_operator, remote_device)
 			. = TRUE
 		if("light-toggle")
 			lights = !lights
@@ -1803,10 +1800,7 @@
 			action_text = "changed the closing speed of"
 			. = TRUE
 		if("open-close")
-			var/was_closed = density
-			user_toggle_open(usr)
-			if(density != was_closed)
-				action_text = was_closed ? "opened" : "closed"
+			apply_panel_action(density ? "open" : "close", usr, remote_operator, remote_device)
 			. = TRUE
 	advactivator_action = FALSE
 	if(action_text)
@@ -1814,6 +1808,41 @@
 
 /obj/machinery/door/airlock/proc/user_allowed(mob/user)
 	return (hasSiliconAccessInArea(user) && canAIControl(user)) || IsAdminGhost(user) || advactivator_action
+
+/// Network panel control uses the operator's silicon access to this area.
+/obj/machinery/door/airlock/proc/netdm_panel_allowed(mob/user)
+	var/mob/living/operator = user
+	return !QDELETED(src) && istype(operator) && operator.client && !operator.stat && !operator.incapacitated() && \
+		(operator.mobility_flags & MOBILITY_UI) && !QDELETED(wires) && !(obj_flags & EMAGGED) && !detonated && \
+		!(machine_stat & (BROKEN|MAINT|EMPED)) && hasSiliconAccessInArea(operator) && canAIControl(operator)
+
+/// Apply one desired panel state for an authorized caller, logging changes through the regular door log.
+/// Returns whether the requested state was reached. Opening and closing can wait for the animation.
+/obj/machinery/door/airlock/proc/apply_panel_action(action, mob/user, mob/remote_operator, remote_device)
+	var/action_text
+	switch(action)
+		if("open", "close")
+			if(operating)
+				return FALSE
+			var/closed = action == "close"
+			if(density == closed)
+				return TRUE
+			user_toggle_open(user)
+			if(QDELETED(src) || density != closed)
+				return FALSE
+			action_text = closed ? "closed" : "opened"
+		if("bolt", "unbolt")
+			var/bolted = action == "bolt"
+			if(!!locked == bolted)
+				return TRUE
+			toggle_bolt(user)
+			if(!!locked != bolted)
+				return FALSE
+			action_text = bolted ? "bolted" : "unbolted"
+		else
+			return FALSE
+	log_remote_use(remote_operator, action_text, remote_device)
+	return TRUE
 
 /obj/machinery/door/airlock/proc/shock_restore(mob/user)
 	if(!user_allowed(user))

@@ -29,5 +29,6 @@ test('игровая легенда включает только известн
     onToggleLegend={jest.fn()} />);
   expect(screen.getByText('АПЦ')).toBeTruthy();
   expect(screen.getByText('Камера')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Легенда' }).getAttribute('aria-expanded')).toBe('true');
   expect(screen.queryByText('Дверь или шлюз')).toBeNull();
 });

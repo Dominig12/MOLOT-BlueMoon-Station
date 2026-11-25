@@ -59,7 +59,6 @@
 	active_camera = null
 	last_camera = null
 	last_camera_turf = null
-	QDEL_NULL(netdm_window)
 	return ..()
 
 /obj/machinery/computer/security/connect_to_shuttle(obj/docking_port/mobile/port, obj/docking_port/stationary/dock, idnum, override=FALSE)
@@ -508,18 +507,3 @@
 	return fallback_camera
 
 #undef DEFAULT_MAP_SIZE
-
-/// P13: opens the network window of the station from the security console.
-/obj/machinery/computer/security/proc/netdm_open_space(mob/living/user)
-	if(!SSnetdm_observe?.observing() || !SSnetdm_observe.services || !isliving(user))
-		return FALSE
-	var/datum/component/netdm_node/node = netdm_make_node(src)
-	if(!node)
-		return FALSE
-	SSnetdm_observe.diagnostics?.offer_shell(src)
-	if(netdm_window && QDELETED(netdm_window))
-		netdm_window = null
-	if(!netdm_window)
-		netdm_window = new(src, node, user)
-	netdm_window.user_ref = WEAKREF(user)
-	return netdm_window.open_space(user)

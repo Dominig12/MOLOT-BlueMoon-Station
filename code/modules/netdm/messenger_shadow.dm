@@ -20,6 +20,7 @@
  * shows what the network would deliver without a message server.
  */
 /datum/netdm_messenger_shadow
+	parent_type = /datum/netdm_integration
 	/// Computer weakref -> messenger weakref; instance -> messenger weakref.
 	var/list/by_computer = list()
 	var/list/by_instance = list()
@@ -44,12 +45,12 @@
 	var/list/exceptions = list()
 	var/list/notes = list()
 
-/datum/netdm_messenger_shadow/proc/setup(datum/netdm_service_lane/lane)
+/datum/netdm_messenger_shadow/setup(datum/netdm_service_lane/lane)
 	lane.dispatcher.allow_command("pda.messenger", "deliver", new /datum/netdm_command_handler/pda_deliver)
 	lane.dispatcher.allow_result("deliver", new /datum/netdm_effect_handler/pda_receipt, "pda.messenger")
 	setup_relay(lane)
 
-/datum/netdm_messenger_shadow/proc/reset_session()
+/datum/netdm_messenger_shadow/reset_session()
 	// Receipts of the old session never arrive; those messages are compared with what arrived so far.
 	operations.Cut()
 	reset_relay_session()
@@ -227,7 +228,7 @@
 
 // ---- Comparison ------------------------------------------------------------------------------
 
-/datum/netdm_messenger_shadow/proc/tick()
+/datum/netdm_messenger_shadow/tick()
 	relay_tick()
 	while(length(sends))
 		var/list/record = sends[sends[1]]

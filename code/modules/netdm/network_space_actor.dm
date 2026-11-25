@@ -66,6 +66,21 @@
 /datum/netdm_space_actor/proc/title()
 	return "нет связи"
 
+/datum/netdm_space_actor/proc/terminal_data(mob/user)
+	return null
+
+/datum/netdm_space_actor/proc/terminal_action(command, params, mob/user)
+	return FALSE
+
+/datum/netdm_space_actor/proc/matching_terminal(terminal_type, atom/device, datum/node, mob/user)
+	return null
+
+/datum/netdm_space_actor/proc/is_entity_role()
+	return FALSE
+
+/datum/netdm_space_actor/proc/leave_role(mob/user, datum/ui_state/state)
+	return FALSE
+
 /datum/netdm_space_actor/proc/physical_device()
 	return null
 
@@ -132,10 +147,26 @@
 	return terminal ? terminal.ui_state(user) : GLOB.never_state
 
 /datum/netdm_space_actor/terminal/ui_status(mob/user, datum/ui_state/state)
-	return terminal && !QDELETED(terminal) ? terminal.ui_status(user, state) : UI_CLOSE
+	return user && !QDELETED(terminal) ? terminal.ui_status(user, state) : UI_CLOSE
 
 /datum/netdm_space_actor/terminal/title()
-	return terminal ? terminal.device_title(physical_device()) : "нет связи"
+	var/atom/device = physical_device()
+	return device ? terminal.device_title(device) : "нет связи"
+
+/datum/netdm_space_actor/terminal/terminal_data(mob/user)
+	if(can_submit() && ui_status(user, ui_state(user)) == UI_INTERACTIVE)
+		return terminal.ui_data(user)
+	return null
+
+/datum/netdm_space_actor/terminal/terminal_action(command, params, mob/user)
+	if(can_submit() && ui_status(user, ui_state(user)) == UI_INTERACTIVE)
+		return terminal.dispatch_terminal_action(command, params, user)
+	return FALSE
+
+/datum/netdm_space_actor/terminal/matching_terminal(terminal_type, atom/device, datum/node, mob/user)
+	if(!istype(terminal, terminal_type) || QDELETED(terminal) || physical_device() != device || network_node() != node)
+		return null
+	return ui_status(user, ui_state(user)) == UI_INTERACTIVE ? terminal : null
 
 /datum/netdm_space_actor/terminal/physical_device()
 	return terminal?.device_ref?.resolve()
@@ -158,12 +189,14 @@
 /datum/netdm_space_actor/terminal/on_window_close(datum/netdm_space/space, list/last_presence)
 	if(window != space)
 		return
-	var/datum/netdm_apc_operator/operator = network_node()
+	var/datum/netdm_terminal_operator/operator = network_node()
 	if(istype(operator))
-		// The durable APC operator, not a destroyed window, owns delayed detach.
+		// The durable operator owns delayed detach.
 		operator.detach_needed = TRUE
-		return
-	return ..()
+	else
+		..()
+	if(!QDELETED(terminal))
+		terminal.retire_closed_workspace()
 
 GLOBAL_DATUM(netdm_entity_spawner, /obj/effect/mob_spawn/netdm_entity)
 GLOBAL_DATUM(netdm_player_entity, /datum/netdm_space_actor/entity)
@@ -219,6 +252,16 @@ GLOBAL_DATUM(netdm_player_entity, /datum/netdm_space_actor/entity)
 
 /datum/netdm_space_actor/entity/title()
 	return "Сетевая сущность"
+
+/datum/netdm_space_actor/entity/is_entity_role()
+	return TRUE
+
+/datum/netdm_space_actor/entity/leave_role(mob/user, datum/ui_state/state)
+	if(ui_status(user, state) != UI_INTERACTIVE)
+		return FALSE
+	var/mob/dead/netdm_entity/controller = user
+	INVOKE_ASYNC(controller, TYPE_PROC_REF(/mob/dead/netdm_entity, return_to_observer))
+	return TRUE
 
 /datum/netdm_space_actor/entity/on_window_close(datum/netdm_space/space, list/last_presence)
 	// The entity still exists while its window is closed. Leaving the role retires its endpoint.

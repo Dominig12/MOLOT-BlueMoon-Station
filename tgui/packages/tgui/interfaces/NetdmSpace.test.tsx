@@ -77,6 +77,78 @@ const setup = (initial: Record<string, unknown> = {}) => {
   };
 };
 
+const deviceTerminal = {
+  title: 'АПЦ',
+  entries: [],
+  connectionReady: true,
+  events: [],
+  watches: ['oxygen'],
+  limit: 1024,
+  scriptLimit: 4096,
+  disk: null,
+  diskNotice: null,
+  loadedScript: null,
+  programsEnabled: true,
+  kept: [],
+};
+
+const openPanel = (name: string) => fireEvent.click(
+  within(screen.getByRole('tablist', { name: 'Панели сети' })).getByRole('tab', { name }),
+);
+
+test('terminal and editor keep their drafts while visiting the selected node and other panels', () => {
+  const { actions } = setup({ terminal: deviceTerminal });
+  fireEvent.click(screen.getByText('Выбрать удалённый узел'));
+  openPanel('Терминал');
+  const terminal = screen.getByRole('textbox', { name: 'Командная строка' });
+  fireEvent.change(terminal, { target: { value: 'services' } });
+  fireEvent.click(screen.getByText('Редактор'));
+  const script = screen.getByPlaceholderText(/^observe atmos.sensor/) as HTMLTextAreaElement;
+  fireEvent.change(script, { target: { value: '$state = self' } });
+  openPanel('Карта');
+  expect(screen.getByRole('heading', { name: 'Узел 2' })).toBeTruthy();
+  openPanel('События');
+  expect(screen.getByText('Доставленные события')).toBeTruthy();
+  expect(screen.getByText('oxygen')).toBeTruthy();
+  openPanel('Терминал');
+  expect(screen.getByPlaceholderText(/^observe atmos.sensor/)).toBe(script);
+  expect(script.value).toBe('$state = self');
+  fireEvent.click(within(screen.getByRole('tabpanel')).getByRole('button', { name: 'Терминал' }));
+  const restored = screen.getByRole('textbox', { name: 'Командная строка' }) as HTMLInputElement;
+  expect(restored.value).toBe('services');
+  expect(actions()).toEqual([]);
+  fireEvent.keyDown(restored, { key: 'Enter' });
+  expect(actions()).toEqual([{
+    type: 'act/terminal', payload: { command: 'run', params: { line: 'services' } },
+  }]);
+});
+
+test('node diagnostics prepares the selected service request without replacing the device draft', () => {
+  const { actions } = setup({
+    terminal: deviceTerminal,
+    services: [...base.services, { node: '2', type: 'research.server', instance: 'research.remote', stale: false }],
+  });
+  openPanel('Терминал');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Командная строка' }), {
+    target: { value: 'self' },
+  });
+  openPanel('Карта');
+  fireEvent.click(screen.getByText('Выбрать удалённый узел'));
+  fireEvent.change(screen.getByLabelText('Сервис'), { target: { value: 'shell.remote' } });
+  fireEvent.click(screen.getByText('Диагностика'));
+  fireEvent.click(screen.getByText('Подготовить запрос API'));
+  const presence = screen.getByRole('textbox', { name: 'Командная строка сети' }) as HTMLInputElement;
+  expect(presence.value).toBe('api network.shell');
+  expect(actions()).toEqual([]);
+  fireEvent.keyDown(presence, { key: 'Enter' });
+  expect(actions()).toEqual([{ type: 'act/act', payload: { line: 'api network.shell' } }]);
+  fireEvent.change(screen.getByLabelText('Откуда выполнять'), { target: { value: 'device' } });
+  const terminal = screen.getByRole('textbox', { name: 'Командная строка' }) as HTMLInputElement;
+  expect(terminal.value).toBe('self');
+  openPanel('Карта');
+  expect((screen.getByLabelText('Сервис') as HTMLSelectElement).value).toBe('shell.remote');
+});
+
 test('selected map node offers an explicit Host route preview; Enter never skips preview', () => {
   const { push, actions } = setup();
   fireEvent.click(screen.getByText('Выбрать удалённый узел'));
@@ -95,6 +167,8 @@ test('selected map node offers an explicit Host route preview; Enter never skips
       radioHops: 0, nodes: ['1', '2'], radioLegs: [], limited: false,
     },
   });
+  fireEvent.keyDown(screen.getByLabelText('Настройки карты'), { key: 'Enter' });
+  expect(actions().filter(item => item.type === 'act/move')).toEqual([]);
   fireEvent.keyDown(document.body, { key: 'Enter' });
   expect(actions().filter(item => item.type === 'act/move')).toEqual([{
     type: 'act/move', payload: { to: 'shell.remote' },
@@ -166,13 +240,13 @@ test('switching service is local and opening its schema is an explicit Host requ
 
 test('the vertical tab rail switches and focuses panels without sending commands', () => {
   const { actions } = setup();
-  const node = screen.getByRole('tab', { name: 'Узел' });
+  const node = screen.getByRole('tab', { name: 'Карта' });
   const routes = screen.getByRole('tab', { name: 'Маршруты' });
   node.focus();
   fireEvent.keyDown(node, { key: 'ArrowDown' });
   expect(document.activeElement).toBe(routes);
   expect(screen.getByRole('tabpanel', { name: 'Маршруты' }).id).toBe(routes.getAttribute('aria-controls'));
-  expect(screen.queryByRole('tabpanel', { name: 'Узел' })).toBeNull();
+  expect(screen.queryByRole('tabpanel', { name: 'Карта' })).toBeNull();
   expect(actions()).toEqual([]);
 });
 
@@ -186,6 +260,7 @@ test('a bodyless controller can explicitly leave the role', () => {
 
 test('toolbar selects scan radius and level independently of camera actions', () => {
   const { actions } = setup({ levels: [1, 2] });
+  fireEvent.click(screen.getByLabelText('Настройки карты'));
   fireEvent.change(screen.getByRole('combobox', { name: 'Радиус сканирования' }), { target: { value: '5' } });
   fireEvent.click(screen.getByRole('button', { name: 'Сканировать' }));
   fireEvent.change(screen.getByRole('combobox', { name: 'Уровень карты' }), { target: { value: '2' } });
@@ -228,6 +303,60 @@ test('stale service remains inspectable but sends no typed commands', () => {
   });
   fireEvent.click(screen.getByText('Доступные действия'));
   expect(actions()).toEqual([]);
+});
+
+test('optional enums show Host choices without the wire separator and can be left out', () => {
+  const fields = (record: Record<string, string>) =>
+    Object.entries(record).map(([name, value]) => ({ name, value }));
+  const { actions } = setup({
+    services: [{ node: '1', type: 'research.server', instance: 'research.lab', stale: false }],
+    actionEntries: [
+      {
+        id: 1, line: 'api research.server', pending: false, status: 'ok',
+        records: [fields({ type: 'research.server', command: 'status', request: 'research.status_request' })],
+      },
+      {
+        id: 2, line: 'api research.server status', pending: false, status: 'ok',
+        records: [fields({ how: 'request', field: 'reason', type: 'enum', required: 'no', spec: ' open|refresh' })],
+      },
+    ],
+  });
+  fireEvent.click(screen.getByText('Доступные действия'));
+  fireEvent.click(screen.getByText('Получить состояние'));
+  const reason = screen.getByRole('combobox', { name: 'Причина запроса' });
+  expect(within(reason).getByRole('option', { name: 'Обновление' })).toBeTruthy();
+  fireEvent.change(reason, { target: { value: 'refresh' } });
+  fireEvent.click(screen.getByText('Отправить запрос'));
+  fireEvent.change(reason, { target: { value: '' } });
+  fireEvent.click(screen.getByText('Отправить запрос'));
+  expect(actions().map(item => item.payload.line)).toEqual([
+    'api research.server status', 'invoke research.lab status reason=refresh', 'invoke research.lab status',
+  ]);
+});
+
+test('the panel API sends only the selected door action while the wire catalogue explains press', () => {
+  const door = { node: '1', type: 'machine.door', instance: 'door.e24', stale: false };
+  const { actions, push } = setup({
+    services: [door],
+    actionEntries: [{
+      id: 1, line: 'api machine.door', pending: false, status: 'ok',
+      records: ['set_state', 'control'].map((command, index) => [
+        { name: 'type', value: 'machine.door' }, { name: 'command', value: command },
+        { name: 'request', value: index === 0 ? 'machine.door_set' : 'machine.door_control_request' },
+      ]),
+    }],
+  });
+  expect(screen.queryByText('Панель шлюза')).toBeNull();
+  fireEvent.click(screen.getByText('Доступные действия'));
+  expect(screen.getByText(/идентификатор нажатия press/i)).toBeTruthy();
+  expect(screen.queryByText('Изменить состояние')).toBeNull();
+  expect(actions()).toEqual([]);
+  push({ services: [{ ...door, doorPanel: { opened: 0, bolted: 0 } }] });
+  fireEvent.click(screen.getByText('Панель шлюза', { selector: 'summary' }));
+  fireEvent.click(screen.getByText('Открыть шлюз'));
+  expect(actions()).toEqual([]);
+  fireEvent.click(screen.getByText('Открыть шлюз?'));
+  expect(actions()).toEqual([{ type: 'act/device_action', payload: { instance: 'door.e24', command: 'open' } }]);
 });
 
 test('context shows recent activity for its node only without network requests', () => {

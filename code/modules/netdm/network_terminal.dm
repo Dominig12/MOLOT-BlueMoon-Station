@@ -49,20 +49,23 @@
 		return null
 	var/instance = "netshell.[endpoint.id]"
 	if(!endpoint.services[instance])
-		lane.offer(provider, instance, "network.shell", "shell.output", 1, scope = istype(provider, /datum/component/netdm_node) ? "none" : "domain")
+		lane.offer(provider, instance, "network.shell", "shell.output", 1, scope = private_shell(provider) ? "none" : "domain")
 	return instance
+
+/datum/netdm_diagnostics/proc/private_shell(datum/provider)
+	return istype(provider, /datum/component/netdm_node) || istype(provider, /datum/netdm_terminal_operator/console)
 
 /datum/netdm_diagnostics/proc/queue_shell_request(datum/asker, datum/provider, command, list/arguments, datum/callback/on_output, datum/callback/can_send)
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
 	if(!lane || QDELETED(asker) || QDELETED(provider) || !on_output)
 		return FALSE
-	var/local_shell = istype(provider, /datum/component/netdm_node)
+	var/local_shell = private_shell(provider)
 	if(length(queries) >= NETDM_TERMINAL_PENDING || (local_shell ? (asker != provider || !can_send) : !lane.node_id(provider)))
 		return FALSE
-	var/datum/netdm_apc_operator/operator = asker
+	var/datum/netdm_terminal_operator/operator = asker
 	if(istype(operator))
 		var/datum/netdm_service_endpoint/endpoint = lane.by_node[operator]
-		if(operator.apc_ref?.resolve() != provider || !can_send || !endpoint)
+		if(operator.shell_provider() != provider || !can_send || !endpoint)
 			return FALSE
 		if(endpoint.attached_node != lane.node_id(operator))
 			lane.node_moved(operator)
@@ -135,85 +138,132 @@
 		return FALSE
 	return !apc.locked || (apc.obj_flags & EMAGGED) || apc.allowed(user)
 
-/// A player's endpoint is attached to the APC's physical node. Its provider is the public APC shell.
-/datum/netdm_apc_operator
+/// An operator owns a Host endpoint on the physical node, with an independent session and journal.
+/datum/netdm_terminal_operator
 	var/datum/netdm_diagnostics/diagnostics
 	var/key
-	var/datum/weakref/apc_ref
+	var/datum/weakref/device_ref
 	var/datum/weakref/user_ref
 	var/client/operator_client
 	var/datum/weakref/terminal_ref
 	var/idle_until
 	var/detach_needed = FALSE
 
-/datum/netdm_apc_operator/New(datum/netdm_diagnostics/owner, operator_key, obj/machinery/power/apc/apc, mob/user)
+/datum/netdm_terminal_operator/New(datum/netdm_diagnostics/owner, operator_key, atom/device, mob/user)
 	diagnostics = owner
 	key = operator_key
-	apc_ref = WEAKREF(apc)
+	device_ref = WEAKREF(device)
 	user_ref = WEAKREF(user)
 	operator_client = user.client
 	idle_until = world.time + NETDM_APC_OPERATOR_IDLE
 	RegisterSignal(user, list(COMSIG_PARENT_QDELETING, COMSIG_MOB_CLIENT_LOGOUT), PROC_REF(on_gone))
-	RegisterSignal(apc, COMSIG_PARENT_QDELETING, PROC_REF(on_gone))
+	RegisterSignal(device, COMSIG_PARENT_QDELETING, PROC_REF(on_gone))
 	return ..()
 
-/datum/netdm_apc_operator/proc/on_gone(datum/source)
+/datum/netdm_terminal_operator/proc/on_gone(datum/source)
 	SIGNAL_HANDLER
 	qdel(src)
 
-/datum/netdm_apc_operator/proc/authorized()
+/datum/netdm_terminal_operator/proc/authorized()
 	var/mob/living/user = user_ref?.resolve()
-	var/obj/machinery/power/apc/apc = apc_ref?.resolve()
-	return !QDELETED(src) && !QDELETED(apc) && !QDELETED(user) && operator_client && user.client == operator_client && diagnostics?.terminal_access(apc, user)
+	return !QDELETED(src) && device_ref?.resolve() && user && operator_client && user.client == operator_client
 
-/datum/netdm_apc_operator/proc/can_detach_presence()
-	var/datum/netdm_terminal/apc/terminal = terminal_ref?.resolve()
-	return !QDELETED(src) && !QDELETED(apc_ref?.resolve()) && !terminal?.space
+/datum/netdm_terminal_operator/proc/shell_provider()
+	return src
 
-/datum/netdm_apc_operator/proc/detach_answered(list/output)
+/datum/netdm_terminal_operator/proc/wire_node()
+	return null
+
+/datum/netdm_terminal_operator/proc/bind_terminal(datum/netdm_terminal/terminal)
+	terminal_ref = WEAKREF(terminal)
+	idle_until = 0
+
+/datum/netdm_terminal_operator/proc/release_terminal(datum/netdm_terminal/terminal)
+	var/datum/netdm_terminal/current = terminal_ref?.resolve()
+	if(!current || current == terminal)
+		terminal_ref = null
+		idle_until = world.time + NETDM_APC_OPERATOR_IDLE
+
+/datum/netdm_terminal_operator/proc/can_detach_presence()
+	var/datum/netdm_terminal/terminal = terminal_ref?.resolve()
+	return !QDELETED(src) && device_ref?.resolve() && !terminal?.space
+
+/datum/netdm_terminal_operator/proc/detach_answered(list/output)
 	if(can_detach_presence() && !(output?["status"] in list("suspended", "ended", "none")))
 		detach_needed = TRUE
 
-/datum/netdm_apc_operator/Destroy()
+/datum/netdm_terminal_operator/Destroy()
 	var/mob/user = user_ref?.resolve()
-	var/obj/machinery/power/apc/apc = apc_ref?.resolve()
+	var/atom/device = device_ref?.resolve()
 	if(user)
 		UnregisterSignal(user, list(COMSIG_PARENT_QDELETING, COMSIG_MOB_CLIENT_LOGOUT))
-	if(apc)
-		UnregisterSignal(apc, COMSIG_PARENT_QDELETING)
-	if(key && diagnostics?.apc_operators[key] == src)
-		diagnostics.apc_operators -= key
+	if(device)
+		UnregisterSignal(device, COMSIG_PARENT_QDELETING)
+	if(key && diagnostics?.terminal_operators[key] == src)
+		diagnostics.terminal_operators -= key
 	SSnetdm_observe?.services?.drop(src)
 	qdel(terminal_ref?.resolve())
 	operator_client = null
 	diagnostics = null
 	return ..()
 
+/datum/netdm_apc_operator
+	parent_type = /datum/netdm_terminal_operator
+	var/datum/weakref/apc_ref
+
+/datum/netdm_apc_operator/New(datum/netdm_diagnostics/owner, operator_key, obj/machinery/power/apc/apc, mob/user)
+	apc_ref = WEAKREF(apc)
+	return ..()
+
+/datum/netdm_apc_operator/authorized()
+	return ..() && diagnostics?.terminal_access(apc_ref?.resolve(), user_ref?.resolve())
+
+/datum/netdm_apc_operator/shell_provider()
+	return apc_ref?.resolve()
+
+/datum/netdm_apc_operator/wire_node()
+	var/obj/machinery/power/apc/apc = apc_ref?.resolve()
+	return apc ? SSnetdm_observe.apc_node_id(apc) : null
+
+/datum/netdm_terminal_operator/console
+	var/datum/weakref/node_ref
+
+/datum/netdm_terminal_operator/console/New(datum/netdm_diagnostics/owner, operator_key, obj/machinery/computer/console, mob/user)
+	node_ref = WEAKREF(console.GetComponent(/datum/component/netdm_node))
+	return ..()
+
+/datum/netdm_terminal_operator/console/wire_node()
+	var/datum/component/netdm_node/node = node_ref?.resolve()
+	return SSnetdm_observe.node_facts[node] ? SSnetdm_observe.node_ids[node] : null
+
 /datum/netdm_diagnostics/proc/apc_operator(obj/machinery/power/apc/apc, mob/living/user)
-	var/key = "[REF(apc)]/[REF(user)]"
-	var/datum/netdm_apc_operator/operator = apc_operators[key]
-	if(operator?.authorized() && operator.apc_ref.resolve() == apc && operator.user_ref.resolve() == user)
+	return terminal_operator(/datum/netdm_apc_operator, apc, user)
+
+/datum/netdm_diagnostics/proc/terminal_operator(operator_type, atom/device, mob/living/user)
+	var/key = "[REF(device)]/[REF(user)]"
+	var/datum/netdm_terminal_operator/operator = terminal_operators[key]
+	if(istype(operator, operator_type) && operator.authorized() && operator.device_ref.resolve() == device && operator.user_ref.resolve() == user)
 		return operator
 	qdel(operator)
-	operator = new(src, key, apc, user)
+	operator = new operator_type(src, key, device, user)
 	if(!SSnetdm_observe.services?.endpoint_for(operator))
 		qdel(operator)
 		return null
-	apc_operators[key] = operator
+	terminal_operators[key] = operator
 	return operator
 
-/datum/netdm_diagnostics/proc/check_apc_operators()
-	if(!length(apc_operators) || world.time < next_apc_operator_check)
+/datum/netdm_diagnostics/proc/check_terminal_operators()
+	if(!length(terminal_operators) || world.time < next_terminal_operator_check)
 		return
-	next_apc_operator_check = world.time + 1 SECONDS
-	for(var/key in apc_operators.Copy())
-		var/datum/netdm_apc_operator/operator = apc_operators[key]
+	next_terminal_operator_check = world.time + 1 SECONDS
+	for(var/key in terminal_operators.Copy())
+		var/datum/netdm_terminal_operator/operator = terminal_operators[key]
 		if(!operator.authorized() || (operator.idle_until && world.time >= operator.idle_until))
 			qdel(operator)
 			continue
-		if(operator.detach_needed && operator.can_detach_presence() && queue_shell_request(operator, operator.apc_ref.resolve(),
-			"detach", list("note" = "window"), CALLBACK(operator, TYPE_PROC_REF(/datum/netdm_apc_operator, detach_answered)),
-			CALLBACK(operator, TYPE_PROC_REF(/datum/netdm_apc_operator, can_detach_presence))))
+		if(operator.detach_needed && operator.can_detach_presence() && queue_shell_request(operator, operator.shell_provider(),
+			"detach", list("note" = "window"), CALLBACK(operator, TYPE_PROC_REF(/datum/netdm_terminal_operator, detach_answered)),
+			CALLBACK(operator, TYPE_PROC_REF(/datum/netdm_terminal_operator, can_detach_presence))))
 			operator.detach_needed = FALSE
 
 /// A terminal runs lines and scripts at its own endpoint. The UI host is the device the user operates.
@@ -225,6 +275,9 @@
 	var/serial = 0
 	var/disk_notice
 	var/list/loaded_script
+	/// The network workspace displaying this operator's terminal and presence.
+	var/datum/netdm_space/space
+	var/retire_timer
 
 /datum/netdm_terminal/New(atom/device, datum/node = device)
 	device_ref = WEAKREF(device)
@@ -238,21 +291,47 @@
 /datum/netdm_terminal/proc/shell_provider()
 	return node_ref?.resolve()
 
+/datum/netdm_terminal/Destroy()
+	deltimer(retire_timer)
+	QDEL_NULL(space)
+	var/datum/netdm_terminal_operator/operator = node_ref?.resolve()
+	if(istype(operator))
+		operator.release_terminal(src)
+	return ..()
+
+/datum/netdm_terminal/proc/open_space(mob/user)
+	if(!can_submit() || ui_status(user, ui_state(user)) != UI_INTERACTIVE)
+		return FALSE
+	var/datum/netdm_space/window = space
+	if(!window)
+		window = new(src)
+	if(window.ui_interact(user))
+		deltimer(retire_timer)
+		retire_timer = null
+		return TRUE
+	qdel(window)
+	return FALSE
+
+/// Let a queued detach finish while its terminal still owns the send guard.
+/datum/netdm_terminal/proc/retire_closed_workspace()
+	deltimer(retire_timer)
+	retire_timer = addtimer(CALLBACK(src, PROC_REF(dispose_if_closed)), NETDM_TERMINAL_TIMEOUT + 1 SECONDS, TIMER_STOPPABLE)
+
+/datum/netdm_terminal/proc/dispose_if_closed()
+	retire_timer = null
+	if(!space)
+		qdel(src)
+
+/datum/netdm_terminal/proc/update_workspace()
+	if(!QDELETED(space))
+		SStgui.update_uis(space)
+
 /datum/netdm_terminal/apc
 	var/opening = FALSE
 
 /datum/netdm_terminal/apc/New(obj/machinery/power/apc/apc, datum/netdm_apc_operator/operator)
-	operator.terminal_ref = WEAKREF(src)
-	operator.idle_until = 0
+	operator.bind_terminal(src)
 	return ..(apc, operator)
-
-/datum/netdm_terminal/apc/Destroy()
-	var/datum/netdm_apc_operator/operator = node_ref?.resolve()
-	var/datum/netdm_terminal/apc/current = operator?.terminal_ref?.resolve()
-	if(istype(operator) && (!current || current == src))
-		operator.terminal_ref = null
-		operator.idle_until = world.time + NETDM_APC_OPERATOR_IDLE
-	return ..()
 
 /datum/netdm_terminal/apc/shell_provider()
 	return device_ref?.resolve()
@@ -295,14 +374,7 @@
 	return GLOB.physical_state
 
 /datum/netdm_terminal/ui_interact(mob/user, datum/tgui/ui)
-	ui = SStgui.try_update_ui(user, src, ui)
-	if(!ui)
-		ui = new(user, src, "NetdmTerminal")
-		return ui.open()
-	return TRUE
-
-/datum/netdm_terminal/ui_close(mob/user)
-	qdel(src)
+	return open_space(user)
 
 /datum/netdm_terminal/ui_data(mob/user)
 	var/atom/device = device_ref?.resolve()
@@ -326,37 +398,58 @@
 /datum/netdm_terminal/proc/device_title(atom/device)
 	return get_area_name(device, TRUE)
 
-/datum/netdm_terminal/ui_act(action, list/params, datum/tgui/ui, datum/ui_state/state)
-	. = ..()
-	if(.)
-		return
-	switch(action)
-		if("run")
-			var/line = trim("[params["line"]]")
-			// "migrate <program> <shell instance>" moves the asker's program to another device (NetEntity).
-			var/list/words = splittext(line, " ")
-			if(length(words) == 3 && words[1] == "migrate")
-				return migrate_program(words[2], words[3])
-			return submit(line)
-		if("run_script")
-			return submit(params["source"], TRUE)
-		if("check_script")
-			return check_script(params["source"], params["name"], params["tag"])
-		if("start_program")
-			return start_program(params["name"], params["source"], !!params["keep"])
-		if("forget_program")
-			return forget_program(params["name"])
-		if("list_programs")
-			return submit("programs")
-		if("stop_program")
-			return stop_program(params["program"])
-		if("save_disk", "load_disk", "run_disk")
-			return script_disk_action(ui.user, action, params["disk"], params["file"], params["source"])
-		if("clear")
-			entries.Cut()
-			return TRUE
-		if("open_space")
-			return open_space(ui.user)
+/// Browser actions are bound to these local views. Arguments never select a proc.
+/datum/netdm_terminal/proc/dispatch_terminal_action(command, params, mob/user)
+	var/static/list/actions = list(
+		"run" = PROC_REF(run_from_ui),
+		"run_script" = PROC_REF(run_script_from_ui),
+		"check_script" = PROC_REF(check_script_from_ui),
+		"start_program" = PROC_REF(start_program_from_ui),
+		"forget_program" = PROC_REF(forget_program_from_ui),
+		"list_programs" = PROC_REF(list_programs_from_ui),
+		"stop_program" = PROC_REF(stop_program_from_ui),
+		"save_disk" = PROC_REF(disk_from_ui),
+		"load_disk" = PROC_REF(disk_from_ui),
+		"run_disk" = PROC_REF(disk_from_ui),
+		"clear" = PROC_REF(clear_from_ui),
+	)
+	if(!istext(command) || (!isnull(params) && !islist(params)))
+		return FALSE
+	var/handler = actions[command]
+	return handler ? call(src, handler)(params || list(), user, command) : FALSE
+
+/datum/netdm_terminal/proc/run_from_ui(list/params)
+	var/line = trim("[params["line"]]")
+	// "migrate <program> <shell instance>" moves the asker's program to another device.
+	var/list/words = splittext(line, " ")
+	if(length(words) == 3 && words[1] == "migrate")
+		return migrate_program(words[2], words[3])
+	return submit(line)
+
+/datum/netdm_terminal/proc/run_script_from_ui(list/params)
+	return submit(params["source"], TRUE)
+
+/datum/netdm_terminal/proc/check_script_from_ui(list/params)
+	return check_script(params["source"], params["name"], params["tag"])
+
+/datum/netdm_terminal/proc/start_program_from_ui(list/params)
+	return start_program(params["name"], params["source"], !!params["keep"])
+
+/datum/netdm_terminal/proc/forget_program_from_ui(list/params)
+	return forget_program(params["name"])
+
+/datum/netdm_terminal/proc/list_programs_from_ui()
+	return submit("programs")
+
+/datum/netdm_terminal/proc/stop_program_from_ui(list/params)
+	return stop_program(params["program"])
+
+/datum/netdm_terminal/proc/disk_from_ui(list/params, mob/user, command)
+	return script_disk_action(user, command, params["disk"], params["file"], params["source"])
+
+/datum/netdm_terminal/proc/clear_from_ui()
+	entries.Cut()
+	return TRUE
 
 /// Resolve media from the user's hands on each action. The browser only identifies the disk it displayed.
 /datum/netdm_terminal/proc/held_script_disk(mob/user)
@@ -515,14 +608,45 @@
 					fields["schema"], text2num(fields["major"]), fields["projection"], fields["mode"], text2num(fields["pending"]))
 			else if(fields["status"] == "unwatched")
 				SSnetdm_observe.services.forget_shell_watch(endpoint, key)
-	SStgui.update_uis(src)
+	update_workspace()
+
+/proc/netdm_open_local_terminal(terminal_type, atom/device, datum/node, mob/user)
+	if(!isliving(user) || !user.client)
+		return FALSE
+	for(var/datum/weakref/workspace_ref as anything in list(user.netdm_pending_workspace, user.netdm_workspace))
+		var/datum/netdm_space/workspace = workspace_ref?.resolve()
+		var/datum/netdm_terminal/local/current = workspace?.actor?.matching_terminal(terminal_type, device, node, user)
+		if(current)
+			return current.ui_interact(user)
+	var/datum/netdm_terminal/local/terminal = new terminal_type(device, node, user)
+	if(terminal.ui_interact(user))
+		return TRUE
+	qdel(terminal)
+	return FALSE
 
 /datum/netdm_terminal/local
 	var/datum/weakref/user_ref
+	var/client/operator_client
+	var/client_revoked = FALSE
 
-/datum/netdm_terminal/local/New(atom/device, datum/component/netdm_node/node, mob/user)
+/datum/netdm_terminal/local/New(atom/device, datum/node, mob/user)
 	user_ref = WEAKREF(user)
+	operator_client = user?.client
+	if(operator_client)
+		RegisterSignal(user, COMSIG_MOB_CLIENT_LOGOUT, PROC_REF(revoke_client))
 	return ..(device, node)
+
+/datum/netdm_terminal/local/Destroy()
+	var/mob/user = user_ref?.resolve()
+	if(user && (operator_client || client_revoked))
+		UnregisterSignal(user, COMSIG_MOB_CLIENT_LOGOUT)
+	operator_client = null
+	return ..()
+
+/datum/netdm_terminal/local/proc/revoke_client(mob/user)
+	SIGNAL_HANDLER
+	client_revoked = TRUE
+	operator_client = null
 
 /datum/netdm_terminal/local/ui_status(mob/user, datum/ui_state/state)
 	return user == user_ref?.resolve() && can_submit() ? ..() : UI_CLOSE
@@ -532,7 +656,9 @@
 
 /datum/netdm_terminal/local/can_submit()
 	var/mob/living/user = user_ref?.resolve()
-	return !QDELETED(src) && istype(user) && !user.stat && !user.incapacitated() && (user.mobility_flags & MOBILITY_UI)
+	if(QDELETED(src) || !istype(user) || client_revoked || user.client != operator_client)
+		return FALSE
+	return !user.stat && !user.incapacitated() && (user.mobility_flags & MOBILITY_UI)
 
 /datum/netdm_terminal/local/send_guard()
 	return CALLBACK(src, PROC_REF(can_submit))
@@ -559,9 +685,7 @@
 		node = netdm_make_node(src, NETDM_MOUNT_MOBILE)
 	if(!node)
 		return FALSE
-	var/datum/netdm_terminal/local/pda/terminal = new(src, node, user)
-	terminal.ui_interact(user)
-	return TRUE
+	return netdm_open_local_terminal(/datum/netdm_terminal/local/pda, src, node, user)
 
 /datum/netdm_terminal/local/implant/ui_host(mob/user)
 	return user_ref?.resolve() || src
@@ -598,8 +722,7 @@
 /obj/item/implant/netdm_terminal/ui_action_click(mob/living/user)
 	if(!user || user != imp_in || !node || user.shared_ui_interaction(user) != UI_INTERACTIVE)
 		return
-	var/datum/netdm_terminal/local/implant/terminal = new(src, node, user)
-	terminal.ui_interact(user)
+	netdm_open_local_terminal(/datum/netdm_terminal/local/implant, src, node, user)
 
 /obj/item/implantcase/netdm_terminal
 	name = "футляр сетевого импланта"
@@ -694,8 +817,7 @@
 	if(!connected())
 		return ..()
 	if(GLOB.physical_state.can_use_topic(src, user) == UI_INTERACTIVE)
-		var/datum/netdm_terminal/local/adapter/terminal = new(src, node, user)
-		terminal.ui_interact(user)
+		netdm_open_local_terminal(/datum/netdm_terminal/local/adapter, src, node, user)
 	return TRUE
 
 /obj/item/netdm_adapter/AltClick(mob/user)
@@ -930,13 +1052,41 @@
 #undef NETDM_APC_OPERATOR_IDLE
 #undef NETDM_APC_OPERATOR_PENDING
 
-/// P13: a security console carries the network window as a second, live view of the grid.
-/datum/netdm_terminal/local/console
-	ui_state(mob/user)
-		return GLOB.default_state
+/// A console's network workspace requires its ordinary physical interaction.
+/obj/machinery/computer/proc/netdm_operator_access(mob/living/user)
+	if(!istype(src, /obj/machinery/computer/security) && !istype(src, /obj/machinery/computer/rdconsole))
+		return FALSE
+	return !QDELETED(src) && isliving(user) && user.client && is_operational() && GLOB.default_state.can_use_topic(src, user) == UI_INTERACTIVE
 
-	can_submit()
-		var/obj/machinery/computer/security/console = device_ref?.resolve()
-		var/mob/living/user = user_ref?.resolve()
-		return !QDELETED(src) && istype(console) && !QDELETED(console) && istype(user) && \
-			!user.stat && !user.incapacitated()
+/obj/machinery/computer/rdconsole/netdm_operator_access(mob/living/user)
+	return !locked && ..()
+
+/obj/machinery/computer/proc/netdm_open_space(mob/living/user)
+	var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe?.diagnostics
+	if(!SSnetdm_observe?.observing() || !SSnetdm_observe.services || !diagnostics || !netdm_operator_access(user))
+		return FALSE
+	if(!netdm_make_node(src))
+		return FALSE
+	var/datum/netdm_terminal_operator/console/operator = diagnostics.terminal_operator(/datum/netdm_terminal_operator/console, src, user)
+	if(!operator)
+		return FALSE
+	var/datum/netdm_terminal/local/console/terminal = operator.terminal_ref?.resolve()
+	if(!terminal)
+		terminal = new(src, operator, user)
+	if(terminal.ui_interact(user))
+		return TRUE
+	qdel(terminal)
+	return FALSE
+
+/datum/netdm_terminal/local/console/New(obj/machinery/computer/console, datum/netdm_terminal_operator/console/operator, mob/user)
+	operator.bind_terminal(src)
+	return ..(console, operator, user)
+
+/datum/netdm_terminal/local/console/ui_state(mob/user)
+	return GLOB.default_state
+
+/datum/netdm_terminal/local/console/can_submit()
+	var/datum/netdm_terminal_operator/console/operator = node_ref?.resolve()
+	var/obj/machinery/computer/console = device_ref?.resolve()
+	var/mob/living/user = user_ref?.resolve()
+	return ..() && operator?.authorized() && console?.netdm_operator_access(user)

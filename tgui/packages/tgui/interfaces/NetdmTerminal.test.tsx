@@ -1,53 +1,52 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { combineReducers, createStore, setGlobalStore } from 'common/redux';
 
-import { backendReducer, backendUpdate } from '../backend';
-import { debugReducer } from '../debug';
-import { NetdmTerminal } from './NetdmTerminal';
+import { NetdmTerminalContent, NetdmTerminalData, NetdmTerminalEvents } from './NetdmTerminal';
 
 const fields = (record: Record<string, string>) => Object.entries(record).map(([name, value]) => ({ name, value }));
 
-const setup = (screenMode: 'tools' | 'home' = 'tools') => {
-  const topic = jest.fn();
-  (global as any).Byond = { winset: () => {}, winget: () => Promise.resolve(null), topic };
-  const store = createStore(combineReducers({ backend: backendReducer, debug: debugReducer }));
-  setGlobalStore(store);
-  const push = (entries: object[], extra: Record<string, unknown> = {}) => store.dispatch(backendUpdate({
-    config: { interface: 'NetdmTerminal' },
-    data: { title: 'АПЦ', limit: 1024, scriptLimit: 4096, entries, ...extra },
-  }));
-  push([]);
-  const ui = render(<NetdmTerminal />);
-  if (screenMode === 'tools') {
-    fireEvent.click(screen.getByText('Инструменты'));
-  }
+type Entry = NetdmTerminalData['entries'][number];
+type EntryFixture = Pick<Entry, 'id' | 'line' | 'records'> & Partial<Entry>;
+
+const terminalData = (entries: EntryFixture[] = []): NetdmTerminalData => ({
+  title: 'АПЦ',
+  limit: 1024,
+  scriptLimit: 4096,
+  entries: entries.map(entry => ({ pending: false, status: 'ok', error: null, position: null, fuel: null, ...entry })),
+  programsEnabled: false,
+  kept: null,
+  disk: null,
+  diskNotice: null,
+  loadedScript: null,
+});
+
+const setup = () => {
+  const act = jest.fn();
+  const ui = render(<NetdmTerminalContent data={terminalData()} act={act} />);
   return {
-    push: (entries: object[], extra: Record<string, unknown> = {}) => {
-      push(entries, extra); ui.rerender(<NetdmTerminal />);
-    },
-    commands: () => topic.mock.calls.filter(([message]) => message.type === 'act/run')
-      .map(([message]) => JSON.parse(message.payload).line),
-    actions: () => topic.mock.calls.map(([message]) => message.type),
+    push: (entries: EntryFixture[]) => ui.rerender(<NetdmTerminalContent data={terminalData(entries)} act={act} />),
+    commands: () => act.mock.calls.filter(([action]) => action === 'run').map(([, params]) => params.line),
+    actions: () => act.mock.calls.map(([action]) => action),
   };
 };
 
+const commandInput = () => screen.getByRole<HTMLInputElement>('textbox', { name: 'Командная строка' });
+
 test('история по стрелкам сохраняет черновик при переходе в справку и обратно', () => {
   const { commands } = setup();
-  const getInput = () => screen.getByRole<HTMLInputElement>('textbox', { name: 'Командная строка' });
-  fireEvent.change(getInput(), { target: { value: 'services' } });
-  fireEvent.keyDown(getInput(), { key: 'Enter' });
+  fireEvent.change(commandInput(), { target: { value: 'services' } });
+  fireEvent.keyDown(commandInput(), { key: 'Enter' });
   expect(commands()).toEqual(['services']);
-  fireEvent.change(getInput(), { target: { value: 'trace 42' } });
-  fireEvent.keyDown(getInput(), { key: 'ArrowUp' });
-  expect(getInput().value).toBe('services');
-  fireEvent.keyDown(getInput(), { key: 'ArrowDown' });
-  expect(getInput().value).toBe('trace 42');
+  fireEvent.change(commandInput(), { target: { value: 'trace 42' } });
+  fireEvent.keyDown(commandInput(), { key: 'ArrowUp' });
+  expect(commandInput().value).toBe('services');
+  fireEvent.keyDown(commandInput(), { key: 'ArrowDown' });
+  expect(commandInput().value).toBe('trace 42');
 
-  fireEvent.click(screen.getByText('Справка'));
+  fireEvent.click(screen.getByRole('button', { name: 'Справка' }));
   fireEvent.click(screen.getByText('Устройства'));
   expect(commands()).toEqual(['services', 'help', 'help services']);
-  fireEvent.click(screen.getAllByText('Справка')[0]);
-  expect(getInput().value).toBe('trace 42');
+  fireEvent.click(screen.getByRole('button', { name: 'Терминал' }));
+  expect(commandInput().value).toBe('trace 42');
 });
 
 test('результат термометра и доставка запроса используют ID возвращённой операции', () => {
@@ -63,7 +62,7 @@ test('результат термометра и доставка запроса
 
 test('пример из ответа справки подставляется в строку и ждёт запуска игроком', () => {
   const { commands, push } = setup();
-  fireEvent.click(screen.getByText('Справка'));
+  fireEvent.click(screen.getByRole('button', { name: 'Справка' }));
   push([{
     id: 1, line: 'help', status: 'ok', pending: false,
     records: [fields({ topic: 'services', syntax: 'services', description: 'Найти сервисы в сети', example: 'services -type atmos.alarm' })],
@@ -95,33 +94,32 @@ test('универсальные действия предлагают API и г
 });
 
 test('доставленные события отображаются без сетевого вызова или применения эффекта', () => {
-  const { commands, push } = setup();
-  push([], {
+  const onCommand = jest.fn();
+  const data = {
     watches: ['oxygen'],
     events: [{
       delivery: '802', key: 'oxygen', instance: 'atmos.test', schema: 'atmos.sample',
       payload: '{"pressureKPa":101.3,"quality":"current"}', truncated: false, at: 250,
     }],
-  });
-  fireEvent.click(screen.getByText('События (1)'));
+  };
+  render(<NetdmTerminalEvents data={data} onCommand={onCommand} />);
   expect(screen.getByText('atmos.test · atmos.sample')).toBeTruthy();
   expect(screen.getByText('{"pressureKPa":101.3,"quality":"current"}')).toBeTruthy();
-  expect(commands()).toEqual([]);
+  expect(onCommand).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText('oxygen'));
-  expect(commands()).toEqual(['unwatch oxygen']);
+  expect(onCommand).toHaveBeenCalledTimes(1);
+  expect(onCommand).toHaveBeenCalledWith('unwatch oxygen');
 });
 
 
 test('IDE validates source through Host without running or starting the program', () => {
   const { actions, push } = setup();
-  fireEvent.click(screen.getByText('Редактор'));
+  fireEvent.click(screen.getByRole('button', { name: 'Редактор' }));
   const editor = document.querySelector('textarea') as HTMLTextAreaElement;
   expect(editor).toBeTruthy();
   fireEvent.input(editor, { target: { value: 'self | select node' } });
   fireEvent.click(screen.getByText('Проверить код'));
-  expect(actions()).toContain('act/check_script');
-  expect(actions()).not.toContain('act/run_script');
-  expect(actions()).not.toContain('act/start_program');
+  expect(actions()).toEqual(['check_script']);
   push([{
     id: 1, line: 'check 1', status: 'valid', pending: false, error: null,
     position: null, records: [],
@@ -129,246 +127,78 @@ test('IDE validates source through Host without running or starting the program'
   expect(screen.getByText(/Компиляция успешна/)).toBeTruthy();
 });
 
+test('быстрые команды доступны в списке рядом со строкой и сохраняют её черновик', () => {
+  const { actions, commands } = setup();
 
-test('обычный игрок видит понятный обзор, а не набор команд и IDE', () => {
-  const { actions } = setup('home');
-  expect(screen.getByText('Сеть станции')).toBeTruthy();
-  expect(screen.getByText('Найти устройства')).toBeTruthy();
-  expect(screen.getByText('Тревоги атмосферы')).toBeTruthy();
-  expect(screen.queryByRole('textbox', { name: 'Командная строка' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Терминал', pressed: true })).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'Журнал терминала' })).toBeTruthy();
+  expect(screen.queryByText('Карта сети')).toBeNull();
+  expect(screen.queryByText('Обзор')).toBeNull();
   expect(screen.queryByText('Проверить код')).toBeNull();
-  // Opening the panel must not make unrequested discovery or control calls.
   expect(actions()).toEqual([]);
+
+  fireEvent.change(commandInput(), { target: { value: 'nodes' } });
+  const menu = screen.getByRole('combobox', { name: 'Быстрые команды' });
+  fireEvent.change(menu, { target: { value: 'services' } });
+  fireEvent.change(menu, { target: { value: 'jobs' } });
+  expect(commands()).toEqual(['services', 'jobs']);
+  expect(commandInput().value).toBe('nodes');
 });
 
-test('поиск в обзоре использует штатную сеть и показывает понятные сервисы', () => {
-  const { commands, push } = setup('home');
-  fireEvent.click(screen.getByText('Найти устройства'));
-  expect(commands()).toEqual(['services']);
-  push([{
-    id: 1, line: 'services', status: 'ok', pending: false, error: null,
-    records: [fields({ instance: 'atmos.alarm.e42', type: 'atmos.alarm', hops: '2' })],
-  }], { connectionReady: true });
-  expect(screen.getByText('Атмосферная тревога')).toBeTruthy();
-  expect(screen.getByText('atmos.alarm.e42')).toBeTruthy();
-  expect(screen.getByText('Подключено')).toBeTruthy();
-  // Discovery alone never reads, watches or controls a physical device.
-  expect(commands()).toEqual(['services']);
-  // Controls only appear after choosing a device.
-  expect(screen.queryByText('Запросить показания')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство atmos.alarm.e42' }));
-  fireEvent.click(screen.getByText('Запросить показания'));
-  fireEvent.click(screen.getByText('Следить за событиями'));
-  expect(commands()).toEqual([
-    'services',
-    'invoke atmos.alarm.e42 read reason=inspect',
-    'watch atmos.alarm.e42 -key atmos.alarm.e42',
-  ]);
+test('запуск скрипта открывает журнал и сохраняет текст в редакторе', () => {
+  const { actions } = setup();
+  fireEvent.click(screen.getByRole('button', { name: 'Редактор' }));
+  const editor = document.querySelector('textarea')!;
+  expect(editor.closest('details')).toBeNull();
+  expect(screen.getByText('Диск').closest('details')?.open).toBe(false);
+
+  fireEvent.input(editor, { target: { value: 'self | select node' } });
+  fireEvent.click(screen.getByText('Запустить'));
+  expect(actions()).toEqual(['run_script']);
+  expect(screen.getByRole('button', { name: 'Терминал', pressed: true })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Редактор' }));
+  expect(document.querySelector('textarea')?.value).toBe('self | select node');
 });
 
-test('обзор позволяет углубиться в инструменты и вернуться без новых запросов', () => {
-  const { commands, actions } = setup('home');
-  fireEvent.click(screen.getByText('Тревоги атмосферы'));
-  expect(commands()).toEqual(['services -type atmos.alarm']);
-  fireEvent.click(screen.getByText('Открыть инструменты'));
-  expect(screen.getByRole('textbox', { name: 'Командная строка' })).toBeTruthy();
-  fireEvent.click(screen.getByText('Редактор'));
-  expect(screen.getByText('Проверить код')).toBeTruthy();
-  fireEvent.click(screen.getByText('Обзор'));
-  expect(screen.queryByText('Проверить код')).toBeNull();
-  expect(commands()).toEqual(['services -type atmos.alarm']);
-  expect(actions()).not.toContain('act/start_program');
-  expect(actions()).not.toContain('act/run_script');
+test('команда с карты подставляется один раз и только после открытия вкладки', () => {
+  const act = jest.fn();
+  const data = terminalData();
+  const preset = { id: 1, line: 'trace 42' };
+  const ui = render(<NetdmTerminalContent data={data} act={act} active={false} preset={preset} />);
+  expect(commandInput().value).toBe('');
+
+  ui.rerender(<NetdmTerminalContent data={data} act={act} active preset={preset} />);
+  expect(commandInput().value).toBe('trace 42');
+  expect(document.activeElement).toBe(commandInput());
+  expect(act).not.toHaveBeenCalled();
+
+  fireEvent.change(commandInput(), { target: { value: 'nodes' } });
+  ui.rerender(<NetdmTerminalContent data={terminalData()} act={act} active preset={preset} />);
+  expect(commandInput().value).toBe('nodes');
+  fireEvent.keyDown(commandInput(), { key: 'Enter' });
+  expect(act).toHaveBeenCalledTimes(1);
+  expect(act).toHaveBeenCalledWith('run', { line: 'nodes' });
 });
 
-test('карта и входящие события доступны без изучения командной строки', () => {
-  const { actions, commands } = setup('home');
-  fireEvent.click(screen.getAllByText('Карта сети')[0]);
-  expect(actions()).toContain('act/open_space');
-  fireEvent.click(screen.getByText('Открыть события'));
-  expect(screen.getByText('Доставленные события')).toBeTruthy();
-  expect(commands()).toEqual([]);
-});
-
-
-test('простые показания не путают принятие запроса с доставленным ответом', () => {
-  const { push, commands } = setup('home');
-  const listing = {
-    id: 1, line: 'services', status: 'ok', pending: false, error: null,
-    records: [fields({ instance: 'atmos.alarm.e42', type: 'atmos.alarm', hops: '1' })],
-  };
+test('журнал показывает ожидание, затем ответ по возвращённому номеру операции', () => {
+  const { commands, push } = setup();
   const request = {
-    id: 2, line: 'invoke atmos.alarm.e42 read reason=inspect', status: 'ok', pending: false, error: null,
+    id: 1, line: 'invoke atmos.alarm.e42 read reason=inspect',
     records: [fields({ instance: 'atmos.alarm.e42', command: 'read', status: 'sent', operation: '987' })],
   };
-  push([listing, request]);
-  expect(screen.getByText(/Запрос принят в сеть/)).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство atmos.alarm.e42' }));
+  const result = { id: 2, line: 'result 987', records: [] };
+
+  push([request]);
+  expect(screen.getByText('sent')).toBeTruthy();
   expect(screen.queryByText('101.3')).toBeNull();
-  fireEvent.click(screen.getByText('Получить ответ'));
+  fireEvent.click(screen.getByLabelText('Получить показания'));
   expect(commands()).toEqual(['result 987']);
-  push([listing, request, {
-    id: 3, line: 'result 987', status: 'ok', pending: false, error: null,
-    records: [fields({ pressureKPa: '101.3', temperatureK: '293', alarm: 'false', danger: '0' })],
-  }]);
+
+  push([request, { ...result, pending: true, status: null }]);
+  expect(screen.getByText('ожидание ответа по сети…')).toBeTruthy();
+  expect(screen.queryByText('101.3')).toBeNull();
+
+  push([request, { ...result, records: [fields({ pressureKPa: '101.3' })] }]);
+  expect(screen.queryByText('ожидание ответа по сети…')).toBeNull();
   expect(screen.getByText('101.3')).toBeTruthy();
-  expect(screen.getByText('Без тревоги')).toBeTruthy();
-});
-
-
-test('active observation is reversible without starting a background program', () => {
-  const { commands, push, actions } = setup('home');
-  push([{
-    id: 1, line: 'services', status: 'ok', pending: false, error: null,
-    records: [fields({ instance: 'atmos.alarm.e42', type: 'atmos.alarm', hops: '2' })],
-  }], { watches: ['atmos.alarm.e42'] });
-  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство atmos.alarm.e42' }));
-  expect(screen.getByText('Не следить')).toBeTruthy();
-  fireEvent.click(screen.getByText('Не следить'));
-  expect(commands()).toEqual(['unwatch atmos.alarm.e42']);
-  expect(actions()).not.toContain('act/start_program');
-});
-
-test('technical service details open only after an explicit click', () => {
-  const { commands, push } = setup('home');
-  push([{
-    id: 1, line: 'services', status: 'ok', pending: false, error: null,
-    records: [fields({ instance: 'machine.test', type: 'machine.control', hops: '1' })],
-  }]);
-  expect(screen.queryByText('Описание API')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство machine.test' }));
-  expect(screen.queryByText('Описание API')).toBeNull();
-  fireEvent.click(screen.getByText('Технические возможности'));
-  fireEvent.click(screen.getByText('Описание API'));
-  expect(commands()).toEqual(['api machine.control']);
-  expect(screen.getByRole('textbox', { name: 'Командная строка' })).toBeTruthy();
-});
-
-
-test('the selected alarm displays only acknowledged readings and actual delivered events', () => {
-  const { push, commands } = setup('home');
-  const service = {
-    id: 1, line: 'services', pending: false, status: 'ok', error: null,
-    records: [fields({ instance: 'atmos.alarm.e42', type: 'atmos.alarm', hops: '1' })],
-  };
-  push([service], {
-    events: [{
-      instance: 'atmos.alarm.e42', schema: 'atmos.alarm_state', delivery: '501',
-      payload: '{"pressureKPa":130.5,"temperatureK":310,"danger":2,"alarm":true}',
-      truncated: false, at: 220,
-    }],
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство atmos.alarm.e42' }));
-  expect(screen.getByText('Последнее событие тревоги'.toUpperCase())).toBeTruthy();
-  expect(screen.getByText('130.5')).toBeTruthy();
-  expect(screen.getByText('Тревога')).toBeTruthy();
-  expect(screen.getByText(/не гарантия текущего состояния/)).toBeTruthy();
-  expect(commands()).toEqual([]);
-  fireEvent.click(screen.getByText('Запросить показания'));
-  expect(commands()).toEqual(['invoke atmos.alarm.e42 read reason=inspect']);
-  push([service, {
-    id: 2, line: 'invoke atmos.alarm.e42 read reason=inspect',
-    pending: false, status: 'ok', error: null,
-    records: [fields({ operation: '987', status: 'sent' })],
-  }]);
-  expect(screen.getByText('Запрос отправлен. Ответ ещё не получен.')).toBeTruthy();
-  fireEvent.click(screen.getByText('Получить ответ'));
-  expect(commands()).toEqual([
-    'invoke atmos.alarm.e42 read reason=inspect',
-    'result 987',
-  ]);
-});
-
-test('repeat discovery keeps older results visibly marked until the new network answer', () => {
-  const { push, commands } = setup('home');
-  const previous = {
-    id: 1, line: 'services', pending: false, status: 'ok', error: null,
-    records: [fields({ instance: 'atmos.alarm.e42', type: 'atmos.alarm', hops: '1' })],
-  };
-  push([previous, {
-    id: 2, line: 'services -type atmos.alarm', pending: true,
-    status: null, error: null, records: [],
-  }]);
-  expect(screen.getByText('atmos.alarm.e42')).toBeTruthy();
-  expect(screen.getByText(/Ниже результаты прошлого поиска/)).toBeTruthy();
-  push([previous, {
-    id: 2, line: 'services -type atmos.alarm', pending: false,
-    status: 'no_answer', error: 'timeout', records: [],
-  }]);
-  expect(screen.getByText('atmos.alarm.e42')).toBeTruthy();
-  expect(screen.getByText(/доступность могла измениться/)).toBeTruthy();
-  fireEvent.click(screen.getByText('Повторить'));
-  expect(commands()).toEqual(['services -type atmos.alarm']);
-});
-
-
-test('generic service commands are loaded only on demand and never auto-execute', () => {
-  const { push, commands } = setup('home');
-  const listing = {
-    id: 1, line: 'services', status: 'ok', pending: false, error: null,
-    records: [fields({ instance: 'research.server.lab', type: 'research.server', hops: '3' })],
-  };
-  push([listing]);
-  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство research.server.lab' }));
-  expect(commands()).toEqual([]);
-  expect(screen.queryByText('Получить состояние')).toBeNull();
-  fireEvent.click(screen.getByText('Доступные действия'));
-  expect(commands()).toEqual(['api research.server']);
-  push([listing, {
-    id: 2, line: 'api research.server', status: 'ok', pending: false, error: null,
-    records: [fields({
-      type: 'research.server', command: 'status',
-      request: 'research.status_request', result: 'research.status',
-    })],
-  }]);
-  fireEvent.click(screen.getByText('Получить состояние'));
-  expect(commands()).toEqual(['api research.server', 'api research.server status']);
-  push([listing, {
-    id: 2, line: 'api research.server', status: 'ok', pending: false, error: null,
-    records: [fields({
-      type: 'research.server', command: 'status',
-      request: 'research.status_request', result: 'research.status',
-    })],
-  }, {
-    id: 3, line: 'api research.server status', status: 'ok', pending: false,
-    error: null, records: [fields({
-      how: 'request', field: 'reason', type: 'enum',
-      required: 'no', spec: '=open|refresh',
-    })],
-  }]);
-  expect(commands()).toEqual(['api research.server', 'api research.server status']);
-  fireEvent.click(screen.getByText('Отправить запрос'));
-  expect(commands()).toEqual([
-    'api research.server', 'api research.server status', 'invoke research.server.lab status',
-  ]);
-});
-
-test('machine power action requires typed input and explicit confirmation', () => {
-  const { push, commands } = setup('home');
-  const listing = {
-    id: 1, line: 'services', status: 'ok', pending: false, error: null,
-    records: [fields({ instance: 'machine.test', type: 'machine.control', hops: '1' })],
-  };
-  const catalogue = {
-    id: 2, line: 'api machine.control', status: 'ok', pending: false, error: null,
-    records: [fields({ type: 'machine.control', command: 'set_power',
-      request: 'machine.set_power', result: 'machine.power_state' })],
-  };
-  const schema = {
-    id: 3, line: 'api machine.control set_power', status: 'ok', pending: false, error: null,
-    records: [fields({ how: 'request', field: 'on',
-      type: 'boolean', required: 'yes', spec: '' })],
-  };
-  push([listing]);
-  fireEvent.click(screen.getByRole('button', { name: 'Открыть устройство machine.test' }));
-  fireEvent.click(screen.getByText('Доступные действия'));
-  push([listing, catalogue]);
-  fireEvent.click(screen.getByText('Управление питанием'));
-  push([listing, catalogue, schema]);
-  const submit = screen.getByText('Отправить команду');
-  expect(submit.closest('.Button')?.getAttribute('class')).toContain('disabled');
-  expect(commands()).toEqual(['api machine.control', 'api machine.control set_power']);
-  fireEvent.click(screen.getByText('Да'));
-  fireEvent.click(screen.getByText('Отправить команду'));
-  expect(commands()).toEqual(['api machine.control', 'api machine.control set_power']);
 });

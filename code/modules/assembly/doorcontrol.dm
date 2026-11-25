@@ -49,6 +49,21 @@
 	addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
 	controller.mirror(plan)
 
+/// The mapped button prewarms this channel. Other controllers may opt into their own channel.
+/obj/item/assembly/control/proc/netdm_mapped_channel()
+	return type == /obj/item/assembly/control && id ? "blast:[id]" : null
+
+/// Absolute commands for this press, keyed by the doors selected by this controller.
+/obj/item/assembly/control/proc/netdm_plan_doors(authoritative)
+	var/list/doors = list()
+	var/openclose
+	for(var/obj/machinery/door/poddoor/door in GLOB.airlocks)
+		if(door.id == id)
+			if(isnull(openclose) || !sync_doors)
+				openclose = door.density
+			doors[door] = list("state" = openclose ? "open" : "closed")
+	return doors
+
 /obj/item/assembly/control/airlock
 	name = "airlock controller"
 	desc = "A small electronic device able to control an airlock remotely."
@@ -62,16 +77,28 @@
 				16= door safties (SAFE)
 	*/
 
-/obj/item/assembly/control/airlock/activate()
-	var/datum/netdm_door_shadow/controller = SSnetdm_observe.doors
-	var/list/plan = controller?.plan(src)
-	if(!plan)
-		if(usr)
-			to_chat(usr, span_warning("Сетевой контроллер не отправил команду: устройство или маршрут недоступны."))
-		return
-	cooldown = TRUE
-	addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
-	controller.mirror(plan)
+/obj/item/assembly/control/airlock/netdm_mapped_channel()
+	return type == /obj/item/assembly/control/airlock && id && netdm_functions() ? "airlock:[id]" : null
+
+/obj/item/assembly/control/airlock/proc/netdm_functions()
+	return specialfunctions & (OPEN|IDSCAN|BOLTS|SHOCK|SAFE)
+
+/obj/item/assembly/control/airlock/netdm_plan_doors(authoritative)
+	var/functions = netdm_functions()
+	if(!functions)
+		return null
+	var/list/doors = list()
+	var/close = FALSE
+	for(var/obj/machinery/door/airlock/door in GLOB.airlocks)
+		if(door.id_tag != id)
+			continue
+		doors[door] = door.netdm_control_values(functions, authoritative)
+		if(!door.density)
+			close = TRUE
+	if(functions & OPEN)
+		for(var/door in doors)
+			doors[door]["state"] = close ? "closed" : "open"
+	return doors
 
 /obj/item/assembly/control/massdriver
 	name = "mass driver controller"

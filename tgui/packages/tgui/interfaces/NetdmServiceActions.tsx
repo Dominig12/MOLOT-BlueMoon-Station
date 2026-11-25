@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
-import { Box, Button, Dropdown, Input, NoticeBox, Stack } from '../components';
+import { Box, Button, NoticeBox } from '../components';
 import { DeliveryStatus } from './NetdmDelivery';
 import { DeviceEntry } from './NetdmDeviceState';
 import {
@@ -12,6 +12,8 @@ import {
   latestApiReply,
   serviceActions,
   ServiceField,
+  serviceFieldGuide,
+  serviceWorkflow,
 } from './NetdmServiceSchema';
 
 type Props = {
@@ -22,42 +24,50 @@ type Props = {
   disabled?: boolean;
 };
 
-const fieldValue = (values: Record<string, string>, key: string) => values[key] ?? '';
+const initialValue = (field: ServiceField) =>
+  field.required && field.type === 'enum' && field.choices.length === 1 ? field.choices[0] : '';
 
-/** One field from the service's real request schema; never creates implicit parameters. */
 const ActionField = ({
-  field, value, onChange,
-}: { field: ServiceField; value: string; onChange: (value: string) => void }) => {
+  request, field, value, disabled, onChange,
+}: { request: string; field: ServiceField; value: string; disabled: boolean; onChange: (value: string) => void }) => {
+  const id = useId();
   const error = argumentError(field, value);
-  const label = field.name.replace(/_/g, ' ');
+  const guide = serviceFieldGuide(request, field.name);
+  const label = guide?.label ?? field.name.replace(/_/g, ' ');
+  const options = field.type === 'boolean' ? ['true', 'false'] : field.type === 'enum' ? field.choices : null;
+  const hint = guide?.hint ?? (
+    field.maxLength !== null ? `До ${Math.min(field.maxLength, 256)} символов.`
+      : field.min !== null && field.max !== null ? `От ${field.min} до ${field.max}.` : ''
+  );
+  const description = options && !options.length ? 'В схеме нет доступных вариантов. Обновите список команд.' : hint;
+  const optionLabel = (option: string) => guide?.labels?.[option]
+    ?? (field.type === 'boolean' ? option === 'true' ? 'Да' : 'Нет' : option);
   return (
     <div className="NetdmHome__formField">
-      <div className="NetdmHome__formLabel">
-        {label}{field.required ? ' *' : ''}
-        <span>{field.type}{field.spec ? ` · ${field.spec}` : ''}</span>
-      </div>
-      {field.type === 'boolean' ? (
-        <Stack>
-          <Stack.Item>
-            <Button selected={value === 'true'} content="Да" onClick={() => onChange('true')} />
-            <Button selected={value === 'false'} content="Нет" onClick={() => onChange('false')} />
-          </Stack.Item>
-        </Stack>
-      ) : field.type === 'enum' && field.choices.length > 0 ? (
-        <Dropdown
-          options={field.choices}
-          selected={value || 'Выберите значение'}
-          onSelected={onChange}
-        />
+      <label className="NetdmHome__formLabel" htmlFor={id}>
+        {label}{field.required && <span aria-hidden="true"> *</span>}
+      </label>
+      {options ? (
+        <select id={id} value={value} disabled={disabled || !options.length} required={field.required}
+          aria-describedby={description ? `${id}-hint` : undefined}
+          onChange={event => onChange(event.currentTarget.value)}>
+          <option value="" disabled={field.required}>{field.required ? 'Выберите значение' : 'Не указывать'}</option>
+          {options.map(option => <option key={option} value={option}>{optionLabel(option)}</option>)}
+        </select>
       ) : (
-        <Input
-          fluid
+        <input
+          id={id}
+          disabled={disabled}
+          required={field.required}
+          aria-describedby={description ? `${id}-hint` : undefined}
+          aria-invalid={!!value && !!error}
+          inputMode={field.type === 'integer' || field.type === 'number' ? 'decimal' : undefined}
           maxLength={Math.min(field.maxLength ?? 128, 256)}
-          placeholder={field.type === 'integer' || field.type === 'number' ? 'Число' : 'Значение'}
           value={value}
-          onInput={(_event: unknown, next: string) => onChange(next)}
+          onChange={event => onChange(event.currentTarget.value)}
         />
       )}
+      {!!description && <small id={`${id}-hint`} className="NetdmHome__fieldHint">{description}</small>}
       {!!value && !!error && <Box color="bad">{error}</Box>}
     </div>
   );
@@ -125,14 +135,16 @@ export const NetdmServiceActions = ({ instance, type, entries, onCommand, disabl
   const [values, setValues] = useState<Record<string, string>>({});
   const catalogueLine = `api ${type}`;
   const catalogue = latestApiReply(entries, catalogueLine);
-  const actions = serviceActions(catalogue, type).slice(0, 16);
+  const discovered = serviceActions(catalogue, type).map(action => ({ ...action, workflow: serviceWorkflow(type, action) }));
+  const workflows = new Set(discovered.flatMap(({ workflow }) => workflow ? [workflow] : []));
+  const actions = discovered.filter(action => !action.workflow).slice(0, 16);
   const chosen = actions.find(action => action.command === selected) ?? null;
   const schemaLine = chosen ? `api ${type} ${chosen.command}` : '';
   const schema = chosen ? latestApiReply(entries, schemaLine) : undefined;
   const fields = chosen && schema ? actionFields(schema, type, chosen.command) : [];
-  const valid = chosen && schema?.status === 'ok' && !schema.pending &&
-    fields.every(field => argumentError(field, fieldValue(values, field.name)) === null);
-  const line = chosen && valid ? invocationLine(instance, chosen.command, fields, values) : null;
+  const formValues = Object.fromEntries(fields.map(field => [field.name, values[field.name] ?? initialValue(field)]));
+  const line = chosen && schema?.status === 'ok' && !schema.pending
+    ? invocationLine(instance, chosen.command, fields, formValues) : null;
   const lastExecution = line ? latestApiReply(entries, line) : undefined;
 
   const toggle = () => {
@@ -165,7 +177,7 @@ export const NetdmServiceActions = ({ instance, type, entries, onCommand, disabl
               Список действий пока недоступен.
               <Button icon="redo" content="Повторить" onClick={() => onCommand(catalogueLine)} />
             </NoticeBox>
-          ) : actions.length === 0 ? (
+          ) : actions.length === 0 && workflows.size === 0 ? (
             <div className="NetdmHome__minor">Для этого сервиса нет доступных команд в каталоге.</div>
           ) : (
             <>
@@ -181,6 +193,9 @@ export const NetdmServiceActions = ({ instance, type, entries, onCommand, disabl
                     onClick={() => choose(action.command)} />
                 ))}
               </div>
+              {[...workflows].map(workflow => (
+                <div key={workflow} className="NetdmHome__minor">{workflow}</div>
+              ))}
               {!!chosen && (
                 <div className="NetdmHome__actionForm">
                   <div className="NetdmHome__sectionLabel">
@@ -193,8 +208,8 @@ export const NetdmServiceActions = ({ instance, type, entries, onCommand, disabl
                   ) : (
                     <>
                       {fields.map(field => (
-                        <ActionField key={field.name} field={field}
-                          value={fieldValue(values, field.name)}
+                        <ActionField key={field.name} request={chosen.request} field={field} disabled={disabled}
+                          value={formValues[field.name]}
                           onChange={next => setValues(previous => ({
                             ...previous, [field.name]: next,
                           }))} />
@@ -213,10 +228,6 @@ export const NetdmServiceActions = ({ instance, type, entries, onCommand, disabl
                           disabled={disabled || !line}
                           onClick={() => line && onCommand(line)} />
                       )}
-                      <div className="NetdmHome__minor">
-                        Команда выполняется только после проверки прав, маршрута и состояния получателя.
-                        Подтверждение отправки не означает применения.
-                      </div>
                       <ActionResult entry={lastExecution} entries={entries} onCommand={onCommand} />
                     </>
                   )}

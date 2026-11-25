@@ -64,3 +64,12 @@ test('numeric fields have bounds and zero-argument read-only requests remain val
   expect(isReadAction('set_power')).toBe(false);
   expect(isReadAction('delete_all')).toBe(false);
 });
+
+test.each([' open|closed', '=open|closed'])('enum choices survive compact Host encoding (%s)', spec => {
+  const schema = actionFields(reply('api machine.door set_state', [
+    { how: 'request', field: 'state', type: 'enum', required: 'no', spec },
+  ]), 'machine.door', 'set_state');
+  expect(schema[0].choices).toEqual(['open', 'closed']);
+  expect(argumentError(schema[0], 'open')).toBeNull();
+  expect(argumentError(schema[0], 'toggle')).not.toBeNull();
+});

@@ -47,7 +47,7 @@
 	/// "holder type f=frequency z=level" -> count of relayed transmissions that were never broadcast.
 	var/list/unheard_sample = list()
 
-/datum/netdm_radio_shadow/proc/setup(datum/netdm_service_lane/lane)
+/datum/netdm_radio_shadow/setup(datum/netdm_service_lane/lane)
 	lane.dispatcher.allow_command("radio.receiver", "uplink", new /datum/netdm_command_handler/radio_uplink)
 	lane.dispatcher.allow_result("uplink", new /datum/netdm_effect_handler/radio_uplink_receipt, "radio.receiver")
 	if(world.GetConfig("env", "NETDM_RADIO_MODE") == "authoritative")

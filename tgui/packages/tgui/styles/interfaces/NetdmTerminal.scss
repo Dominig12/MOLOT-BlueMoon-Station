@@ -254,23 +254,36 @@
     border-top: 1px solid #3d5965;
   }
   &__formField {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
     margin: 10px 0;
     padding: 9px;
     border-radius: 5px;
     background: #223844;
+
+    input, select {
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
+      min-height: 28px;
+      padding: 4px 7px;
+      border: 1px solid #48616c;
+      border-radius: 5px;
+      background: #101c29;
+      color: #deedee;
+      color-scheme: dark;
+    }
   }
   &__formLabel {
-    margin-bottom: 7px;
     font-size: 12px;
     color: #deedee;
     font-weight: 600;
   }
-  &__formLabel span {
-    display: block;
-    margin-top: 3px;
+  &__fieldHint {
     color: #93aeb8;
-    font-weight: normal;
-    font-size: 10px;
+    font-size: 11px;
+    line-height: 1.35;
   }
   &__actionResult {
     margin-top: 10px;
@@ -314,13 +327,22 @@
   }
 }
 
+.Window:has(.NetdmUnifiedGrid) {
+  background: #0e1823;
+  .Window__titleBar {
+    border-bottom: 1px solid #2c4152;
+    background: #101a25;
+    color: #d8e6f1;
+  }
+}
+
 .NetdmToolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px 12px;
-  padding: 7px 9px;
+  gap: 6px 12px;
+  padding: 6px 10px;
   min-width: 0;
   border: 1px solid #2c4152;
   border-radius: 9px;
@@ -362,14 +384,8 @@
     gap: 5px;
     min-width: 0;
   }
-  &__controls { gap: 7px; }
-  &__group {
-    padding: 3px;
-    border: 1px solid #2c4152;
-    border-radius: 7px;
-    background: #101a25;
-    &:empty { display: none; }
-  }
+  &__controls { gap: 6px; }
+  &__group:empty { display: none; }
 
   select,
   button,
@@ -386,9 +402,46 @@
   select { cursor: pointer; color-scheme: dark; }
   button:not(:disabled) { cursor: pointer; }
   button:disabled { opacity: 0.5; }
-  &__icon { display: grid; place-items: center; width: 26px; }
+  & &__origin { border-color: #324c60; background: #101a25; }
   & &__scan { border-color: #4c727d; background: #264b59; color: #e2f7fb; }
   &__scan .Icon { margin-right: 2px; }
+
+  &__settings {
+    position: relative;
+
+    > summary {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 27px;
+      border-radius: 5px;
+      color: #adc4d6;
+      cursor: pointer;
+      list-style: none;
+    }
+    > summary::-webkit-details-marker { display: none; }
+    > summary:hover,
+    &[open] > summary { background: #253a4c; color: #e3edf5; }
+  }
+  &__settingsPanel {
+    position: absolute;
+    z-index: 6;
+    top: calc(100% + 7px);
+    right: 0;
+    display: grid;
+    gap: 5px;
+    width: min(200px, 70vw);
+    padding: 9px;
+    border: 1px solid #3b5267;
+    border-radius: 8px;
+    background: #142332;
+    box-shadow: 0 5px 18px #05101b99;
+
+    label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    select { border-color: #3b5267; background: #101a25; }
+    button { text-align: left; }
+    button .Icon { margin-right: 4px; color: #7edbd7; }
+  }
   button:not(:disabled):hover,
   select:hover,
   .Button--color--default:not(.Button--disabled):hover { background: #2b4356; }
@@ -397,13 +450,68 @@
   :focus-visible { outline: 2px solid #7edbd7; outline-offset: -2px; }
 }
 
+.NetdmUnifiedGrid {
+  position: relative;
+  min-height: 0;
+
+  &[data-active-tab='terminal'] &__map { visibility: hidden; }
+
+  &__legend {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid #3a596d;
+    border-radius: 6px;
+    background: #0c1926;
+    color: #aec9d9;
+    cursor: pointer;
+
+    &:hover, &[aria-expanded='true'] { color: #7edbd7; background: #1b3040; }
+    &:focus-visible { outline: 2px solid #7edbd7; }
+  }
+
+  &__discovery {
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    gap: 9px;
+    height: 100%;
+    padding: 12px;
+    border: 1px solid #2c4152;
+    border-radius: 9px;
+    background: #142332;
+    text-align: center;
+
+    > .Icon { color: #7edbd7; font-size: 21px; }
+    h2 { margin: 0; font-size: 16px; }
+    p { margin: 0; max-width: 230px; color: #9eb5c6; }
+    .Button { margin: 3px 0 0; border-radius: 6px; background: #264b59; }
+  }
+}
+
+.NetdmWorkspace {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+
+  &__pane { min-height: 0; min-width: 0; overflow: auto; }
+  &__pane[hidden] { display: none; }
+  &__presence { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 8px; }
+  .NetdmTerminalWorkspace { min-height: 0; min-width: 0; height: 100%; }
+}
+
 .NetdmDock {
   --dock-accent: #7edbd7;
   --dock-edge: #2c4152;
   --dock-label: #9eb5c6;
   --dock-text: #e3edf5;
+  --dock-rail-width: 46px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 46px;
+  grid-template-columns: minmax(0, 1fr) var(--dock-rail-width);
   height: 100%;
   min-height: 0;
   color: var(--dock-text);
@@ -416,9 +524,12 @@
   &[data-tab='activity'] { --dock-accent: #8bbdff; }
   &[data-tab='operator'] { --dock-accent: #cabaef; }
   &[data-tab='chat'] { --dock-accent: #83d6f4; }
+  &[data-tab='terminal'] { --dock-accent: #92ddd6; }
 
   &__rail {
     grid-area: 1 / 2;
+    position: relative;
+    z-index: 2;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -487,25 +598,26 @@
     min-height: 0;
     &[hidden] { display: none; }
   }
+  &__panel[data-panel='terminal'] {
+    grid-template-rows: minmax(0, 1fr);
+    position: absolute;
+    inset: 0 var(--dock-rail-width) 0 0;
+    z-index: 1;
+    border: 1px solid var(--dock-edge);
+    border-radius: 9px 0 0 9px;
+    background: #101a25;
+    overflow: hidden;
+  }
 
   &__header {
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 10px 12px;
+    gap: 7px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--dock-edge);
-    background: #152332;
+    background: #131f2c;
 
     h2 { margin: 0; min-width: 0; font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
-  }
-  &__headerIcon {
-    display: grid;
-    place-items: center;
-    flex: 0 0 29px;
-    height: 29px;
-    border-radius: 7px;
-    background: #223749;
-    color: var(--dock-accent);
   }
 
   &__body {
@@ -520,7 +632,7 @@
     scrollbar-width: thin;
     scrollbar-color: #3f5e73 transparent;
   }
-  &__body--chat { overflow: hidden; }
+  &__body--chat, &__body--terminal { overflow: hidden; }
   &__body > * { flex-shrink: 0; }
   &__body--chat > * { flex: 1 1 auto; min-height: 0; }
 
@@ -659,6 +771,139 @@
   :focus-visible { outline: 2px solid var(--dock-accent); outline-offset: -2px; }
 }
 
+.NetdmDock .NetdmWorkspace {
+  .NetdmTerminalWorkspace__tabs {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--dock-edge);
+  }
+
+  .NetdmTerminalWorkspace__tab,
+  .NetdmTerminalWorkspace__clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 29px;
+    padding: 4px 8px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--dock-label);
+    font: inherit;
+    cursor: pointer;
+
+    &:hover { background: #1a2c3c; color: var(--dock-text); }
+    &[aria-pressed='true'] {
+      background: #1e3341;
+      color: var(--dock-accent);
+    }
+  }
+
+  .NetdmTerminalWorkspace__journal,
+  .NetdmTerminalWorkspace__editor {
+    min-height: 0;
+    border: 0;
+    border-radius: 5px;
+    background: #111d29;
+  }
+
+  .NetdmTerminalWorkspace__composer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .NetdmTerminalWorkspace__commandInput {
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+    font-family: Consolas, monospace;
+  }
+
+  .NetdmTerminalWorkspace__commandMenu { flex-shrink: 0; width: auto; max-width: 32%; color: var(--dock-label); }
+
+  .NetdmTerminalWorkspace__execute {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 4px 9px;
+    border: 1px solid #416674;
+    border-radius: 5px;
+    background: #264b59;
+    color: var(--dock-text);
+    font: inherit;
+    cursor: pointer;
+
+    &:hover { background: #305867; }
+    &:disabled { opacity: 0.48; cursor: default; }
+  }
+  .NetdmTerminalWorkspace__clear:disabled { opacity: 0.4; cursor: default; }
+  .NetdmTerminalWorkspace__usage {
+    display: block;
+    margin-top: 4px;
+    color: var(--dock-label);
+    overflow-wrap: anywhere;
+  }
+
+  .NetdmTerminalWorkspace__editorSurface .TextArea {
+    border: 1px solid #324a5e;
+    border-radius: 5px;
+    background: #0d1823;
+  }
+  .NetdmTerminalWorkspace__editorSurface textarea {
+    background: #0d1823;
+    color: var(--dock-text);
+    font-family: Consolas, monospace;
+  }
+  .NetdmTerminalWorkspace__editorBar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 6px;
+  }
+  .NetdmTerminalWorkspace__editorTools {
+    margin-top: 9px;
+    padding-top: 8px;
+    border-top: 1px solid var(--dock-edge);
+    > summary { color: var(--dock-label); cursor: pointer; }
+    &[open] > summary { margin-bottom: 8px; }
+  }
+}
+
+.NetdmNode {
+  padding: 2px 3px;
+
+  h3 { margin: 0; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere; }
+  &__overview,
+  &__service { padding: 3px 0 8px; }
+  &__status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: 5px;
+    color: var(--dock-label);
+
+    &[data-state='here'] { color: #8bdcac; }
+    &[data-state='stale'] { color: #ebbd7f; }
+    > span { color: #d19aff; }
+  }
+
+  &__details {
+    margin-top: 6px;
+    padding: 8px 0 0;
+    border-top: 1px solid var(--dock-edge);
+    > summary { color: var(--dock-label); }
+  }
+}
+
 .NetdmBreach {
   margin-top: 8px;
 
@@ -726,8 +971,8 @@
   .NetdmHome__minor { margin: 7px 0; font-size: 11px; color: #a0bac4; }
   .NetdmHome__actionChoices { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
   .NetdmHome__actionForm { margin-top: 10px; padding-top: 8px; border-top: 1px solid #405e6a; }
-  .NetdmHome__formField { margin: 9px 0; padding: 8px; border-radius: 5px; background: #243c47; }
-  .NetdmHome__formLabel { margin-bottom: 5px; font-size: 12px; font-weight: 600; }
-  .NetdmHome__formLabel span { display: block; margin-top: 4px; font-size: 10px; color: #b1c6cd; }
+  .NetdmHome__formField { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin: 9px 0; }
+  .NetdmHome__formLabel { font-size: 12px; font-weight: 600; }
+  .NetdmHome__fieldHint { color: #b1c6cd; font-size: 11px; line-height: 1.35; }
   .NetdmHome__actionResult { margin-top: 9px; padding: 9px; border-left: 3px solid #70b1aa; background: #27404a; }
 }

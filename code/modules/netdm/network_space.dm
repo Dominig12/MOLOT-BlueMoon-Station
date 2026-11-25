@@ -29,6 +29,12 @@
 #define NETDM_SPACE_FLAG_APC 16
 #define NETDM_SPACE_FLAG_UNPOWERED 32
 
+/mob
+	/// The player's currently open network workspace.
+	var/datum/weakref/netdm_workspace
+	/// The workspace reserved while TGUI sends its opening assets.
+	var/datum/weakref/netdm_pending_workspace
+
 /**
  * P12.4 · the player's network window (docs/network-space-design.ru.md, decisions Р1–Р6 of 14.11.2026).
  *
@@ -44,6 +50,7 @@
 	/// An adapter constructed for a legacy terminal is owned by this window.
 	var/owns_actor = FALSE
 	var/opening = FALSE
+	var/datum/weakref/viewer_ref
 	/// Item key -> fields. Keys: "n|id", "l|a|b", "s|instance".
 	var/list/items = list()
 	var/revision = 0
@@ -126,6 +133,11 @@
 /datum/netdm_space/Destroy()
 	deltimer(refresh_timer)
 	forget_machine_ticket()
+	var/mob/viewer = viewer_ref?.resolve()
+	if(viewer && viewer.netdm_workspace == weak_reference)
+		viewer.netdm_workspace = null
+	if(viewer && viewer.netdm_pending_workspace == weak_reference)
+		viewer.netdm_pending_workspace = null
 	// Close the authenticated view; independently owned actors may outlive it.
 	var/datum/netdm_space_actor/source = actor
 	if(source && !QDELETED(source))
@@ -146,16 +158,45 @@
 	return actor && !QDELETED(actor) ? actor.ui_status(user, state) : UI_CLOSE
 
 /datum/netdm_space/ui_interact(mob/user, datum/tgui/ui)
+	if(!user?.client)
+		return FALSE
 	if(opening)
-		return TRUE
+		return user.netdm_pending_workspace == weak_reference
 	ui = SStgui.try_update_ui(user, src, ui)
+	if(QDELETED(src))
+		return FALSE
 	if(ui)
+		if(user.netdm_workspace == weak_reference)
+			user.netdm_pending_workspace = null
 		return TRUE
-	opening = TRUE
+	reserve_opening(user)
 	ui = new(user, src, "NetdmSpace")
-	. = ui.open()
-	if(!QDELETED(src))
-		opening = FALSE
+	var/opened = ui.open()
+	if(!QDELETED(src) && finish_opening(user, opened && user.client))
+		return TRUE
+	if(opened && !QDELETED(ui))
+		ui.close()
+	return FALSE
+
+/datum/netdm_space/proc/reserve_opening(mob/user)
+	opening = TRUE
+	viewer_ref = WEAKREF(user)
+	user.netdm_pending_workspace = WEAKREF(src)
+
+/datum/netdm_space/proc/finish_opening(mob/user, opened)
+	opening = FALSE
+	if(user.netdm_pending_workspace != weak_reference)
+		return FALSE
+	user.netdm_pending_workspace = null
+	if(!opened)
+		return FALSE
+	var/datum/netdm_space/previous = user.netdm_workspace?.resolve()
+	user.netdm_workspace = weak_reference
+	if(previous && previous != src)
+		SStgui.close_uis(previous)
+		if(!QDELETED(previous))
+			qdel(previous)
+	return TRUE
 
 /datum/netdm_space/ui_close(mob/user)
 	immersion_closed()
@@ -817,50 +858,93 @@
 	if(!can_operate_alarm(operator) || !alarm?.netdm_can_set_alert(operator))
 		machine_command = list("instance" = instance, "enabled" = enabled, "status" = "rejected", "reason" = alarm ? "access_denied" : "alarm_offline")
 		return TRUE
+	var/list/request = prepare_machine_command("alarm", instance, operator, alarm, list("enabled" = enabled))
+	if(request)
+		queue_machine_command(request, "alarm_action", list("instance" = instance, "ticket" = request["ticket"], "enabled" = enabled))
+	return TRUE
+
+/// Player controls use the same actions as AiAirlock, routed from the current presence.
+/datum/netdm_space/proc/device_action(instance, command, mob/living/operator)
+	if(!istext(command) || !(command in list("open", "close", "bolt", "unbolt")) || !istext(instance) || length(instance) > 64 || machine_pending() || presence?["state"] != "active" || !actor?.can_submit())
+		return FALSE
+	var/list/service = items["s|[instance]"]
+	if(service?["type"] != "machine.door" || is_stale(service))
+		return FALSE
+	var/obj/machinery/door/airlock/door = airlock_for_service(instance)
+	if(!door?.netdm_panel_allowed(operator))
+		machine_command = list("kind" = "door", "instance" = instance, "action" = command, "status" = "rejected", "reason" = door ? "access_denied" : "door_gone")
+		return TRUE
+	var/list/request = prepare_machine_command("door", instance, operator, door, list("action" = command))
+	if(request)
+		queue_machine_command(request, "act", list("line" = "invoke [instance] control ticket=[request["ticket"]] action=[command]"))
+	return TRUE
+
+/datum/netdm_space/proc/airlock_for_service(instance)
+	var/datum/weakref/door_ref = SSnetdm_observe?.doors?.by_instance[instance]
+	var/obj/machinery/door/airlock/door = door_ref?.resolve()
+	return istype(door) ? door : null
+
+/datum/netdm_space/proc/prepare_machine_command(kind, instance, mob/living/operator, atom/target, list/fields)
 	var/datum/node = actor?.network_node()
 	var/datum/netdm_service_endpoint/endpoint = node ? SSnetdm_observe.services?.by_node[node] : null
 	var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe.diagnostics
-	if(!endpoint?.attached_node || !diagnostics || length(diagnostics.alarm_actions) >= NETDM_SPACE_ACTION_LIMIT)
-		machine_command = list("instance" = instance, "enabled" = enabled, "status" = "not_delivered", "reason" = endpoint?.attached_node ? "busy" : "offline")
-		return TRUE
+	if(!endpoint?.attached_node || !diagnostics || length(diagnostics.machine_actions) >= NETDM_SPACE_ACTION_LIMIT)
+		machine_command = list("kind" = kind, "instance" = instance, "status" = "not_delivered",
+			"reason" = endpoint?.attached_node ? "busy" : "offline") + fields
+		return null
 	var/ticket = rustg_generate_uuid_v4()
-	var/list/request = list("ticket" = ticket, "window" = WEAKREF(src), "operator" = WEAKREF(operator), "target" = WEAKREF(alarm),
-		"instance" = instance, "enabled" = enabled, "status" = "sending", "entry" = endpoint.id, "generation" = "[endpoint.generation]",
-		"stream" = SSnetdm_observe.bridge?.stream_id, "deadline" = world.time + NETDM_SPACE_ACTION_WAIT, "next_query" = world.time + 3 SECONDS)
-	if(!send("alarm_action", list("instance" = instance, "ticket" = ticket, "enabled" = enabled), CALLBACK(src, PROC_REF(machine_accepted), request)))
-		machine_command = list("instance" = instance, "enabled" = enabled, "status" = "not_delivered", "reason" = "busy")
-		return TRUE
-	machine_command = request
-	diagnostics.alarm_actions[ticket] = request
-	return TRUE
+	return list("ticket" = ticket, "kind" = kind, "window" = WEAKREF(src), "operator" = WEAKREF(operator), "target" = WEAKREF(target),
+		"instance" = instance, "status" = "sending", "entry" = endpoint.id, "generation" = "[endpoint.generation]",
+		"stream" = SSnetdm_observe.bridge?.stream_id, "deadline" = world.time + NETDM_SPACE_ACTION_WAIT, "next_query" = world.time + 3 SECONDS) + fields
 
-/datum/netdm_diagnostics/proc/consume_alarm_action(list/item, obj/machinery/airalarm/alarm, list/payload)
+/datum/netdm_space/proc/queue_machine_command(list/request, protocol, list/arguments)
+	machine_command = request
+	if(!send(protocol, arguments, CALLBACK(src, PROC_REF(machine_accepted), request)))
+		finish_machine_command("not_delivered", "busy")
+		return
+	SSnetdm_observe.diagnostics.machine_actions[request["ticket"]] = request
+
+/datum/netdm_diagnostics/proc/claim_machine_action(list/item, atom/target, list/payload, kind, field)
 	var/ticket = payload?["ticket"]
-	var/list/request = istext(ticket) ? alarm_actions[ticket] : null
-	if(!request || request["used"] || world.time >= request["deadline"] || request["stream"] != SSnetdm_observe.bridge?.stream_id || \
-		request["instance"] != item["instance"] || request["entry"] != item["producer"] || request["generation"] != "[item["producerGeneration"]]" || request["enabled"] != !!payload["enabled"])
+	var/list/request = istext(ticket) ? machine_actions[ticket] : null
+	if(!request || request["kind"] != kind || request["used"] || world.time >= request["deadline"] || request["stream"] != SSnetdm_observe.bridge?.stream_id || \
+		request["instance"] != item["instance"] || request["entry"] != item["producer"] || request["generation"] != "[item["producerGeneration"]]" || request[field] != payload[field])
 		return null
 	var/datum/weakref/target_ref = request["target"]
-	var/datum/weakref/window_ref = request["window"]
-	var/datum/weakref/operator_ref = request["operator"]
-	var/datum/netdm_space/window = window_ref?.resolve()
-	var/mob/living/operator = operator_ref?.resolve()
-	if(target_ref?.resolve() != alarm || window?.machine_command != request || !window.can_operate_alarm(operator))
+	if(target_ref?.resolve() != target || !machine_action_window(request))
 		return null
 	request["used"] = TRUE
 	request["operation"] = "[item["operationId"]]"
-	return operator
+	return request
 
-/datum/netdm_diagnostics/proc/alarm_action_received(list/item)
+/datum/netdm_diagnostics/proc/machine_action_window(list/request)
+	if(!request || request["stream"] != SSnetdm_observe.bridge?.stream_id || world.time >= request["deadline"])
+		return null
+	var/datum/weakref/window_ref = request?["window"]
+	var/datum/netdm_space/window = window_ref?.resolve()
+	return window?.machine_command == request && window?.actor?.can_submit() ? window : null
+
+/datum/netdm_diagnostics/proc/machine_action_receipt(list/item, kind)
 	var/list/payload = item["payload"]
 	var/ticket = payload?["ticket"]
-	var/list/request = istext(ticket) ? alarm_actions[ticket] : null
-	if(!request?["used"] || request["operation"] != "[item["operationId"]]" || request["instance"] != item["instance"] || \
+	var/list/request = istext(ticket) ? machine_actions[ticket] : null
+	if(!request?["used"] || request["kind"] != kind || request["operation"] != "[item["operationId"]]" || request["instance"] != item["instance"] || \
 		request["entry"] != item["recipient"] || request["generation"] != "[item["recipientGeneration"]]" || request["stream"] != SSnetdm_observe.bridge?.stream_id)
-		return
-	var/datum/weakref/window_ref = request["window"]
-	var/datum/netdm_space/window = window_ref?.resolve()
-	if(window?.machine_command == request)
+		return null
+	return request
+
+/datum/netdm_diagnostics/proc/consume_alarm_action(list/item, obj/machinery/airalarm/alarm, list/payload)
+	var/list/request = claim_machine_action(item, alarm, payload, "alarm", "enabled")
+	var/datum/netdm_space/window = machine_action_window(request)
+	var/datum/weakref/operator_ref = request?["operator"]
+	var/mob/living/operator = operator_ref?.resolve()
+	return window?.can_operate_alarm(operator) ? operator : null
+
+/datum/netdm_diagnostics/proc/alarm_action_received(list/item)
+	var/list/request = machine_action_receipt(item, "alarm")
+	var/datum/netdm_space/window = machine_action_window(request)
+	if(window)
+		var/list/payload = item["payload"]
 		request["zoneAlarm"] = payload["zoneAlarm"]
 		request["sourceActive"] = payload["sourceActive"]
 		request["changed"] = payload["changed"]
@@ -908,14 +992,14 @@
 			finish_machine_command("unknown", reason)
 		if("applied")
 			request["applied_by_host"] = TRUE
-			if(status["result"] == "failed" || status["result"] == "delivered")
+			if(!request["receipt_received"] && (status["result"] == "failed" || status["result"] == "delivered"))
 				finish_machine_command("no_receipt", status["resultReason"])
 
 /datum/netdm_space/proc/forget_machine_ticket()
 	if(machine_command?["ticket"])
 		var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe?.diagnostics
 		if(diagnostics)
-			diagnostics.alarm_actions -= machine_command["ticket"]
+			diagnostics.machine_actions -= machine_command["ticket"]
 
 /datum/netdm_space/proc/finish_machine_command(status, reason)
 	forget_machine_ticket()
@@ -1098,6 +1182,7 @@
 	var/list/down = list()
 	var/list/services = list()
 	var/may_control_alarm = presence?["state"] == "active" && can_operate_alarm(user)
+	var/may_control_door = presence?["state"] == "active" && actor?.can_submit()
 	var/obj/machinery/computer/security/console = active_camera_console(user)
 	for(var/key in items)
 		var/list/fields = items[key]
@@ -1115,9 +1200,15 @@
 				var/obj/machinery/camera/camera
 				if(console && on_level[fields["node"]] && fields["type"] == "camera.access" && !is_stale(fields))
 					camera = camera_for_service(fields["instance"])
+				var/list/door_panel
+				if(may_control_door && on_level[fields["node"]] && fields["type"] == "machine.door" && !is_stale(fields))
+					var/obj/machinery/door/airlock/door = airlock_for_service(fields["instance"])
+					if(door?.netdm_panel_allowed(user))
+						door_panel = list("opened" = !door.density, "bolted" = !!door.locked)
 				services += list(list("instance" = fields["instance"], "type" = fields["type"], "node" = fields["node"],
 					"stale" = is_stale(fields), "canControlAlarm" = !!alarm?.netdm_can_set_alert(user),
-					"cameraName" = camera && console.netdm_camera_allowed(camera) ? camera.c_tag : null))
+					"cameraName" = camera && console.netdm_camera_allowed(camera) ? camera.c_tag : null,
+					"doorPanel" = door_panel))
 	var/list/watch_data
 	if(alarm_watch)
 		watch_data = list("instance" = alarm_watch["instance"], "node" = alarm_watch["node"], "z" = alarm_watch["z"],
@@ -1125,15 +1216,17 @@
 			"sample" = alarm_watch["sample"], "age" = isnull(alarm_watch["at"]) ? null : floor((world.time - alarm_watch["at"]) / 10))
 	var/list/command_data
 	if(machine_command)
-		command_data = list("instance" = machine_command["instance"], "enabled" = machine_command["enabled"], "status" = machine_command["status"],
+		command_data = list("kind" = machine_command["kind"], "instance" = machine_command["instance"], "enabled" = machine_command["enabled"], "status" = machine_command["status"],
 			"operation" = machine_command["operation"], "reason" = machine_command["reason"], "source" = machine_command["source"],
-			"zoneAlarm" = machine_command["zoneAlarm"], "sourceActive" = machine_command["sourceActive"], "changed" = machine_command["changed"])
+			"zoneAlarm" = machine_command["zoneAlarm"], "sourceActive" = machine_command["sourceActive"], "changed" = machine_command["changed"],
+			"doorAction" = machine_command["action"], "doorOpen" = machine_command["door_open"], "doorBolted" = machine_command["door_bolted"])
 	var/list/chat_data
 	if(has_current_chat())
 		// The UI can identify a visit across missed polls without receiving its write scope.
 		chat_data = list("node" = chat_node, "channel" = chat_channel, "visit" = chat_channel ? "channel" : md5(chat_scope), "received" = chat_received,
 			"messages" = chat_messages, "status" = chat_status)
-	return list("title" = actor?.title() || "нет связи", "entityRole" = istype(actor, /datum/netdm_space_actor/entity), "z" = z, "levels" = levels,
+	return list("title" = actor?.title() || "нет связи", "entityRole" = !!actor?.is_entity_role(), "z" = z, "levels" = levels,
+		"terminal" = actor?.terminal_data(user),
 		"nodes" = nodes, "edges" = edges, "down" = down, "services" = services, "presence" = presence, "hostNode" = host,
 		"otherPresences" = occupants_on_level,
 		"immersed" = immersed, "immersionEnabled" = netdm_immersion_enabled() && !!actor?.neural_implant(), "immersionReason" = immersed_reason,
@@ -1147,103 +1240,100 @@
 	. = ..()
 	if(.)
 		return
-	switch(action)
-		if("scan")
-			return scan(text2num("[params["radius"]]") || 3)
-		if("enter")
-			return enter()
-		if("leave")
-			return leave()
-		if("leave_role")
-			var/datum/netdm_space_actor/entity/entity = actor
-			if(istype(entity) && entity.ui_status(ui.user, state) == UI_INTERACTIVE)
-				var/mob/dead/netdm_entity/controller = ui.user
-				INVOKE_ASYNC(controller, TYPE_PROC_REF(/mob/dead/netdm_entity, return_to_observer))
-				return TRUE
-			return FALSE
-		if("move")
-			return move(params["to"])
-		if("preview_move")
-			return preview_move(params["to"])
-		if("clear_route_preview")
-			return clear_route_preview()
-		if("abort_move")
-			if(presence?["state"] == "moving")
-				return send("abort_move", list("note" = "window"), CALLBACK(src, PROC_REF(presence_changed), "Отмена перехода"))
-		if("act")
-			return act_line("[params["line"]]")
-		if("select_camera")
-			return select_camera(params["instance"], ui.user)
-		if("send_chat")
-			return send_chat(ui.user, params["node"], params["text"])
-		if("read_alarm")
-			return read_alarm(params["instance"])
-		if("watch_alarm")
-			return watch_alarm(params["instance"], ui.user)
-		if("stop_alarm_watch")
-			return stop_alarm_watch()
-		if("machine_alert")
-			return operate_alarm(params["instance"], params["enabled"], ui.user)
-		if("level")
-			var/level = text2num("[params["z"]]")
-			if(isnum(level))
-				z = level
-			return TRUE
-		if("immerse")
-			return immerse()
-		if("surface")
-			return surface_immersion()
-		if("persona")
-			return set_persona(params, ui.user)
-		if("chat_channel")
-			chat_channel = !chat_channel
-			clear_chat()
-			return TRUE
-		if("banish")
-			return banish_intruder()
-		if("call_courier")
-			return call_courier()
-		if("call_engineer")
-			return call_engineer()
-		if("call_agent")
-			var/goal = "[params["goal"]]"
-			if(goal in list("courier", "engineer", "sentinel", "watcher", "archivist"))
-				return call_agent(goal)
-			return FALSE
-		if("hack_start")
-			return hack_start("[params["node"]]")
-		if("hack_answer")
-			return hack_submit("[params["code"]]")
-		if("hack_keys")
-			return hack_refresh_keys()
-		if("hack_mask")
-			return hack_toggle_mask()
-		if("hack_use")
-			return hack_use("[params["node"]]")
+	return dispatch_ui_action(action, params, ui.user, state)
+
+#define NETDM_UI_USER 1
+#define NETDM_UI_STATE 2
+#define NETDM_UI_PARAMS 3
+
+/// Each public action binds only its own parameters. Only allowlisted, local methods can run.
+/datum/netdm_space/proc/dispatch_ui_action(action, list/params, mob/user, datum/ui_state/state)
+	var/static/list/actions = list(
+		"scan" = list(PROC_REF(scan_from_ui), "radius"),
+		"enter" = list(PROC_REF(enter)),
+		"leave" = list(PROC_REF(leave)),
+		"leave_role" = list(PROC_REF(leave_role), NETDM_UI_USER, NETDM_UI_STATE),
+		"move" = list(PROC_REF(move), "to"),
+		"preview_move" = list(PROC_REF(preview_move), "to"),
+		"clear_route_preview" = list(PROC_REF(clear_route_preview)),
+		"abort_move" = list(PROC_REF(abort_move)),
+		"act" = list(PROC_REF(act_from_ui), "line"),
+		"terminal" = list(PROC_REF(terminal_from_ui), "command", "params", NETDM_UI_USER),
+		"device_action" = list(PROC_REF(device_action), "instance", "command", NETDM_UI_USER),
+		"select_camera" = list(PROC_REF(select_camera), "instance", NETDM_UI_USER),
+		"send_chat" = list(PROC_REF(send_chat), NETDM_UI_USER, "node", "text"),
+		"read_alarm" = list(PROC_REF(read_alarm), "instance"),
+		"watch_alarm" = list(PROC_REF(watch_alarm), "instance", NETDM_UI_USER),
+		"stop_alarm_watch" = list(PROC_REF(stop_alarm_watch)),
+		"machine_alert" = list(PROC_REF(operate_alarm), "instance", "enabled", NETDM_UI_USER),
+		"level" = list(PROC_REF(select_level), "z"),
+		"immerse" = list(PROC_REF(immerse)),
+		"surface" = list(PROC_REF(surface_immersion)),
+		"persona" = list(PROC_REF(set_persona), NETDM_UI_PARAMS, NETDM_UI_USER),
+		"chat_channel" = list(PROC_REF(toggle_chat_channel)),
+		"banish" = list(PROC_REF(banish_intruder)),
+		"call_courier" = list(PROC_REF(call_courier)),
+		"call_engineer" = list(PROC_REF(call_engineer)),
+		"call_agent" = list(PROC_REF(call_agent_from_ui), "goal"),
+		"hack_start" = list(PROC_REF(hack_start), "node"),
+		"hack_answer" = list(PROC_REF(hack_submit), "code"),
+		"hack_keys" = list(PROC_REF(hack_refresh_keys)),
+		"hack_mask" = list(PROC_REF(hack_toggle_mask)),
+		"hack_use" = list(PROC_REF(hack_use), "node"),
+	)
+	var/list/route = istext(action) ? actions[action] : null
+	if(!route)
+		return FALSE
+	var/handler = route[1]
+	if(length(route) == 1)
+		return call(src, handler)()
+	var/list/context = list(user, state, params)
+	var/list/arguments = list()
+	for(var/index in 2 to length(route))
+		var/parameter = route[index]
+		arguments += list(isnum(parameter) ? context[parameter] : params?[parameter])
+	return call(src, handler)(arglist(arguments))
+
+#undef NETDM_UI_USER
+#undef NETDM_UI_STATE
+#undef NETDM_UI_PARAMS
+
+/datum/netdm_space/proc/scan_from_ui(radius)
+	return scan(text2num("[radius]") || 3)
+
+/datum/netdm_space/proc/act_from_ui(line)
+	return act_line("[line]")
+
+/datum/netdm_space/proc/terminal_from_ui(command, params, mob/user)
+	return actor?.terminal_action(command, params, user) || FALSE
+
+/datum/netdm_space/proc/select_level(level)
+	level = text2num("[level]")
+	if(isnum(level))
+		z = level
+	return TRUE
+
+/datum/netdm_space/proc/leave_role(mob/user, datum/ui_state/state)
+	return actor?.leave_role(user, state) || FALSE
+
+/datum/netdm_space/proc/abort_move()
+	if(presence?["state"] != "moving")
+		return FALSE
+	return send("abort_move", list("note" = "window"), CALLBACK(src, PROC_REF(presence_changed), "Отмена перехода"))
+
+/datum/netdm_space/proc/toggle_chat_channel()
+	chat_channel = !chat_channel
+	clear_chat()
+	return TRUE
+
+/datum/netdm_space/proc/call_agent_from_ui(goal)
+	var/static/list/available_goals = list("courier", "engineer", "sentinel", "watcher", "archivist")
+	goal = "[goal]"
+	return (goal in available_goals) && call_agent(goal)
 
 /// A detach sent by a closing window: its answer has nobody to show it to.
 /datum/netdm_diagnostics/proc/space_ignored(list/output)
 	return
-
-/datum/netdm_terminal
-	/// The network window opened from this terminal, if any.
-	var/datum/netdm_space/space
-
-/datum/netdm_terminal/Destroy()
-	QDEL_NULL(space)
-	return ..()
-
-/// Opens the network window of this terminal's operator.
-/datum/netdm_terminal/proc/open_space(mob/user)
-	if(!can_submit())
-		return FALSE
-	var/datum/netdm_space/window = space
-	if(!window)
-		window = new(src)
-	if(window.ui_interact(user))
-		return TRUE
-	qdel(window)
-	return FALSE
 
 #undef NETDM_SPACE_REFRESH
 #undef NETDM_SPACE_OTHERS_LIFETIME
@@ -1331,6 +1421,7 @@
 
 /// Starts a breach against a known APC, the type whose key can operate a machine.
 /datum/netdm_space/proc/hack_start(node)
+	node = "[node]"
 	if(!SSnetdm_observe?.services || !islist(presence))
 		note("Сеть занята.")
 		return FALSE
@@ -1366,6 +1457,7 @@
 	SStgui.update_uis(src)
 
 /datum/netdm_space/proc/hack_submit(code)
+	code = "[code]"
 	if(!SSnetdm_observe?.services || !islist(presence))
 		note("Сеть занята.")
 		return FALSE
@@ -1436,6 +1528,7 @@
 
 /// Uses a stolen key for a physical effect the Host authorises: currently the APC breaker.
 /datum/netdm_space/proc/hack_use(node)
+	node = "[node]"
 	if(!SSnetdm_observe?.services || !islist(presence))
 		note("Сеть занята.")
 		return FALSE

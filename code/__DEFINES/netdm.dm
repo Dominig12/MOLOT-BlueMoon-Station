@@ -25,3 +25,6 @@
 
 /// Source tag of the traits the network immersion applies to the body left at the access point.
 #define NETDM_IMMERSION_TRAIT "netdm_immersion"
+
+/// Emitted by a service lane after the Host accepts an endpoint attachment: (datum/node).
+#define COMSIG_NETDM_ENDPOINT_ATTACHED "netdm_endpoint_attached"

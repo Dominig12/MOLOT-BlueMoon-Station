@@ -4,10 +4,12 @@
 #define NETDM_CAMERA_DEADLINE (5 SECONDS)
 #define NETDM_CAMERA_DOMAIN "camera"
 
+/datum/netdm_integration/camera_access/setup(datum/netdm_service_lane/lane)
+	lane.dispatcher.allow_command("camera.access", "acquire", new /datum/netdm_command_handler/camera_acquire)
+	lane.dispatcher.allow_result("acquire", new /datum/netdm_effect_handler/camera_acquired, "camera.access")
+
 /obj/machinery/computer/security
 	var/datum/weakref/netdm_camera_target
-	/// P13: the network window opened from this console, if any.
-	var/datum/netdm_terminal/local/console/netdm_window
 	var/netdm_camera_instance
 	var/netdm_camera_operation
 	var/netdm_camera_request

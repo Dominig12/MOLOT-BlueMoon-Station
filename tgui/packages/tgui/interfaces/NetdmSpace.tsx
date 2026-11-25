@@ -10,8 +10,10 @@ import { DeviceEntry } from './NetdmDeviceState';
 import { isSelectedPreview, NodeTravelChoice, nodeTravelChoice } from './netdmNodeTravel';
 import { knownAdjacentNodes, NearbyDestination, nearbyDestinations, NearbyNode } from './netdmPresenceNavigation';
 import { NetdmServiceActions } from './NetdmServiceActions';
+import { safeServiceIdentifier } from './NetdmServiceSchema';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
 import { NetdmSpaceDock, SpaceTab } from './NetdmSpaceDock';
+import { NetdmTerminalContent, NetdmTerminalData, NetdmTerminalEvents } from './NetdmTerminal';
 import { TopologyCanvas } from './NetdmTopology';
 import { MapChrome } from './NetdmTopology/MapChrome';
 import { countActivityNodes, FLAG_APC, FLAG_UNPOWERED, isOffline, parseView, View } from './NetdmTopology/model';
@@ -30,9 +32,13 @@ if (typeof window !== 'undefined') {
   }, true);
 }
 
+type DoorAction = 'open' | 'close' | 'bolt' | 'unbolt';
+type DoorPanelState = { opened: BooleanLike; bolted: BooleanLike };
+
 type Service = {
   instance: string; type: string; node: string; stale: BooleanLike;
   canControlAlarm?: BooleanLike; cameraName?: string | null;
+  doorPanel?: DoorPanelState | null;
 };
 
 type Presence = {
@@ -110,13 +116,18 @@ type AlarmWatch = {
 
 type MachineCommand = {
   instance: string;
-  enabled: BooleanLike;
+  kind?: 'door' | 'alarm';
+  enabled?: BooleanLike;
   status: 'sending' | 'sent' | 'applied' | 'rejected' | 'not_delivered' | 'no_receipt' | 'unknown';
   operation?: string;
   reason?: string;
   source?: string;
   zoneAlarm?: BooleanLike;
   sourceActive?: BooleanLike;
+  doorAction?: DoorAction | null;
+  doorOpen?: BooleanLike;
+  doorBolted?: BooleanLike;
+  changed?: BooleanLike;
 };
 
 type NodeChat = {
@@ -135,6 +146,7 @@ type ChatOpening = { previousRead: ChatProgress | null; snapshot: ChatProgress |
 type Data = {
   title: string;
   entityRole?: BooleanLike;
+  terminal?: NetdmTerminalData | null;
   z: number;
   levels: number[];
   nodes: unknown[];
@@ -247,6 +259,55 @@ const MACHINE_REASON: Record<string, string> = {
   no_presence: 'Войдите в сеть.',
 };
 
+const DOOR_ACTIONS = {
+  open: { icon: 'door-open', label: 'Открыть шлюз', confirm: 'Открыть шлюз?' },
+  close: { icon: 'door-closed', label: 'Закрыть шлюз', confirm: 'Закрыть шлюз?' },
+  bolt: { icon: 'lock', label: 'Опустить болты', confirm: 'Опустить болты?' },
+  unbolt: { icon: 'lock-open', label: 'Поднять болты', confirm: 'Поднять болты?' },
+};
+
+const DOOR_STATUS: Partial<Record<MachineCommand['status'], string>> = {
+  sent: 'Ожидаем выполнения шлюзом…',
+  applied: 'Шлюз подтвердил выполнение',
+  not_delivered: 'Команда не дошла до шлюза',
+  no_receipt: 'Квитанция от шлюза не пришла. Исход команды неизвестен.',
+};
+
+const DOOR_REASON: Record<string, string> = {
+  access_denied: 'У оператора нет доступа к панели шлюза.',
+  door_blocked: 'Текущее состояние шлюза мешает выполнить команду.',
+  door_gone: 'Шлюз больше недоступен в сети.',
+  denied: 'Требуется доступ к панели шлюза.',
+  forbidden: 'Требуется доступ к панели шлюза.',
+  offline: 'Шлюз отключён.',
+  unreachable: 'Маршрут до шлюза недоступен.',
+  invalid_route: 'Маршрут до шлюза недоступен.',
+};
+
+const describeDoorState = (opened: BooleanLike, bolted: BooleanLike) =>
+  `${opened ? 'Шлюз открыт' : 'Шлюз закрыт'} · ${bolted ? 'болты опущены' : 'болты подняты'}`;
+
+const DoorPanel = ({ state, disabled, onAction }: {
+  state: DoorPanelState; disabled: boolean; onAction: (command: DoorAction) => void;
+}) => {
+  const actions: DoorAction[] = [state.opened ? 'close' : 'open', state.bolted ? 'unbolt' : 'bolt'];
+  return (
+    <details className="NetdmDock__disclosure">
+      <summary>Панель шлюза</summary>
+      <Box color="label">{describeDoorState(state.opened, state.bolted)}</Box>
+      <div className="NetdmDock__actions">
+        {actions.map(command => {
+          const { icon, label, confirm } = DOOR_ACTIONS[command];
+          return (
+            <Button.Confirm key={command} icon={icon} content={label} confirmContent={confirm}
+              disabled={disabled} onClick={() => onAction(command)} />
+          );
+        })}
+      </div>
+    </details>
+  );
+};
+
 const CHAT_STATUS: Record<string, string> = {
   sending: 'Отправляем…',
   sent: 'Сообщение отправлено.',
@@ -269,16 +330,19 @@ const NodePanel = (props: {
   view: View; id: string | null; services: Service[]; entries: DeviceEntry[]; activity: LifeEvent[];
   otherPresences: number; travel: NodeTravelChoice; active: boolean; alarmPending: boolean;
   machinePending: boolean; routePending: boolean; watchedAlarm: string | null; hack?: HackState | null;
+  selectedService?: string; onSelectService: (instance: string) => void;
   onPreview: (instance: string) => void; onTrace: (id: string) => void;
+  onPrepareTerminal?: (line: string) => void;
   onWatchAlarm: (instance: string) => void; onReadAlarm: (instance: string) => void;
   onSetAlarm: (instance: string, enabled: boolean) => void; onCommand: (line: string) => void;
   onHack: (node: string) => void; onHackAnswer: (answer: string) => void; onHackUse: (node: string) => void;
   onSelectCamera: (instance: string) => void;
+  onDoorAction: (instance: string, command: DoorAction) => void;
 }) => {
   const { id, view, services, entries, activity, otherPresences, travel, active, alarmPending,
-    machinePending, routePending, watchedAlarm, onPreview, onTrace, onWatchAlarm, onReadAlarm,
-    onSetAlarm, onCommand, hack, onHack, onHackAnswer, onHackUse, onSelectCamera } = props;
-  const [selectedService, setSelectedService] = useState<string | null>(null);
+    machinePending, routePending, watchedAlarm, onPreview, onTrace, onPrepareTerminal, onWatchAlarm, onReadAlarm,
+    onSetAlarm, onCommand, hack, onHack, onHackAnswer, onHackUse, onSelectCamera,
+    onDoorAction, selectedService, onSelectService } = props;
   const node = id ? view.nodes.get(id) : undefined;
   if (!id || !node) {
     return <Box className="NetdmDock__empty">Выберите узел на карте.</Box>;
@@ -290,12 +354,12 @@ const NodePanel = (props: {
   const disabled = !active || stale || !!current?.stale;
   const recent = activity.filter(item => item.node === id).slice(-3).reverse();
   const travelHint = {
-    here: 'Вы на этом узле.',
-    unknown: 'Этот узел ещё не обнаружен.',
-    offline: 'Узел не работает — переход пока невозможен.',
-    no_shell: 'Точка входа на этом узле пока не обнаружена.',
-    stale: 'Сведения о точке входа устарели. Обновите карту.',
-    ready: 'Точка входа известна. Маршрут нужно проверить.',
+    here: 'Вы на этом узле',
+    unknown: 'Узел ещё не обнаружен',
+    offline: 'Узел недоступен',
+    no_shell: 'Без точки входа',
+    stale: 'Обновите карту для перехода',
+    ready: 'Доступен переход',
   }[travel.state];
   const serviceName = (service: Service) => ({
     'atmos.alarm': 'Панель атмосферы',
@@ -307,16 +371,22 @@ const NodePanel = (props: {
     'pda.messenger': 'Сервер сообщений',
     'research.server': 'Сервер исследований',
   }[service.type] ?? service.type.replace(/\./g, ' '));
+  const serviceActions = current && (
+    <NetdmServiceActions key={current.instance} instance={current.instance}
+      type={current.type} entries={entries} disabled={disabled} onCommand={onCommand} />
+  );
+  const serviceType = current?.type;
+  const doorPanel = serviceType === 'machine.door' ? current?.doorPanel : null;
+  const hasDedicatedControls = serviceType === 'camera.access' || serviceType === 'atmos.alarm' || !!doorPanel;
+
   return (
-    <>
-      <div className="NetdmDock__card NetdmDock__node">
-        <div className="NetdmDock__meta">
-          <strong>{node.flags & FLAG_APC ? 'АПЦ' : 'Устройство'}</strong>
-          <span>{node.x}, {node.y}{otherPresences > 0 ? ` · ◆ ${otherPresences}` : ''}</span>
-        </div>
-        <Box color={stale ? 'average' : travel.state === 'here' ? 'good' : 'label'}>
+    <div className="NetdmNode NetdmSpaceContext">
+      <div className="NetdmNode__overview">
+        <h3>{current ? current.cameraName || serviceName(current) : node.flags & FLAG_APC ? 'АПЦ' : 'Устройство'}</h3>
+        <div className="NetdmNode__status" data-state={stale ? 'stale' : travel.state}>
           {stale ? 'Сведения устарели' : travelHint}
-        </Box>
+          {otherPresences > 0 && <span title="Другие присутствия">◆ {otherPresences}</span>}
+        </div>
         {travel.state === 'ready' && (
           <div className="NetdmDock__actions">
             <Button icon="route" disabled={!active || routePending}
@@ -326,11 +396,11 @@ const NodePanel = (props: {
         )}
       </div>
       {current ? (
-        <div className="NetdmDock__card NetdmSpaceContext">
-          {here.length > 1 ? (
+        <div className="NetdmNode__service">
+          {here.length > 1 && (
             <label className="NetdmDock__field">
               <span>Сервис</span>
-              <select value={current.instance} onChange={event => setSelectedService(event.currentTarget.value)}>
+              <select value={current.instance} onChange={event => onSelectService(event.currentTarget.value)}>
                 {here.map(service => (
                   <option key={service.instance} value={service.instance}>
                     {service.cameraName || serviceName(service)}{service.stale ? ' · устарел' : ''}
@@ -338,8 +408,7 @@ const NodePanel = (props: {
                 ))}
               </select>
             </label>
-          ) : <strong>{current.cameraName || serviceName(current)}</strong>}
-          <div className="NetdmDock__mono">{current.instance}{current.stale ? ' · устарел' : ''}</div>
+          )}
           {!!current.cameraName && (
             <div className="NetdmDock__actions">
               <Button icon="video" disabled={stale || !!current.stale}
@@ -377,10 +446,13 @@ const NodePanel = (props: {
               )}
             </>
           )}
-          <NetdmServiceActions key={current.instance} instance={current.instance}
-            type={current.type} entries={entries} disabled={disabled} onCommand={onCommand} />
+          {doorPanel && (
+            <DoorPanel key={current.instance} state={doorPanel} disabled={disabled || machinePending}
+              onAction={command => onDoorAction(current.instance, command)} />
+          )}
+          {!hasDedicatedControls && serviceActions}
         </div>
-      ) : <Box color="label" className="NetdmDock__card">Известных сервисов пока нет.</Box>}
+      ) : <Box color="label">Известных сервисов пока нет.</Box>}
       {(node.flags & FLAG_APC) !== 0 && travel.state === 'here' && (
         <div className="NetdmDock__card NetdmBreach">
           <NetdmBreach hack={hack} selected={id} enabled={active && !stale}
@@ -388,22 +460,32 @@ const NodePanel = (props: {
         </div>
       )}
       {recent.length > 0 && (
-        <div className="NetdmDock__card">
-          <strong>Активность узла</strong>
+        <details className="NetdmNode__details NetdmDock__disclosure">
+          <summary>Активность узла</summary>
           {recent.map(item => (
             <Box key={`${item.seq}-${item.kind}-${item.node}`} className="NetdmDock__event" color="label">
               {item.name ? `${item.name}: ` : ''}{item.text || item.kind}
             </Box>
           ))}
-        </div>
+        </details>
       )}
-      <details className="NetdmDock__card NetdmDock__disclosure">
+      <details className="NetdmNode__details NetdmDock__disclosure">
         <summary>Диагностика</summary>
+        <div className="NetdmDock__mono">
+          X {node.x} · Y {node.y}
+          {!!current && <div>{current.instance}{current.stale ? ' · устарел' : ''}</div>}
+        </div>
         <div className="NetdmDock__actions">
           <Button icon="signal" disabled={!active} onClick={() => onTrace(id)}>Проверить связь</Button>
+          {!!onPrepareTerminal && !!current && safeServiceIdentifier(current.type) && (
+            <Button icon="terminal" onClick={() => onPrepareTerminal(`api ${current.type}`)}>
+              Подготовить запрос API
+            </Button>
+          )}
         </div>
+        {hasDedicatedControls && serviceActions}
       </details>
-    </>
+    </div>
   );
 };
 
@@ -561,20 +643,33 @@ const AlarmWatchPanel = (props: { watch: AlarmWatch; onSelect: () => void; onSto
   );
 };
 
+const hasReportedState = (value: BooleanLike) => value !== null && value !== undefined;
+
 const MachineCommandPanel = (props: { command: MachineCommand }) => {
-  const { instance, enabled, status, operation, reason, source, zoneAlarm, sourceActive } = props.command;
+  const { instance, enabled, status, operation, reason, source, zoneAlarm, sourceActive,
+    kind, doorAction, doorOpen, doorBolted, changed } = props.command;
+  const isDoor = kind === 'door';
   const { text, color } = MACHINE_STATUS[status] ?? MACHINE_STATUS.unknown;
+  const reasonText = reason && ((isDoor && DOOR_REASON[reason]) || MACHINE_REASON[reason] || reason);
+  const actionLabel = isDoor ? (doorAction && DOOR_ACTIONS[doorAction]?.label) || 'Управление шлюзом'
+    : enabled ? 'Поднять тревогу' : 'Снять тревогу панели';
   return (
-    <Section title="Команда атмосферной панели">
-      <Box title={instance}>{enabled ? 'Поднять тревогу' : 'Снять тревогу панели'}</Box>
-      <Box aria-live="polite" bold color={color}>{text}</Box>
-      {status === 'applied' && zoneAlarm !== null && sourceActive !== null && (
+    <Section title={isDoor ? 'Команда шлюза' : 'Команда атмосферной панели'}>
+      <Box title={instance}>{actionLabel}</Box>
+      <Box aria-live="polite" bold color={color}>{isDoor ? DOOR_STATUS[status] ?? text : text}</Box>
+      {isDoor && status === 'applied' && hasReportedState(doorOpen) && hasReportedState(doorBolted) && (
+        <Box color="label">
+          {describeDoorState(doorOpen, doorBolted)}
+          {hasReportedState(changed) && !changed && ' · состояние уже соответствовало команде'}
+        </Box>
+      )}
+      {!isDoor && status === 'applied' && hasReportedState(zoneAlarm) && hasReportedState(sourceActive) && (
         <Box color={zoneAlarm ? 'average' : 'label'}>
           {sourceActive ? 'Тревога панели активна' : 'Тревога панели снята'}
           {zoneAlarm && !sourceActive ? ' · в зоне остались другие тревоги' : ''}
         </Box>
       )}
-      {reason && <Box color="label">{MACHINE_REASON[reason] ?? reason}</Box>}
+      {reasonText && <Box color="label">{reasonText}</Box>}
       {(source || operation) && (
         <Box color="label">
           {source && `Узел отправки ${source}`}
@@ -593,6 +688,7 @@ const ActionBox = (props: {
   dynamic: ShellDynamicPool;
   onLine: (value: string) => void;
   onSend: () => void;
+  onCommand: (command: string) => void;
 }) => {
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(0);
@@ -609,7 +705,7 @@ const ActionBox = (props: {
   };
   const submit = () => {
     const text = props.line.trim();
-    if (text.length === 0) {
+    if (!props.enabled || text.length === 0) {
       return;
     }
     const next = [...history.filter(entry => entry !== text), text].slice(-32);
@@ -620,58 +716,54 @@ const ActionBox = (props: {
   };
   const first = props.line.trim().split(/\s+/)[0];
   const hint = SHELL_COMMANDS.find(command => command.name === first)?.usage
-    ?? 'Tab — автодополнение · ↑↓ — история · help — справка';
+    ?? 'Enter — выполнить · ↑↓ — история';
   return (
-    <Section
-      title="Командная строка"
-      buttons={(
-        <>
-          <Button icon="plug" onClick={() => props.onLine('api')}>API</Button>
-          <Button icon="question-circle" onClick={() => props.onLine('help')}>Справка</Button>
-        </>
-      )}>
-      <Stack align="center">
-        <Stack.Item grow>
-          <div className="Input Input--fluid Input--monospace">
-            <div className="Input__baseline" aria-hidden="true">.</div>
-            <input
-              className="Input__input"
-              aria-label="Командная строка сети"
-              autoComplete="off"
-              spellCheck={false}
-              maxLength={1024}
-              placeholder="links | where state -ne up"
-              value={props.line}
-              onChange={event => props.onLine(event.currentTarget.value)}
-              onKeyDown={event => {
-                if (event.nativeEvent.isComposing) {
-                  return;
-                }
-                if (event.key === 'Tab') {
-                  event.preventDefault();
-                  props.onLine(tabComplete(props.line, props.dynamic));
-                  return;
-                }
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  submit();
-                  return;
-                }
-                if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-                  event.preventDefault();
-                  recall(historyIndex + (event.key === 'ArrowUp' ? -1 : 1));
-                }
-              }} />
-          </div>
-          <Box mt={0.5} color="label" fontSize="0.9em">{hint}</Box>
-        </Stack.Item>
-        <Stack.Item>
-          <Button icon="play" disabled={!props.enabled || !props.line.trim()} onClick={submit}>
-            Выполнить
-          </Button>
-        </Stack.Item>
-      </Stack>
-    </Section>
+    <div>
+      <div className="NetdmTerminalWorkspace__composer">
+        <select className="NetdmTerminalWorkspace__commandMenu" aria-label="Быстрые команды"
+          disabled={!props.enabled} value="" onChange={event => props.onCommand(event.currentTarget.value)}>
+          <option value="" disabled>Команды</option>
+          <option value="services">Сервисы</option>
+          <option value="links">Связи</option>
+          <option value="api">API</option>
+          <option value="help">Справка</option>
+        </select>
+        <input
+          className="NetdmTerminalWorkspace__commandInput"
+          aria-label="Командная строка сети"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={1024}
+          placeholder="Введите команду"
+          value={props.line}
+          onChange={event => props.onLine(event.currentTarget.value)}
+          onKeyDown={event => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === 'Tab' && !event.shiftKey) {
+              const completed = tabComplete(props.line, props.dynamic);
+              if (completed !== props.line) {
+                event.preventDefault();
+                props.onLine(completed);
+              }
+              return;
+            }
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              submit();
+              return;
+            }
+            if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+              event.preventDefault();
+              recall(historyIndex + (event.key === 'ArrowUp' ? -1 : 1));
+            }
+          }} />
+        <button type="button" className="NetdmTerminalWorkspace__execute"
+          disabled={!props.enabled || !props.line.trim()} onClick={submit}>
+          Выполнить
+        </button>
+      </div>
+      <small className="NetdmTerminalWorkspace__usage">{hint}</small>
+    </div>
   );
 };
 
@@ -1015,6 +1107,7 @@ export const NetdmSpace = () => {
     [data.nodes, data.edges, data.down],
   );
   const [selected, setSelected] = useState<string | null>(null);
+  const [serviceSelection, setServiceSelection] = useState<{ node: string; instance: string }>();
   const [failure, setFailure] = useState<string | null>(null);
   const [radius, setRadius] = useState(3);
   const [fitRequest, setFitRequest] = useState(0);
@@ -1022,7 +1115,9 @@ export const NetdmSpace = () => {
   const [focusTarget, setFocusTarget] = useState<string | null>(null);
   const [showMapLegend, setShowMapLegend] = useState(false);
   const [line, setLine] = useState('');
-  const [advanced, setAdvanced] = useState(false);
+  const [terminalOpened, setTerminalOpened] = useState(false);
+  const [source, setSource] = useState<'device' | 'presence'>('device');
+  const [devicePreset, setDevicePreset] = useState<{ id: number; line: string }>();
   const [sideTab, setSideTab] = useState<SpaceTab>('node');
   const [chatOpening, setChatOpening] = useState<ChatOpening | null>(null);
   const [readChat, setReadChat] = useState<ChatProgress | null>(null);
@@ -1046,6 +1141,12 @@ export const NetdmSpace = () => {
   const machinePending = machineCommand?.status === 'sending' || machineCommand?.status === 'sent';
   const inside = !!presence?.presence && presence.state !== 'ended';
   const active = inside && presence.state === 'active';
+  const showTerminal = sideTab === 'terminal';
+  const deviceTerminal = data.terminal;
+  const useDevice = !!deviceTerminal && source === 'device';
+  const terminalAct = useCallback((command: string, params: Record<string, unknown> = {}) => {
+    act('terminal', { command, params });
+  }, [act]);
   const actRef = useRef(act);
   actRef.current = act;
   useEffect(() => {
@@ -1074,13 +1175,13 @@ export const NetdmSpace = () => {
     if (machineCommand?.operation && machineCommand.status !== 'sending') {
       const node = data.services.find(service => service.instance === machineCommand.instance)?.node;
       if (node && view.nodes.has(node)) {
-        const id = `alarm:${machineCommand.operation}`;
+        const id = `${machineCommand.kind ?? 'alarm'}:${machineCommand.operation}`;
         const outcome = {
           sent: 'queued',
           applied: 'delivered',
           rejected: 'rejected',
           not_delivered: 'rejected',
-          no_receipt: 'applied',
+          no_receipt: machineCommand.kind === 'door' ? 'unknown' : 'applied',
           unknown: 'unknown',
         }[machineCommand.status] as SceneSignal['outcome'];
         signals.set(id, outcome);
@@ -1105,10 +1206,21 @@ export const NetdmSpace = () => {
     : null;
   const selectTab = (tab: SpaceTab) => {
     if (tab === sideTab) return;
+    if (tab === 'terminal') setTerminalOpened(true);
     setSideTab(tab);
     setChatOpening(tab === 'chat'
       ? { previousRead: readChat, snapshot: visit ? { visit, received } : null }
       : null);
+  };
+  const prepareTerminal = (command: string) => {
+    if (active) {
+      setSource('presence');
+      setLine(command);
+    } else if (deviceTerminal) {
+      setSource('device');
+      setDevicePreset(previous => ({ id: (previous?.id ?? 0) + 1, line: command }));
+    }
+    selectTab('terminal');
   };
   const inspectMap = (node: string | null) => {
     setSelected(node);
@@ -1189,12 +1301,12 @@ export const NetdmSpace = () => {
         return;
       }
       const target = event.target as HTMLElement | null;
-      if (target?.closest('input, textarea, select, button, [role="button"], [contenteditable="true"]')) {
+      if (target?.closest('input, textarea, select, button, summary, [role="button"], [contenteditable="true"]')) {
         return;
       }
       // The chat and shell are independent input surfaces; shortcuts work only
       // when the player is navigating the main network canvas.
-      if (showChat) {
+      if (showChat || showTerminal) {
         return;
       }
       if (event.key.toLowerCase() === 'f') {
@@ -1224,7 +1336,7 @@ export const NetdmSpace = () => {
     };
     window.addEventListener('keydown', keyboard);
     return () => window.removeEventListener('keydown', keyboard);
-  }, [inside, showChat, focusHome, focusKnown, homeNeighbors, active, moving, routePending, selected,
+  }, [inside, showChat, showTerminal, focusHome, focusKnown, homeNeighbors, active, moving, routePending, selected,
     selectedTravel, canMove, preview, act, requestRoute]);
   const send = () => {
     const trimmed = line.trim();
@@ -1238,6 +1350,37 @@ export const NetdmSpace = () => {
       act('act', { line: `trace ${id} | select state hops radioHops ticks` });
     }
   };
+  const terminal = terminalOpened && (
+    <div className="NetdmWorkspace">
+      {deviceTerminal && (
+        <div className="NetdmWorkspace__pane" hidden={!useDevice}>
+          <NetdmTerminalContent data={deviceTerminal} act={terminalAct}
+            active={showTerminal && useDevice} preset={devicePreset} />
+        </div>
+      )}
+      <div className="NetdmWorkspace__pane NetdmWorkspace__presence" hidden={useDevice}>
+        <Section className="NetdmTerminalWorkspace__journal" scrollable fill>
+          {data.log.length === 0 && (
+            <Box color="label">{active ? 'Ответов пока нет.' : 'Войдите в сеть, чтобы отправлять команды.'}</Box>
+          )}
+          {[...data.log].reverse().map((entry, index) => (
+            <div className="NetdmDock__event" key={index}>{entry}</div>
+          ))}
+        </Section>
+        <ActionBox
+          line={line}
+          enabled={active}
+          dynamic={{
+            instances: data.services.map(service => service.instance),
+            nodes: [...view.nodes.keys()],
+            types: [...new Set(data.services.map(service => service.type))],
+          }}
+          onLine={setLine}
+          onSend={send}
+          onCommand={command => active && act('act', { line: command })} />
+      </div>
+    </div>
+  );
 
   return (
     <Window width={inside ? 1120 : 860} height={inside ? 720 : 600} title={`Сеть: ${data.title}`}>
@@ -1252,46 +1395,67 @@ export const NetdmSpace = () => {
                   {inside && (
                     <span>
                       {presence.state === 'moving' ? ` → ${presence.to}` : data.hostNode ? ` · Узел ${data.hostNode}` : ''}
-                      {advanced && ` · Поколение ${presence.generation ?? 1}`}
                     </span>
                   )}
                   {!!reason && <small>{reason}</small>}
                 </div>
               </div>
               <div className="NetdmToolbar__controls">
-                <div className="NetdmToolbar__group">
-                  <select aria-label="Радиус сканирования" title="Радиус сканирования" value={radius}
-                    onChange={event => setRadius(Number(event.currentTarget.value))}>
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map(value => <option key={value} value={value}>{value} хоп.</option>)}
+                {showTerminal && deviceTerminal && (
+                  <select className="NetdmToolbar__origin" aria-label="Откуда выполнять" value={source}
+                    onChange={event => setSource(event.currentTarget.value === 'device' ? 'device' : 'presence')}>
+                    <option value="device">С устройства</option>
+                    <option value="presence">С присутствия</option>
                   </select>
-                  <button type="button" className="NetdmToolbar__scan" disabled={!canScan}
-                    onClick={() => act('scan', { radius })}>
-                    <Icon name="satellite-dish" /> Сканировать
-                  </button>
-                </div>
-                <div className="NetdmToolbar__group">
-                  {data.levels.length > 1 && (
-                    <select aria-label="Уровень карты" title="Уровень карты" value={data.z}
-                      onChange={event => {
-                        setSelected(null);
-                        act('level', { z: Number(event.currentTarget.value) });
-                      }}>
-                      {data.levels.map(level => <option key={level} value={level}>Z{level}</option>)}
-                    </select>
-                  )}
-                  {inside && !!data.hostNode && view.nodes.has(data.hostNode) && (
-                    <button type="button" className="NetdmToolbar__icon" aria-label="Я здесь"
-                      title="Центрировать на себе (F)" onClick={focusHome}>
-                      <Icon name="crosshairs" />
-                    </button>
-                  )}
-                  {!failure && view.nodes.size > 0 && (
-                    <button type="button" className="NetdmToolbar__icon" aria-label="Вся карта"
-                      title="Показать всю карту" onClick={() => setFitRequest(current => current + 1)}>
-                      <Icon name="expand" />
-                    </button>
-                  )}
-                </div>
+                )}
+                {!showTerminal && (
+                  <>
+                    {view.nodes.size > 0 && (
+                      <button type="button" className="NetdmToolbar__scan" disabled={!canScan}
+                        onClick={() => { selectTab('node'); act('scan', { radius }); }}>
+                        <Icon name="satellite-dish" /> Сканировать
+                      </button>
+                    )}
+                    <details className="NetdmToolbar__settings">
+                      <summary aria-label="Настройки карты" title="Настройки карты">
+                        <Icon name="sliders-h" />
+                      </summary>
+                      <div className="NetdmToolbar__settingsPanel">
+                        <label>
+                          Радиус сканирования
+                          <select aria-label="Радиус сканирования" value={radius}
+                            onChange={event => setRadius(Number(event.currentTarget.value))}>
+                            {[1, 2, 3, 4, 5, 6, 7, 8].map(value => <option key={value} value={value}>{value} хоп.</option>)}
+                          </select>
+                        </label>
+                        {data.levels.length > 1 && (
+                          <label>
+                            Уровень карты
+                            <select aria-label="Уровень карты" value={data.z}
+                              onChange={event => {
+                                setSelected(null);
+                                selectTab('node');
+                                act('level', { z: Number(event.currentTarget.value) });
+                              }}>
+                              {data.levels.map(level => <option key={level} value={level}>Z{level}</option>)}
+                            </select>
+                          </label>
+                        )}
+                        {inside && !!data.hostNode && view.nodes.has(data.hostNode) && (
+                          <button type="button" title="Центрировать на себе (F)"
+                            onClick={() => { focusHome(); selectTab('node'); }}>
+                            <Icon name="crosshairs" /> Я здесь
+                          </button>
+                        )}
+                        {!failure && view.nodes.size > 0 && (
+                          <button type="button" onClick={() => { selectTab('node'); setFitRequest(current => current + 1); }}>
+                            <Icon name="expand" /> Вся карта
+                          </button>
+                        )}
+                      </div>
+                    </details>
+                  </>
+                )}
                 <div className="NetdmToolbar__group">
                   {immersed && (
                     <Button icon="power-off" color="average" tooltip="Вернуться в тело у точки доступа"
@@ -1317,12 +1481,21 @@ export const NetdmSpace = () => {
             </header>
           </Stack.Item>
           <Stack.Item grow minHeight={0}>
-            <Stack fill>
-              <Stack.Item grow minWidth={0} position="relative">
+            <Stack fill className="NetdmUnifiedGrid" data-active-tab={sideTab}>
+              <Stack.Item grow minWidth={0} position="relative" className="NetdmUnifiedGrid__map"
+                aria-hidden={showTerminal}>
                 {view.nodes.size === 0 ? (
-                  <Section fill>
-                    <Box color="label">Вы пока ничего не знаете о сети. Сканируйте, чтобы увидеть окрестность.</Box>
-                  </Section>
+                  <div className="NetdmUnifiedGrid__discovery">
+                    <Icon name="satellite-dish" />
+                    <h2>Обнаружение узлов</h2>
+                    <p>
+                      {canScan ? 'Просканируйте окрестность, чтобы увидеть устройства и связи.'
+                        : 'Сканирование доступно при активном присутствии.'}
+                    </p>
+                    <Button icon="search" disabled={!canScan} onClick={() => act('scan', { radius })}>
+                      Обнаружить узлы
+                    </Button>
+                  </div>
                 ) : failure ? (
                   <FallbackList
                     view={view}
@@ -1367,69 +1540,49 @@ export const NetdmSpace = () => {
                       onToggleLegend={() => setShowMapLegend(value => !value)} />
                   </div>
                 )}
-                {!failure && view.nodes.size > 0 && otherPresences && Object.keys(otherPresences).length > 0 && (
-                  <Box
-                    position="absolute"
-                    bottom={0.5}
-                    left={0.5}
-                    px={0.5}
-                    py={0.25}
-                    color={OTHER_PRESENCE_COLOR}
-                    backgroundColor="#101217"
-                    style={{ pointerEvents: 'none' }}>
-                    ◆ Чужое присутствие
-                  </Box>
-                )}
               </Stack.Item>
               <Stack.Item minHeight={0} minWidth={0} shrink={0} basis="clamp(248px, 36vw, 376px)">
                 <NetdmSpaceDock tab={sideTab} onTab={selectTab} unread={unread}
                   routeActive={moving || !!preview}
+                  activityActive={!!watch}
+                  terminal={terminal}
                   title={sideTab === 'node' && shown ? `Узел ${shown}`
                     : sideTab === 'operator' && entityRole ? 'Сущность'
                     : sideTab === 'chat' && chat ? (chat.channel ? 'Общий канал' : `Чат узла ${chat.node}`) : undefined}>
                   {sideTab === 'node' && (
-                    <>
-                      <NodePanel
-                        key={shown ?? 'unknown'}
-                        view={view}
-                        id={shown}
-                        services={data.services}
-                        entries={entries}
-                        activity={life.activity}
-                        travel={selectedTravel}
-                        otherPresences={shown ? otherPresences?.[shown] ?? 0 : 0}
-                        active={active}
-                        alarmPending={!!data.alarmPending}
-                        machinePending={machinePending}
-                        routePending={routePending}
-                        watchedAlarm={watch?.instance ?? null}
-                        hack={data.hack}
-                        onHack={node => act('hack_start', { node })}
-                        onHackAnswer={code => act('hack_answer', { code })}
-                        onHackUse={node => act('hack_use', { node })}
-                        onSelectCamera={instance => act('select_camera', { instance })}
-                        onPreview={requestRoute}
-                        onReadAlarm={instance => act('read_alarm', { instance })}
-                        onWatchAlarm={instance => act('watch_alarm', { instance })}
-                        onSetAlarm={(instance, enabled) => act('machine_alert', { instance, enabled: enabled ? 1 : 0 })}
-                        onTrace={trace}
-                        onCommand={command => {
-                          if (active && command.length <= 1024) {
-                            act('act', { line: command });
-                          }
-                        }} />
-                      {watch && (
-                        <AlarmWatchPanel
-                          watch={watch}
-                          onSelect={() => {
-                            setSelected(watch.node);
-                            if (watch.z !== null && watch.z !== data.z) {
-                              act('level', { z: watch.z });
-                            }
-                          }}
-                          onStop={() => act('stop_alarm_watch')} />
-                      )}
-                    </>
+                    <NodePanel
+                      key={shown ?? 'unknown'}
+                      view={view}
+                      id={shown}
+                      services={data.services}
+                      entries={entries}
+                      activity={life.activity}
+                      travel={selectedTravel}
+                      otherPresences={shown ? otherPresences?.[shown] ?? 0 : 0}
+                      active={active}
+                      alarmPending={!!data.alarmPending}
+                      machinePending={machinePending}
+                      routePending={routePending}
+                      watchedAlarm={watch?.instance ?? null}
+                      selectedService={serviceSelection?.node === shown ? serviceSelection.instance : undefined}
+                      onSelectService={instance => shown && setServiceSelection({ node: shown, instance })}
+                      hack={data.hack}
+                      onHack={node => act('hack_start', { node })}
+                      onHackAnswer={code => act('hack_answer', { code })}
+                      onHackUse={node => act('hack_use', { node })}
+                      onSelectCamera={instance => act('select_camera', { instance })}
+                      onDoorAction={(instance, command) => act('device_action', { instance, command })}
+                      onPreview={requestRoute}
+                      onReadAlarm={instance => act('read_alarm', { instance })}
+                      onWatchAlarm={instance => act('watch_alarm', { instance })}
+                      onSetAlarm={(instance, enabled) => act('machine_alert', { instance, enabled: enabled ? 1 : 0 })}
+                      onTrace={trace}
+                      onPrepareTerminal={active || deviceTerminal ? prepareTerminal : undefined}
+                      onCommand={command => {
+                        if (active && command.length <= 1024) {
+                          act('act', { line: command });
+                        }
+                      }} />
                   )}
                   {sideTab === 'route' && (
                     <>
@@ -1490,8 +1643,21 @@ export const NetdmSpace = () => {
                   )}
                   {sideTab === 'activity' && (
                     <>
-                      <Section title="Журнал"
-                        buttons={<Button icon="terminal" selected={advanced} onClick={() => setAdvanced(current => !current)}>Команды</Button>}>
+                      {watch && (
+                        <AlarmWatchPanel
+                          watch={watch}
+                          onSelect={() => {
+                            selectTab('node');
+                            if (watch.z !== null && watch.z !== data.z) {
+                              setSelected(watch.node);
+                              act('level', { z: watch.z });
+                            } else {
+                              focusKnown(watch.node);
+                            }
+                          }}
+                          onStop={() => act('stop_alarm_watch')} />
+                      )}
+                      <Section title="Журнал">
                         <NetdmDeliveryActivity entries={entries} onSelect={instance => {
                           const node = data.services.find(service => service.instance === instance)?.node;
                           if (node && view.nodes.has(node)) {
@@ -1507,17 +1673,8 @@ export const NetdmSpace = () => {
                           <div className="NetdmDock__event" key={index}>{entry}</div>
                         ))}
                       </Section>
-                      {advanced && (
-                        <ActionBox
-                          line={line}
-                          enabled={active}
-                          dynamic={{
-                            instances: data.services.map(service => service.instance),
-                            nodes: [...view.nodes.keys()],
-                            types: [...new Set(data.services.map(service => service.type))],
-                          }}
-                          onLine={setLine}
-                          onSend={send} />
+                      {deviceTerminal && (!!deviceTerminal.events?.length || !!deviceTerminal.watches?.length) && (
+                        <NetdmTerminalEvents data={deviceTerminal} onCommand={line => terminalAct('run', { line })} />
                       )}
                       <NetworkEventHistory activity={life.activity} incidents={data.incidents ?? []} />
                     </>

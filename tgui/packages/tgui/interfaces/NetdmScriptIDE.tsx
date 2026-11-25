@@ -1,4 +1,4 @@
-import { KeyboardEvent, useMemo, useRef, useState } from 'react';
+import { KeyboardEvent, ReactNode, useMemo, useRef, useState } from 'react';
 
 import { Box, Button, NoticeBox, Section, Stack, TextArea } from '../components';
 import { SHELL_COMMANDS, ShellDynamicPool } from './netdmShell';
@@ -82,9 +82,10 @@ type Props = {
   pool: ShellDynamicPool;
   check?: ScriptCheck;
   onCheck: () => void;
+  actions?: ReactNode;
 };
 
-export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }: Props) => {
+export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck, actions }: Props) => {
   const caret = useRef(source.length);
   const editor = useRef<TextArea | null>(null);
   const [preview, setPreview] = useState(false);
@@ -116,19 +117,9 @@ export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }
   };
 
   return (
-    <Section
-      title="IDE · Network Shell"
-      buttons={
-        <>
-          <Button icon="check-circle" content="Проверить код" onClick={onCheck}
-            disabled={!source.trim() || source.length > limit || !!check?.pending} />
-          <Button icon="eye" selected={preview} onClick={() => setPreview(!preview)}
-            tooltip="Обзор структуры программы" content={preview ? 'Редактор' : 'Структура'} />
-        </>
-      }>
+    <div className="NetdmTerminalWorkspace__editorSurface">
       <Stack>
-        <Stack.Item grow basis={0}>
-          <Box color="label" mb={0.5}>Код исполняется на устройстве. Проверка не запускает команды и не меняет сеть.</Box>
+        <Stack.Item grow basis={0} className="NetdmTerminalWorkspace__editorArea">
           <Stack>
             <Stack.Item>
               <Box as="pre" color="label" m={0} style={{
@@ -158,7 +149,7 @@ export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }
                 }}
                 onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
                   caret.current = event.currentTarget.selectionStart;
-                  if (event.key === 'Tab') {
+                  if (event.key === 'Tab' && !event.shiftKey) {
                     event.preventDefault();
                     const suggestions = scriptSuggestions(event.currentTarget.value, caret.current, pool);
                     if (suggestions.length === 1) {
@@ -171,8 +162,7 @@ export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }
               />
             </Stack.Item>
           </Stack>
-          <Box color="label" mt={0.5}>{source.length}/{limit} символов · {lines.length} строк</Box>
-          {candidates.length > 0 && (
+          {!!source.trim() && candidates.length > 0 && (
             <Box mt={0.5}>
               <Box inline color="label" mr={0.5}>Подсказки:</Box>
               {candidates.map(candidate => (
@@ -196,6 +186,14 @@ export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }
           </Stack.Item>
         )}
       </Stack>
+      <div className="NetdmTerminalWorkspace__editorBar">
+        <Button icon="check-circle" content="Проверить код" onClick={onCheck}
+          disabled={!source.trim() || source.length > limit || !!check?.pending} />
+        {actions}
+        <Button icon="eye" selected={preview} onClick={() => setPreview(!preview)}
+          tooltip="Обзор структуры программы" content={preview ? 'Скрыть структуру' : 'Структура'} />
+        <Box color="label" className="NetdmTerminalWorkspace__editorCount">{source.length}/{limit}</Box>
+      </div>
       {!!check?.pending && <NoticeBox info mt={0.5}>Исходник отправлен на проверку через network.shell.</NoticeBox>}
       {!!check?.stale && <Box color="label" mt={0.5}>Исходник изменён после проверки — проверьте новую версию.</Box>}
       {!check?.stale && check?.status === 'valid' && (
@@ -209,6 +207,6 @@ export const NetdmScriptIDE = ({ source, onChange, limit, pool, check, onCheck }
           {issue && ` · строка ${issue.line}, столбец ${issue.column}`}
         </NoticeBox>
       )}
-    </Section>
+    </div>
   );
 };

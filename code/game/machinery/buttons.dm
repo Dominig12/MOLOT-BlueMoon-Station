@@ -49,8 +49,8 @@
 			board.accesses = req_one_access
 
 	setup_device()
-	if(mapload && . != INITIALIZE_HINT_QDEL && SSnetdm_observe?.doors?.mapped_button_channel(src))
-		SSnetdm_observe.doors.prewarm_buttons += WEAKREF(src)
+	if(mapload && . != INITIALIZE_HINT_QDEL)
+		SSnetdm_observe?.doors?.queue_mapped_button(src)
 
 
 /obj/machinery/button/update_icon()

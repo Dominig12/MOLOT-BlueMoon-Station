@@ -21,6 +21,7 @@
  * The instance name joins the frequency and the id_tag, the same pair that links them on the radio.
  */
 /datum/netdm_telemetry_shadow
+	parent_type = /datum/netdm_integration
 	/// "instance/tick" -> report record, in creation order.
 	var/list/reports = list()
 	/// End-to-end latencies of matched deliveries, microseconds, newest last.
@@ -52,7 +53,7 @@
 	/// Latest mismatches, for diagnostics.
 	var/list/mismatches = list()
 
-/datum/netdm_telemetry_shadow/proc/setup(datum/netdm_service_lane/lane)
+/datum/netdm_telemetry_shadow/setup(datum/netdm_service_lane/lane)
 	lane.dispatcher.allow("atmos.sample", new /datum/netdm_effect_handler/atmos_shadow)
 	lane.dispatcher.allow_command("atmos.telemetry", "sample", new /datum/netdm_command_handler/atmos_sample)
 	lane.dispatcher.allow_result("sample", new /datum/netdm_effect_handler/atmos_snapshot)
@@ -61,7 +62,7 @@
 	lane.dispatcher.allow_command("atmos.alarm", "set_alert", new /datum/netdm_command_handler/atmos_set_alert)
 	lane.dispatcher.allow_result("set_alert", new /datum/netdm_effect_handler/atmos_alert_set, "atmos.alarm")
 
-/datum/netdm_telemetry_shadow/proc/reset_session()
+/datum/netdm_telemetry_shadow/reset_session()
 	// Deliveries of the old session will never arrive: those reports are not compared.
 	reports.Cut()
 	reason_cache.Cut()
@@ -226,7 +227,7 @@
 		samples.Cut(1, 2)
 
 /// Compares settled reports and asks consoles that subscribed for a snapshot. Called every fire.
-/datum/netdm_telemetry_shadow/proc/tick()
+/datum/netdm_telemetry_shadow/tick()
 	while(length(reports))
 		var/list/report = reports[reports[1]]
 		if(world.time < report["created"] + NETDM_TELEMETRY_SETTLE)

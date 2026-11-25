@@ -14,28 +14,13 @@
 #define NETDM_DOORS_PREWARM_BATCH 8
 
 /**
- * Buttons and doors in Shadow mode (P9.1). Mapped station buttons and their tagged doors join in batches
- * after the first network snapshot. Built or reconfigured controls also join at the first press if needed.
- * A press keeps its legacy effect: the controller finds its doors by
- * ID across the station and acts at once. Besides, the button sends each of those doors the command set_state
- * over the network with the state that press gives it: open or closed, and for an airlock controller the bolts,
- * ID scanner, shock and safety it leaves. The values are absolute, never a toggle, so a retry or a duplicate
- * cannot flip a door back. In Shadow the door only records the arrival and answers its current state with the
- * reason "shadow". Each (press, door) is then compared: reached over the network, or missed with the Host's
- * reason; and whether the legacy door ended where the press put it.
- *
- * Authoritative mode (NETDM_DOOR_MODE=authoritative, or set_authoritative()): the press no longer moves its doors
- * itself. It plans the absolute state each door should take (open or closed, and for an airlock controller where
- * its toggles of bolts, scanner, shock and safety lead), and a door takes it when the command reaches it over the
- * network. A door the network does not reach stays as it was; a door that cannot do part of it (cut bolt wires,
- * no power) answers with the reason. Presses that are compatibility exceptions keep the legacy path in both modes.
- *
- * Compatibility exceptions, counted but not mirrored: a controller outside a button (in an assembly or a hand),
- * an airlock controller without functions, a press of more than NETDM_DOORS_FANOUT doors. Mass drivers,
- * igniters, flashers and the other controllers keep the legacy path without a mirror.
+ * Mapped buttons and their tagged doors join in batches after the first network snapshot.
+ * A controller plans an absolute state for each door. This datum owns admission, transport,
+ * deduplication and receipts. The receiving door applies the plan after delivery.
  */
 /datum/netdm_door_shadow
-	/// NETDM_DOOR_MODE=authoritative, or set_authoritative() at runtime: doors move only by network command.
+	parent_type = /datum/netdm_integration
+	/// Doors move only by network command. The flag also labels the recorded outcome.
 	var/authoritative = TRUE
 	/// Door weakref -> its instance door.<endpoint>, and back.
 	var/list/instances = list()
@@ -62,9 +47,11 @@
 	var/list/round_trips = list()
 	var/list/notes = list()
 
-/datum/netdm_door_shadow/proc/setup(datum/netdm_service_lane/lane)
+/datum/netdm_door_shadow/setup(datum/netdm_service_lane/lane)
 	lane.dispatcher.allow_command("machine.door", "set_state", new /datum/netdm_command_handler/door_set_state)
 	lane.dispatcher.allow_result("set_state", new /datum/netdm_effect_handler/door_state, "machine.door")
+	lane.dispatcher.allow_command("machine.door", "control", new /datum/netdm_command_handler/airlock_panel)
+	lane.dispatcher.allow_result("control", new /datum/netdm_effect_handler/airlock_panel, "machine.door")
 	// Machine control is always a network command, not a second legacy path.
 
 /// Switches who moves the doors. A command keeps the mode of the press that sent it.
@@ -72,7 +59,7 @@
 	// Retained for old callers: switching back to a bypass is not supported.
 	return !!enabled
 
-/datum/netdm_door_shadow/proc/reset_session()
+/datum/netdm_door_shadow/reset_session()
 	// Receipts of the old session never arrive; those presses are compared with what arrived so far.
 	operations.Cut()
 
@@ -90,8 +77,10 @@
 
 /// A door is a fixed node offering door.<endpoint>. Returns the instance.
 /datum/netdm_door_shadow/proc/add_door(obj/machinery/door/door)
+	if(QDELETED(door))
+		return null
 	var/datum/weakref/door_ref = WEAKREF(door)
-	if(instances[door_ref] || QDELETED(door))
+	if(instances[door_ref])
 		return instances[door_ref]
 	var/datum/component/netdm_node/node = device_node(door)
 	var/datum/netdm_service_endpoint/endpoint = node ? SSnetdm_observe.services?.endpoint_for(node) : null
@@ -101,11 +90,13 @@
 	SSnetdm_observe.services.offer(node, instance, "machine.door", "machine.door_set", 1)
 	instances[door_ref] = instance
 	by_instance[instance] = door_ref
+	RegisterSignal(door, COMSIG_PARENT_QDELETING, PROC_REF(on_door_deleted))
 	return instance
 
-/// The door is gone; its node leaves with it, the lane drops the endpoint then.
-/datum/netdm_door_shadow/proc/remove_door(obj/machinery/door/door)
-	var/datum/weakref/door_ref = WEAKREF(door)
+/// The component drops the endpoint. Remove the matching door entries before Destroy clears the weak reference.
+/datum/netdm_door_shadow/proc/on_door_deleted(obj/machinery/door/door)
+	SIGNAL_HANDLER
+	var/datum/weakref/door_ref = door.weak_reference
 	var/instance = instances[door_ref]
 	if(instance)
 		instances -= door_ref
@@ -127,24 +118,15 @@
 
 /datum/netdm_door_shadow/proc/mapped_button_channel(obj/machinery/button/button)
 	var/obj/item/assembly/control/control = button.device
-	if(!istype(control) || !control.id)
-		return null
-	if(control.type == /obj/item/assembly/control)
-		return "blast:[control.id]"
-	if(control.type == /obj/item/assembly/control/airlock)
-		var/obj/item/assembly/control/airlock/airlock_control = control
-		if(airlock_control.specialfunctions & (OPEN|IDSCAN|BOLTS|SHOCK|SAFE))
-			return "airlock:[control.id]"
-	return null
+	return istype(control) ? control.netdm_mapped_channel() : null
 
-/datum/netdm_door_shadow/proc/mapped_door_channel(obj/machinery/door/door)
-	if(istype(door, /obj/machinery/door/airlock))
-		var/obj/machinery/door/airlock/airlock = door
-		return airlock.id_tag ? "airlock:[airlock.id_tag]" : null
-	if(istype(door, /obj/machinery/door/poddoor))
-		var/obj/machinery/door/poddoor/blast = door
-		return blast.id ? "blast:[blast.id]" : null
-	return null
+/datum/netdm_door_shadow/proc/queue_mapped_button(obj/machinery/button/button)
+	if(mapped_button_channel(button))
+		prewarm_buttons += WEAKREF(button)
+
+/datum/netdm_door_shadow/proc/queue_mapped_door(obj/machinery/door/door)
+	if(door.netdm_control_channel())
+		prewarm_doors += WEAKREF(door)
 
 /datum/netdm_door_shadow/proc/tick_prewarm()
 	if(!SSnetdm_observe.published)
@@ -167,68 +149,33 @@
 		var/obj/machinery/door/door = door_ref.resolve()
 		if(!door || !door.anchored || !isturf(door.loc) || !is_station_level(door.z) || is_antag_training_atom(door))
 			continue
-		var/channel = mapped_door_channel(door)
+		var/channel = door.netdm_control_channel()
 		if(channel && prewarm_channels[channel])
 			add_door(door)
 
 // ---- Legacy side -----------------------------------------------------------------------------
 
-/**
- * The doors a controller acts on and the state this press gives each, found the legacy way before it acts:
- * the open-or-close decision depends on the doors as they are now. Null when the press is not mirrored.
- * GLOB.airlocks holds every door, blast doors too, in the order GLOB.machines has them.
- */
+/// Admit a button press and let its controller produce the commands.
 /datum/netdm_door_shadow/proc/plan(obj/item/assembly/control/control)
 	counters["presses"]++
 	var/obj/machinery/button/button = control.loc
 	if(!istype(button) || !add_button(button))
 		return exception("not_button")
-	var/list/doors = list()
-	var/functions = 0
-	if(istype(control, /obj/item/assembly/control/airlock))
-		var/obj/item/assembly/control/airlock/airlock_control = control
-		functions = airlock_control.specialfunctions & (OPEN|IDSCAN|BOLTS|SHOCK|SAFE)
-		if(!functions)
-			return exception("no_function")
-		var/close = FALSE
-		for(var/obj/machinery/door/airlock/door in GLOB.airlocks)
-			if(door.id_tag == control.id)
-				doors[door] = list()
-				if((functions & OPEN) && !door.density)
-					close = TRUE
-				if(authoritative)
-					// The legacy press toggles these; the command carries where each toggle leads, as absolute values.
-					if(functions & BOLTS)
-						doors[door]["bolted"] = door.locked ? FALSE : TRUE
-					if(functions & IDSCAN)
-						doors[door]["id_scan"] = door.aiDisabledIdScanner ? TRUE : FALSE
-					if(functions & SHOCK)
-						doors[door]["shocked"] = door.secondsElectrified ? FALSE : TRUE
-					if(functions & SAFE)
-						doors[door]["safety"] = door.safe ? FALSE : TRUE
-		if(functions & OPEN)
-			for(var/door in doors)
-				doors[door]["state"] = close ? "closed" : "open"
-	else
-		var/openclose
-		for(var/obj/machinery/door/poddoor/door in GLOB.airlocks)
-			if(door.id == control.id)
-				if(isnull(openclose) || !control.sync_doors)
-					openclose = door.density
-				doors[door] = list("state" = openclose ? "open" : "closed")
+	var/list/doors = control.netdm_plan_doors(authoritative)
+	if(isnull(doors))
+		return exception("no_function")
 	if(!length(doors))
 		return exception("no_doors")
 	if(length(doors) > NETDM_DOORS_FANOUT)
 		return exception("fanout")
-	return list("button" = button, "doors" = doors, "functions" = functions)
+	return list("button" = button, "doors" = doors)
 
 /datum/netdm_door_shadow/proc/exception(name)
 	counters["exceptions"]++
 	exceptions[name]++
 	return null
 
-/// The legacy controller acted. Each of its doors gets the command over the network; an airlock controller's
-/// bolts, scanner, shock and safety are read as the legacy press left them.
+/// Submit the controller's absolute state for each admitted door.
 /datum/netdm_door_shadow/proc/mirror(list/plan)
 	var/obj/machinery/button/button = plan["button"]
 	var/datum/component/netdm_node/node = button.GetComponent(/datum/component/netdm_node)
@@ -245,22 +192,11 @@
 	record["started_rt"] = REALTIMEOFDAY
 	record["queued"] = list()
 	record["cold"] = list()
-	var/functions = plan["functions"]
 	var/list/doors = plan["doors"]
 	for(var/obj/machinery/door/door as anything in doors)
 		if(QDELETED(door))
 			continue
 		var/list/wanted = doors[door]
-		if(functions && !authoritative)
-			var/obj/machinery/door/airlock/airlock = door
-			if(functions & BOLTS)
-				wanted["bolted"] = airlock.locked ? TRUE : FALSE
-			if(functions & IDSCAN)
-				wanted["id_scan"] = airlock.aiDisabledIdScanner ? FALSE : TRUE
-			if(functions & SHOCK)
-				wanted["shocked"] = airlock.secondsElectrified ? TRUE : FALSE
-			if(functions & SAFE)
-				wanted["safety"] = airlock.safe ? TRUE : FALSE
 		var/instance = instances[WEAKREF(door)] || add_door(door)
 		if(!instance)
 			continue
@@ -340,57 +276,78 @@
 		counters["duplicates"]++
 		first = FALSE
 	if(!record["authoritative"])
-		return list("result" = door_state(door, press, FALSE, "shadow"))
+		return list("result" = door.netdm_control_state(press, FALSE, "shadow"))
 	if(!first)
-		return list("result" = door_state(door, press, FALSE, "duplicate")) // The first arrival already applied it.
+		return list("result" = door.netdm_control_state(press, FALSE, "duplicate"))
 	var/datum/weakref/user_ref = record?["user"]
-	return list("result" = apply(door, record["wanted"][instance], user_ref?.resolve(), press))
+	return list("result" = door.netdm_apply_controls(record["wanted"][instance], user_ref?.resolve(), press))
+
+/obj/machinery/door/proc/netdm_control_channel()
+	return null
+
+/obj/machinery/door/airlock/netdm_control_channel()
+	return id_tag ? "airlock:[id_tag]" : null
+
+/obj/machinery/door/poddoor/netdm_control_channel()
+	return id ? "blast:[id]" : null
+
+/// Sample the requested controls. An authoritative button toggles them when it builds its absolute command.
+/obj/machinery/door/airlock/proc/netdm_control_values(functions, toggle)
+	. = list()
+	if(functions & BOLTS)
+		.["bolted"] = (!!locked != !!toggle)
+	if(functions & IDSCAN)
+		.["id_scan"] = (!aiDisabledIdScanner != !!toggle)
+	if(functions & SHOCK)
+		.["shocked"] = (!!secondsElectrified != !!toggle)
+	if(functions & SAFE)
+		.["safety"] = (!!safe != !!toggle)
 
 /// Authoritative: the door takes the absolute state the command carries. What it cannot do is named in the reason.
-/datum/netdm_door_shadow/proc/apply(obj/machinery/door/door, list/payload, mob/user, press)
-	var/list/refused = list()
-	var/changed = FALSE
-	if(istype(door, /obj/machinery/door/airlock))
-		var/obj/machinery/door/airlock/airlock = door
-		if(!isnull(payload["bolted"]) && airlock.locked != !!payload["bolted"])
-			if(airlock.wires.is_cut(WIRE_BOLTS) || !airlock.hasPower())
-				refused += "bolts"
-			else
-				airlock.locked = !!payload["bolted"]
-				airlock.update_icon()
-				changed = TRUE
-				if(user)
-					airlock.log_remote_use(user, airlock.locked ? "bolted" : "unbolted", "network button")
-		if(!isnull(payload["id_scan"]) && airlock.aiDisabledIdScanner != !payload["id_scan"])
-			airlock.aiDisabledIdScanner = !payload["id_scan"]
-			changed = TRUE
-		if(!isnull(payload["shocked"]) && !!airlock.secondsElectrified != !!payload["shocked"])
-			airlock.secondsElectrified = payload["shocked"] ? -1 : 0
-			changed = TRUE
-			if(payload["shocked"] && user)
-				log_combat(user, airlock, "electrified")
-		if(!isnull(payload["safety"]) && airlock.safe != !!payload["safety"])
-			airlock.safe = !!payload["safety"]
-			changed = TRUE
+/obj/machinery/door/proc/netdm_apply_controls(list/payload, mob/user, press, changed = FALSE, reason)
 	var/wanted_state = payload["state"]
-	if(wanted_state == "open" && door.density)
-		INVOKE_ASYNC(door, TYPE_PROC_REF(/obj/machinery/door, open))
+	if(wanted_state == "open" && density)
+		INVOKE_ASYNC(src, PROC_REF(open))
 		changed = TRUE
-	else if(wanted_state == "closed" && !door.density)
-		INVOKE_ASYNC(door, TYPE_PROC_REF(/obj/machinery/door, close))
+	else if(wanted_state == "closed" && !density)
+		INVOKE_ASYNC(src, PROC_REF(close))
 		changed = TRUE
 	if(user && wanted_state)
-		door.log_remote_use(user, wanted_state == "open" ? "opened" : "closed", "network button")
-	return door_state(door, press, changed, length(refused) ? "refused_[jointext(refused, "+")]" : null)
+		log_remote_use(user, wanted_state == "open" ? "opened" : "closed", "network button")
+	return netdm_control_state(press, changed, reason)
 
-/datum/netdm_door_shadow/proc/door_state(obj/machinery/door/door, press, changed, reason)
-	var/list/state = list("press" = press, "state" = door.density ? "closed" : "open", "changed" = changed ? TRUE : FALSE)
-	if(istype(door, /obj/machinery/door/airlock))
-		var/obj/machinery/door/airlock/airlock = door
-		state["bolted"] = airlock.locked ? TRUE : FALSE
+/obj/machinery/door/airlock/netdm_apply_controls(list/payload, mob/user, press, changed = FALSE, reason)
+	if(!isnull(payload["bolted"]) && locked != !!payload["bolted"])
+		if(wires.is_cut(WIRE_BOLTS) || !hasPower())
+			reason = "refused_bolts"
+		else
+			locked = !!payload["bolted"]
+			update_icon()
+			changed = TRUE
+			if(user)
+				log_remote_use(user, locked ? "bolted" : "unbolted", "network button")
+	if(!isnull(payload["id_scan"]) && aiDisabledIdScanner != !payload["id_scan"])
+		aiDisabledIdScanner = !payload["id_scan"]
+		changed = TRUE
+	if(!isnull(payload["shocked"]) && !!secondsElectrified != !!payload["shocked"])
+		secondsElectrified = payload["shocked"] ? -1 : 0
+		changed = TRUE
+		if(payload["shocked"] && user)
+			log_combat(user, src, "electrified")
+	if(!isnull(payload["safety"]) && safe != !!payload["safety"])
+		safe = !!payload["safety"]
+		changed = TRUE
+	return ..(payload, user, press, changed, reason)
+
+/obj/machinery/door/proc/netdm_control_state(press, changed, reason)
+	var/list/state = list("press" = press, "state" = density ? "closed" : "open", "changed" = changed ? TRUE : FALSE)
 	if(reason)
 		state["reason"] = reason
 	return state
+
+/obj/machinery/door/airlock/netdm_control_state(press, changed, reason)
+	. = ..()
+	.["bolted"] = locked ? TRUE : FALSE
 
 /// The door's answer came back to the button over the network.
 /datum/netdm_door_shadow/proc/receipt(atom/button, list/item)
@@ -410,7 +367,7 @@
 
 // ---- Comparison ------------------------------------------------------------------------------
 
-/datum/netdm_door_shadow/proc/tick()
+/datum/netdm_door_shadow/tick()
 	tick_prewarm()
 	if(length(warming))
 		var/now = REALTIMEOFDAY
@@ -449,7 +406,7 @@
 		var/obj/machinery/door/door = door_ref.resolve()
 		if(!door || !wanted)
 			continue
-		var/list/now = door_state(door, null, FALSE, null)
+		var/list/now = door.netdm_control_state(null, FALSE, null)
 		var/list/differs = list()
 		if(wanted["state"] && wanted["state"] != now["state"])
 			differs += "state"
@@ -548,6 +505,63 @@
 	if(!SSnetdm_observe.doors)
 		return "no_doors"
 	return SSnetdm_observe.doors.receipt(target, item)
+
+/// The receipt confirms queueing. Opening and closing can yield during the actual animation.
+/datum/netdm_command_handler/airlock_panel/execute(datum/target, list/item)
+	var/obj/machinery/door/airlock/door = target
+	if(!istype(door))
+		return "unsupported_command"
+	var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe?.diagnostics
+	var/list/payload = item["payload"]
+	var/list/request = diagnostics?.claim_machine_action(item, door, payload, "door", "action")
+	var/datum/weakref/operator_ref = request?["operator"]
+	if(!request || !door.netdm_panel_allowed(operator_ref?.resolve()))
+		return "access_denied"
+	INVOKE_ASYNC(diagnostics, TYPE_PROC_REF(/datum/netdm_diagnostics, run_airlock_panel_action), request)
+	return list("result" = list("ticket" = payload["ticket"], "accepted" = TRUE))
+
+/datum/netdm_diagnostics/proc/run_airlock_panel_action(list/request)
+	if(!machine_action_window(request))
+		return
+	var/datum/weakref/target_ref = request["target"]
+	var/datum/weakref/operator_ref = request["operator"]
+	var/obj/machinery/door/airlock/door = target_ref?.resolve()
+	var/mob/living/operator = operator_ref?.resolve()
+	if(!door?.netdm_panel_allowed(operator))
+		request["door_outcome"] = "rejected"
+		request["door_reason"] = door ? "access_denied" : "door_gone"
+	else
+		var/was_open = !door.density
+		var/was_bolted = !!door.locked
+		var/applied = door.apply_panel_action(request["action"], operator, operator, "netDM control panel")
+		if(QDELETED(door))
+			request["door_outcome"] = "rejected"
+			request["door_reason"] = "door_gone"
+		else
+			request["door_open"] = !door.density
+			request["door_bolted"] = !!door.locked
+			request["changed"] = was_open != request["door_open"] || was_bolted != request["door_bolted"]
+			request["door_outcome"] = applied ? "applied" : "rejected"
+			request["door_reason"] = applied ? null : "door_blocked"
+	finish_airlock_panel_action(request)
+
+/datum/netdm_effect_handler/airlock_panel/apply(datum/target, list/item)
+	SSnetdm_observe?.diagnostics?.airlock_panel_received(item)
+	return TRUE
+
+/datum/netdm_diagnostics/proc/airlock_panel_received(list/item)
+	var/list/request = machine_action_receipt(item, "door")
+	var/list/payload = item["payload"]
+	if(!request || !payload?["accepted"])
+		return
+	request["receipt_received"] = TRUE
+	finish_airlock_panel_action(request)
+
+/datum/netdm_diagnostics/proc/finish_airlock_panel_action(list/request)
+	if(!request["receipt_received"] || !request["door_outcome"])
+		return
+	var/datum/netdm_space/window = machine_action_window(request)
+	window?.finish_machine_command(request["door_outcome"], request["door_reason"])
 
 #undef NETDM_DOORS_SETTLE
 #undef NETDM_DOORS_ATTACH

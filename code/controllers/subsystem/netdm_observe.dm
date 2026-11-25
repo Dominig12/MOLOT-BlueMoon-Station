@@ -9,6 +9,16 @@
 /// A fire above this share of a tick is logged with the timeline of its sections.
 #define NETDM_SLOW_FIRE 50
 
+/// Adapter lifecycle for the game features using the service lane.
+/datum/netdm_integration/proc/setup(datum/netdm_service_lane/lane)
+	return
+
+/datum/netdm_integration/proc/reset_session()
+	return
+
+/datum/netdm_integration/proc/tick()
+	return
+
 SUBSYSTEM_DEF(netdm_observe)
 	name = "netDM Network"
 	wait = 1
@@ -108,6 +118,8 @@ SUBSYSTEM_DEF(netdm_observe)
 	var/list/fire_marks = list()
 	/// Service control plane of the session: endpoints, services, subscriptions and the inbox.
 	var/datum/netdm_service_lane/services
+	/// Feature adapters run in registration order for both session resets and processing.
+	var/list/integrations = list()
 	/// atmos.telemetry pilot in Shadow mode: radio and netDM recipients compared report by report.
 	var/datum/netdm_telemetry_shadow/telemetry
 	/// research.server pilot in Shadow mode: R&D servers keep their storage in the Host ledger.
@@ -133,20 +145,24 @@ SUBSYSTEM_DEF(netdm_observe)
 		flags &= ~SS_NO_FIRE
 		// Devices declare their services while atoms initialize, before this subsystem does.
 		services = new
+		integrations.Cut()
 		telemetry = new
-		telemetry.setup(services)
+		register_integration(telemetry)
 		research = new
-		research.setup(services)
+		register_integration(research)
 		messenger = new
-		messenger.setup(services)
+		register_integration(messenger)
 		radio = new
-		radio.setup(services)
+		register_integration(radio)
 		doors = new
-		doors.setup(services)
+		register_integration(doors)
 		diagnostics = new
-		diagnostics.setup(services)
-		services.dispatcher.allow_command("camera.access", "acquire", new /datum/netdm_command_handler/camera_acquire)
-		services.dispatcher.allow_result("acquire", new /datum/netdm_effect_handler/camera_acquired, "camera.access")
+		register_integration(diagnostics)
+		register_integration(new /datum/netdm_integration/camera_access)
+
+/datum/controller/subsystem/netdm_observe/proc/register_integration(datum/netdm_integration/integration)
+	integrations += integration
+	integration.setup(services)
 
 /datum/controller/subsystem/netdm_observe/Initialize(start_timeofday)
 	if(flags & SS_NO_FIRE)
@@ -210,15 +226,11 @@ SUBSYSTEM_DEF(netdm_observe)
 	apc_states.Cut()
 	next_apc_state_check = 0
 	services?.reset_session()
-	telemetry?.reset_session()
 	// P13: the Host session owns the network population: a new session seeds it again.
 	life_seeded = FALSE
 	life_waiting = FALSE
-	research?.reset_session()
-	messenger?.reset_session()
-	radio?.reset_session()
-	doors?.reset_session()
-	diagnostics?.reset_session()
+	for(var/datum/netdm_integration/integration as anything in integrations)
+		integration.reset_session()
 	pending_view = null
 	views.Cut()
 	removed_node_ids.Cut()
@@ -574,12 +586,8 @@ SUBSYSTEM_DEF(netdm_observe)
 			services.accept(reply)
 		if(published && services.pump(bridge) < 0)
 			return
-		telemetry?.tick()
-		research?.tick()
-		messenger?.tick()
-		radio?.tick()
-		doors?.tick()
-		diagnostics?.tick()
+		for(var/datum/netdm_integration/integration as anything in integrations)
+			integration.tick()
 		mark("services")
 
 	if(pending)

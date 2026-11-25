@@ -77,7 +77,7 @@
 		if(QDELETED(terminal))
 			terminal_listeners -= observer
 		else
-			SStgui.update_uis(terminal)
+			terminal.update_workspace()
 	return TRUE
 
 /datum/netdm_service_endpoint/proc/observe_terminal(datum/netdm_terminal/terminal)
@@ -97,6 +97,19 @@
  * allowlisted dispatcher. Everything is rebuilt after a new session.
  */
 /datum/netdm_service_lane
+	/// The request's local kind selects how its reply is applied. Wire replies cannot select a method.
+	var/static/list/reply_handlers = list(
+		"ack" = PROC_REF(accept_ack),
+		"detach" = PROC_REF(accept_detach),
+		"attach" = PROC_REF(accept_attach),
+		"register" = PROC_REF(accept_registration),
+		"subscribe" = PROC_REF(accept_subscription),
+		"publish" = PROC_REF(accept_submission),
+		"invoke" = PROC_REF(accept_submission),
+		"status" = PROC_REF(accept_callback),
+		"control" = PROC_REF(accept_callback),
+		"poll" = PROC_REF(accept_poll),
+	)
 	var/datum/netdm_endpoint_registry/weak/registry = new
 	var/datum/netdm_effect_dispatcher/dispatcher = new
 	/// endpoint ID -> /datum/netdm_service_endpoint
@@ -147,7 +160,7 @@
 	if(endpoint)
 		return !domain || endpoint.domain == domain ? endpoint : null
 	// The Host can keep a presence between connections. A new player session must never inherit its key.
-	var/id_prefix = istype(node, /datum/netdm_apc_operator) ? "p-[rustg_generate_uuid_v4()]-" : null
+	var/id_prefix = istype(node, /datum/netdm_terminal_operator) ? "p-[rustg_generate_uuid_v4()]-" : null
 	var/id = registry.register(owner_of(node), id_prefix)
 	if(!id)
 		return null
@@ -248,7 +261,7 @@
 	var/datum/netdm_service_endpoint/endpoint = by_node[node]
 	if(!endpoint)
 		return
-	if(istype(node, /datum/netdm_apc_operator))
+	if(istype(node, /datum/netdm_terminal_operator))
 		var/list/setup = inflight[endpoint.busy]
 		if(endpoint.attached_node || setup?["op"] == "attach")
 			pending_detaches[endpoint.id] = endpoint.generation
@@ -294,7 +307,7 @@
 	for(var/id in endpoints)
 		var/datum/netdm_service_endpoint/endpoint = endpoints[id]
 		var/datum/node = endpoint.node
-		if((istype(node, /obj/machinery/power/apc) || istype(node, /datum/netdm_apc_operator)) && endpoint.attached_node != node_id(node))
+		if((istype(node, /obj/machinery/power/apc) || istype(node, /datum/netdm_terminal_operator)) && endpoint.attached_node != node_id(node))
 			unsettled[id] = TRUE
 
 /// True while the instance of this node can publish in the current session.
@@ -381,15 +394,14 @@
 		endpoint.busy = null
 		unsettled[id] = TRUE
 
-/// Node wire ID acknowledged by the Host, or null while it is not in the network. APC operators
-/// share their APC's published wire ID and keep their own endpoint IDs.
+/// Node wire ID acknowledged by the Host, or null while it is not in the network.
+/// Operators keep their own endpoint IDs on the physical device's published wire ID.
 /datum/netdm_service_lane/proc/node_id(datum/node)
 	if(istype(node, /obj/machinery/power/apc))
 		return SSnetdm_observe.apc_node_id(node)
-	var/datum/netdm_apc_operator/operator = node
+	var/datum/netdm_terminal_operator/operator = node
 	if(istype(operator))
-		var/obj/machinery/power/apc/apc = operator.apc_ref?.resolve()
-		return apc ? SSnetdm_observe.apc_node_id(apc) : null
+		return operator.wire_node()
 	return SSnetdm_observe.node_facts[node] ? SSnetdm_observe.node_ids[node] : null
 
 /// Leave one slot for each inbox operation that isn't in flight. Commands and bulk work share the rest.
@@ -601,69 +613,83 @@
 	// Its next step, if any, is taken in the next pass.
 	if(endpoint)
 		unsettled[endpoint.id] = TRUE
-	var/ok = reply["ok"]
-	var/error = reply["error"]
-	switch(op["op"])
-		if("ack")
-			ack_inflight = FALSE
-		if("detach")
-			if(!ok && error != "unknown_endpoint" && error != "stale_generation")
-				pending_detaches[op["id"]] = op["generation"]
-		if("attach")
-			if(ok)
-				endpoint.attached_node = op["node"]
-				// Programs kept on the device's media start again: after a new session or a new generation.
-				SSnetdm_observe.diagnostics?.endpoint_attached(endpoint.node)
-		if("register")
-			if(ok)
-				endpoint.registered[op["instance"]] = TRUE
-				endpoint.acknowledged_at[op["instance"]] = op["sent_at"]
-				// Subscribers waiting out a retry delay for this instance ask now.
-				provider_changed(op["instance"])
-			else
-				refuse(endpoint, op["instance"], error)
-		if("subscribe")
-			var/key = op["key"]
-			if(op["epoch"] != provider_epochs[op["instance"]])
-				// The provider changed while this request was in flight: the answer may be outdated either way,
-				// a confirmation as much as unknown_service. The subscription is asked again at once.
-				endpoint.retry_delay -= key
-			else if(ok)
-				endpoint.subscribed[key] = TRUE
-				endpoint.retry_delay -= key
-				var/list/result = reply["result"]
-				// A duplicate confirms the subscription that was in place since its first request.
-				if(!(islist(result) && result["status"] == "duplicate" && !isnull(endpoint.acknowledged_at[key])))
-					endpoint.acknowledged_at[key] = op["sent_at"]
-			else if(error == "unknown_service" || error == "unknown_endpoint")
-				var/delay = endpoint.retry_delay[key] ? min(endpoint.retry_delay[key] * 2, NETDM_LANE_SUBSCRIBE_RETRY_MAX) : NETDM_LANE_SUBSCRIBE_RETRY
-				endpoint.retry_delay[key] = delay
-				endpoint.retry_at[key] = world.time + delay
-			else
-				refuse(endpoint, key, error)
-		if("publish", "invoke")
-			var/list/entry = op["entry"]
-			entry["accepted_us"] = netdm_now_us()
-			var/datum/callback/on_accept = entry["callback"]
-			on_accept?.Invoke(entry, reply)
-		if("status", "control")
-			var/datum/callback/on_reply = op["callback"]
-			on_reply?.Invoke(reply)
-		if("poll")
-			poll_inflight = FALSE
-			var/list/page = reply["result"]
-			if(ok && islist(page))
-				var/list/acks = dispatcher.handle_page(page, registry)
-				counters["items"] += length(page["items"])
-				// A command delivered to a provider is answered, and its result comes back soon.
-				if(length(page["items"]))
-					hot_until = max(hot_until, world.time + NETDM_LANE_HOT)
-				pending_acks += acks
-				counters["acks"] += length(acks)
-				// More is waiting: poll again without the cadence pause.
-				if(text2num(page["pending"]) > 0)
-					next_poll = 0
+	var/handler = reply_handlers[op["op"]]
+	if(handler)
+		call(src, handler)(op, endpoint, reply)
 	return TRUE
+
+/datum/netdm_service_lane/proc/accept_ack(list/op, datum/netdm_service_endpoint/endpoint, list/reply)
+	ack_inflight = FALSE
+
+/datum/netdm_service_lane/proc/accept_detach(list/op, datum/netdm_service_endpoint/endpoint, list/reply)
+	var/error = reply["error"]
+	if(!reply["ok"] && error != "unknown_endpoint" && error != "stale_generation")
+		pending_detaches[op["id"]] = op["generation"]
+
+/datum/netdm_service_lane/proc/accept_attach(list/op, datum/netdm_service_endpoint/endpoint, list/reply)
+	if(!reply["ok"])
+		return
+	endpoint.attached_node = op["node"]
+	SEND_SIGNAL(src, COMSIG_NETDM_ENDPOINT_ATTACHED, endpoint.node)
+
+/datum/netdm_service_lane/proc/accept_registration(list/op, datum/netdm_service_endpoint/endpoint, list/reply)
+	var/instance = op["instance"]
+	if(!reply["ok"])
+		refuse(endpoint, instance, reply["error"])
+		return
+	endpoint.registered[instance] = TRUE
+	endpoint.acknowledged_at[instance] = op["sent_at"]
+	// Subscribers waiting out a retry delay for this instance ask now.
+	provider_changed(instance)
+
+/datum/netdm_service_lane/proc/accept_subscription(list/op, datum/netdm_service_endpoint/endpoint, list/reply)
+	var/key = op["key"]
+	if(op["epoch"] != provider_epochs[op["instance"]])
+		// Both refusals and confirmations may refer to the previous provider. Retry at once.
+		endpoint.retry_delay -= key
+		return
+	if(reply["ok"])
+		endpoint.subscribed[key] = TRUE
+		endpoint.retry_delay -= key
+		var/list/result = reply["result"]
+		// A duplicate confirms the subscription that was in place since its first request.
+		if(!(islist(result) && result["status"] == "duplicate" && !isnull(endpoint.acknowledged_at[key])))
+			endpoint.acknowledged_at[key] = op["sent_at"]
+		return
+	var/error = reply["error"]
+	if(error == "unknown_service" || error == "unknown_endpoint")
+		var/delay = endpoint.retry_delay[key] ? min(endpoint.retry_delay[key] * 2, NETDM_LANE_SUBSCRIBE_RETRY_MAX) : NETDM_LANE_SUBSCRIBE_RETRY
+		endpoint.retry_delay[key] = delay
+		endpoint.retry_at[key] = world.time + delay
+		return
+	refuse(endpoint, key, error)
+
+/datum/netdm_service_lane/proc/accept_submission(list/op, datum/netdm_service_endpoint/endpoint, list/reply)
+	var/list/entry = op["entry"]
+	entry["accepted_us"] = netdm_now_us()
+	var/datum/callback/on_accept = entry["callback"]
+	on_accept?.Invoke(entry, reply)
+
+/datum/netdm_service_lane/proc/accept_callback(list/op, datum/netdm_service_endpoint/endpoint, list/reply)
+	var/datum/callback/on_reply = op["callback"]
+	on_reply?.Invoke(reply)
+
+/datum/netdm_service_lane/proc/accept_poll(list/op, datum/netdm_service_endpoint/endpoint, list/reply)
+	poll_inflight = FALSE
+	var/list/page = reply["result"]
+	if(!reply["ok"] || !islist(page))
+		return
+	var/list/acks = dispatcher.handle_page(page, registry)
+	var/count = length(page["items"])
+	counters["items"] += count
+	// A command delivered to a provider is answered, and its result comes back soon.
+	if(count)
+		hot_until = max(hot_until, world.time + NETDM_LANE_HOT)
+	pending_acks += acks
+	counters["acks"] += length(acks)
+	// More is waiting: poll again without the cadence pause.
+	if(text2num(page["pending"]) > 0)
+		next_poll = 0
 
 /datum/netdm_service_lane/proc/refuse(datum/netdm_service_endpoint/endpoint, name, reason)
 	endpoint.refused[name] = reason || "refused"

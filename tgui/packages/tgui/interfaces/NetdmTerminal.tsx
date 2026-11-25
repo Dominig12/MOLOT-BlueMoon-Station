@@ -1,10 +1,7 @@
 import { BooleanLike } from 'common/react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { useBackend } from '../backend';
-import { Box, Button, Dropdown, Input, NoticeBox, Section, Stack, Table } from '../components';
-import { Window } from '../layouts';
-import { NetdmHome } from './NetdmHome';
+import { Box, Button, Icon, NoticeBox, Section, Stack, Table } from '../components';
 import { NetdmScriptIDE } from './NetdmScriptIDE';
 import { SHELL_COMMANDS, tabComplete } from './netdmShell';
 
@@ -32,7 +29,7 @@ type NetworkEvent = {
   at: number;
 };
 
-type Data = {
+export type NetdmTerminalData = {
   title: string;
   events?: NetworkEvent[];
   watches?: string[];
@@ -69,6 +66,14 @@ const HELP_TOPICS = [
   { topic: 'scripts', title: 'Скрипты' },
   { topic: 'programs', title: 'Программы' },
 ];
+
+const TERMINAL_PANES = [
+  { id: 'terminal', icon: 'terminal', label: 'Терминал' },
+  { id: 'editor', icon: 'code', label: 'Редактор' },
+  { id: 'help', icon: 'question-circle', label: 'Справка' },
+] as const;
+
+type TerminalPane = typeof TERMINAL_PANES[number]['id'];
 
 const SCRIPT_EXAMPLES = {
   'Поиск серверов': 'services -type research.server | sort hops | first 3 | select instance hops',
@@ -181,10 +186,12 @@ const Help = (props: { entry?: Entry; topic: string; hasDraft: boolean; onTopic:
   onExample: (example: string) => void }) => {
   const { entry, topic, hasDraft, onTopic, onExample } = props;
   return (
-    <Section fill scrollable title="Справка"
-      buttons={HELP_TOPICS.map(item => (
-        <Button key={item.topic} selected={item.topic === topic} onClick={() => onTopic(item.topic)}>{item.title}</Button>
-      ))}>
+    <Section fill scrollable className="NetdmTerminalWorkspace__help">
+      <div className="NetdmTerminalWorkspace__helpTopics">
+        {HELP_TOPICS.map(item => (
+          <Button key={item.topic} selected={item.topic === topic} onClick={() => onTopic(item.topic)}>{item.title}</Button>
+        ))}
+      </div>
       {!entry || entry.pending ? (
         <Box color="label">Ожидание ответа по сети…</Box>
       ) : failedEntry(entry) ? (
@@ -214,10 +221,51 @@ const Help = (props: { entry?: Entry; topic: string; hasDraft: boolean; onTopic:
   );
 };
 
-const terminalSize = (simpleView: boolean, editingScript: boolean) => {
-  if (simpleView) return { width: 820, height: 650 };
-  if (editingScript) return { width: 940, height: 720 };
-  return { width: 760, height: 560 };
+const TerminalNavigation = ({ pane, onPane }: {
+  pane: TerminalPane;
+  onPane: (pane: TerminalPane) => void;
+}) => {
+  return (
+    <div className="NetdmTerminalWorkspace__tabs" role="group" aria-label="Режим работы">
+      {TERMINAL_PANES.map(({ id, icon, label }) => (
+        <button key={id} type="button" className="NetdmTerminalWorkspace__tab" data-pane={id}
+          aria-pressed={pane === id} onClick={() => onPane(id)}>
+          <Icon name={icon} />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+export const NetdmTerminalEvents = ({ data, onCommand }: {
+  data: Pick<NetdmTerminalData, 'events' | 'watches'>;
+  onCommand: (command: string) => void;
+}) => {
+  const { events = [], watches = [] } = data;
+  const watchKeys = watches.filter(key => SERVICE_NAME.test(key));
+  return (
+    <Section title="Доставленные события">
+      {watchKeys.length > 0 && (
+        <Box mb={1}>
+          <Box color="label" inline mr={1}>Подписки</Box>
+          {watchKeys.map(key => (
+            <Button key={key} icon="times" content={key} tooltip="Отписаться"
+              onClick={() => onCommand(`unwatch ${key}`)} />
+          ))}
+        </Box>
+      )}
+      {events.length === 0 && <Box color="label">Сюда поступают события сервисов, на которые вы подписались.</Box>}
+      {events.map(event => (
+        <Section key={event.delivery} title={`${event.instance} · ${event.schema}`}>
+          <Box color="label">Подписка {event.key} · Доставка {event.delivery}</Box>
+          <Box fontFamily="monospace" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+            {event.payload}{!!event.truncated && ' … (обрезано)'}
+          </Box>
+        </Section>
+      ))}
+    </Section>
+  );
 };
 
 const editorCheckState = (entries: Entry[], checkTag: number | null, checkedSource: string, script: string) => {
@@ -232,8 +280,12 @@ const editorCheckState = (entries: Entry[], checkTag: number | null, checkedSour
   };
 };
 
-export const NetdmTerminal = () => {
-  const { act, data } = useBackend<Data>();
+export const NetdmTerminalContent = ({ data, act, active = true, preset }: {
+  data: NetdmTerminalData;
+  act: (command: string, params?: Record<string, unknown>) => void;
+  active?: boolean;
+  preset?: { id: number; line: string };
+}) => {
   const [line, setLine] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(0);
@@ -241,17 +293,16 @@ export const NetdmTerminal = () => {
   const [script, setScript] = useState('');
   const [programName, setProgramName] = useState('');
   const [keepProgram, setKeepProgram] = useState(false);
-  // The device starts as a simple control panel; scripts and CLI are opt-in.
-  const [simpleView, setSimpleView] = useState(true);
-  const [editingScript, setEditingScript] = useState(false);
+  const [pane, setPane] = useState<TerminalPane>('terminal');
   const [checkedSource, setCheckedSource] = useState('');
   const [checkTag, setCheckTag] = useState<number | null>(null);
   const checkSerial = useRef(0);
-  const [helpTopic, setHelpTopic] = useState<string | null>(null);
-  const [eventView, setEventView] = useState(false);
+  const [helpTopic, setHelpTopic] = useState('');
   const commandInput = useRef<HTMLInputElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const followLog = useRef(true);
+  const handledPreset = useRef<number>(null);
+  const focusPreset = useRef(false);
   const { disk, diskNotice, loadedScript } = data;
   const loadedId = loadedScript?.id;
   const loadedSource = loadedScript?.source;
@@ -263,7 +314,7 @@ export const NetdmTerminal = () => {
   const canRun = !!script.trim() && script.length <= data.scriptLimit;
   const canRunOnce = canRun && !/^(observe|on|every)\b/.test(script.trimStart());
   const checkState = editorCheckState(data.entries, checkTag, checkedSource, script);
-  const helpEntry = helpTopic === null ? undefined : [...data.entries].reverse().find(entry => entry.line === helpLine(helpTopic));
+  const helpEntry = pane === 'help' ? [...data.entries].reverse().find(entry => entry.line === helpLine(helpTopic)) : undefined;
   // Dynamic completion pools: instances from the last `services`, nodes from the last `nodes`/`trace`.
   const completion = useMemo(() => {
     const lastWith = (pattern: RegExp, field: string) => {
@@ -285,19 +336,34 @@ export const NetdmTerminal = () => {
     const first = line.trim().split(/\s+/)[0];
     return SHELL_COMMANDS.find(command => command.name === first)?.usage ?? null;
   }, [line]);
+  const presetId = preset?.id;
+  const presetLine = preset?.line;
   useEffect(() => {
-    if (!editingScript && helpTopic === null) {
-      commandInput.current?.focus();
+    if (!active || presetId === undefined || presetLine === undefined || handledPreset.current === presetId) {
+      return;
     }
-  }, [editingScript, helpTopic]);
+    handledPreset.current = presetId;
+    focusPreset.current = true;
+    setLine(presetLine);
+    setHistoryIndex(history.length);
+    setDraft('');
+    setPane('terminal');
+  }, [active, history.length, presetId, presetLine]);
+  useEffect(() => {
+    const input = commandInput.current;
+    // Keep dock navigation on the tab rail until the map explicitly opens a draft.
+    if (active && input && focusPreset.current) {
+      input.focus();
+      focusPreset.current = false;
+    }
+  }, [active, pane, presetId]);
   useLayoutEffect(() => {
-    if (log.current && followLog.current) {
+    if (active && log.current && followLog.current) {
       log.current.scrollTop = log.current.scrollHeight;
     }
   });
 
   const run = (command: string) => {
-    setEventView(false);
     followLog.current = true;
     act('run', { line: command });
   };
@@ -326,97 +392,26 @@ export const NetdmTerminal = () => {
       setLine('');
     }
   };
-  const showTools = () => {
-    setSimpleView(false);
-    setEditingScript(false);
-    setHelpTopic(null);
-    setEventView(false);
+  const selectPane = (next: TerminalPane) => {
+    if (next === pane) return;
+    setPane(next);
+    if (next === 'help') openHelp('');
   };
-  const showEditor = () => {
-    setSimpleView(false);
-    setEditingScript(true);
-    setHelpTopic(null);
-    setEventView(false);
+  const launchScript = (action: string, params: Record<string, unknown>) => {
+    followLog.current = true;
+    act(action, params);
+    setPane('terminal');
   };
-  const showEvents = () => {
-    setSimpleView(false);
-    setEditingScript(false);
-    setHelpTopic(null);
-    setEventView(true);
-  };
-
-  const size = terminalSize(simpleView, editingScript);
 
   return (
-    <Window title={`Сетевой модуль: ${data.title}`}
-      width={size.width}
-      height={size.height}>
-      <Window.Content>
-        <Stack vertical fill>
-          <Stack.Item>
-            <Section fitted>
-              <Button icon="home" content="Обзор" selected={simpleView}
-                onClick={() => setSimpleView(true)} />
-              <Button icon="terminal" content="Инструменты"
-                selected={!simpleView && !editingScript}
-                onClick={showTools} />
-              <Button icon="code" content="Редактор"
-                selected={!simpleView && editingScript}
-                onClick={showEditor} />
-              <Button icon="project-diagram" content="Карта сети"
-                onClick={() => act('open_space')} />
-            </Section>
-          </Stack.Item>
-          {!simpleView && (
-            <Stack.Item>
-              <Section fitted>
-                <Button icon="question-circle" content="Справка" selected={helpTopic !== null}
-                  onClick={() => {
-                    if (helpTopic === null) {
-                      openHelp('');
-                    } else {
-                      setHelpTopic(null);
-                    }
-                  }} />
-                <Button icon="search" content="Сервисы"
-                  onClick={() => { setHelpTopic(null); run('services'); }} />
-                <Button icon="plug" content="API"
-                  onClick={() => { setHelpTopic(null); run('api'); }} />
-                <Button icon="list" content="Команды"
-                  onClick={() => { setHelpTopic(null); run('commands'); }} />
-                <Button icon="tachometer-alt" content="Атмосфера"
-                  onClick={() => { setHelpTopic(null); run('services -type atmos.alarm'); }} />
-                <Button icon="tasks" content="Доставка"
-                  onClick={() => { setHelpTopic(null); run('jobs'); }} />
-                <Button icon="bell" content={`События (${data.events?.length ?? 0})`}
-                  selected={eventView && helpTopic === null} onClick={() => {
-                    setHelpTopic(null);
-                    setEventView(!eventView);
-                  }} />
-                {!!data.programsEnabled && <Button icon="list" content="Программы"
-                  onClick={() => { setHelpTopic(null); run('programs'); }} />}
-              </Section>
-            </Stack.Item>
-          )}
+    <div className="NetdmTerminalWorkspace">
+      <Stack vertical fill>
+        <Stack.Item>
+          <TerminalNavigation pane={pane} onPane={selectPane} />
+        </Stack.Item>
+        {pane !== 'editor' && (
           <Stack.Item grow>
-            {simpleView ? (
-              <NetdmHome
-                title={data.title}
-                connected={!!data.connectionReady}
-                entries={data.entries}
-                events={data.events?.length ?? 0}
-                watches={data.watches?.length ?? 0}
-                watchKeys={data.watches ?? []}
-                eventFeed={data.events ?? []}
-                onDiscover={() => run('services')}
-                onAlarms={() => run('services -type atmos.alarm')}
-                onMap={() => act('open_space')}
-                onEvents={showEvents}
-                onAdvanced={showTools}
-                onInspect={command => { showTools(); run(command); }}
-                onCommand={run}
-              />
-            ) : helpTopic !== null ? (
+            {pane === 'help' ? (
               <Help
                 entry={helpEntry}
                 topic={helpTopic}
@@ -425,40 +420,14 @@ export const NetdmTerminal = () => {
                 onExample={example => {
                   setLine(example);
                   setHistoryIndex(history.length);
-                  setEditingScript(false);
-                  setHelpTopic(null);
+                  setPane('terminal');
                 }} />
-            ) : eventView ? (
-              <Section key="terminal-events" fill scrollable title="Доставленные события"
-                buttons={<Button icon="list" content="Журнал" onClick={() => setEventView(false)} />}>
-                <Box color="label" mb={1}>
-                  Здесь отображаются только события, доставленные на ваш endpoint по активным подпискам.
-                  Подписка не выполняет никаких действий с игровыми объектами.
-                </Box>
-                {(data.watches ?? []).length > 0 && (
-                  <Box mb={1}>
-                    <Box color="label" inline mr={1}>Подписки:</Box>
-                    {(data.watches ?? []).filter(key => SERVICE_NAME.test(key)).map(key => (
-                      <Button key={key} icon="times" content={key} tooltip="Отписаться"
-                        onClick={() => run(`unwatch ${key}`)} />
-                    ))}
-                  </Box>
-                )}
-                {(data.events ?? []).length === 0 && (
-                  <Box color="label">Событий пока нет. Найдите сервис и выполните watch.</Box>
-                )}
-                {(data.events ?? []).map(event => (
-                  <Section key={event.delivery} title={`${event.instance} · ${event.schema}`}>
-                    <Box color="label">Подписка: {event.key} · Доставка: {event.delivery}</Box>
-                    <Box fontFamily="monospace" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                      {event.payload}{!!event.truncated && ' … (обрезано)'}
-                    </Box>
-                  </Section>
-                ))}
-              </Section>
             ) : (
               <Section
                 key="terminal-log"
+                className="NetdmTerminalWorkspace__journal"
+                role="region"
+                aria-label="Журнал терминала"
                 fill
                 scrollable
                 scrollableRef={log}
@@ -467,84 +436,82 @@ export const NetdmTerminal = () => {
                   if (node) {
                     followLog.current = node.scrollHeight - node.scrollTop - node.clientHeight < 32;
                   }
-                }}
-                title="Журнал терминала"
-                buttons={<Button icon="eraser" tooltip="Очистить журнал" onClick={() => act('clear')} />}>
-                {data.entries.length === 0 && <Box color="label">Введите команду или откройте справку.</Box>}
+                }}>
+                {data.entries.length === 0 && <Box color="label">Ответы на команды появятся здесь.</Box>}
                 {data.entries.map(entry => (
                   <EntryView key={entry.id} entry={entry} onCommand={run}
-                    onDraft={command => { setLine(command); setEditingScript(false); setHelpTopic(null); }}
+                    onDraft={command => { setLine(command); setPane('terminal'); }}
                     onStop={program => act('stop_program', { program })} />
                 ))}
               </Section>
             )}
           </Stack.Item>
-          {!simpleView && helpTopic === null && (editingScript ? (
-            <Stack.Item>
-              <Section
-                title="Скрипт"
-                buttons={
+        )}
+        {pane === 'editor' && (
+          <Stack.Item grow>
+            <Section scrollable fill className="NetdmTerminalWorkspace__editor">
+              <NetdmScriptIDE
+                key={loadedId}
+                source={script}
+                onChange={setScript}
+                limit={data.scriptLimit}
+                pool={completion}
+                check={checkState}
+                actions={
                   <>
                     {!script.trim() && (
-                      <Dropdown
-                        options={Object.keys(SCRIPT_EXAMPLES)}
-                        selected="Пример"
-                        onSelected={(key: keyof typeof SCRIPT_EXAMPLES) => setScript(SCRIPT_EXAMPLES[key])} />
+                      <select className="NetdmTerminalWorkspace__commandMenu" aria-label="Примеры скриптов" value=""
+                        onChange={event => {
+                          const example = SCRIPT_EXAMPLES[event.currentTarget.value as keyof typeof SCRIPT_EXAMPLES];
+                          if (example) setScript(example);
+                        }}>
+                        <option value="" disabled>Примеры</option>
+                        {Object.keys(SCRIPT_EXAMPLES).map(name => <option key={name}>{name}</option>)}
+                      </select>
                     )}
                     <Button
                       icon="play"
                       content="Запустить"
                       disabled={!canRunOnce}
                       tooltip="Однократный скрипт не допускает on/observe/every; запустите его как программу."
-                      onClick={() => act('run_script', { source: script })}
+                      onClick={() => launchScript('run_script', { source: script })}
                     />
                   </>
                 }
-              >
-                <NetdmScriptIDE
-                  key={loadedId}
-                  source={script}
-                  onChange={setScript}
-                  limit={data.scriptLimit}
-                  pool={completion}
-                  check={checkState}
-                  onCheck={() => {
-                    const tag = ++checkSerial.current;
-                    setCheckTag(tag);
-                    setCheckedSource(script);
-                    act('check_script', { source: script, name: SERVICE_NAME.test(programName) ? programName : 'draft', tag });
-                  }}
-                />
+                onCheck={() => {
+                  const tag = ++checkSerial.current;
+                  setCheckTag(tag);
+                  setCheckedSource(script);
+                  act('check_script', { source: script, name: SERVICE_NAME.test(programName) ? programName : 'draft', tag });
+                }}
+              />
+              <details className="NetdmTerminalWorkspace__editorTools">
+                <summary>{data.programsEnabled ? 'Программы и диск' : 'Диск'}</summary>
                 {!!data.programsEnabled && (
-                  <Stack mt={0.5}>
-                    <Stack.Item grow>
-                      <Input
-                        fluid
-                        maxLength={32}
-                        placeholder="Имя программы"
-                        value={programName}
-                        onInput={(_event: unknown, value: string) => setProgramName(value)}
-                      />
-                    </Stack.Item>
-                    <Stack.Item>
-                      <Button
-                        icon="play"
-                        content="Запустить программу"
-                        disabled={!canRun || !/^[a-zA-Z0-9._-]+$/.test(programName)}
-                        onClick={() => act('start_program', { name: programName, source: script, keep: keepProgram })}
-                      />
-                    </Stack.Item>
+                  <div className="NetdmTerminalWorkspace__programControls">
+                    <input
+                      className="NetdmTerminalWorkspace__programName"
+                      aria-label="Имя программы"
+                      maxLength={32}
+                      placeholder="Имя программы"
+                      value={programName}
+                      onChange={event => setProgramName(event.currentTarget.value)}
+                    />
+                    <Button
+                      icon="play"
+                      content="Запустить программу"
+                      disabled={!canRun || !/^[a-zA-Z0-9._-]+$/.test(programName)}
+                      onClick={() => launchScript('start_program', { name: programName, source: script, keep: keepProgram })}
+                    />
                     {!!data.kept && (
-                      <Stack.Item>
-                        <Button.Checkbox
-                          checked={keepProgram}
-                          content="Хранить на устройстве"
-                          tooltip="Программа записывается на устройство и запускается при каждом его подключении к сети."
-                          onClick={() => setKeepProgram(!keepProgram)}
-                        />
-                      </Stack.Item>
+                      <Button.Checkbox
+                        checked={keepProgram}
+                        content="Хранить на устройстве"
+                        tooltip="Программа записывается на устройство и запускается при каждом его подключении к сети."
+                        onClick={() => setKeepProgram(!keepProgram)}
+                      />
                     )}
-                  </Stack>
+                  </div>
                 )}
                 {!!data.programsEnabled && !!data.kept && data.kept.length > 0 && (
                   <Box mt={0.5}>
@@ -590,73 +557,73 @@ export const NetdmTerminal = () => {
                       icon="play"
                       content="Запустить с диска"
                       disabled={!disk.file}
-                      onClick={() => act('run_disk', { disk: disk.id, file: disk.file })}
+                      onClick={() => launchScript('run_disk', { disk: disk.id, file: disk.file })}
                     />
                   </Box>
                 ) : (
-                  <Box color="label" mt={0.5}>Возьми Data Disk в руку для записи или чтения.</Box>
+                  <Box color="label" mt={0.5}>Возьмите Data Disk в руку для записи или чтения.</Box>
                 )}
-                {diskNotice && <Box mt={0.5}>{diskNotice}</Box>}
-              </Section>
-            </Stack.Item>
-          ) : (
-            <Stack.Item>
-              <Stack>
-                <Stack.Item grow>
-                  <div className="Input Input--fluid Input--monospace">
-                    <div className="Input__baseline" aria-hidden="true">.</div>
-                    <input
-                      ref={commandInput}
-                      className="Input__input"
-                      aria-label="Командная строка"
-                      autoComplete="off"
-                      spellCheck={false}
-                      maxLength={data.limit}
-                      placeholder="help · Tab дополнит · ↑↓ история"
-                      value={line}
-                      onChange={event => setLine(event.currentTarget.value)}
-                      onKeyDown={event => {
-                        if (event.nativeEvent.isComposing) {
-                          return;
-                        }
-                        if (event.key === 'Tab') {
-                          event.preventDefault();
-                          setLine(current => tabComplete(current, completion));
-                          return;
-                        }
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          send(line);
-                        } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-                          event.preventDefault();
-                          recall(historyIndex + (event.key === 'ArrowUp' ? -1 : 1));
-                        }
-                      }} />
-                    <Box mt={0.5} color="label" fontSize="0.9em">
-                      {usageHint ?? 'Tab — автодополнение · ↑↓ — история · Enter — выполнить'}
-                    </Box>
-                  </div>
-                </Stack.Item>
-                <Stack.Item>
-                  <Button
-                    icon="chevron-up"
-                    tooltip="Предыдущая команда"
-                    disabled={historyIndex === 0}
-                    onClick={() => recall(historyIndex - 1)}
-                  />
-                  <Button
-                    icon="chevron-down"
-                    tooltip="Следующая команда или черновик"
-                    disabled={historyIndex === history.length}
-                    onClick={() => recall(historyIndex + 1)}
-                  />
-                  <Button icon="play" content="Выполнить" disabled={!line.trim()} onClick={() => send(line)} />
-                </Stack.Item>
-              </Stack>
-            </Stack.Item>
-          ))}
-        </Stack>
-      </Window.Content>
-    </Window>
+              </details>
+              {diskNotice && <Box mt={0.5}>{diskNotice}</Box>}
+            </Section>
+          </Stack.Item>
+        )}
+        {pane === 'terminal' && (
+          <Stack.Item>
+            <div className="NetdmTerminalWorkspace__composer">
+              <select className="NetdmTerminalWorkspace__commandMenu" aria-label="Быстрые команды" value=""
+                onChange={event => { if (event.currentTarget.value) run(event.currentTarget.value); }}>
+                <option value="" disabled>Команды</option>
+                <option value="services">Сервисы</option>
+                <option value="jobs">Доставка</option>
+                {!!data.programsEnabled && <option value="programs">Программы</option>}
+              </select>
+              <input
+                ref={commandInput}
+                className="NetdmTerminalWorkspace__commandInput"
+                aria-label="Командная строка"
+                autoComplete="off"
+                spellCheck={false}
+                maxLength={data.limit}
+                placeholder="Введите команду"
+                title="Tab — автодополнение · ↑↓ — история · Enter — выполнить"
+                value={line}
+                onChange={event => setLine(event.currentTarget.value)}
+                onKeyDown={event => {
+                  if (event.nativeEvent.isComposing) {
+                    return;
+                  }
+                  if (event.key === 'Tab' && !event.shiftKey) {
+                    const completed = tabComplete(line, completion);
+                    if (completed !== line) {
+                      event.preventDefault();
+                      setLine(completed);
+                    }
+                    return;
+                  }
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    send(line);
+                  } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                    event.preventDefault();
+                    recall(historyIndex + (event.key === 'ArrowUp' ? -1 : 1));
+                  }
+                }} />
+              <button className="NetdmTerminalWorkspace__execute" type="button" disabled={!line.trim()}
+                onClick={() => send(line)}>
+                Выполнить
+              </button>
+              {data.entries.length > 0 && (
+                <button className="NetdmTerminalWorkspace__clear" type="button" aria-label="Очистить журнал"
+                  title="Очистить журнал" onClick={() => act('clear')}>
+                  <Icon name="eraser" />
+                </button>
+              )}
+            </div>
+            {usageHint && <div className="NetdmTerminalWorkspace__usage">{usageHint}</div>}
+          </Stack.Item>
+        )}
+      </Stack>
+    </div>
   );
 };

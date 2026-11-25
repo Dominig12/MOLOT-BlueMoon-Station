@@ -10,10 +10,6 @@
 	SSnetdm_observe.research?.remove_server(src)
 	return ..()
 
-/// P13: the R&D console carries the network window: the same node that carries its research traffic.
-/obj/machinery/computer/rdconsole
-	var/datum/netdm_terminal/local/console/netdm_window
-
 /obj/machinery/computer/rdconsole/research_node(id, mob/user)
 	var/datum/netdm_research_shadow/research = SSnetdm_observe.research
 	var/datum/techweb/web = stored_research
@@ -28,24 +24,6 @@
 	return research.console_research(src, web, id, user)
 
 /// Disk buttons of a console under the ledger go to its bound server (P6, §13.8).
-/obj/machinery/computer/rdconsole/Destroy()
-	QDEL_NULL(netdm_window)
-	return ..()
-
-/obj/machinery/computer/rdconsole/proc/netdm_open_space(mob/living/user)
-	if(!SSnetdm_observe?.observing() || !SSnetdm_observe.services || !isliving(user))
-		return FALSE
-	var/datum/component/netdm_node/node = netdm_make_node(src)
-	if(!node)
-		return FALSE
-	SSnetdm_observe.diagnostics?.offer_shell(src)
-	if(netdm_window && QDELETED(netdm_window))
-		netdm_window = null
-	if(!netdm_window)
-		netdm_window = new(src, node, user)
-	netdm_window.user_ref = WEAKREF(user)
-	return netdm_window.open_space(user)
-
 /obj/machinery/computer/rdconsole/ui_act(action, list/params)
 	if(action == "open_network")
 		return netdm_open_space(usr)

@@ -45,6 +45,7 @@
  * so one root cause is counted once instead of cascading into every later purchase.
  */
 /datum/netdm_research_shadow
+	parent_type = /datum/netdm_integration
 	/// Catalog payloads, built once per round from pristine node data; resent after every new session.
 	var/list/catalog_chunks
 	var/catalog_next = 1
@@ -149,7 +150,7 @@
 	var/list/evidence_pending = list()
 	var/next_evidence = 0
 
-/datum/netdm_research_shadow/proc/setup(datum/netdm_service_lane/lane)
+/datum/netdm_research_shadow/setup(datum/netdm_service_lane/lane)
 	lane.dispatcher.allow_result("research", new /datum/netdm_effect_handler/research_answer)
 	lane.dispatcher.allow_result("status", new /datum/netdm_effect_handler/research_status)
 	lane.dispatcher.allow_result("sync", new /datum/netdm_effect_handler/research_sync)
@@ -159,7 +160,7 @@
 
 /// A new Host session: the catalog is installed again and every storage registered again (both duplicates
 /// for the same round); unconfirmed mirror events stay in order and are sent again.
-/datum/netdm_research_shadow/proc/reset_session()
+/datum/netdm_research_shadow/reset_session()
 	catalog_ready = FALSE
 	catalog_next = 1
 	if(sending)
@@ -512,7 +513,7 @@
 	note(text)
 
 /// Called every fire after the service lane: one request in flight keeps the mirror in order.
-/datum/netdm_research_shadow/proc/tick()
+/datum/netdm_research_shadow/tick()
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
 	if(!lane || !SSresearch.initialized)
 		return

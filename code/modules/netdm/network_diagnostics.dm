@@ -18,6 +18,7 @@
  * A module without power answers nothing, like any device without power.
  */
 /datum/netdm_diagnostics
+	parent_type = /datum/netdm_integration
 	/// Idempotency key -> list("apc", "user", "instance", "deadline", "sent").
 	var/list/pending = list()
 	/// Operation ID -> idempotency key, for the answers.
@@ -31,19 +32,20 @@
 	var/list/queries = list()
 	/// Operation ID -> query key.
 	var/list/query_operations = list()
-	/// Logical APC sessions, indexed by the world objects of the APC and its operator.
-	var/list/apc_operators = list()
-	var/next_apc_operator_check = 0
+	/// Logical sessions, indexed by the physical device and its operator.
+	var/list/terminal_operators = list()
+	var/next_terminal_operator_check = 0
 	var/next_entity_spawner_check = 0
 	/// A single-use player authorization awaiting a station device. The UI never receives these keys.
-	var/list/alarm_actions = list()
+	var/list/machine_actions = list()
 	/// Watched query instance -> list("services", "digest", "partial", "at"): the last published state of the
 	/// directory that APC reaches. A changed digest means a query would answer differently now.
 	var/list/directory_states = list()
 	/// The last report: list("apc" = weakref, "state", "wired", "wired_up", "radio", "devices", "neighbors" = list(node ID -> state), "lines").
 	var/list/last_report
 
-/datum/netdm_diagnostics/proc/setup(datum/netdm_service_lane/lane)
+/datum/netdm_diagnostics/setup(datum/netdm_service_lane/lane)
+	RegisterSignal(lane, COMSIG_NETDM_ENDPOINT_ATTACHED, PROC_REF(on_endpoint_attached))
 	lane.dispatcher.allow_result("link_state", new /datum/netdm_effect_handler/network_link_state, "network.diagnostics")
 	lane.dispatcher.allow("network.link_state", new /datum/netdm_effect_handler/network_link_event)
 	lane.dispatcher.allow_result("services", new /datum/netdm_effect_handler/network_query_page, "network.query")
@@ -59,8 +61,12 @@
 		lane.dispatcher.allow_result(space_command, new /datum/netdm_effect_handler/network_query_page, "network.shell")
 	lane.dispatcher.allow("query.directory", new /datum/netdm_effect_handler/network_directory_event)
 
+/datum/netdm_diagnostics/proc/on_endpoint_attached(datum/netdm_service_lane/source, datum/node)
+	SIGNAL_HANDLER
+	endpoint_attached(node)
+
 /// A new Host session: retry reads, but don't replay shell requests that may already have sent commands.
-/datum/netdm_diagnostics/proc/reset_session()
+/datum/netdm_diagnostics/reset_session()
 	operations.Cut()
 	query_operations.Cut()
 	for(var/key in pending)
@@ -285,9 +291,9 @@
 	on_page?.Invoke(page)
 
 /// Sends the requests whose APC is attached, and gives up on those that waited too long.
-/datum/netdm_diagnostics/proc/tick()
+/datum/netdm_diagnostics/tick()
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
-	check_apc_operators()
+	check_terminal_operators()
 	update_entity_spawner()
 	if(length(queries))
 		pump_queries(lane)

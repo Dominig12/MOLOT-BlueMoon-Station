@@ -1927,6 +1927,75 @@
 	var/published_apcs = report["apcs"] + report["off_station_apcs"]
 	TEST_ASSERT(report["host_nodes"] >= published_apcs, "The Host must hold every published APC ([report["host_nodes"]] of [published_apcs]).")
 
+/datum/unit_test/netdm_door_dispatch/Run()
+	var/channel = "netdm-door-[REF(src)]"
+	var/obj/item/assembly/control/blast_control = allocate(/obj/item/assembly/control)
+	blast_control.id = channel
+	var/obj/item/assembly/control/airlock/airlock_control = allocate(/obj/item/assembly/control/airlock)
+	airlock_control.id = channel
+	airlock_control.specialfunctions = OPEN|BOLTS|IDSCAN
+
+	var/obj/machinery/door/poddoor/blast_closed = allocate(/obj/machinery/door/poddoor)
+	blast_closed.id = channel
+	var/obj/machinery/door/poddoor/blast_open = allocate(/obj/machinery/door/poddoor)
+	blast_open.id = channel
+	blast_open.density = FALSE
+	var/obj/machinery/door/airlock/airlock_closed = allocate(/obj/machinery/door/airlock)
+	airlock_closed.id_tag = channel
+	var/obj/machinery/door/airlock/airlock_open = allocate(/obj/machinery/door/airlock)
+	airlock_open.id_tag = channel
+	airlock_open.density = FALSE
+
+	var/list/blast_plan = blast_control.netdm_plan_doors(TRUE)
+	TEST_ASSERT_EQUAL(length(blast_plan), 2, "A blast-door controller selects only its own doors.")
+	TEST_ASSERT_EQUAL(blast_plan[blast_closed]["state"], "open", "The first blast door determines the synchronized state.")
+	TEST_ASSERT_EQUAL(blast_plan[blast_open]["state"], "open", "The other blast door takes the same state.")
+	blast_control.sync_doors = FALSE
+	blast_plan = blast_control.netdm_plan_doors(TRUE)
+	TEST_ASSERT_EQUAL(blast_plan[blast_open]["state"], "closed", "An independent door toggles its own state.")
+
+	airlock_closed.locked = FALSE
+	airlock_closed.aiDisabledIdScanner = TRUE
+	var/list/airlock_plan = airlock_control.netdm_plan_doors(TRUE)
+	TEST_ASSERT_EQUAL(length(airlock_plan), 2, "An airlock controller selects only airlocks on its channel.")
+	TEST_ASSERT_EQUAL(airlock_plan[airlock_closed]["state"], "closed", "An open airlock makes the group close.")
+	TEST_ASSERT_EQUAL(airlock_plan[airlock_closed]["bolted"], TRUE, "The plan carries an absolute bolt state.")
+	TEST_ASSERT_EQUAL(airlock_plan[airlock_closed]["id_scan"], TRUE, "The plan enables the disabled scanner.")
+	airlock_control.specialfunctions = 0
+	TEST_ASSERT_NULL(airlock_control.netdm_plan_doors(TRUE), "A controller without functions cannot construct a press.")
+
+	airlock_closed.set_machine_stat(airlock_closed.machine_stat | NOPOWER)
+	var/list/receipt = airlock_closed.netdm_apply_controls(list("bolted" = TRUE, "id_scan" = TRUE), null, "test")
+	TEST_ASSERT_EQUAL(receipt["reason"], "refused_bolts", "An unpowered airlock refuses a bolt change.")
+	TEST_ASSERT_EQUAL(receipt["bolted"], FALSE, "The receipt reports the actual bolt state.")
+	TEST_ASSERT(!airlock_closed.aiDisabledIdScanner && receipt["changed"], "The independent scanner change still applies.")
+
+	var/datum/netdm_door_shadow/transport = SSnetdm_observe?.doors
+	if(!transport)
+		return
+	var/datum/weakref/door_ref = WEAKREF(airlock_closed)
+	var/instance = transport.add_door(airlock_closed)
+	TEST_ASSERT(instance && transport.instances[door_ref] == instance && transport.by_instance[instance] == door_ref, "The door registers both lookup indexes.")
+	qdel(airlock_closed)
+	TEST_ASSERT_NULL(transport.instances[door_ref], "Deletion removes the door's forward index.")
+	TEST_ASSERT_NULL(transport.by_instance[instance], "Deletion removes the reverse index.")
+
+/datum/unit_test/netdm_airlock_panel_actuator/Run()
+	var/obj/machinery/door/airlock/door = allocate(/obj/machinery/door/airlock)
+	TEST_ASSERT(!door.netdm_panel_allowed(null), "Network panel control requires an operator.")
+	TEST_ASSERT(!door.apply_panel_action("unsupported", null, null, "test"), "Unknown panel actions are rejected.")
+
+	door.density = TRUE
+	door.welded = TRUE
+	TEST_ASSERT(!door.apply_panel_action("open", null, null, "test") && door.density, "Opening retains the weld guard.")
+	TEST_ASSERT(door.apply_panel_action("close", null, null, "test") && door.density, "Closing a closed door is a no-op.")
+
+	door.locked = FALSE
+	TEST_ASSERT(door.apply_panel_action("bolt", null, null, "test") && door.locked, "Lowering bolts uses normal door control.")
+	TEST_ASSERT(door.apply_panel_action("bolt", null, null, "test") && door.locked, "Repeating an absolute bolt action cannot raise the bolts.")
+	door.set_machine_stat(door.machine_stat | NOPOWER)
+	TEST_ASSERT(!door.apply_panel_action("unbolt", null, null, "test") && door.locked, "Raising the bolts still requires power.")
+
 /// P9.1 on the station: map buttons pressed there and back; every door they control is reached over the
 /// network or missed with a Host reason. Writes netdm_door_station.json.
 /datum/unit_test/netdm_observe/area_map/door_station
@@ -2170,7 +2239,6 @@
 	var/near_id = near_fact["a"]
 	var/far_id = far_fact["a"]
 	TEST_ASSERT(wait_for_links(left.z, near_id, 1, TRUE), "The two zones must be wired together.")
-
 	// Opening the terminal shows what the multitool used to print: the module and its ports.
 	var/datum/netdm_terminal/terminal = allocate(/datum/netdm_terminal, near)
 	TEST_ASSERT_EQUAL(length(terminal.entries), 2, "A new terminal asks for the module and its ports.")
@@ -2494,6 +2562,73 @@
 	near.locked = was_locked
 	log_world("netDM network terminal: lines=[diagnostics.counters["lines"]] [diagnostics.state()]")
 
+/// Headless test users have no client. Grant only this door's panel authority to this fixture's operator.
+/obj/machinery/door/airlock/netdm_panel_test
+	var/datum/weakref/test_operator
+
+/obj/machinery/door/airlock/netdm_panel_test/netdm_panel_allowed(mob/user)
+	return user && user == test_operator?.resolve()
+
+/obj/machinery/door/airlock/netdm_panel_test/user_allowed(mob/user)
+	return netdm_panel_allowed(user)
+
+/datum/unit_test/netdm_observe/area_map/network_airlock_panel/Run()
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
+		return
+	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
+	TEST_ASSERT(wait_until_live(), "Observe must publish the initial map.")
+	var/turf/left = run_loc_floor_bottom_left
+	var/turf/right = get_step(left, EAST)
+	assign_area(left, test_zone(/area/netdm_test/first))
+	assign_area(right, test_zone(/area/netdm_test/second))
+	var/obj/machinery/power/apc/near = allocate(/obj/machinery/power/apc, left)
+	var/obj/machinery/power/apc/far = allocate(/obj/machinery/power/apc, right)
+	TEST_ASSERT(wait_for_fact(WEAKREF(near), left) && wait_for_fact(WEAKREF(far), right), "Both APCs must be published.")
+	var/mob/living/carbon/human/operator = allocate(/mob/living/carbon/human, left)
+	var/obj/machinery/door/airlock/netdm_panel_test/door = allocate(/obj/machinery/door/airlock/netdm_panel_test, right)
+	door.test_operator = WEAKREF(operator)
+	door.locked = FALSE
+	door.welded = FALSE
+	var/instance = SSnetdm_observe.doors.add_door(door)
+	var/datum/component/netdm_node/node = door.GetComponent(/datum/component/netdm_node)
+	TEST_ASSERT(instance && node, "The test airlock must offer its command service.")
+	var/deadline = world.time + 40 SECONDS
+	while(world.time < deadline && !SSnetdm_observe.services.ready(node, instance))
+		sleep(2)
+	TEST_ASSERT(SSnetdm_observe.services.ready(node, instance), "Host registered the airlock service.")
+	var/datum/netdm_terminal/terminal = allocate(/datum/netdm_terminal, near)
+	var/datum/netdm_space/space = allocate(/datum/netdm_space, terminal)
+	TEST_ASSERT(space.enter(), "The terminal can enter the network.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && space.presence?["state"] != "active")
+		sleep(2)
+	TEST_ASSERT_EQUAL(space.presence?["state"], "active", "The operator has an active presence.")
+	TEST_ASSERT(space.scan(3), "The presence can discover the airlock.")
+	deadline = world.time + 20 SECONDS
+	while(world.time < deadline && !space.items["s|[instance]"])
+		space.refresh()
+		sleep(5)
+	TEST_ASSERT(space.items["s|[instance]"], "The presence has seen the airlock: [jointext(space.log, " | ")]")
+
+	var/list/action = list("instance" = instance, "command" = "open")
+	var/datum/netdm_command_handler/airlock_panel/handler = new
+	TEST_ASSERT_EQUAL(handler.execute(door, list("payload" = list("action" = "open", "ticket" = "invented"))), "access_denied",
+		"A direct wire call cannot invent a panel ticket.")
+	qdel(handler)
+	TEST_ASSERT(space.dispatch_ui_action("device_action", action, null, GLOB.always_state), "An unauthorized attempt returns an explicit refusal.")
+	TEST_ASSERT(space.machine_command?["reason"] == "access_denied" && !space.machine_command?["ticket"] && door.density,
+		"The refusal does not queue or open the door.")
+	TEST_ASSERT(!space.dispatch_ui_action("device_action", list("instance" = instance, "command" = "toggle"), operator, GLOB.always_state),
+		"The panel API accepts absolute actions.")
+	TEST_ASSERT(space.dispatch_ui_action("device_action", action, operator, GLOB.always_state), "The authorized operator can issue an Open request.")
+	deadline = world.time + 25 SECONDS
+	while(world.time < deadline && space.machine_pending())
+		sleep(2)
+	var/list/receipt = space.machine_command
+	TEST_ASSERT(receipt?["status"] == "applied" && receipt["receipt_received"] && receipt["door_open"] && !door.density,
+		"Delivery and the finished opening are both required: [receipt?["status"]] [receipt?["reason"]].")
+	qdel(door)
+
 /// P13 immersion: the dive layer is opt-in, and the access point of the body is a working APC of its zone.
 /datum/unit_test/netdm_observe/area_map/network_immersion/Run()
 	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
@@ -2730,12 +2865,90 @@
 	var/datum/netdm_space/space = new(source)
 	TEST_ASSERT(space.actor == source && source.window == space && !space.owns_actor, "Externally owned actors may attach one network view.")
 	TEST_ASSERT(!space.enter() && !space.scan(1), "UI requests cannot acquire missing source authority.")
+	TEST_ASSERT(!space.ui_data(null)["terminal"] && !space.dispatch_ui_action("terminal", list("command" = "clear"), null, GLOB.always_state), "Actors without a physical terminal cannot render or route its actions.")
 	qdel(space)
 	TEST_ASSERT(!QDELETED(source) && !source.window, "Closing a window releases, but does not destroy, an independently owned actor.")
 	var/datum/netdm_space/second_window = new(source)
 	TEST_ASSERT(source.window == second_window, "An independent actor may open another view after its old view closed.")
 	qdel(source)
 	TEST_ASSERT(QDELETED(second_window), "Retiring a network actor closes its existing UI rather than leaving an orphaned window.")
+
+/// DreamDaemon lacks a browser. Use the live local-terminal owner guard with an in-memory UI state.
+/datum/netdm_terminal/local/workspace_test/ui_state(mob/user)
+	return GLOB.always_state
+
+/// Logical console operators share the mapped device, while each Host shell and inbox is private.
+/datum/unit_test/netdm_observe/area_map/network_console_operators/Run()
+	if(world.GetConfig("env", "NETDM_IPC_MODE") != "v1")
+		return
+	http_base = world.GetConfig("env", "NETDM_TEST_HTTP")
+	TEST_ASSERT(wait_until_live(), "Observe must publish the initial map.")
+	var/turf/location = run_loc_floor_bottom_left
+	assign_area(location, test_zone(/area/netdm_test/first))
+	var/obj/machinery/power/apc/apc = allocate(/obj/machinery/power/apc, location)
+	TEST_ASSERT(wait_for_fact(WEAKREF(apc), location), "The console's APC must be published.")
+	var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe.diagnostics
+	var/datum/netdm_service_lane/lane = SSnetdm_observe.services
+	var/obj/machinery/computer/rdconsole/console = allocate(/obj/machinery/computer/rdconsole, location)
+	var/datum/component/netdm_node/console_node = netdm_make_node(console)
+	TEST_ASSERT(wait_for_node(console_node, location, TRUE), "The R&D console must be published.")
+	var/mob/living/carbon/human/first_viewer = allocate(/mob/living/carbon/human, location)
+	var/mob/living/carbon/human/second_viewer = allocate(/mob/living/carbon/human, location)
+	var/datum/netdm_terminal_operator/console/first = diagnostics.terminal_operator(/datum/netdm_terminal_operator/console, console, first_viewer)
+	var/datum/netdm_terminal_operator/console/second = diagnostics.terminal_operator(/datum/netdm_terminal_operator/console, console, second_viewer)
+	allocated += list(first, second)
+	TEST_ASSERT(first && second, "Both console operators must have Host endpoints.")
+	TEST_ASSERT_EQUAL(lane.node_id(first), lane.node_id(console_node), "The first operator must use the physical R&D console node.")
+	TEST_ASSERT_EQUAL(lane.node_id(second), lane.node_id(console_node), "The second operator must use the physical R&D console node.")
+	TEST_ASSERT(first.shell_provider() == first && second.shell_provider() == second, "Each operator owns a private shell on the console.")
+	TEST_ASSERT(lane.by_node[first]?.id && lane.by_node[second]?.id && lane.by_node[first].id != lane.by_node[second].id, "The operators must have distinct session and inbox identities.")
+	qdel(first)
+	qdel(second)
+
+/datum/unit_test/netdm_unified_terminal/Run()
+	var/mob/living/carbon/human/operator = allocate(/mob/living/carbon/human)
+	var/mob/living/carbon/human/other_player = allocate(/mob/living/carbon/human)
+	var/obj/item/device = allocate(/obj/item)
+	var/datum/netdm_terminal/local/terminal = allocate(/datum/netdm_terminal/local/workspace_test, device, device, operator)
+	var/datum/netdm_space/space = allocate(/datum/netdm_space, terminal)
+	var/datum/netdm_space/previous = allocate(/datum/netdm_space)
+	previous.reserve_opening(operator)
+	TEST_ASSERT(previous.finish_opening(operator, TRUE), "The first workspace becomes active after its window opens.")
+	space.reserve_opening(operator)
+	var/datum/netdm_space/reserved = operator.netdm_pending_workspace?.resolve()
+	TEST_ASSERT(operator.netdm_workspace?.resolve() == previous && reserved == space, "A pending source preserves the previously open workspace.")
+	TEST_ASSERT(reserved.actor.matching_terminal(terminal.type, device, device, operator) == terminal, "Another click can find the pending terminal for the same source.")
+	var/datum/netdm_space/replacement = allocate(/datum/netdm_space)
+	replacement.reserve_opening(operator)
+	TEST_ASSERT(!space.finish_opening(operator, TRUE) && operator.netdm_pending_workspace?.resolve() == replacement, "A superseded open cannot steal a later reservation.")
+	TEST_ASSERT(!replacement.finish_opening(operator, FALSE) && !operator.netdm_pending_workspace && operator.netdm_workspace?.resolve() == previous, "An unsuccessful open leaves the active window available.")
+	replacement.reserve_opening(operator)
+	qdel(replacement)
+	TEST_ASSERT(!operator.netdm_pending_workspace && operator.netdm_workspace?.resolve() == previous, "Destroying the pending window releases only its own reservation.")
+	space.reserve_opening(operator)
+	TEST_ASSERT(space.finish_opening(operator, TRUE) && QDELETED(previous) && operator.netdm_workspace?.resolve() == space, "A successful open installs the new workspace and closes the previous one.")
+	var/list/sentinel = list("line" = "self")
+	terminal.entries += list(sentinel)
+	var/entries_before = length(terminal.entries)
+	var/list/view = space.ui_data(operator)
+	var/list/terminal_data = view["terminal"]
+	TEST_ASSERT(terminal.space == space && terminal_data && terminal_data["entries"] == terminal.entries, "A physical workspace exposes its own terminal model.")
+	TEST_ASSERT(!space.ui_data(other_player)["terminal"], "A different viewer cannot read the terminal model.")
+	var/list/clear_action = list("command" = "clear", "params" = list())
+	TEST_ASSERT(!space.dispatch_ui_action("terminal", clear_action, other_player, GLOB.always_state), "A different viewer cannot drive the terminal.")
+	TEST_ASSERT(!space.dispatch_ui_action("terminal", list("command" = "enter"), operator, GLOB.always_state), "A terminal action cannot select a presence proc.")
+	TEST_ASSERT(!space.dispatch_ui_action("terminal", list("command" = "open_space"), operator, GLOB.always_state), "The old window action is not part of the allowlist.")
+	TEST_ASSERT(!space.dispatch_ui_action("terminal", list("command" = "clear", "params" = "bad"), operator, GLOB.always_state), "A malformed nested payload is refused.")
+	TEST_ASSERT_EQUAL(length(terminal.entries), entries_before, "Rejected requests do not mutate terminal history.")
+	TEST_ASSERT(space.dispatch_ui_action("terminal", clear_action, operator, GLOB.always_state), "The owner may clear the terminal from the unified view.")
+	TEST_ASSERT(!length(terminal.entries), "The command reached the same mounted terminal.")
+	qdel(space)
+	TEST_ASSERT(!terminal.space && !QDELETED(terminal), "Closing the workspace releases its model while queued replies finish.")
+	TEST_ASSERT(!operator.netdm_workspace, "Destroying the active workspace clears the player reference.")
+	var/datum/callback/queued = terminal.send_guard()
+	TEST_ASSERT(queued.Invoke(), "Terminal requests remain valid during normal retirement.")
+	terminal.revoke_client(operator)
+	TEST_ASSERT(!queued.Invoke(), "Logout revokes a queued terminal request even during retirement.")
 
 /// DreamDaemon has no interactive client. Bypass only the client ownership check for this fixture.
 /datum/netdm_space_actor/entity/test/can_submit()
@@ -2776,7 +2989,10 @@
 
 	var/datum/netdm_space/space = new(source)
 	var/list/view = space.ui_data(null)
-	TEST_ASSERT(view["entityRole"] && space.enter(), "The entity enters through its own network view.")
+	TEST_ASSERT(view["entityRole"], "The controller exposes the entity role to its network view.")
+	TEST_ASSERT(!space.dispatch_ui_action("Destroy", list(), controller, GLOB.always_state), "Only allowlisted UI actions may dispatch.")
+	TEST_ASSERT(!space.dispatch_ui_action("leave_role", list(), controller, GLOB.always_state), "A controller without an owning client cannot leave through the UI.")
+	TEST_ASSERT(space.dispatch_ui_action("enter", list(), controller, GLOB.always_state), "The entity enters through its own network view.")
 	var/deadline = world.time + 25 SECONDS
 	while(world.time < deadline && space.presence?["state"] != "active")
 		sleep(2)
@@ -2784,29 +3000,29 @@
 	deadline = world.time + 20 SECONDS
 	while(world.time < deadline && !lane.ready(target_apc, dest))
 		sleep(2)
-	TEST_ASSERT(lane.ready(target_apc, dest) && space.scan(2), "The entity scans for the destination.")
+	TEST_ASSERT(lane.ready(target_apc, dest) && space.dispatch_ui_action("scan", list("radius" = 2), controller, GLOB.always_state), "The entity scans for the destination.")
 	deadline = world.time + 25 SECONDS
 	while(world.time < deadline && !space.items["s|[dest]"])
 		sleep(2)
-	TEST_ASSERT(space.items["s|[dest]"] && space.preview_move(dest), "The entity discovers the shell and checks a route.")
+	TEST_ASSERT(space.items["s|[dest]"] && space.dispatch_ui_action("preview_move", list("to" = dest), controller, GLOB.always_state), "The entity discovers the shell and checks a route.")
 	deadline = world.time + 20 SECONDS
 	while(world.time < deadline && space.route_preview?["status"] == "pending")
 		sleep(2)
-	TEST_ASSERT(space.route_preview?["status"] == "ready" && space.move(dest), "Host verifies the path before the move.")
+	TEST_ASSERT(space.route_preview?["status"] == "ready" && space.dispatch_ui_action("move", list("to" = dest), controller, GLOB.always_state), "Host verifies the path before the move.")
 	deadline = world.time + 25 SECONDS
 	while(world.time < deadline && (space.presence?["state"] != "active" || space.host_node() != target_node))
 		sleep(2)
 	TEST_ASSERT_EQUAL(space.host_node(), target_node, "The entity migrated to the target in the simulated network.")
 
-	TEST_ASSERT(space.hack_start(target_node), "The entity starts a challenge at its current APC.")
+	TEST_ASSERT(space.dispatch_ui_action("hack_start", list("node" = target_node), controller, GLOB.always_state), "The entity starts a challenge at its current APC.")
 	deadline = world.time + 15 SECONDS
 	while(world.time < deadline && !space.hack_code)
 		sleep(1)
-	TEST_ASSERT(space.hack_code && space.hack_submit(space.hack_code), "The routed challenge can be answered.")
+	TEST_ASSERT(space.hack_code && space.dispatch_ui_action("hack_answer", list("code" = space.hack_code), controller, GLOB.always_state), "The routed challenge can be answered.")
 	deadline = world.time + 20 SECONDS
 	while(world.time < deadline && space.hack_status == "checking")
 		sleep(2)
-	TEST_ASSERT(space.hack_status == "ok" && length(space.hack_keys) && space.hack_use(target_node), "Host grants a key for the target APC.")
+	TEST_ASSERT(space.hack_status == "ok" && length(space.hack_keys) && space.dispatch_ui_action("hack_use", list("node" = target_node), controller, GLOB.always_state), "Host grants a key for the target APC.")
 	deadline = world.time + 20 SECONDS
 	while(world.time < deadline && target_apc.operating)
 		sleep(2)

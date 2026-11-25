@@ -3,21 +3,24 @@ import { KeyboardEvent, ReactNode, useId } from 'react';
 import { Icon } from '../components';
 
 const TABS = [
-  { id: 'node', icon: 'microchip', label: 'Узел' },
+  { id: 'node', icon: 'project-diagram', label: 'Карта' },
   { id: 'route', icon: 'route', label: 'Маршруты' },
   { id: 'activity', icon: 'stream', label: 'События' },
   { id: 'operator', icon: 'user-astronaut', label: 'Оператор' },
   { id: 'chat', icon: 'comments', label: 'Чат' },
+  { id: 'terminal', icon: 'terminal', label: 'Терминал' },
 ] as const;
 
 export type SpaceTab = typeof TABS[number]['id'];
 
-export const NetdmSpaceDock = ({ tab, onTab, title, unread, routeActive, children }: {
+export const NetdmSpaceDock = ({ tab, onTab, title, unread, routeActive, activityActive, terminal, children }: {
   tab: SpaceTab;
   onTab: (tab: SpaceTab) => void;
   title?: string;
   unread: number;
   routeActive: boolean;
+  activityActive: boolean;
+  terminal: ReactNode;
   children: ReactNode;
 }) => {
   const id = useId();
@@ -50,7 +53,7 @@ export const NetdmSpaceDock = ({ tab, onTab, title, unread, routeActive, childre
               {unreadChat && (
                 <span aria-hidden="true" className="NetdmDock__unread">{unread > 99 ? '99+' : unread}</span>
               )}
-              {item.id === 'route' && routeActive && (
+              {((item.id === 'route' && routeActive) || (item.id === 'activity' && activityActive)) && (
                 <span aria-hidden="true" className="NetdmDock__routeDot" />
               )}
             </button>
@@ -60,14 +63,17 @@ export const NetdmSpaceDock = ({ tab, onTab, title, unread, routeActive, childre
       {TABS.map(item => (
         <section key={item.id} id={`${id}-${item.id}-panel`} role="tabpanel"
           aria-labelledby={`${id}-${item.id}-tab`} hidden={item.id !== tab} tabIndex={0}
-          className="NetdmDock__panel">
-          {item.id === tab && (
+          className="NetdmDock__panel" data-panel={item.id}>
+          {(item.id === tab || (item.id === 'terminal' && !!terminal)) && (
             <>
-              <header className="NetdmDock__header">
-                <span className="NetdmDock__headerIcon" aria-hidden="true"><Icon name={item.icon} /></span>
-                <h2>{title || item.label}</h2>
-              </header>
-              <div className={`NetdmDock__body NetdmDock__body--${item.id}`}>{children}</div>
+              {item.id !== 'terminal' && (
+                <header className="NetdmDock__header">
+                  <h2>{title || item.label}</h2>
+                </header>
+              )}
+              <div className={`NetdmDock__body NetdmDock__body--${item.id}`}>
+                {item.id === 'terminal' ? terminal : children}
+              </div>
             </>
           )}
         </section>

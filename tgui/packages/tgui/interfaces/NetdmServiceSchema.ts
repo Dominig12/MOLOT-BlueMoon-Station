@@ -29,6 +29,12 @@ export const safeServiceIdentifier = (value: string): boolean =>
 const value = (record: DeviceRecord[], key: string) =>
   record.find(field => field.name === key)?.value ?? '';
 
+const enumChoices = (spec: string): string[] => {
+  // The compact shell response replaces "=" inside record values with spaces.
+  const choices = spec.trim().replace(/^=/, '').split('|').map(choice => choice.trim());
+  return choices.every(safeServiceIdentifier) ? [...new Set(choices)] : [];
+};
+
 export const latestApiReply = (entries: DeviceEntry[], line: string): DeviceEntry | undefined =>
   [...entries].reverse().find(entry => entry.line === line);
 
@@ -60,10 +66,8 @@ export const actionFields = (entry: DeviceEntry | undefined, type: string, comma
     if (!safeServiceIdentifier(name) || seen.has(name) ||
         !['text', 'multiline', 'integer', 'number', 'boolean', 'enum'].includes(kind)) return [];
     seen.add(name);
-    const spec = value(record, 'spec');
-    const choices = kind === 'enum' && spec.startsWith('=')
-      ? spec.slice(1).split('|').filter(item => /^[a-zA-Z0-9._-]+$/.test(item))
-      : [];
+    const spec = value(record, 'spec').trim();
+    const choices = kind === 'enum' ? enumChoices(spec) : [];
     const limits = spec.match(/\[(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)\]/);
     const maxLength = spec.match(/≤(\d+)/);
     return [{
@@ -128,6 +132,8 @@ export const actionLabel = (command: string): string => ({
   status: 'Получить состояние',
   read: 'Получить показания',
   sample: 'Запросить измерение',
+  link_state: 'Проверить состояние связей',
+  trace: 'Проверить путь до узла',
   set_power: 'Управление питанием',
   set_state: 'Изменить состояние',
   set_alert: 'Управление тревогой',
@@ -139,4 +145,81 @@ export const actionLabel = (command: string): string => ({
 
 /** Conservative: unrecognized actions are changes, never assume they are harmless. */
 export const isReadAction = (command: string): boolean =>
-  ['read', 'sample', 'status'].includes(command);
+  ['read', 'sample', 'status', 'link_state', 'trace'].includes(command);
+
+const PDA_WORKFLOW = 'Отправляйте сообщения из приложения «Сообщения» на КПК. КПК подставляет данные отправителя и идентификатор сообщения.';
+const RESEARCH_WORKFLOW = 'Используйте консоль R&D для исследований, переноса очков и работы с диском. Консоль подставляет данные для операции.';
+
+// Presentation guides match the request schema reported by Host. Authorization remains with the game.
+const DEVICE_WORKFLOWS: Readonly<Partial<Record<string, string>>> = {
+  'machine.door_set': 'Привязанная кнопка создаёт идентификатор нажатия press автоматически.',
+  'machine.door_control_request': 'Для сетевого управления откройте «Панель шлюза» в карточке узла. Она доступна операторам с правами управления шлюзом.',
+  'camera.acquire': 'Выберите камеру на охранной консоли. Она создаёт идентификатор подключения.',
+  'atmos.alert_request': 'Используйте «Поднять тревогу» или «Снять тревогу» в карточке панели. Идентификатор запроса создаётся автоматически.',
+  'pda.message': PDA_WORKFLOW,
+  'pda.relay': PDA_WORKFLOW,
+  'pda.delivery': PDA_WORKFLOW,
+  'radio.uplink': 'Передайте сообщение через гарнитуру или рацию. Идентификатор передачи создаётся автоматически.',
+  'research.request': RESEARCH_WORKFLOW,
+  'research.sync_request': RESEARCH_WORKFLOW,
+  'research.transfer_request': RESEARCH_WORKFLOW,
+  'research.transfer_authorization': RESEARCH_WORKFLOW,
+  'research.disk_request': RESEARCH_WORKFLOW,
+};
+
+const SERVICE_WORKFLOWS: Readonly<Partial<Record<string, string>>> = {
+  'network.shell': 'Пользуйтесь вкладками «Терминал», «Маршруты» и «Чат». Они подставляют параметры сетевой сессии.',
+  'network.query': 'Список сервисов, маршруты и журнал команд доступны в терминале через services, route и jobs.',
+};
+
+function ownEntry<T>(record: Readonly<Partial<Record<string, T>>>, key: string): T | undefined {
+  return Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+}
+
+export const serviceWorkflow = (type: string, action: ServiceAction): string | undefined =>
+  ownEntry(DEVICE_WORKFLOWS, action.request) ?? ownEntry(SERVICE_WORKFLOWS, type);
+
+type FieldGuide = {
+  label: string;
+  hint?: string;
+  labels?: Readonly<Partial<Record<string, string>>>;
+};
+
+const INSPECT_REASON: FieldGuide = {
+  label: 'Причина запроса',
+  labels: { inspect: 'Осмотр', refresh: 'Обновление' },
+};
+
+type FieldGuides = Readonly<Partial<Record<string, FieldGuide>>>;
+
+const FIELD_GUIDES: Readonly<Partial<Record<string, FieldGuides>>> = {
+  'machine.set_power': {
+    on: { label: 'Питание', labels: { true: 'Включить', false: 'Выключить' } },
+  },
+  'atmos.alarm_read': { reason: INSPECT_REASON },
+  'atmos.sample_request': {
+    reason: {
+      label: 'Причина замера',
+      hint: 'Для обычного замера оставьте поле пустым.',
+      labels: { subscribe: 'Подписка', refresh: 'Обновление' },
+    },
+  },
+  'network.link_request': { reason: INSPECT_REASON },
+  'network.trace_request': {
+    node: {
+      label: 'Номер узла',
+      hint: 'Выберите узел на карте и скопируйте число из заголовка «Узел N».',
+    },
+  },
+  'research.status_request': {
+    reason: {
+      label: 'Причина запроса',
+      labels: { open: 'Открытие', refresh: 'Обновление' },
+    },
+  },
+};
+
+export const serviceFieldGuide = (request: string, name: string): FieldGuide | undefined => {
+  const fields = ownEntry(FIELD_GUIDES, request);
+  return fields && ownEntry(fields, name);
+};
