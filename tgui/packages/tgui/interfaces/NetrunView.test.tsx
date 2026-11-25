@@ -130,6 +130,29 @@ test('библиотека программ показывает текст вы
   expect(screen.getByText(/invoke net.inspect self/)).toBeTruthy();
 });
 
+test('редактор отправляет текст программы на сервер, а не выполняет его сам', () => {
+  const { act } = renderWindow({ panel: panel() as Data['panel'], error: null, notice: null });
+  fireEvent.click(screen.getByText('Программы'));
+  const editor = screen.getByRole<HTMLTextAreaElement>('textbox');
+  fireEvent.change(editor, { target: { value: 'program "Probe"\ninvoke net.inspect self\nstop' } });
+  fireEvent.click(screen.getByText('Запустить'));
+  expect(act).toHaveBeenCalledWith('import', {
+    source: 'program "Probe"\ninvoke net.inspect self\nstop',
+    target: null,
+  });
+});
+
+test('пресет открывается в редакторе и запускается оттуда же', () => {
+  const { act } = renderWindow({ panel: panel() as Data['panel'], error: null, notice: null });
+  fireEvent.click(screen.getByText('Программы'));
+  fireEvent.click(screen.getByText('Inspector'));
+  fireEvent.click(screen.getByText('Открыть в редакторе'));
+  fireEvent.click(screen.getByText('Запустить'));
+  const calls = act.mock.calls.filter(([name]) => name === 'import');
+  expect(calls.length).toBe(1);
+  expect(String(calls[0][1].source)).toContain('invoke net.inspect self');
+});
+
 test('вкладка «События» показывает итог операции', () => {
   renderWindow({ panel: panel() as Data['panel'], error: null, notice: null });
   fireEvent.click(screen.getByText('События'));

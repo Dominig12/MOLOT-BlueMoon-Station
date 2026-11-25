@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { useBackend } from '../backend';
-import { Box, Button, Icon, NoticeBox, Section, Stack, Table } from '../components';
+import { Box, Button, Icon, NoticeBox, Section, Stack, Table, TextArea } from '../components';
 import { Window } from '../layouts';
 import { NetrunMap } from './NetrunView/Map';
 import {
@@ -136,7 +136,45 @@ const programStateText: Record<string, string> = {
   cancelled: 'отменена',
 };
 
-const PresetLibrary = ({ presets }: { presets: PresetView[] }) => {
+/**
+ * The placeholder text of a fresh editor. It is a real program: pressing the button compiles and starts it,
+ * and the server checks every action it invokes against the operator's rights.
+ */
+const DEFAULT_SOURCE = `program "Probe"
+invoke net.inspect self
+stop`;
+
+const ProgramEditor = ({
+  text,
+  onChange,
+  onRun,
+}: {
+  text: string;
+  onChange: (text: string) => void;
+  onRun: (text: string) => void;
+}) => {
+  return (
+    <Section
+      title="Редактор"
+      buttons={
+        <Button icon="play" content="Запустить" disabled={!text.trim()} onClick={() => onRun(text)} />
+      }
+    >
+      <TextArea
+        fluid
+        height="120px"
+        value={text}
+        onInput={(_event, value) => onChange(value)}
+        placeholder="program &quot;Probe&quot;"
+      />
+      <Box mt={1} color="label" fontSize={11}>
+        Текст — это данные: права, стоимость и перезарядка проверяются на сервере при каждом действии.
+      </Box>
+    </Section>
+  );
+};
+
+const PresetLibrary = ({ presets, onChoose }: { presets: PresetView[]; onChoose: (text: string) => void }) => {
   const [chosen, setChosen] = useState<string | null>(null);
   const current = presets.find(preset => preset.name === chosen) ?? null;
   return (
@@ -151,9 +189,12 @@ const PresetLibrary = ({ presets }: { presets: PresetView[] }) => {
         ))}
       </Stack>
       {current ? (
-        <Box mt={1} style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 11 }}>
-          {current.text}
-        </Box>
+        <>
+          <Box mt={1} style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 11 }}>
+            {current.text}
+          </Box>
+          <Button mt={1} icon="pen" content="Открыть в редакторе" onClick={() => onChoose(current.text)} />
+        </>
       ) : (
         <Box mt={1} color="label" fontSize={11}>
           Выберите программу, чтобы увидеть её текст. Это данные: чужие права и старые адреса с ними не
@@ -170,16 +211,23 @@ const ProgramsTab = ({
   presets,
   selected,
   onExecute,
+  onImport,
 }: {
   actions: ActionView[];
   programs: ProgramView[];
   presets: PresetView[];
   selected: number | null;
   onExecute: (action: string) => void;
-}) => (
+  onImport: (text: string) => void;
+}) => {
+  const [text, setText] = useState(DEFAULT_SOURCE);
+  return (
   <Stack vertical fill>
     <Stack.Item>
-      <PresetLibrary presets={presets} />
+      <ProgramEditor text={text} onChange={setText} onRun={onImport} />
+    </Stack.Item>
+    <Stack.Item>
+      <PresetLibrary presets={presets} onChoose={setText} />
     </Stack.Item>
     <Stack.Item>
       <Section title="Запущенные программы">
@@ -248,7 +296,8 @@ const ProgramsTab = ({
       </Stack.Item>
     ))}
   </Stack>
-);
+  );
+};
 
 const EventsTab = ({ operations }: { operations: OperationView[] }) => (
   <Table>
@@ -343,6 +392,7 @@ export const NetrunContent = ({
                   presets={panel.presets}
                   selected={selected}
                   onExecute={execute}
+                  onImport={text => act('import', { source: text, target: selected })}
                 />
               )}
               {panel && tab === 'events' && <EventsTab operations={panel.operations} />}

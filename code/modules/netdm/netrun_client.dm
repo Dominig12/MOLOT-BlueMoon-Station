@@ -84,6 +84,8 @@
 			return TRUE
 		if("execute")
 			return execute(params)
+		if("import")
+			return import_program(params)
 
 /**
  * Runs one action from this window. It travels as the operator's own network identity, so the Host
@@ -126,6 +128,51 @@
 		notice = "Сеть отказала: [reply["error"] || "нет ответа"]"
 		return
 	notice = "Итог: [result["status"]]"
+	next_poll = 0
+	SStgui.update_uis(src)
+
+/**
+ * Imports program text and starts it as this operator on this device. The text carries no rights: the Host
+ * compiles it, starts it as the operator's principal and checks every action it invokes.
+ */
+/datum/netrun_client/proc/import_program(list/params)
+	var/source = params["source"]
+	if(!istext(source) || !length(source))
+		notice = "Текст программы пуст."
+		return TRUE
+	if(length(source) > 8192)
+		notice = "Программа слишком длинная."
+		return TRUE
+	var/datum/controller/subsystem/netdm_observe/network = SSnetdm_observe
+	if(!network?.services)
+		notice = "Сеть недоступна."
+		return TRUE
+	var/list/execution = netrun_execution_host()
+	if(!execution)
+		notice = "Действия недоступны: терминал не привязан к цифровому хосту."
+		return TRUE
+	var/list/payload = list(
+		"principal" = principal,
+		"source" = source,
+		"execution" = execution["id"],
+	)
+	if(endpoint_id)
+		payload["endpoint"] = endpoint_id
+		payload["generation"] = endpoint_generation
+	if(!network.services.control("netrun_program", payload, CALLBACK(src, PROC_REF(on_program))))
+		notice = "Канал занят, повторю позже."
+		return TRUE
+	notice = "Программа отправлена."
+	return TRUE
+
+/datum/netrun_client/proc/on_program(list/reply)
+	if(QDELETED(src) || !islist(reply))
+		return
+	var/list/result = reply["result"]
+	if(!reply["ok"] || !islist(result))
+		notice = "Программа отклонена: [reply["error"] || "нет ответа"]"
+		return
+	notice = "Программа запущена: [result["name"] || result["status"]]"
 	next_poll = 0
 	SStgui.update_uis(src)
 
