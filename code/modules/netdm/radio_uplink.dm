@@ -80,6 +80,10 @@
 	var/datum/component/netdm_node/node = istype(source) && radios[WEAKREF(source)] ? source.GetComponent(/datum/component/netdm_node) : null
 	if(!id || !node)
 		return FALSE // Machines and radios outside the network keep the legacy path.
+	// Without a published world there is no digital stage at all, so the transmission keeps the physical
+	// path instead of waiting for a session that may never come (INT-002).
+	if(!SSnetdm_observe.published || !SSnetdm_observe.services)
+		return FALSE
 	uplink_counters["transmissions"]++
 	// The radio knows which receivers serve its frequency; whether one is on is the receiver's to say.
 	var/list/targets = list()
@@ -265,9 +269,10 @@
 	if(transmission_method != TRANSMISSION_SUBSPACE)
 		return ..()
 	var/datum/netdm_radio_shadow/radio = SSnetdm_observe.radio
-	// Telecomms cannot deliver a subspace signal when the Host or endpoint is absent.
-	// The uplink either enters the packet network or is lost.
-	radio?.uplink(src)
+	// A transmission the digital stage cannot take keeps the physical path: an unavailable CORE must not
+	// swallow a signal the station's own telecomms could still deliver (INT-002).
+	if(!radio?.uplink(src))
+		return ..()
 
 #undef NETDM_UPLINK_CONTEXT
 #undef NETDM_UPLINK_CONTEXTS

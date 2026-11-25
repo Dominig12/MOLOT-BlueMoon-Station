@@ -42,14 +42,26 @@
 	var/datum/netdm_door_shadow/controller = SSnetdm_observe.doors
 	var/list/plan = controller?.plan(src)
 	if(!plan)
-		if(usr)
-			to_chat(usr, span_warning("Сетевой контроллер не отправил команду: устройство или маршрут недоступны."))
-		return
+		// A button is a physical device: when the network cannot carry its command it keeps its own local
+		// behaviour instead of doing nothing (AT-35, INT-002).
+		return legacy_activate()
 	cooldown = TRUE
 	addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
 	controller.mirror(plan)
 
 /// The mapped button prewarms this channel. Other controllers may opt into their own channel.
+/// The behaviour this button had before the network existed. It is used whenever the network cannot carry a
+/// command, so an isolated button still opens its blast doors.
+/obj/item/assembly/control/proc/legacy_activate()
+	cooldown = TRUE
+	var/openclose
+	for(var/obj/machinery/door/poddoor/M in GLOB.machines)
+		if(M.id == src.id)
+			if(openclose == null)
+				openclose = M.density
+			INVOKE_ASYNC(M, openclose ? TYPE_PROC_REF(/obj/machinery/door/poddoor, open) : TYPE_PROC_REF(/obj/machinery/door/poddoor, close))
+	addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
+
 /obj/item/assembly/control/proc/netdm_mapped_channel()
 	return type == /obj/item/assembly/control && id ? "blast:[id]" : null
 
@@ -76,6 +88,31 @@
 				8= shock (SHOCK)
 				16= door safties (SAFE)
 	*/
+
+/// The airlock controller keeps its own local behaviour when the network is unavailable.
+/obj/item/assembly/control/airlock/legacy_activate()
+	cooldown = TRUE
+	var/doors_need_closing = FALSE
+	var/list/obj/machinery/door/airlock/open_or_close = list()
+	for(var/obj/machinery/door/airlock/D in GLOB.airlocks)
+		if(D.id_tag == src.id)
+			if(specialfunctions & OPEN)
+				open_or_close += D
+				if(!D.density)
+					doors_need_closing = TRUE
+			if(specialfunctions & IDSCAN)
+				D.aiDisabledIdScanner = !D.aiDisabledIdScanner
+			if(specialfunctions & BOLTS)
+				if(!D.wires.is_cut(WIRE_BOLTS) && D.hasPower())
+					D.locked = !D.locked
+					D.update_icon()
+			if(specialfunctions & SHOCK)
+				D.secondsElectrified = D.secondsElectrified ? 0 : 30
+			if(specialfunctions & SAFE)
+				D.safe = !D.safe
+	for(var/D in open_or_close)
+		INVOKE_ASYNC(D, doors_need_closing ? TYPE_PROC_REF(/obj/machinery/door/airlock, close) : TYPE_PROC_REF(/obj/machinery/door/airlock, open))
+	addtimer(VARSET_CALLBACK(src, cooldown, FALSE), 10)
 
 /obj/item/assembly/control/airlock/netdm_mapped_channel()
 	return type == /obj/item/assembly/control/airlock && id && netdm_functions() ? "airlock:[id]" : null
