@@ -155,6 +155,8 @@
 		"principal" = principal,
 		"source" = source,
 		"execution" = execution["id"],
+		// The player pressed the button: the import and the deployment are one deliberate act here.
+		"confirm" = TRUE,
 	)
 	if(endpoint_id)
 		payload["endpoint"] = endpoint_id
