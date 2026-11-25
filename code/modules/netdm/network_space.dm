@@ -254,9 +254,15 @@
 	same = same && text2num("[identity["colour"]]") == text2num("[presence["personaColour"]]")
 	if(same)
 		return
-	send("persona", list("name" = identity["name"], "signature" = identity["signature"], "statusLine" = identity["status"],
-		"role" = identity["role"], "colour" = text2num("[identity["colour"]]")),
-		CALLBACK(src, PROC_REF(persona_answered)))
+	// A neuro-link may carry only the fields it was written with. Absent ones travel as empty text, because
+	// the contract accepts a missing field but never a null one, and a refused command would silently leave the
+	// presence without its identity.
+	send("persona", list(
+		"name" = "[identity["name"] || ""]",
+		"signature" = "[identity["signature"] || ""]",
+		"statusLine" = "[identity["status"] || ""]",
+		"role" = "[identity["role"] || ""]",
+		"colour" = text2num("[identity["colour"]]")), CALLBACK(src, PROC_REF(persona_answered)))
 
 /datum/netdm_space/proc/set_persona(list/params, mob/living/user)
 	var/list/arguments = list()
