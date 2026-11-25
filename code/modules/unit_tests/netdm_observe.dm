@@ -3029,3 +3029,28 @@
 	TEST_ASSERT(!target_apc.operating && entry_apc.operating, "The Host-approved action flips only the target's physical breaker.")
 	qdel(source)
 	TEST_ASSERT(QDELETED(space) && !lane.by_node[entry], "Retirement closes the view and invalidates the entity endpoint.")
+
+/**
+ * The NETRUN device adapter without a network: names, classes and refusal to invent anything from missing
+ * input. The live path (declare → grant → execute) is covered by the Host integration checks.
+ */
+/datum/unit_test/netdm_observe/netrun_adapter
+
+/datum/unit_test/netdm_observe/netrun_adapter/Run()
+	TEST_ASSERT_EQUAL(netrun_host_name("door.a"), "svc.door.a", "a service instance becomes a host name")
+	TEST_ASSERT_EQUAL(length(netrun_host_name("x")), length("svc.x"), "a short instance keeps its name")
+	TEST_ASSERT(length(netrun_host_name("")) <= 68, "an empty instance still produces a bounded name")
+	TEST_ASSERT_EQUAL(netrun_host_class("research.server"), "Server", "a research server is a server")
+	TEST_ASSERT_EQUAL(netrun_host_class("machine.door"), "Terminal", "a door is a terminal")
+	TEST_ASSERT_EQUAL(netrun_host_class("atmos.telemetry"), "Terminal", "a sensor is a terminal")
+	TEST_ASSERT_EQUAL(netrun_host_class("network.shell"), "Terminal", "unknown services still get a shape")
+
+	// A declaration without a lane or an instance must be refused, not crash the lane.
+	var/datum/netrun_adapter/adapter = new
+	adapter.service_registered(null, null, "door.a")
+	adapter.service_registered(null, null, null)
+	adapter.service_registered(null, null, 42)
+	TEST_ASSERT_EQUAL(length(adapter.hosts), 0, "no host is declared without a lane")
+	TEST_ASSERT_EQUAL(adapter.pending, 0, "a refused declaration leaves nothing pending")
+	TEST_ASSERT(isnull(adapter.host_of("door.a")), "an undeclared instance has no host")
+	qdel(adapter)
