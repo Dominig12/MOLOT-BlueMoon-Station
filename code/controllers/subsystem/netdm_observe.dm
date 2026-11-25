@@ -204,7 +204,22 @@ SUBSYSTEM_DEF(netdm_observe)
 		bridge = null
 	clear_observation()
 
+/// Ends every active dive. Called when the session is reset or the subsystem stops, so no operator is left
+/// behind in a body that cannot act.
+/datum/controller/subsystem/netdm_observe/proc/end_immersions(reason)
+	if(!length(netdm_immersions))
+		return
+	// The registry is keyed by a weak reference of the operator, so the dive is the value.
+	for(var/key in netdm_immersions.Copy())
+		var/datum/netdm_immersion/dive = netdm_immersions[key]
+		if(!QDELETED(dive))
+			dive.surface(reason)
+	netdm_immersions.Cut()
+
 /datum/controller/subsystem/netdm_observe/proc/clear_observation()
+	// A dive belongs to the session: when the session is gone, every operator comes back to its body
+	// instead of being left in trance with blocked hands (audit, §13).
+	end_immersions("session_reset")
 	phase = null
 	pending = null
 	pending_heartbeat = FALSE

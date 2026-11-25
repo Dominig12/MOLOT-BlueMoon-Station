@@ -80,6 +80,18 @@
 		query["sent"] = FALSE
 		query["operation"] = null
 
+/**
+ * The player-facing entry point of the module report. The audit found the only caller was a unit test, so the
+ * diagnostic existed but no player could reach it; this verb is that path.
+ */
+/obj/machinery/power/apc/verb/netdm_diagnostic()
+	set name = "Network diagnostic"
+	set category = "Object"
+	set src in oview(1)
+	if(!usr || !SSnetdm_observe?.observing())
+		return
+	SSnetdm_observe.diagnostics?.inspect(src, usr)
+
 /// Asks the APC's network module. Returns TRUE when the click was taken, also when it only tells why not.
 /datum/netdm_diagnostics/proc/inspect(obj/machinery/power/apc/apc, mob/user)
 	var/datum/netdm_service_lane/lane = SSnetdm_observe.services

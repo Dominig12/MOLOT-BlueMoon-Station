@@ -1231,7 +1231,7 @@
 		"otherPresences" = occupants_on_level,
 		"immersed" = immersed, "immersionEnabled" = netdm_immersion_enabled() && !!actor?.neural_implant(), "immersionReason" = immersed_reason,
 		"immersedSeconds" = (immersed && immersed_at) ? round((world.time - immersed_at) / 10) : 0,
-		"life" = life, "incidents" = SSnetdm_observe?.netdm_incidents || list(), "hack" = list("status" = hack_status, "code" = hack_code, "target" = hack_target, "remaining" = max(0, (hack_expires - world.time) / (1 SECONDS)), "keys" = hack_keys, "masked" = hack_masked), "persona" = islist(presence) ? list("name" = presence["personaName"], "signature" = presence["personaSignature"], "status" = presence["personaStatus"], "role" = presence["personaRole"], "colour" = text2num("[presence["personaColour"]]")) : null,
+		"life" = islist(presence) ? life : list(), "incidents" = islist(presence) ? (SSnetdm_observe?.netdm_incidents || list()) : list(), "hack" = list("status" = hack_status, "code" = hack_code, "target" = hack_target, "remaining" = max(0, (hack_expires - world.time) / (1 SECONDS)), "keys" = hack_keys, "masked" = hack_masked), "persona" = islist(presence) ? list("name" = presence["personaName"], "signature" = presence["personaSignature"], "status" = presence["personaStatus"], "role" = presence["personaRole"], "colour" = text2num("[presence["personaColour"]]")) : null,
 		"chat" = chat_data,
 		"log" = log, "actionEntries" = action_entries, "revision" = revision, "alarmPending" = !!alarm_request, "alarmWatch" = watch_data,
 		"routePreview" = route_preview, "machineCommand" = command_data)
