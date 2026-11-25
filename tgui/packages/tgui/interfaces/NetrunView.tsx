@@ -12,6 +12,7 @@ import {
   formatCooldown,
   HostView,
   OperationView,
+  ProgramView,
   summarise,
   TabKey,
   TABS,
@@ -125,16 +126,56 @@ const HostsTab = ({
   </Table>
 );
 
+const programStateText: Record<string, string> = {
+  running: 'выполняется',
+  waiting: 'ожидание',
+  waitingforoperation: 'ждёт ответа',
+  completed: 'завершена',
+  faulted: 'остановлена',
+  cancelled: 'отменена',
+};
+
 const ProgramsTab = ({
   actions,
+  programs,
   selected,
   onExecute,
 }: {
   actions: ActionView[];
+  programs: ProgramView[];
   selected: number | null;
   onExecute: (action: string) => void;
 }) => (
   <Stack vertical fill>
+    <Stack.Item>
+      <Section title="Запущенные программы">
+        <Table>
+          <Table.Row header>
+            <Table.Cell>ID</Table.Cell>
+            <Table.Cell>Состояние</Table.Cell>
+            <Table.Cell>Инструкций</Table.Cell>
+            <Table.Cell>Причина</Table.Cell>
+          </Table.Row>
+          {programs.map(program => (
+            <Table.Row key={program.process} className="candystripe">
+              <Table.Cell>
+                #{program.process} {program.definition}
+              </Table.Cell>
+              <Table.Cell>{programStateText[program.state] ?? program.state}</Table.Cell>
+              <Table.Cell>{program.instructions}</Table.Cell>
+              <Table.Cell color="label">{program.fault ?? '—'}</Table.Cell>
+            </Table.Row>
+          ))}
+          {programs.length === 0 && (
+            <Table.Row>
+              <Table.Cell colSpan={4} color="label">
+                Программ нет.
+              </Table.Cell>
+            </Table.Row>
+          )}
+        </Table>
+      </Section>
+    </Stack.Item>
     {actions.map(action => (
       <Stack.Item key={action.id}>
         <Section
@@ -262,7 +303,12 @@ export const NetrunContent = ({
                 <HostsTab hosts={panel.hosts} selected={selected} onSelect={onSelect} />
               )}
               {panel && tab === 'programs' && (
-                <ProgramsTab actions={panel.actions} selected={selected} onExecute={execute} />
+                <ProgramsTab
+                  actions={panel.actions}
+                  programs={panel.programs}
+                  selected={selected}
+                  onExecute={execute}
+                />
               )}
               {panel && tab === 'events' && <EventsTab operations={panel.operations} />}
             </Section>

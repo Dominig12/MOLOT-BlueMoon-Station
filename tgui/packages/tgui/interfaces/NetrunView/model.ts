@@ -42,6 +42,18 @@ export type OperationView = {
 
 export type LinkView = { a: number; b: number; cost: number };
 
+/** A running or finished program of this observer. It runs on the server, not in the window. */
+export type ProgramView = {
+  process: number;
+  definition: string;
+  state: string;
+  instructions: number;
+  runs: number;
+  fault: string | null;
+  lastAction: string | null;
+  lastOutcome: string | null;
+};
+
 /** The bounded client refresh. Everything here was filtered on the server before it was sent. */
 export type Panel = {
   now: number;
@@ -51,6 +63,7 @@ export type Panel = {
   links: LinkView[];
   actions: ActionView[];
   operations: OperationView[];
+  programs: ProgramView[];
   knowledge: { known: number; stale: number; total: number };
 };
 

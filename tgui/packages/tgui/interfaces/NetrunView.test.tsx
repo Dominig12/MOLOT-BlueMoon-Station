@@ -55,6 +55,18 @@ const panel = (overrides: Partial<Data['panel']> = {}) => ({
   operations: [
     { operation: 3, status: 'committed', kind: 'query', category: 'perception', reason: null, result: null },
   ],
+  programs: [
+    {
+      process: 4,
+      definition: 'guardian',
+      state: 'waiting',
+      instructions: 12,
+      runs: 1,
+      fault: null,
+      lastAction: 'net.inspect',
+      lastOutcome: 'committed',
+    },
+  ],
   knowledge: { known: 2, stale: 1, total: 2 },
   ...overrides,
 });
@@ -95,6 +107,13 @@ test('выбор хоста на карте открывает контекст 
   fireEvent.click(screen.getByText('Программы'));
   fireEvent.click(screen.getByText('Выполнить'));
   expect(act).toHaveBeenCalledWith('execute', { action: 'net.inspect', target: 1 });
+});
+
+test('вкладка «Программы» показывает запущенную программу и её состояние', () => {
+  renderWindow({ panel: panel() as Data['panel'], error: null, notice: null });
+  fireEvent.click(screen.getByText('Программы'));
+  expect(screen.getByText(/guardian/)).toBeTruthy();
+  expect(screen.getByText('ожидание')).toBeTruthy();
 });
 
 test('вкладка «События» показывает итог операции', () => {
