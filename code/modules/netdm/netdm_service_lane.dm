@@ -677,8 +677,6 @@
 /// unknown operation is refused there rather than being sent to the Host as something else.
 /datum/netdm_service_lane/proc/send_control(datum/netdm_bridge/v1/staged/bridge, list/control)
 	var/op = control[1]
-	if(copytext(op, 1, 7) == "radio_")
-		return bridge.radio(op, control[2])
 	if(copytext(op, 1, 8) == "netrun_")
 		return bridge.netrun(op, control[2])
 	return bridge.research(op, control[2])

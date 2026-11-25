@@ -233,53 +233,6 @@
 		return null
 	return request(list("op" = op, "payload" = payload))
 
-/// P8 Shadow: analytic reach of a radio transmission (radio_reach); it changes nothing in the Host.
-/datum/netdm_bridge/v1/staged/proc/radio(op, list/payload)
-	if(op != "radio_reach" || !islist(payload))
-		return null
-	return request(list("op" = op, "payload" = payload))
-
-/datum/netdm_bridge/proc/game_add_node(node_id, x, y, z = 0)
-    return request(list("op" = "game_add_node", "a" = node_id, "x" = x, "y" = y, "z" = z))
-
-/datum/netdm_bridge/proc/game_remove_node(node_id)
-    return request(list("op" = "game_remove_node", "a" = node_id))
-
-/datum/netdm_bridge/proc/game_move_node(node_id, x, y, z = 0)
-    return request(list("op" = "game_move_node", "a" = node_id, "x" = x,
-        "y" = y, "z" = z))
-
-/datum/netdm_bridge/proc/game_connect(from_id, to_id, cost = 1)
-    return request(list("op" = "game_connect", "a" = from_id, "b" = to_id,
-        "cost" = cost))
-
-/datum/netdm_bridge/proc/game_disconnect(from_id, to_id)
-    return request(list("op" = "game_disconnect", "a" = from_id, "b" = to_id))
-
-/datum/netdm_bridge/proc/game_batch(list/changes)
-    return request(list("op" = "game_batch", "changes" = changes))
-
-/datum/netdm_bridge/proc/game_stats()
-    return request(list("op" = "game_stats"))
-
-/datum/netdm_bridge/proc/game_reset()
-    return request(list("op" = "game_reset"))
-
-/datum/netdm_bridge/proc/game_radio(node_id, range = 14, channel = 1, enabled = TRUE)
-    return request(list("op" = "game_radio", "a" = node_id,
-        "range" = range, "channel" = channel, "enabled" = !!enabled))
-
-/datum/netdm_bridge/proc/packet_send(from_id, to_id, bytes, request_id, interactive = TRUE, timeout_ticks = 30)
-    return request(list("op" = "packet_send", "a" = from_id,
-        "b" = to_id, "bytes" = bytes, "requestId" = request_id,
-        "trafficClass" = interactive ? 1 : 0, "timeoutTicks" = timeout_ticks))
-
-/datum/netdm_bridge/proc/packet_cancel(packet_id)
-    if(!stream_id)
-        return null
-    return request(list("op" = "packet_cancel", "packetId" = packet_id,
-        "streamId" = stream_id))
-
 /// Request a bounded page using the cursor last processed in DM.
 /// One poll in flight, preventing accidental buildup when the server is slow.
 /datum/netdm_bridge/proc/request_receipts(limit = 64)
