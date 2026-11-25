@@ -134,7 +134,7 @@
 	if(!SSnetdm_observe?.services)
 		notice = "Сеть недоступна."
 		return TRUE
-	var/presence = panel?.presence
+	var/list/presence = panel?["presence"]
 	var/identity = text2num(presence?["identity"])
 	if(verb != "enter" && !identity)
 		notice = "Нет присутствия: сначала войдите на свой терминал."

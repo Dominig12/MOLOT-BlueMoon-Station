@@ -45,9 +45,11 @@
 	var/list/service = endpoint?.services[instance]
 	if(!islist(service) || !istext(service["type"]))
 		return
+	var/node = lane?.node_id(endpoint.node)
 	if(endpoint.node && !devices[endpoint.node])
 		devices[endpoint.node] = instance
-	wanted[instance] = list("type" = service["type"], "tries" = 0)
+	// The network position travels with the declaration, so the Host can measure reach and plan travel.
+	wanted[instance] = list("type" = service["type"], "tries" = 0, "node" = node)
 	declare()
 
 /**
@@ -78,14 +80,17 @@
 		entry["tries"]++
 		pending++
 		hosts[instance] = 0
-		var/accepted = lane.control("netrun_host", list(
+		var/list/payload = list(
 			"name" = netrun_host_name(instance),
 			"class" = netrun_host_class(entry["type"]),
 			"capacityCu" = 2,
 			"rateCu" = 1,
 			"memorySlots" = 1,
 			"services" = list(entry["type"] = instance),
-		), CALLBACK(src, PROC_REF(on_host_declared), instance))
+		)
+		if(!isnull(entry["node"]))
+			payload["node"] = entry["node"]
+		var/accepted = lane.control("netrun_host", payload, CALLBACK(src, PROC_REF(on_host_declared), instance))
 		if(!accepted)
 			// The channel did not take it at all: keep the queue moving and try again later.
 			pending--
