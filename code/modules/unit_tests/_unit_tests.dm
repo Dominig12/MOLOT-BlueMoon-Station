@@ -439,6 +439,7 @@
 #include "modular_map_loader.dm" //SPLURT EDIT
 #include "nightshift.dm"
 #include "netdm_observe.dm"
+#include "netrun_client_life.dm"
 #include "northstar.dm"
 #include "ntnet_responses.dm"
 // #include "ntnetwork_tests.dm"
