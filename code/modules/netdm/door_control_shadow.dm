@@ -55,10 +55,6 @@
 	// Machine control is always a network command, not a second legacy path.
 
 /// Switches who moves the doors. A command keeps the mode of the press that sent it.
-/datum/netdm_door_shadow/proc/set_authoritative(enabled)
-	// Retained for old callers: switching back to a bypass is not supported.
-	return !!enabled
-
 /datum/netdm_door_shadow/reset_session()
 	// Receipts of the old session never arrive; those presses are compared with what arrived so far.
 	operations.Cut()
