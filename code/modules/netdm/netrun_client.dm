@@ -86,6 +86,8 @@
 			return execute(params)
 		if("import")
 			return import_program(params)
+		if("travel")
+			return travel(params)
 
 /**
  * Runs one action from this window. It travels as the operator's own network identity, so the Host
@@ -119,6 +121,66 @@
 		return TRUE
 	notice = "Действие отправлено: [action_id]"
 	return TRUE
+
+/**
+ * Presence and travel: enter where this device's host stands, move to another host over a route the transport
+ * plans, or abort a move that has not landed. The answer carries where the presence stands and when it arrives.
+ */
+/datum/netrun_client/proc/travel(list/params)
+	var/verb = params["mode"]
+	var/destination = text2num(params["target"])
+	if(!istext(verb) || (verb != "leave" && !destination))
+		return TRUE
+	if(!SSnetdm_observe?.services)
+		notice = "Сеть недоступна."
+		return TRUE
+	var/presence = panel?.presence
+	var/identity = text2num(presence?["identity"])
+	if(verb != "enter" && !identity)
+		notice = "Нет присутствия: сначала войдите на свой терминал."
+		return TRUE
+	var/list/payload = list("action" = verb)
+	if(identity)
+		payload["identity"] = identity
+	if(verb == "enter")
+		var/list/execution = netrun_execution_host()
+		if(!execution)
+			notice = "Вход невозможен: терминал не привязан к цифровому хосту."
+			return TRUE
+		payload["host"] = execution["id"]
+	else
+		payload["destination"] = destination
+	if(!SSnetdm_observe.services.control("netrun_presence", payload, CALLBACK(src, PROC_REF(on_presence))))
+		notice = "Канал занят, повторю позже."
+		return TRUE
+	notice = verb == "enter" ? "Вхожу на терминал..." : (verb == "leave" ? "Выхожу..." : "Иду к цели...")
+	return TRUE
+
+/datum/netrun_client/proc/on_presence(list/reply)
+	if(QDELETED(src) || !islist(reply))
+		return
+	var/list/result = reply["result"]
+	if(!reply["ok"] || !islist(result))
+		notice = "Сеть отказала: [reply["error"] || "нет ответа"]"
+		SStgui.update_uis(src)
+		return
+	switch(result["status"])
+		if("ok")
+			notice = result["state"] == "traveling" ? "В пути: [result["hops"]] переходов." : "Присутствие активно."
+		if("already_there")
+			notice = "Вы уже здесь."
+		if("no_transport")
+			notice = "Маршрутов нет: сеть не знает дороги."
+		if("no_route")
+			notice = "Маршрут недоступен."
+		if("busy")
+			notice = "Вы уже в пути."
+		if("host_unavailable")
+			notice = "Этот хост не принимает присутствие."
+		else
+			notice = "Отказ: [result["status"]]"
+	next_poll = 0
+	SStgui.update_uis(src)
 
 /datum/netrun_client/proc/on_action(list/reply)
 	if(QDELETED(src) || !islist(reply))

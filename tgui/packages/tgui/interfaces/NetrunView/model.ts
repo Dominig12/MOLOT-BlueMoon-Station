@@ -1,6 +1,16 @@
 import { BooleanLike } from 'common/react';
 
 /** What one observer may see of one digital host. Names arrive only once the identity is established. */
+/** Where the operator's own presence stands, as the Host reports it. */
+export type PresenceView = {
+  identity: number;
+  host: number;
+  state: string;
+  destination: number;
+  hops: number;
+  arriveAt: number;
+};
+
 export type HostView = {
   host: number;
   name: string;
@@ -67,6 +77,9 @@ export type Panel = {
   actions: ActionView[];
   operations: OperationView[];
   programs: ProgramView[];
+  /** Only the observer's own presence: another runner's is not this window's business. */
+  presence: PresenceView | null;
+  presences: PresenceView[];
   presets: PresetView[];
   knowledge: { known: number; stale: number; total: number };
 };

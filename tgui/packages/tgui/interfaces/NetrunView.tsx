@@ -55,7 +55,19 @@ const Sidebar = ({ tab, onTab }: { tab: TabKey; onTab: (key: TabKey) => void }) 
   </Stack>
 );
 
-const HostContext = ({ host, onExecute }: { host: HostView; onExecute: (action: string) => void }) => (
+const HostContext = ({
+  host,
+  presence,
+  onExecute,
+  onTravel,
+  onAbort,
+}: {
+  host: HostView;
+  presence?: PresenceView;
+  onExecute: (action: string) => void;
+  onTravel: () => void;
+  onAbort: () => void;
+}) => (
   <Section title="Выбранный хост" width="240px">
     <Box bold>{host.name || host.hostClass}</Box>
     <Box color="label" fontSize={11}>
@@ -83,7 +95,32 @@ const HostContext = ({ host, onExecute }: { host: HostView; onExecute: (action: 
         <Table.Cell>{host.effects}</Table.Cell>
       </Table.Row>
     </Table>
-    <Button mt={1} fluid icon="terminal" content="Осмотреть" onClick={() => onExecute('net.inspect')} />
+    <Button
+      mt={1}
+      fluid
+      icon="terminal"
+      content="Осмотреть"
+      onClick={() => onExecute('net.inspect')}
+    />
+    {presence?.state === 'traveling' ? (
+      <Button mt={1} fluid icon="stop" color="bad" content="Прервать переход" onClick={onAbort} />
+    ) : (
+      <Button
+        mt={1}
+        fluid
+        icon="walking"
+        content={presence ? 'Идти сюда' : 'Войти'}
+        disabled={presence?.host === host.host && presence?.state === 'idle'}
+        onClick={onTravel}
+      />
+    )}
+    <Box mt={1} color="label" fontSize={11}>
+      {!presence
+        ? 'Присутствие не активно'
+        : presence.state === 'traveling'
+          ? `В пути: ${presence.hops} переходов`
+          : `Стою на хосте ${presence.host}`}
+    </Box>
   </Section>
 );
 
@@ -408,7 +445,18 @@ export const NetrunContent = ({
       </Stack.Item>
       {host && (
         <Stack.Item>
-          <HostContext host={host} onExecute={execute} />
+          <HostContext
+            host={host}
+            presence={panel?.presence ?? undefined}
+            onExecute={execute}
+            onTravel={() => {
+              act('travel', {
+                mode: panel?.presence ? 'move' : 'enter',
+                target: selected,
+              });
+            }}
+            onAbort={() => act('travel', { mode: 'abort' })}
+          />
         </Stack.Item>
       )}
     </Stack>
