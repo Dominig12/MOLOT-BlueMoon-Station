@@ -1,6 +1,4 @@
-/// Time a report waits for its netDM deliveries before the comparison with the radio path.
-#define NETDM_TELEMETRY_SETTLE (5 SECONDS)
-/// Reports kept for comparison at once; the oldest are compared early when this fills up.
+/// Delivery records kept at once; the oldest are dropped when this fills up.
 #define NETDM_TELEMETRY_REPORTS 256
 /// Latency samples kept for percentiles.
 #define NETDM_TELEMETRY_SAMPLES 512
@@ -9,14 +7,13 @@
 #define NETDM_ATMOS_ALARM_RESULT_AGE (15 SECONDS)
 
 /**
- * atmos.telemetry pilot in Shadow mode (P4).
+ * atmos.telemetry (P4).
  *
  * Gas sensors keep reporting over the legacy radio frequency, and the atmos consoles keep showing
  * those reports. Every report is also published as atmos.sample by the sensor's service instance;
  * a console subscribes to the instances of the sensors in its list and asks each for a snapshot.
- * Deliveries are only recorded: the console screen does not change. Each report is then compared:
- * which consoles took it from the radio and which received it over netDM, how long that took,
- * and why a console that the radio reached did not receive it.
+ * The console screen does not change: this pilot measures the delivery path itself — which reports
+ * reached a console over netDM, how long that took, and what could not be published at all.
  *
  * The instance name joins the frequency and the id_tag, the same pair that links them on the radio.
  */
@@ -39,13 +36,8 @@
 	var/list/air_alarm_results = list()
 	/// Sensor weakref -> last packet accepted from that physical sensor for snapshot replies.
 	var/list/last_samples = list()
-	/// Console endpoint ID -> list("matched", "radio_only", reason -> count), for station reports.
-	/// "console/instance" -> list(reason, world.time until it is trusted): a console that the network
-	/// cannot reach stays unreachable for a while, so its delivery states are not asked every report.
-	var/list/counters = list("reports" = 0, "compared" = 0, "unmirrored" = 0, "matched" = 0,
-		"legacy_only" = 0, "netdm_only" = 0, "unknown_tick" = 0, "snapshots" = 0, "snapshot_requests" = 0)
-	/// Reason of a console that the radio reached and netDM did not -> count.
-	var/list/reasons = list()
+	/// Delivery counters of this session: reports, snapshots, and reports that could not be published.
+	var/list/counters = list("reports" = 0, "unmirrored" = 0, "unknown_tick" = 0, "snapshots" = 0, "snapshot_requests" = 0)
 
 /datum/netdm_telemetry_shadow/setup(datum/netdm_service_lane/lane)
 	lane.dispatcher.allow("atmos.sample", new /datum/netdm_effect_handler/atmos_shadow)
@@ -110,7 +102,7 @@
 	var/list/report = reports[key]
 	if(report)
 		return report
-	report = list("instance" = instance, "tick" = tick, "created" = world.time, "legacy" = list(), "netdm" = list())
+	report = list("instance" = instance, "tick" = tick, "created" = world.time)
 	reports[key] = report
 	counters["reports"]++
 	if(length(reports) > NETDM_TELEMETRY_REPORTS)
@@ -139,10 +131,12 @@
 		report["queued_us"] = entry["queued_us"]
 	else
 		report["unmirrored"] = "not_ready"
+		counters["unmirrored"]++
 
 /datum/netdm_telemetry_shadow/proc/published(list/report, list/entry, list/reply)
 	if(!reply["ok"])
 		report["unmirrored"] = reply["error"] || "rejected"
+		counters["unmirrored"]++
 		return
 	var/list/result = reply["result"]
 	var/list/value = islist(result) ? result["value"] : null
@@ -190,10 +184,9 @@
 		// A sample from before the current session: nothing to attribute it to.
 		counters["unknown_tick"]++
 		return TRUE
-	var/now = netdm_now_us()
-	var/latency = isnull(report["queued_us"]) ? 0 : now - report["queued_us"]
-	report["netdm"][item["recipient"]] = latency
-	// A slow delivery is visible in the latency counters; nothing else is claimed about it.
+	// A delivery of a report this session queued: its end-to-end latency is one sample.
+	if(!isnull(report["queued_us"]))
+		push(latencies, netdm_now_us() - report["queued_us"])
 
 /datum/netdm_telemetry_shadow/proc/push(list/samples, value)
 	samples += value
@@ -414,7 +407,6 @@
 	return TRUE
 
 // The pilot devices. Without Observe nothing below adds a component or a call.
-#undef NETDM_TELEMETRY_SETTLE
 #undef NETDM_TELEMETRY_REPORTS
 #undef NETDM_TELEMETRY_SAMPLES
 #undef NETDM_ATMOS_ALARM_RESULTS

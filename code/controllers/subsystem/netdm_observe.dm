@@ -122,15 +122,15 @@ SUBSYSTEM_DEF(netdm_observe)
 	var/datum/netrun_adapter/netrun
 	/// Feature adapters run in registration order for both session resets and processing.
 	var/list/integrations = list()
-	/// atmos.telemetry pilot in Shadow mode: radio and netDM recipients compared report by report.
+	/// atmos.telemetry: sensor reports published as services and delivered to subscribed consoles.
 	var/datum/netdm_telemetry_shadow/telemetry
-	/// research.server pilot in Shadow mode: R&D servers keep their storage in the Host ledger.
+	/// research.server: R&D servers keep their storage in the Host ledger and consoles buy over the network.
 	var/datum/netdm_research_shadow/research
-	/// pda.messenger pilot in Shadow mode: PDA messages mirrored as addressed network deliveries (P7).
+	/// pda.messenger: PDA messages are addressed network deliveries through message servers (P7).
 	var/datum/netdm_messenger_shadow/messenger
-	/// Radio speech in Shadow mode: where the network would carry a transmission (P8).
+	/// Radio speech: telecomms receivers are reached over the network, the broadcast stays subspace (P8).
 	var/datum/netdm_radio_shadow/radio
-	/// Buttons and doors in Shadow mode: each press mirrored as set_state commands to its doors (P9.1).
+	/// Buttons and doors: each press becomes set_state commands to its doors (P9.1).
 	var/datum/netdm_door_shadow/doors
 	/// network.diagnostics: a multitool asks an APC's network module about its own ports.
 	var/datum/netdm_diagnostics/diagnostics
@@ -659,8 +659,6 @@ SUBSYSTEM_DEF(netdm_observe)
 		services?.refresh_apc_attachments()
 		forget_unmapped_apc_states()
 		discard_export()
-		if(!life_seeded && world.GetConfig("env", "NETDM_NET_LIFE") == "1")
-			seed_network_life()
 
 	// Keep the connection alive during the initial scan and the old graph ready during live updates.
 	// The lane is created after the first publication; retry the one-time population seeding here.
