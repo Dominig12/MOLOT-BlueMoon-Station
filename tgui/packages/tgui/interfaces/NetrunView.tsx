@@ -6,6 +6,7 @@ import { Window } from '../layouts';
 import { NetrunMap } from './NetrunView/Map';
 import {
   ActionView,
+  AgentView,
   Data,
   findHost,
   formatAge,
@@ -175,6 +176,80 @@ const LifeTab = ({
     </Section>
   );
 };
+
+/**
+ * The observer's strains: a virus that copies itself over existing links, or ICE that just defends. Every row is
+ * what the Host reports, and every button is a request it may refuse.
+ */
+const AgentsTab = ({
+  agents,
+  selected,
+  onAgent,
+}: {
+  agents: AgentView[];
+  selected: number | null;
+  onAgent: (action: string, extra?: Record<string, unknown>) => void;
+}) => (
+  <Section
+    title="Штаммы"
+    buttons={
+      <>
+        <Button
+          icon="bug"
+          content="Вирус"
+          disabled={!selected}
+          onClick={() => onAgent('deploy', { target: selected, kind: 'virus' })}
+        />
+        <Button
+          ml={1}
+          icon="shield"
+          content="ICE"
+          disabled={!selected}
+          onClick={() => onAgent('deploy', { target: selected, kind: 'ice' })}
+        />
+        <Button
+          ml={1}
+          icon="broom"
+          content="Очистить хост"
+          disabled={!selected}
+          onClick={() => onAgent('purge', { target: selected })}
+        />
+      </>
+    }
+  >
+    {agents.length === 0 ? (
+      <NoticeBox info>
+        Ваших штаммов в сети нет. Вирус копируется по существующим связям, пока хватает бюджета и хост платит;
+        ICE только защищает хост и никуда не идёт.
+      </NoticeBox>
+    ) : (
+      <Table>
+        <Table.Row header>
+          <Table.Cell>Штамм</Table.Cell>
+          <Table.Cell>Вид</Table.Cell>
+          <Table.Cell>Хост</Table.Cell>
+          <Table.Cell>Поколение</Table.Cell>
+          <Table.Cell>Целостность</Table.Cell>
+          <Table.Cell>Копий</Table.Cell>
+          <Table.Cell />
+        </Table.Row>
+        {agents.map(agent => (
+          <Table.Row key={agent.id}>
+            <Table.Cell>{agent.strain}</Table.Cell>
+            <Table.Cell>{agent.kind === 'ice' ? 'ICE' : 'вирус'}</Table.Cell>
+            <Table.Cell>{agent.host}</Table.Cell>
+            <Table.Cell>{agent.generation}</Table.Cell>
+            <Table.Cell>{agent.integrity}</Table.Cell>
+            <Table.Cell>{agent.spreads}</Table.Cell>
+            <Table.Cell>
+              <Button compact icon="trash" content="Снять" onClick={() => onAgent('clean', { agent: agent.id })} />
+            </Table.Cell>
+          </Table.Row>
+        ))}
+      </Table>
+    )}
+  </Section>
+);
 
 const HostContext = ({
   host,
@@ -561,6 +636,13 @@ export const NetrunContent = ({
           selected={selected}
           onLife={(action, target) => act('life', { action, target })}
           onRestore={backup => act('life', { action: 'restore_backup', backup, target: selected })}
+        />
+      )}
+      {panel && tab === 'agents' && (
+        <AgentsTab
+          agents={panel.agents ?? []}
+          selected={selected}
+          onAgent={(action, extra) => act('agents', { action, ...extra })}
         />
       )}
       {panel && tab === 'events' && <EventsTab operations={panel.operations} />}

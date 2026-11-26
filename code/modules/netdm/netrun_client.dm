@@ -90,6 +90,8 @@
 			return travel(params)
 		if("life")
 			return life(params)
+		if("agents")
+			return agents(params)
 
 /**
  * Runs one action from this window. It travels as the operator's own network identity, so the Host
@@ -131,6 +133,77 @@
  * Digital life from the window: make a backup on the selected host, move the core there, or restore it from a
  * backup. The Host decides everything; the window only names the intent and shows the answer.
  */
+/**
+ * Viruses and ICE from the window: plant a strain on the selected host, or take one of our own back. The window
+ * only asks; whether the host can pay for the strain is the Host's answer, not a promise of ours.
+ */
+/datum/netrun_client/proc/agents(list/params)
+	var/verb = params["action"]
+	var/target = text2num(params["target"])
+	if(!istext(verb))
+		return TRUE
+	if(!SSnetdm_observe?.services)
+		notice = "Сеть недоступна."
+		return TRUE
+	var/list/payload = list("action" = verb, "principal" = principal)
+	switch(verb)
+		if("deploy")
+			if(!target)
+				notice = "Выберите хост."
+				return TRUE
+			payload["host"] = target
+			payload["kind"] = params["kind"] || "virus"
+			payload["strain"] = params["strain"] || (payload["kind"] == "ice" ? "window.ice" : "window.virus")
+			payload["computeCu"] = 2
+			payload["intervalMs"] = payload["kind"] == "ice" ? 60000 : 10000
+			payload["generations"] = payload["kind"] == "ice" ? 0 : 3
+			payload["copies"] = 1
+			payload["budget"] = payload["kind"] == "ice" ? 0 : 3
+		if("clean")
+			var/agent = text2num(params["agent"])
+			if(!agent)
+				return TRUE
+			payload["agent"] = agent
+		if("purge")
+			if(!target)
+				notice = "Выберите хост."
+				return TRUE
+			payload["host"] = target
+		else
+			return TRUE
+	if(!SSnetdm_observe.services.control("netrun_agent", payload, CALLBACK(src, PROC_REF(on_agents))))
+		notice = "Канал занят, повторю позже."
+		return TRUE
+	return TRUE
+
+/datum/netrun_client/proc/on_agents(list/reply)
+	if(QDELETED(src) || !islist(reply))
+		return
+	var/list/result = reply["result"]
+	if(!reply["ok"] || !islist(result))
+		notice = "Сеть отказала: [reply["error"] || "нет ответа"]"
+		next_poll = 0
+		SStgui.update_uis(src)
+		return
+	switch(result["status"])
+		if("ok")
+			if(!isnull(result["removed"]))
+				notice = "Снято агентов: [result["removed"]]."
+			else if(!isnull(result["strain"]))
+				notice = "Штамм [result["strain"]] размещён на хосте [result["host"]]."
+			else
+				notice = "Готово."
+		if("insufficient_resources")
+			notice = "Хост не может оплатить штамм."
+		if("limit_exceeded")
+			notice = "Предел штаммов исчерпан."
+		if("host_unavailable")
+			notice = "Этот хост недоступен."
+		else
+			notice = "Отказ: [result["status"]]"
+	next_poll = 0
+	SStgui.update_uis(src)
+
 /datum/netrun_client/proc/life(list/params)
 	var/verb = params["action"]
 	var/target = text2num(params["target"])

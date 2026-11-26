@@ -1,6 +1,17 @@
 import { BooleanLike } from 'common/react';
 
 /** What one observer may see of one digital host. Names arrive only once the identity is established. */
+/** One strain of the observer: a virus that spreads or ICE that defends, with what is left of it. */
+export type AgentView = {
+  id: number;
+  strain: string;
+  kind: string;
+  host: number;
+  generation: number;
+  integrity: number;
+  spreads: number;
+};
+
 /** A stored copy of a core: what it holds, how intact it is and when it was taken. */
 export type BackupView = {
   id: number;
@@ -97,6 +108,8 @@ export type Panel = {
   actions: ActionView[];
   operations: OperationView[];
   programs: ProgramView[];
+  /** The observer's own strains. */
+  agents: AgentView[];
   /** Copies of the observer's own core, newest first. */
   backups: BackupView[];
   /** The observer's own cores: their lives are not somebody else's business either. */
@@ -110,13 +123,14 @@ export type Panel = {
 
 export type Data = { panel: Panel | null; error: string | null; notice: string | null };
 
-export type TabKey = 'network' | 'hosts' | 'programs' | 'life' | 'events';
+export type TabKey = 'network' | 'hosts' | 'programs' | 'life' | 'agents' | 'events';
 
 export const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: 'network', label: 'Сеть', icon: 'diagram-project' },
   { key: 'hosts', label: 'Хосты', icon: 'server' },
   { key: 'programs', label: 'Программы', icon: 'code' },
   { key: 'life', label: 'Ядро', icon: 'brain' },
+  { key: 'agents', label: 'Агенты', icon: 'bug' },
   { key: 'events', label: 'События', icon: 'list' },
 ];
 

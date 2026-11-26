@@ -101,7 +101,7 @@ describe('форматирование', () => {
 
 describe('вкладки', () => {
   test('навигация повторяет целевой набор и не содержит пустых разделов', () => {
-    expect(TABS.map(tab => tab.key)).toEqual(['network', 'hosts', 'programs', 'life', 'events']);
+    expect(TABS.map(tab => tab.key)).toEqual(['network', 'hosts', 'programs', 'life', 'agents', 'events']);
     expect(TABS.every(tab => tab.label.length > 0)).toBe(true);
   });
 });

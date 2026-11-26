@@ -77,6 +77,7 @@ const panel = (overrides: Partial<Data['panel']> = {}) => ({
   presence: null,
   lives: [],
   backups: [],
+  agents: [],
   presences: [],
   ...overrides,
 });
@@ -144,6 +145,27 @@ it('lists the stored copies of the core and restores one of them', () => {
   expect(screen.getByText('Копии')).toBeTruthy();
   fireEvent.click(screen.getByText('Восстановить'));
   expect(act).toHaveBeenCalledWith('life', { action: 'restore_backup', backup: 7, target: 1 });
+});
+
+it('shows the strains and plants a virus or ICE on the selected host', () => {
+  const act = jest.fn();
+  const agent = { id: 5, strain: 'window.virus', kind: 'virus', host: 2, generation: 2, integrity: 90, spreads: 1 };
+  render(<NetrunWindow data={{ panel: panel({ agents: [agent] }), error: null, notice: null }} act={act} />);
+  fireEvent.click(screen.getAllByText('deck.1')[0]);
+  fireEvent.click(screen.getByText('Агенты'));
+  expect(screen.getByText('window.virus')).toBeTruthy();
+  fireEvent.click(screen.getByText('Вирус'));
+  expect(act).toHaveBeenCalledWith('agents', { action: 'deploy', target: 1, kind: 'virus' });
+  fireEvent.click(screen.getByText('ICE'));
+  expect(act).toHaveBeenCalledWith('agents', { action: 'deploy', target: 1, kind: 'ice' });
+});
+
+it('cleans one strain and explains an empty list instead of showing nothing', () => {
+  const act = jest.fn();
+  render(<NetrunWindow data={{ panel: panel({ agents: [] }), error: null, notice: null }} act={act} />);
+  fireEvent.click(screen.getAllByText('deck.1')[0]);
+  fireEvent.click(screen.getByText('Агенты'));
+  expect(screen.getByText(/Ваших штаммов в сети нет/)).toBeTruthy();
 });
 
 const renderWindow = (data: Data) => {
