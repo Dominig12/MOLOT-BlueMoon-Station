@@ -1119,7 +1119,11 @@
 		if(!(output?["status"] in list("moving", "suspended", "no_presence")))
 			update_alarm_watch(null)
 		return
-	note("Датчик атмосферы не принял запрос ([fields["status"] || output?["status"] || "нет ответа"]).")
+	var/status = fields["status"] || output?["status"] || "нет ответа"
+	// The answer names why the presence refused (host_unpowered, operator_away and so on): a bare
+	// status tells the player nothing about what to do next (§6.4).
+	var/reason = fields["reason"] || output?["reason"]
+	note("Датчик атмосферы не принял запрос ([status][reason ? ": [reason]" : ""]).")
 
 /datum/netdm_space/proc/check_alarm()
 	if(!alarm_request)
