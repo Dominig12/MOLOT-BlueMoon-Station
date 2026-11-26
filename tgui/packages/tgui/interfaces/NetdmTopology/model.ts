@@ -47,11 +47,18 @@ export type ViewRows = {
 };
 
 /** Upper bounds the client enforces whatever the server sends. */
+/**
+ * A collection as BYOND sends it: a positional list arrives as an array, an associative one (and therefore any
+ * keyed or empty shape the server happens to send) as an object. Iterating the object throws "not iterable",
+ * so every row collection goes through here first.
+ */
+export const rowsOf = <T>(value: unknown): readonly T[] => (Array.isArray(value) ? (value as T[]) : []);
+
 /** P13: how many recent network events touched each node; the map draws their halos. */
-export const countActivityNodes = (events: readonly { node?: string }[]): Readonly<Record<string, number>> => {
+export const countActivityNodes = (events: readonly { node?: string }[] | undefined | null): Readonly<Record<string, number>> => {
   const counts: Record<string, number> = {};
-  for (const event of events) {
-    if (!event.node) {
+  for (const event of rowsOf<{ node?: string }>(events)) {
+    if (!event?.node) {
       continue;
     }
     counts[event.node] = (counts[event.node] ?? 0) + 1;
@@ -78,7 +85,7 @@ const isRow = (row: unknown, size: number): row is unknown[] =>
 /** Parses rows defensively: malformed entries are skipped, not fatal. */
 export const parseView = (rows: ViewRows): View => {
   const nodes = new Map<string, ViewNode>();
-  for (const row of rows.nodes ?? []) {
+  for (const row of rowsOf(rows.nodes)) {
     if (nodes.size >= MAX_NODES) {
       break;
     }
@@ -92,8 +99,8 @@ export const parseView = (rows: ViewRows): View => {
     nodes.set(id, { id, x, y, flags: typeof flags === 'number' ? flags : 0 });
   }
   const links = new Map<string, ViewLink>();
-  const addLinks = (list: unknown[] | undefined, radio: boolean, down: boolean) => {
-    for (const row of list ?? []) {
+  const addLinks = (list: unknown, radio: boolean, down: boolean) => {
+    for (const row of rowsOf(list)) {
       if (links.size >= MAX_LINKS) {
         return;
       }

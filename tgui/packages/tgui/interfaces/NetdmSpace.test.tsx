@@ -96,6 +96,25 @@ const openPanel = (name: string) => fireEvent.click(
   within(screen.getByRole('tablist', { name: 'Панели сети' })).getByRole('tab', { name }),
 );
 
+test('an observer without a presence renders: the life payload is an empty list, not an object', () => {
+  // DM sends `"life" = list()` when nobody is dived in, and BYOND serialises that as `[]`. A `??` default does
+  // not fire for an array, so this payload used to crash the window with "not iterable" on the first render.
+  const { actions } = setup({
+    presence: null,
+    life: [] as unknown as typeof base.life,
+  });
+  expect(screen.getByRole('tablist', { name: 'Панели сети' })).toBeTruthy();
+  expect(actions()).toEqual([]);
+});
+
+test('partially filled life payload does not break the dock', () => {
+  const { actions } = setup({
+    life: { activity: [{ seq: 1, node: '1', kind: 'presence', name: 'Бот', text: 'Прибыл' }] } as unknown as typeof base.life,
+  });
+  expect(screen.getByText(/Бот: Прибыл/)).toBeTruthy();
+  expect(actions()).toEqual([]);
+});
+
 test('terminal and editor keep their drafts while visiting the selected node and other panels', () => {
   const { actions } = setup({ terminal: deviceTerminal });
   fireEvent.click(screen.getByText('Выбрать удалённый узел'));

@@ -56,6 +56,19 @@ describe('parseView', () => {
     expect(isOffline(FLAG_DEVICE | FLAG_BROKEN)).toBe(true);
     expect(isOffline(FLAG_APC | FLAG_DEVICE | FLAG_RADIO)).toBe(false);
   });
+
+  test('a keyed collection from BYOND is empty, not fatal', () => {
+    // DM sends an associative list (or an empty one) as `{}`; iterating it throws "not iterable".
+    const view = parseView({ nodes: {} as unknown as unknown[], edges: {} as unknown as unknown[] });
+    expect(view.nodes.size).toBe(0);
+    expect(view.links.size).toBe(0);
+  });
+
+  test('activity counters survive a missing or keyed payload', () => {
+    expect(countActivityNodes(undefined)).toEqual({});
+    expect(countActivityNodes({} as unknown as { node?: string }[])).toEqual({});
+    expect(countActivityNodes([{ node: '1' }, { node: '1' }, {}])).toEqual({ '1': 2 });
+  });
 });
 
 describe('diffById', () => {

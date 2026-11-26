@@ -174,6 +174,20 @@ type Data = {
   life?: { bots: LifeBot[]; activity: LifeEvent[]; operators?: LifeOperator[] } | null;
 };
 
+/**
+ * What the life payload really contains. Every field is optional on the wire: without a presence the server
+ * sends `list()`, and an empty list reaches the client as `[]` rather than as null, so a plain `??` default
+ * leaves `activity` and `bots` undefined and the first render throws.
+ */
+const lifeOf = (raw: Data['life']) => {
+  const value = raw && !Array.isArray(raw) ? raw : null;
+  return {
+    bots: Array.isArray(value?.bots) ? value.bots : [],
+    activity: Array.isArray(value?.activity) ? value.activity : [],
+    operators: Array.isArray(value?.operators) ? value.operators : [],
+  };
+};
+
 const FILTERS: SceneFilters = { radio: true, devices: true };
 const FALLBACK_ROWS = 200;
 const EMPTY_ACTIONS: DeviceEntry[] = [];
@@ -1123,7 +1137,10 @@ export const NetdmSpace = () => {
   const [readChat, setReadChat] = useState<ChatProgress | null>(null);
   const showChat = sideTab === 'chat';
   const presence = data.presence;
-  const life = data.life ?? { bots: [], activity: [], operators: [] };
+  // The life payload is `list()` while the observer has no presence, and BYOND sends an empty list as `[]`:
+  // `?? fallback` never fires for an array and `.activity` of a bare array is undefined, which used to crash
+  // the whole window on its first render. Normalise the shape once, where it is known.
+  const life = lifeOf(data.life);
   const persona = data.persona ?? presence?.persona ?? null;
   const immersed = !!data.immersed;
   const entityRole = !!data.entityRole;
