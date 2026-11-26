@@ -2685,8 +2685,16 @@
 		break
 	TEST_ASSERT(station_apc, "The station has a published APC module.")
 	var/node = SSnetdm_observe.apc_node_id(station_apc)
+	// The population is seeded asynchronously by the Host: wait for an agent to stand on the APC
+	// instead of assuming it is there the moment the map is live (the seeding is a control round trip).
+	var/pinged = FALSE
+	var/deadline = world.time + 20 SECONDS
+	while(world.time < deadline && !pinged)
+		pinged = SSnetdm_observe.netdm_ambient_ping(station_apc)
+		if(!pinged)
+			sleep(5)
 	// A busy agent leaves an audible trace next to the APC, once per cooldown.
-	TEST_ASSERT(SSnetdm_observe.netdm_ambient_ping(station_apc), "An agent on the APC pings it.")
+	TEST_ASSERT(pinged, "An agent on the APC pings it.")
 	TEST_ASSERT(!SSnetdm_observe.netdm_ambient_ping(station_apc), "The ambient ping respects its cooldown.")
 	// An intruder trips the breaker; engineers can restore it by hand afterwards.
 	station_apc.operating = TRUE
