@@ -260,12 +260,33 @@ test('switching service is local and opening its schema is an explicit Host requ
 test('the vertical tab rail switches and focuses panels without sending commands', () => {
   const { actions } = setup();
   const node = screen.getByRole('tab', { name: 'Карта' });
-  const routes = screen.getByRole('tab', { name: 'Маршруты' });
+  const next = screen.getByRole('tab', { name: 'NETRUN' });
   node.focus();
   fireEvent.keyDown(node, { key: 'ArrowDown' });
-  expect(document.activeElement).toBe(routes);
-  expect(screen.getByRole('tabpanel', { name: 'Маршруты' }).id).toBe(routes.getAttribute('aria-controls'));
+  expect(document.activeElement).toBe(next);
+  expect(screen.getByRole('tabpanel', { name: 'NETRUN' }).id).toBe(next.getAttribute('aria-controls'));
   expect(screen.queryByRole('tabpanel', { name: 'Карта' })).toBeNull();
+  expect(actions()).toEqual([]);
+});
+
+test('the NETRUN tab shows the Host map and its own rail without touching the space layer', () => {
+  const { actions } = setup({
+    netrun: {
+      panel: {
+        now: 1_000, ticks: 1, principal: 1,
+        hosts: [{ host: 7, name: 'svc.door', node: 1, hostClass: 'Terminal', level: 'observed', confidence: 80,
+          ageMs: 0, stale: false, available: true, bufferCu: 2, effects: 0, identified: true, alert: 'Normal' }],
+        links: [], actions: [], operations: [], programs: [], agents: [], backups: [], lives: [],
+        presence: null, presences: [], presets: [], knowledge: { known: 1, stale: 0, total: 1 },
+      },
+      error: null,
+      notice: null,
+    },
+  });
+  fireEvent.click(screen.getByRole('tab', { name: 'NETRUN' }));
+  // The map of the digital world names the host the Host actually reported, and nothing else.
+  expect(screen.getByText('svc.door')).toBeTruthy();
+  // The tab is its own panel: the space layer's actions were not used to open it.
   expect(actions()).toEqual([]);
 });
 

@@ -14,6 +14,13 @@ import { safeServiceIdentifier } from './NetdmServiceSchema';
 import { SHELL_COMMANDS, ShellDynamicPool, tabComplete } from './netdmShell';
 import { NetdmSpaceDock, SpaceTab } from './NetdmSpaceDock';
 import { NetdmTerminalContent, NetdmTerminalData, NetdmTerminalEvents } from './NetdmTerminal';
+import { NetrunContent } from './NetrunView';
+import {
+  DEFAULT_LAYERS as NETRUN_LAYERS,
+  MapLayers as NetrunLayers,
+  Panel as NetrunPanel,
+  TabKey as NetrunTabKey,
+} from './NetrunView/model';
 import { TopologyCanvas } from './NetdmTopology';
 import { MapChrome } from './NetdmTopology/MapChrome';
 import { countActivityNodes, FLAG_APC, FLAG_UNPOWERED, isOffline, parseView, View } from './NetdmTopology/model';
@@ -172,6 +179,11 @@ type Data = {
   immersedSeconds?: number;
   persona: Persona | null;
   life?: { bots: LifeBot[]; activity: LifeEvent[]; operators?: LifeOperator[] } | null;
+  /**
+   * NETRUN inside this window: the same bounded projection the standalone client gets, filtered by the Host
+   * before it was sent. Null while the window has no terminal node to bind to.
+   */
+  netrun?: { panel: NetrunPanel | null; error: string | null; notice: string | null } | null;
 };
 
 /**
@@ -1133,6 +1145,11 @@ export const NetdmSpace = () => {
   const [source, setSource] = useState<'device' | 'presence'>('device');
   const [devicePreset, setDevicePreset] = useState<{ id: number; line: string }>();
   const [sideTab, setSideTab] = useState<SpaceTab>('node');
+  // The NETRUN tab keeps its own camera, layers and selection, exactly like the standalone client did (UI-002).
+  const [netrunTab, setNetrunTab] = useState<NetrunTabKey>('network');
+  const [netrunSelected, setNetrunSelected] = useState<number | null>(null);
+  const [netrunLayers, setNetrunLayers] = useState<NetrunLayers>(NETRUN_LAYERS);
+  const netrun = data.netrun ?? { panel: null, error: null, notice: null };
   const [chatOpening, setChatOpening] = useState<ChatOpening | null>(null);
   const [readChat, setReadChat] = useState<ChatProgress | null>(null);
   const showChat = sideTab === 'chat';
@@ -1565,8 +1582,20 @@ export const NetdmSpace = () => {
                   terminal={terminal}
                   title={sideTab === 'node' && shown ? `Узел ${shown}`
                     : sideTab === 'operator' && entityRole ? 'Сущность'
+                    : sideTab === 'netrun' ? 'NETRUN'
                     : sideTab === 'chat' && chat ? (chat.channel ? 'Общий канал' : `Чат узла ${chat.node}`) : undefined}>
-                  {sideTab === 'node' && (
+                  {sideTab === 'netrun' && (
+                    <NetrunContent
+                      data={netrun}
+                      act={(action, params) => act(`netrun_${action}`, params)}
+                      tab={netrunTab}
+                      onTab={setNetrunTab}
+                      selected={netrunSelected}
+                      onSelect={setNetrunSelected}
+                      layers={netrunLayers}
+                      onLayers={setNetrunLayers}
+                    />
+                  )}                  {sideTab === 'node' && (
                     <NodePanel
                       key={shown ?? 'unknown'}
                       view={view}

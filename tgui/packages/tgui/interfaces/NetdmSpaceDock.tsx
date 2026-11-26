@@ -4,6 +4,7 @@ import { Icon } from '../components';
 
 const TABS = [
   { id: 'node', icon: 'project-diagram', label: 'Карта' },
+  { id: 'netrun', icon: 'satellite-dish', label: 'NETRUN' },
   { id: 'route', icon: 'route', label: 'Маршруты' },
   { id: 'activity', icon: 'stream', label: 'События' },
   { id: 'operator', icon: 'user-astronaut', label: 'Оператор' },

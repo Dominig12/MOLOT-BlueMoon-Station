@@ -113,6 +113,57 @@
 	var/persona_restored = FALSE
 	/// The last intruder named by the presence, so one warning is played per newcomer.
 	var/last_threat = ""
+	/// NETRUN mechanics shown in this window: the same client the PDA opens, bound to this terminal's device.
+	var/datum/netrun_client/netrun
+
+/**
+ * The NETRUN client for this window, created once and bound to the device the terminal was opened from. A window
+ * without a device — an entity role, or a terminal whose node is not published yet — still gets the client: the
+ * map and the library work, and an action that needs an execution host answers with its own refusal.
+ */
+/datum/netdm_space/proc/netrun_for(mob/user)
+	if(!user)
+		return null
+	if(netrun)
+		return netrun
+	var/datum/netdm_space_actor/terminal/operator = actor
+	var/datum/netdm_terminal/opener = istype(operator) ? operator.terminal : null
+	if(!opener)
+		return null
+	var/atom/device = opener.device_ref?.resolve()
+	var/datum/netdm_service_lane/lane = SSnetdm_observe?.services
+	var/datum/netrun_adapter/adapter = SSnetdm_observe?.netrun
+	if(!device || !lane || !adapter)
+		return null
+	var/datum/node = opener.node_ref?.resolve()
+	var/instance = adapter.instance_for_node(node)
+	if(!instance)
+		return null
+	netrun = new /datum/netrun_client(user)
+	netrun.bind_device(lane, node, instance)
+	// Holding the console is the credential: the same rights the PDA path hands out (SEC-001, physical).
+	adapter.grant_operator(lane, netrun.principal, instance)
+	return netrun
+
+/// One NETRUN verb from the window, forwarded to the client that owns the panel. The window owns no state here.
+/datum/netdm_space/proc/netrun_act(verb, list/params)
+	if(!netrun)
+		return TRUE
+	switch(verb)
+		if("execute")
+			return netrun.execute(params)
+		if("life")
+			return netrun.life(params)
+		if("travel")
+			return netrun.travel(params)
+		if("agents")
+			return netrun.agents(params)
+		if("import")
+			return netrun.import_program(params)
+		if("refresh")
+			netrun.next_poll = 0
+			return TRUE
+	return TRUE
 
 /datum/netdm_space/New(datum/source)
 	if(istype(source, /datum/netdm_terminal))
@@ -146,6 +197,7 @@
 		if(owns_actor)
 			qdel(source)
 	actor = null
+	QDEL_NULL(netrun)
 	return ..()
 
 /datum/netdm_space/ui_host(mob/user)
@@ -1164,6 +1216,9 @@
 	return service?["node"]
 
 /datum/netdm_space/ui_data(mob/user)
+	// NETRUN lives inside this window: the same client the PDA uses, so the mechanics have one implementation
+	// and one owner no matter which window the player opened (ARCH-001, §15.1).
+	var/datum/netrun_client/netrunner = netrun_for(user)
 	var/list/levels = list()
 	for(var/key in items)
 		var/list/fields = items[key]
@@ -1243,12 +1298,18 @@
 		"immersedSeconds" = (immersed && immersed_at) ? round((world.time - immersed_at) / 10) : 0,
 		"life" = islist(presence) ? life : list(), "incidents" = islist(presence) ? (SSnetdm_observe?.netdm_incidents || list()) : list(), "hack" = list("status" = hack_status, "code" = hack_code, "target" = hack_target, "remaining" = max(0, (hack_expires - world.time) / (1 SECONDS)), "keys" = hack_keys, "masked" = hack_masked), "persona" = islist(presence) ? list("name" = presence["personaName"], "signature" = presence["personaSignature"], "status" = presence["personaStatus"], "role" = presence["personaRole"], "colour" = text2num("[presence["personaColour"]]")) : null,
 		"chat" = chat_data,
+		"netrun" = netrunner ? netrunner.ui_data(user) : null,
 		"log" = log, "actionEntries" = action_entries, "revision" = revision, "alarmPending" = !!alarm_request, "alarmWatch" = watch_data,
 		"routePreview" = route_preview, "machineCommand" = command_data)
 
 /datum/netdm_space/ui_act(action, list/params, datum/tgui/ui, datum/ui_state/state)
 	. = ..()
 	if(.)
+		return
+	// The NETRUN tab speaks for itself: its verbs are forwarded to the client and never reach the space layer.
+	if(findtext(action, "netrun_") == 1)
+		. = netrun_act(copytext(action, 8), params)
+		SStgui.update_uis(src)
 		return
 	return dispatch_ui_action(action, params, ui.user, state)
 
