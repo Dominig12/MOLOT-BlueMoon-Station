@@ -24,9 +24,7 @@
 	parent_type = /datum/netdm_integration
 	/// "instance/tick" -> report record, in creation order.
 	var/list/reports = list()
-	/// End-to-end latencies of matched deliveries, microseconds, newest last.
 	var/list/latencies = list()
-	var/list/snapshot_latencies = list()
 	/// Snapshot requests of this session: "endpoint/instance" -> TRUE; operation ID -> start time.
 	var/list/snapshots_requested = list()
 	var/list/snapshot_started = list()
@@ -42,16 +40,12 @@
 	/// Sensor weakref -> last packet accepted from that physical sensor for snapshot replies.
 	var/list/last_samples = list()
 	/// Console endpoint ID -> list("matched", "radio_only", reason -> count), for station reports.
-	var/list/per_console = list()
 	/// "console/instance" -> list(reason, world.time until it is trusted): a console that the network
 	/// cannot reach stays unreachable for a while, so its delivery states are not asked every report.
-	var/list/reason_cache = list()
 	var/list/counters = list("reports" = 0, "compared" = 0, "unmirrored" = 0, "matched" = 0,
 		"legacy_only" = 0, "netdm_only" = 0, "unknown_tick" = 0, "snapshots" = 0, "snapshot_requests" = 0)
 	/// Reason of a console that the radio reached and netDM did not -> count.
 	var/list/reasons = list()
-	/// Latest mismatches, for diagnostics.
-	var/list/mismatches = list()
 
 /datum/netdm_telemetry_shadow/setup(datum/netdm_service_lane/lane)
 	lane.dispatcher.allow("atmos.sample", new /datum/netdm_effect_handler/atmos_shadow)
@@ -65,7 +59,6 @@
 /datum/netdm_telemetry_shadow/reset_session()
 	// Deliveries of the old session will never arrive: those reports are not compared.
 	reports.Cut()
-	reason_cache.Cut()
 	snapshots_requested.Cut()
 	snapshot_started.Cut()
 	air_alarm_results.Cut()
@@ -121,7 +114,6 @@
 	reports[key] = report
 	counters["reports"]++
 	if(length(reports) > NETDM_TELEMETRY_REPORTS)
-		compare(reports[reports[1]])
 		reports.Cut(1, 2)
 	return report
 
@@ -160,20 +152,6 @@
 	report["accepted_us"] = entry["accepted_us"]
 
 /// A console took a sensor report from the radio.
-/datum/netdm_telemetry_shadow/proc/legacy_received(obj/machinery/computer/atmos_control/console, id_tag, timestamp)
-	var/instance = netdm_atmos_instance(console.frequency, id_tag)
-	// Loop meters and other radio sources are not in the pilot: nothing to compare.
-	if(!instance || !isnum(timestamp) || !sensor_instances[instance])
-		return
-	var/list/report = report_for(instance, netdm_tick_of(timestamp))
-	report["legacy"][console_key(console)] = TRUE
-
-/datum/netdm_telemetry_shadow/proc/console_key(obj/machinery/computer/atmos_control/console)
-	var/datum/component/netdm_node/node = console.GetComponent(/datum/component/netdm_node)
-	var/datum/netdm_service_endpoint/endpoint = node ? SSnetdm_observe.services.by_node[node] : null
-	return endpoint ? endpoint.id : "ref:[REF(console)]"
-
-/// A console received a sample over netDM: recorded, never shown.
 /datum/netdm_telemetry_shadow/proc/netdm_received(obj/machinery/computer/atmos_control/console, list/item, kind)
 	var/list/payload = item["payload"]
 	if(!islist(payload) || !isnum(payload["pressureKPa"]) || !isnum(payload["temperatureK"]))
@@ -205,39 +183,25 @@
 		var/started = snapshot_started[item["operationId"]]
 		if(!isnull(started))
 			snapshot_started -= item["operationId"]
-			push(snapshot_latencies, netdm_now_us() - started)
 		return TRUE
 	var/tick = islist(payload) ? payload["sampleTick"] : null
 	var/list/report = reports["[item["instance"]]/[tick]"]
 	if(!report)
-		// A sample older than the comparison window, or from before a new session.
+		// A sample from before the current session: nothing to attribute it to.
 		counters["unknown_tick"]++
 		return TRUE
 	var/now = netdm_now_us()
 	var/latency = isnull(report["queued_us"]) ? 0 : now - report["queued_us"]
 	report["netdm"][item["recipient"]] = latency
-	// A slow delivery names its stage: waiting in DM, Host acceptance, or transport and inbox.
-	if(latency > 500000 && !isnull(report["sent_us"]) && !isnull(report["accepted_us"]))
-		note("slow [round(latency / 1000)] ms [report["instance"]] tick [report["tick"]]: queue [round((report["sent_us"] - report["queued_us"]) / 1000)] accept [round((report["accepted_us"] - report["sent_us"]) / 1000)] deliver [round((now - report["accepted_us"]) / 1000)]")
-	return TRUE
+	// A slow delivery is visible in the latency counters; nothing else is claimed about it.
 
 /datum/netdm_telemetry_shadow/proc/push(list/samples, value)
 	samples += value
 	if(length(samples) > NETDM_TELEMETRY_SAMPLES)
 		samples.Cut(1, 2)
 
-/// Compares settled reports and asks consoles that subscribed for a snapshot. Called every fire.
+/// Asks subscribed consoles for one snapshot of every instance they watch. Called every fire.
 /datum/netdm_telemetry_shadow/tick()
-	while(length(reports))
-		var/list/report = reports[reports[1]]
-		if(world.time < report["created"] + NETDM_TELEMETRY_SETTLE)
-			break
-		// A comparison may need a status query. While their queue is full (the Host is late to answer),
-		// reports wait, bounded by NETDM_TELEMETRY_REPORTS, instead of losing their reasons.
-		if(!SSnetdm_observe.services.can_query())
-			break
-		reports.Cut(1, 2)
-		compare(report)
 	if(world.time < next_snapshot_check)
 		return
 	next_snapshot_check = world.time + 1 SECONDS
@@ -261,6 +225,7 @@
 				entry["started_us"] = netdm_now_us()
 				counters["snapshot_requests"]++
 
+
 /datum/netdm_telemetry_shadow/proc/snapshot_accepted(list/entry, list/reply)
 	var/list/result = reply["result"]
 	var/list/value = islist(result) ? result["value"] : null
@@ -268,99 +233,6 @@
 	if(reply["ok"] && operation)
 		snapshot_started[operation] = entry["started_us"]
 
-/datum/netdm_telemetry_shadow/proc/compare(list/report)
-	if(report["unmirrored"] || !report["message"])
-		counters["unmirrored"]++
-		return
-	counters["compared"]++
-	var/list/legacy = report["legacy"]
-	var/list/netdm = report["netdm"]
-	var/list/missing = list()
-	for(var/console in legacy)
-		if(isnull(netdm[console]))
-			missing += console
-			continue
-		counters["matched"]++
-		var/list/stats = console_stats(console)
-		stats["matched"]++
-		push(latencies, netdm[console])
-	for(var/console in netdm)
-		if(!legacy[console])
-			counters["netdm_only"]++
-			var/list/stats = console_stats(console)
-			stats["netdm_only"]++
-			note("[report["instance"]] tick [report["tick"]]: [console] got the sample without the radio")
-	if(!length(missing))
-		return
-	counters["legacy_only"] += length(missing)
-	for(var/console in missing)
-		var/list/stats = console_stats(console)
-		stats["radio_only"]++
-	// Consoles that never subscribed explain themselves; the rest need the delivery states.
-	var/list/undelivered = list()
-	for(var/console in missing)
-		var/list/cached = reason_cache["[console]/[report["instance"]]"]
-		if(cached && world.time < cached[2])
-			reasons[cached[1]]++
-			var/list/stats = console_stats(console)
-			stats[cached[1]]++
-			continue
-		var/datum/netdm_service_endpoint/endpoint = SSnetdm_observe.services.endpoints[console]
-		if(!endpoint)
-			reasons["no_endpoint"]++
-			var/list/stats = console_stats(console)
-			stats["no_endpoint"]++
-		else if(!endpoint.subscribed[report["instance"]])
-			reasons["not_subscribed"]++
-			var/list/stats = console_stats(console)
-			stats["not_subscribed"]++
-		else
-			undelivered += console
-	if(length(undelivered) && !SSnetdm_observe.services.query_status(report["message"], CALLBACK(src, PROC_REF(explain), report, undelivered)))
-		reasons["unexplained"] += length(undelivered)
-
-/// Delivery states of the consoles that the radio reached and netDM did not.
-/datum/netdm_telemetry_shadow/proc/explain(list/report, list/undelivered, list/reply)
-	// Only a missing route outlives one report; any other reason is asked again.
-	var/static/list/lasting = list("invalid_route" = TRUE, "no_route" = TRUE)
-	var/list/states = list()
-	var/list/result = reply["result"]
-	var/list/deliveries = islist(result) ? result["deliveries"] : null
-	for(var/list/delivery in deliveries)
-		states[delivery["recipient"]] = delivery["reason"] || delivery["state"]
-	for(var/console in undelivered)
-		var/reason = states[console] || why_not_recipient(console, report, reply, length(deliveries))
-		reasons[reason]++
-		if(lasting[reason])
-			reason_cache["[console]/[report["instance"]]"] = list(reason, world.time + 30 SECONDS)
-		var/list/stats = console_stats(console)
-		stats[reason]++
-		note("[report["instance"]] tick [report["tick"]]: [console] [reason]")
-
-/// The Host made no delivery for a console that is subscribed now. It fixed the recipients when it
-/// accepted the sample, so a subscription requested after that was not one; anything else is a defect.
-/datum/netdm_telemetry_shadow/proc/why_not_recipient(console, list/report, list/reply, deliveries)
-	if(!reply["ok"])
-		return "status_[reply["error"]]"
-	var/datum/netdm_service_endpoint/endpoint = SSnetdm_observe.services.endpoints[console]
-	var/subscribed_at = endpoint ? endpoint.acknowledged_at[report["instance"]] : null
-	if(!isnull(subscribed_at) && !isnull(report["sent_at"]) && subscribed_at > report["sent_at"])
-		return "subscribed_later"
-	return deliveries ? "not_recipient" : "no_recipients"
-
-/datum/netdm_telemetry_shadow/proc/console_stats(console)
-	var/list/stats = per_console[console]
-	if(!stats)
-		stats = list("matched" = 0, "radio_only" = 0)
-		per_console[console] = stats
-	return stats
-
-/datum/netdm_telemetry_shadow/proc/note(text)
-	mismatches += text
-	if(length(mismatches) > 16)
-		mismatches.Cut(1, 2)
-
-/// Percentile of microsecond samples, in milliseconds.
 /datum/netdm_telemetry_shadow/proc/percentile_ms(list/samples, fraction)
 	if(!length(samples))
 		return null
@@ -369,15 +241,11 @@
 	return round(sorted[index] / 1000, 0.1)
 
 /datum/netdm_telemetry_shadow/proc/state()
-	var/list/reason_text = list()
-	for(var/reason in reasons)
-		reason_text += "[reason]:[reasons[reason]]"
-	return "telemetry reports=[counters["reports"]] compared=[counters["compared"]] matched=[counters["matched"]] \
-		radio_only=[counters["legacy_only"]] netdm_only=[counters["netdm_only"]] unmirrored=[counters["unmirrored"]] \
-		p50=[percentile_ms(latencies, 0.5)]ms p95=[percentile_ms(latencies, 0.95)]ms max=[percentile_ms(latencies, 1)]ms \
-		snapshots=[counters["snapshots"]]/[counters["snapshot_requests"]] reasons=[jointext(reason_text, ",")]"
+	return "telemetry reports=[counters["reports"]] snapshots=[counters["snapshots"]]/[counters["snapshot_requests"]] \
+		unmirrored=[counters["unmirrored"]] delivery_p50=[percentile_ms(latencies, 0.5)]ms \
+		delivery_p95=[percentile_ms(latencies, 0.95)]ms"
 
-/// Instance of a gas sensor: the frequency and id_tag that also link it on the radio, or null.
+/// The service instance of one sensor: stable for the round and inside the Host's alphabet.
 /proc/netdm_atmos_instance(frequency, id_tag)
 	if(!istext(id_tag) || !length(id_tag) || !isnum(frequency))
 		return null
