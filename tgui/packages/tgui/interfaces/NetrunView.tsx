@@ -8,12 +8,14 @@ import {
   ActionView,
   AgentView,
   Data,
+  DEFAULT_LAYERS,
   findHost,
   formatAge,
   formatCooldown,
   BackupView,
   HostView,
   LifeView,
+  MapLayers,
   OperationView,
   PresenceView,
   PresetView,
@@ -21,6 +23,9 @@ import {
   summarise,
   TabKey,
   TABS,
+  TrafficView,
+  trafficRows,
+  trafficState,
 } from './NetrunView/model';
 
 type Act = (action: string, params?: Record<string, unknown>) => void;
@@ -555,8 +560,49 @@ const ProgramsTab = ({
   );
 };
 
-const EventsTab = ({ operations }: { operations: OperationView[] }) => (
-  <Table>
+/**
+ * The traffic tab (UI-001): this observer's own requests, the hosts they went between and how long each one
+ * took. It is the operation log, not a packet capture: the route belongs to the transport and this window
+ * does not claim to know it (§15.2).
+ */
+const TrafficTab = ({ traffic }: { traffic: TrafficView[] }) => {
+  const rows = trafficRows(traffic);
+  return (
+    <Table>
+      <Table.Row header>
+        <Table.Cell>Запрос</Table.Cell>
+        <Table.Cell>Вид</Table.Cell>
+        <Table.Cell>Откуда → куда</Table.Cell>
+        <Table.Cell>Итог</Table.Cell>
+        <Table.Cell>Время</Table.Cell>
+        <Table.Cell>Причина</Table.Cell>
+      </Table.Row>
+      {rows.map(row => (
+        <Table.Row key={row.operation} className="candystripe">
+          <Table.Cell>#{row.operation}</Table.Cell>
+          <Table.Cell>{row.kind}</Table.Cell>
+          <Table.Cell>
+            {row.from || '—'} → {row.to || '—'}
+          </Table.Cell>
+          <Table.Cell color={trafficState(row) === 'in_flight' ? 'average' : undefined}>
+            {trafficState(row) === 'in_flight' ? 'в пути' : (statusText[row.status] ?? row.status)}
+          </Table.Cell>
+          <Table.Cell>{row.latency === null ? '—' : `${(row.latency / 1000).toFixed(1)} с`}</Table.Cell>
+          <Table.Cell color="label">{row.reason ?? '—'}</Table.Cell>
+        </Table.Row>
+      ))}
+      {rows.length === 0 && (
+        <Table.Row>
+          <Table.Cell colSpan={6} color="label">
+            Запросов не было. Действия на карте или в других вкладках появятся здесь со своим маршрутом.
+          </Table.Cell>
+        </Table.Row>
+      )}
+    </Table>
+  );
+};
+
+const EventsTab = ({ operations }: { operations: OperationView[] }) => (  <Table>
     <Table.Row header>
       <Table.Cell>Операция</Table.Cell>
       <Table.Cell>Итог</Table.Cell>
@@ -593,6 +639,8 @@ export const NetrunContent = ({
   onTab,
   selected,
   onSelect,
+  layers,
+  onLayers,
 }: {
   data: Data;
   act: Act;
@@ -600,6 +648,8 @@ export const NetrunContent = ({
   onTab: (key: TabKey) => void;
   selected: number | null;
   onSelect: (host: number | null) => void;
+  layers: MapLayers;
+  onLayers: (layers: MapLayers) => void;
 }) => {
   const panel = data.panel;
   const host = findHost(panel, selected);
@@ -633,7 +683,10 @@ export const NetrunContent = ({
                 <NetrunMap
                   hosts={panel.hosts}
                   links={panel.links}
-                  hideStale={false}
+                  visuals={panel.visuals}
+                  now={panel.now}
+                  layers={layers}
+                  onLayers={onLayers}
                   selected={selected}
                   onSelect={onSelect}
                 />
@@ -641,6 +694,7 @@ export const NetrunContent = ({
               {panel && tab === 'hosts' && (
                 <HostsTab hosts={panel.hosts} selected={selected} onSelect={onSelect} />
               )}
+              {panel && tab === 'traffic' && <TrafficTab traffic={panel.traffic ?? []} />}
               {panel && tab === 'programs' && (
                 <ProgramsTab
                   actions={panel.actions}
@@ -714,6 +768,9 @@ export const NetrunView = () => {
 export const NetrunWindow = ({ data, act }: { data: Data; act: Act }) => {
   const [tab, setTab] = useState<TabKey>('network');
   const [selected, setSelected] = useState<number | null>(null);
+  // The camera and the layers belong to the window, not to one rendering of the map: switching tabs and
+  // coming back must leave the picture the operator had (UI-002).
+  const [layers, setLayers] = useState<MapLayers>(DEFAULT_LAYERS);
   return (
     <NetrunContent
       data={data}
@@ -722,6 +779,8 @@ export const NetrunWindow = ({ data, act }: { data: Data; act: Act }) => {
       onTab={setTab}
       selected={selected}
       onSelect={setSelected}
+      layers={layers}
+      onLayers={setLayers}
     />
   );
 };

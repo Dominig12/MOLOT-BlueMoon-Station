@@ -1,4 +1,7 @@
 import {
+  alertShort,
+  alertStroke,
+  DEFAULT_LAYERS,
   findHost,
   formatAge,
   formatCooldown,
@@ -6,9 +9,17 @@ import {
   labelOf,
   layoutHosts,
   Panel,
+  pointAlong,
   shapeOf,
   summarise,
   TABS,
+  trafficLatency,
+  trafficRows,
+  trafficState,
+  TrafficView,
+  travelMarkers,
+  travelProgress,
+  VisualView,
   visibleHosts,
   visibleLinks,
 } from './model';
@@ -69,6 +80,69 @@ describe('карта и подписи', () => {
   });
 });
 
+describe('слои карты', () => {
+  const visual = (overrides: Partial<VisualView> = {}): VisualView => ({
+    kind: 'presence',
+    own: false,
+    host: 1,
+    destination: 2,
+    state: 'traveling',
+    hops: 1,
+    startedAt: 0,
+    arriveAt: 1000,
+    ...overrides,
+  });
+
+  test('прогресс перехода зажат в свои границы и не зацикливается', () => {
+    expect(travelProgress(0, 1000, 0)).toBe(0);
+    expect(travelProgress(0, 1000, 500)).toBe(0.5);
+    expect(travelProgress(0, 1000, 5_000)).toBe(1);
+    expect(travelProgress(0, 1000, -10)).toBe(0);
+    expect(travelProgress(0, 0, 999)).toBe(1);
+  });
+
+  test('маркер перехода показывает реальную долю пути', () => {
+    const hosts = [host({ host: 1 }), host({ host: 2 })];
+    expect(travelMarkers({ hosts, visuals: [visual()], now: 250 }, DEFAULT_LAYERS)).toEqual([
+      { from: 1, to: 2, own: false, travelling: true, progress: 0.25 },
+    ]);
+  });
+
+  test('переход к нераскрытому хосту не рисуется: ребро не выдаёт скрытый узел', () => {
+    const hosts = [host({ host: 1 })];
+    expect(travelMarkers({ hosts, visuals: [visual()], now: 0 })).toEqual([]);
+  });
+
+  test('своё стоящее присутствие видно, чужое стоящее — нет', () => {
+    const hosts = [host({ host: 1 }), host({ host: 2 })];
+    expect(travelMarkers({ hosts, visuals: [visual({ state: 'idle' })], now: 0 })).toEqual([]);
+    const own = travelMarkers({ hosts, visuals: [visual({ state: 'idle', own: true })], now: 0 });
+    expect(own).toHaveLength(1);
+    expect(own[0]).toMatchObject({ from: 1, to: 1, own: true, travelling: false });
+  });
+
+  test('скрытие устаревших убирает и маркеры к ним', () => {
+    const fresh = host({ host: 1 });
+    const stale = host({ host: 2, stale: true });
+    const layers = { ...DEFAULT_LAYERS, freshOnly: true };
+    expect(travelMarkers({ hosts: [fresh, stale], visuals: [visual()], now: 250 }, layers)).toEqual([]);
+  });
+
+  test('кольцо и подпись описывают один и тот же уровень тревоги', () => {
+    expect(alertStroke(undefined)).toBeNull();
+    expect(alertStroke('Normal')).toBeNull();
+    expect(alertStroke('Lockdown')).not.toBeNull();
+    expect(alertShort('Alert')).toBe('тревога');
+    expect(alertShort(undefined)).toBe('');
+  });
+
+  test('точка на ребре интерполируется и не выходит за концы', () => {
+    expect(pointAlong({ x: 0, y: 0 }, { x: 10, y: 20 }, 0.5)).toEqual({ x: 5, y: 10 });
+    expect(pointAlong({ x: 0, y: 0 }, { x: 10, y: 20 }, 5)).toEqual({ x: 10, y: 20 });
+    expect(pointAlong({ x: 0, y: 0 }, { x: 10, y: 20 }, -1)).toEqual({ x: 0, y: 0 });
+  });
+});
+
 describe('форматирование', () => {
   test('возраст данных читается человеком', () => {
     expect(formatAge(0)).toBe('0 с');
@@ -101,7 +175,51 @@ describe('форматирование', () => {
 
 describe('вкладки', () => {
   test('навигация повторяет целевой набор и не содержит пустых разделов', () => {
-    expect(TABS.map(tab => tab.key)).toEqual(['network', 'hosts', 'programs', 'life', 'agents', 'events']);
+    expect(TABS.map(tab => tab.key)).toEqual([
+      'network',
+      'traffic',
+      'hosts',
+      'programs',
+      'life',
+      'agents',
+      'events',
+    ]);
     expect(TABS.every(tab => tab.label.length > 0)).toBe(true);
+  });
+});
+
+describe('трафик', () => {
+  const entry = (overrides: Partial<TrafficView> = {}): TrafficView => ({
+    operation: 1,
+    kind: 'command',
+    category: 'security',
+    status: 'committed',
+    from: 1,
+    to: 2,
+    at: 1_000,
+    doneAt: 1_400,
+    reason: null,
+    ...overrides,
+  });
+
+  test('незавершённый запрос не выдаётся за успешный', () => {
+    expect(trafficState(entry({ doneAt: 0 }))).toBe('in_flight');
+    expect(trafficLatency(entry({ doneAt: 0 }))).toBeNull();
+    expect(trafficState(entry())).toBe('done');
+    expect(trafficLatency(entry())).toBe(400);
+  });
+
+  test('время запроса не считается отрицательным', () => {
+    expect(trafficLatency(entry({ at: 2_000, doneAt: 1_500 }))).toBeNull();
+  });
+
+  test('строки идут от нового к старому', () => {
+    const rows = trafficRows([entry({ operation: 1 }), entry({ operation: 5 }), entry({ operation: 3 })]);
+    expect(rows.map(row => row.operation)).toEqual([5, 3, 1]);
+  });
+
+  test('пустая проекция не падает', () => {
+    expect(trafficRows(undefined)).toEqual([]);
+    expect(trafficRows([])).toEqual([]);
   });
 });

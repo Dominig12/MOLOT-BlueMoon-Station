@@ -1,5 +1,22 @@
-import { Box, Stack } from '../../components';
-import { HostView, layoutHosts, LinkView, mapExtent, MapNode, NodeShape, visibleHosts, visibleLinks } from './model';
+import { Box, Button, Stack } from '../../components';
+import {
+  alertShort,
+  alertStroke,
+  DEFAULT_LAYERS,
+  HostView,
+  layoutHosts,
+  LinkView,
+  MapLayers,
+  mapExtent,
+  MapNode,
+  NodeShape,
+  pointAlong,
+  TravelMarker,
+  travelMarkers,
+  VisualView,
+  visibleHosts,
+  visibleLinks,
+} from './model';
 
 const RADIUS = 14;
 
@@ -20,8 +37,18 @@ const levelFill = (node: MapNode): string => {
   }
 };
 
-const Shape = ({ node }: { node: MapNode }) => {
-  const stroke = 'rgba(255, 255, 255, 0.75)';
+/** The ring of one node: the alert colour when that layer is on, the neutral outline otherwise. */
+const strokeOf = (node: MapNode, layers: MapLayers): string => {
+  if (layers.alerts) {
+    const colour = alertStroke(node.alert);
+    if (colour) {
+      return colour;
+    }
+  }
+  return 'rgba(255, 255, 255, 0.75)';
+};
+
+const Shape = ({ node, stroke }: { node: MapNode; stroke: string }) => {
   const fill = levelFill(node);
   switch (node.shape as NodeShape) {
     case 'square':
@@ -59,40 +86,107 @@ const Shape = ({ node }: { node: MapNode }) => {
   }
 };
 
+const LayerSwitch = ({
+  layers,
+  onLayers,
+}: {
+  layers: MapLayers;
+  onLayers?: (layers: MapLayers) => void;
+}) => (
+  <Stack mb={1}>
+    <Stack.Item>
+      <Button
+        compact
+        icon="route"
+        content="Движение"
+        selected={layers.movement}
+        tooltip="Реальные переходы присутствий, которые вы можете видеть"
+        onClick={() => onLayers?.({ ...layers, movement: !layers.movement })}
+      />
+    </Stack.Item>
+    <Stack.Item>
+      <Button
+        compact
+        icon="triangle-exclamation"
+        content="Тревога"
+        selected={layers.alerts}
+        tooltip="Собственная тревога каждого известного хоста"
+        onClick={() => onLayers?.({ ...layers, alerts: !layers.alerts })}
+      />
+    </Stack.Item>
+    <Stack.Item>
+      <Button
+        compact
+        icon="hourglass-half"
+        content="Только свежие"
+        selected={layers.freshOnly}
+        tooltip="Скрыть хосты, знание о которых устарело"
+        onClick={() => onLayers?.({ ...layers, freshOnly: !layers.freshOnly })}
+      />
+    </Stack.Item>
+  </Stack>
+);
+
+/** One marker of the movement layer: a dashed route and a dot that stands where the move actually is. */
+const Marker = ({ marker, from, to }: { marker: TravelMarker; from: MapNode; to: MapNode }) => {
+  const colour = marker.own ? '#7fd1ff' : '#f2b24c';
+  if (!marker.travelling) {
+    return <circle cx={from.x} cy={from.y} r={RADIUS + 4} fill="none" stroke={colour} strokeWidth={1.5} />;
+  }
+  const at = pointAlong(from, to, marker.progress);
+  return (
+    <g>
+      <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={colour} strokeWidth={1} strokeDasharray="5 5" />
+      <circle cx={at.x} cy={at.y} r={5} fill={colour} stroke="#111" strokeWidth={1} />
+    </g>
+  );
+};
+
 /**
  * The network map. It draws only what the projection contained: a host the observer may not see is not in
- * the list, so it cannot be drawn, counted or hinted at. Movement of packets is a separate layer that
- * belongs to the presence view, not to this static topology drawing.
+ * the list, so it cannot be drawn, counted or hinted at. The movement layer shows real transitions the Host
+ * reports — no packet is invented for effect (UI-003, §15.2).
  */
 export const NetrunMap = ({
   hosts,
   links,
-  hideStale,
+  visuals,
+  now,
+  layers = DEFAULT_LAYERS,
+  onLayers,
   selected,
   onSelect,
 }: {
   hosts: HostView[];
   links: LinkView[];
-  hideStale: boolean;
+  visuals?: VisualView[];
+  now?: number;
+  layers?: MapLayers;
+  onLayers?: (layers: MapLayers) => void;
   selected: number | null;
   onSelect: (host: number) => void;
 }) => {
-  const visible = visibleHosts(hosts, hideStale);
+  const visible = visibleHosts(hosts, layers.freshOnly);
   const nodes = layoutHosts(visible);
   const shownLinks = visibleLinks(links, visible);
   const extent = mapExtent(nodes);
   const byId = new Map(nodes.map(node => [node.host, node]));
+  const markers = layers.movement ? travelMarkers({ hosts, visuals, now }, layers) : [];
 
   if (nodes.length === 0) {
     return (
-      <Box color="label" p={2}>
-        Наблюдаемых хостов нет. Отсканируйте сеть, чтобы начать карту.
+      <Box>
+        <LayerSwitch layers={layers} onLayers={onLayers} />
+        <Box color="label" p={2}>
+          Наблюдаемых хостов нет. Отсканируйте сеть, чтобы начать карту.
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box className="NetrunMap" style={{ overflow: 'auto', maxWidth: '100%' }}>
+      <LayerSwitch layers={layers} onLayers={onLayers} />
       <svg width={extent.width} height={extent.height} role="group" aria-label="Карта сети">
         {shownLinks.map(link => {
           const a = byId.get(link.a);
@@ -123,20 +217,43 @@ export const NetrunMap = ({
             {node.host === selected && (
               <circle cx={node.x} cy={node.y} r={RADIUS + 6} fill="none" stroke="#3f9dfd" strokeWidth={2} />
             )}
-            <Shape node={node} />
+            <Shape node={node} stroke={strokeOf(node, layers)} />
+            {layers.alerts && alertShort(node.alert) && (
+              <text
+                x={node.x}
+                y={node.y - RADIUS - 6}
+                textAnchor="middle"
+                fill={alertStroke(node.alert) ?? '#ddd'}
+                fontSize={10}
+              >
+                {alertShort(node.alert)}
+              </text>
+            )}
             <text x={node.x} y={node.y + RADIUS + 14} textAnchor="middle" fill="#ddd" fontSize={11}>
               {node.label}
               {node.stale ? ' (устар.)' : ''}
             </text>
           </g>
         ))}
+        {markers.map(marker => {
+          const from = byId.get(marker.from);
+          const to = byId.get(marker.to);
+          if (!from || !to) {
+            return null;
+          }
+          return <Marker key={`${marker.from}-${marker.to}-${marker.own}`} marker={marker} from={from} to={to} />;
+        })}
       </svg>
       <Stack vertical mt={1}>
         <Box color="label" fontSize={11}>
           Форма: ◯ устройство · ▢ точка доступа · ◇ ретранслятор · ⬡ сервер. Яркость — уровень знания,
-          жёлтый — устаревшие данные.
+          жёлтый — устаревшие данные, цветное кольцо и подпись — собственная тревога хоста. Точка на линии —
+          реальный переход присутствия: голубая своя, оранжевая чужая (только наблюдаемая).
         </Box>
       </Stack>
     </Box>
   );
 };
+
+/** The layer switches alone, for a compact map or a legend in another tab. */
+export const NetrunMapLayers = LayerSwitch;

@@ -88,6 +88,12 @@
 			"memorySlots" = 1,
 			"services" = list(entry["type"] = instance),
 		)
+		// Posture travels with the declaration: a device that publishes research data is a closed host with an
+		// IDS, everything else is an ordinary device. The Host still decides what any of that means (§9.3).
+		var/list/posture = netrun_host_security(entry["type"])
+		payload["security"] = posture["profile"]
+		payload["ids"] = posture["ids"]
+		payload["maxPresences"] = posture["maxPresences"]
 		if(!isnull(entry["node"]))
 			payload["node"] = entry["node"]
 		var/accepted = lane.control("netrun_host", payload, CALLBACK(src, PROC_REF(on_host_declared), instance))
@@ -178,6 +184,17 @@
 	if(copytext(type, 1, 9) == "research")
 		return "Server"
 	return "Terminal"
+
+/**
+ * Access posture of a device, declared with its host. Research equipment is a closed host that watches its own
+ * traffic; ordinary devices are standard and hold one presence. This is a starting point for content, not a
+ * balance decision: the numbers live here so a device can change them without touching the Host (§9.3).
+ */
+/proc/netrun_host_security(service_type)
+	var/type = "[service_type]"
+	if(copytext(type, 1, 9) == "research")
+		return list("profile" = "secure", "ids" = TRUE, "maxPresences" = 2)
+	return list("profile" = "standard", "ids" = FALSE, "maxPresences" = 1)
 
 #undef NETRUN_DECLARE_BATCH
 #undef NETRUN_DECLARE_BACKOFF
