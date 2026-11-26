@@ -33,8 +33,10 @@
 	var/max_hosts = 4096
 	/// netDM node datum -> first service instance it publishes. Lets a device find its own host.
 	var/list/devices = list()
-	/// Rights handed to an operator on its own device; the rest is won or granted by the game.
-	var/own_rights = list("execution", "discovery", "read")
+	/// Rights handed to an operator on its own device; the rest is won or granted by the game. Holding the
+	/// device is the credential (SEC-001, physical): it lets the operator run programs here, look around and
+	/// command this host, which is what the §8.2 abilities on your own core need.
+	var/own_rights = list("execution", "discovery", "read", "control")
 
 /// A service became reachable on the network: it becomes a host of the digital world once a session exists.
 /datum/netrun_adapter/proc/service_registered(datum/netdm_service_lane/lane, datum/netdm_service_endpoint/endpoint, instance)
