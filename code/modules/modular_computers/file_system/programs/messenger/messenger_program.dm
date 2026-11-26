@@ -1162,4 +1162,3 @@ GLOBAL_VAR_INIT(pda_messenger_directory_time, -1)
 
 /datum/computer_file/program/messenger/receive_message(datum/signal/subspace/messaging/tablet_message/signal)
 	. = ..()
-	SSnetdm_observe.messenger?.legacy_received(src, signal)
