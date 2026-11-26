@@ -55,6 +55,8 @@ export type HostView = {
   bufferCu: number;
   effects: number;
   identified: BooleanLike;
+  /** The host's own alert level (§9.3). Absent in older projections, so it stays optional. */
+  alert?: string;
 };
 
 /** One declared action: cost, cooldown and documentation come from the same descriptor the server uses. */
