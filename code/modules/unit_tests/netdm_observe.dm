@@ -809,11 +809,11 @@
 		"The treasury pays what the second server lacks: [json_encode(pool_before)] -> [json_encode(pool_after)]")
 	var/unaffordable = pick_node(shadow, web, binding["available"] + 1, 1000000000, expensive)
 	if(unaffordable)
-		var/refused_before = shadow.mismatch_reasons["ledger_insufficient_points"] || 0
+		var/refused_before = shadow.purchase_outcomes["insufficient_points"] || 0
 		TEST_ASSERT(console.research_node(unaffordable, null), "The console must send the third purchase.")
 		TEST_ASSERT(wait_answer(shadow, binding), "The second server must answer.")
 		TEST_ASSERT(!web.researched_nodes[unaffordable], "A node above the whole account cannot be bought.")
-		TEST_ASSERT_EQUAL((shadow.mismatch_reasons["ledger_insufficient_points"] || 0) - refused_before, 1, "The refusal comes from the ledger.")
+		TEST_ASSERT_EQUAL((shadow.purchase_outcomes["insufficient_points"] || 0) - refused_before, 1, "The refusal comes from the ledger.")
 
 	// A forced unlock pays no bounty; each server earns its own income.
 	money = science?.account_balance

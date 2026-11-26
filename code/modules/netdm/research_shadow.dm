@@ -4,8 +4,6 @@
 #define NETDM_RESEARCH_OUTBOX 512
 /// Budget of one encoded catalog chunk; a frame holds 48 KiB with its envelope.
 #define NETDM_RESEARCH_CHUNK_BYTES 30000
-/// Cadence of the balance comparison between a legacy web and its treasury storage.
-#define NETDM_RESEARCH_COMPARE (15 SECONDS)
 /// A mirrored purchase without an answer by then counts as unanswered.
 #define NETDM_RESEARCH_ANSWER_TIMEOUT (20 SECONDS)
 /// Pause after the Host could not take a research request (no ledger, a failed journal).
@@ -28,21 +26,19 @@
 #define NETDM_RESEARCH_SERVER_SEARCH_TIMEOUT (2 MINUTES)
 
 /**
- * research.server pilot in Shadow mode (P5).
+ * research.server under the Host ledger (P5).
  *
- * The legacy techweb keeps deciding everything players see. Every R&D server becomes a netDM node
- * with its own storage in the Host ledger, and the R&D console a node that buys over the network.
- * The first server of a legacy web is that web's treasury: the shadow seeds it with the web's points
- * and knowledge and then mirrors every change made through the techweb primitives — committed income,
- * direct grants, penalties, forced unlocks and boosts. A console purchase that the legacy web made is
- * sent as research.server/research to the treasury over the simulated network, and the Host ledger
- * decides it on its own: same price, same prerequisites, enough points. Answers are compared with
- * the legacy outcome, and the treasury balance is compared with the web's points.
+ * Every R&D server becomes a netDM node with its own storage in the Host ledger, and the R&D console a
+ * node that buys over the network. Until the ledger can take a web over, the first server of that web
+ * is its treasury: it is seeded with the web's points and knowledge, and every change made through the
+ * techweb primitives — committed income, direct grants, penalties, forced unlocks and boosts — is
+ * mirrored into the ledger. Authority switches only over a complete mirror: the legacy balance would
+ * otherwise be projected away without the ledger holding its points.
  *
- * Per-server wallets, the target of the design, are not compared here: the treasury mirrors the
- * shared legacy pool, so differences show defects and unmirrored writers, not the planned change.
- * A mismatching purchase is aligned afterwards (import of the node and a debit of the legacy price),
- * so one root cause is counted once instead of cascading into every later purchase.
+ * After authorize() the ledger decides research for that web: the price, the prerequisites and the
+ * account are its own, and the legacy techweb is only the projection of its servers' wallets and
+ * knowledge. A console purchase is a network operation whose answer tells the player; what it changes
+ * in the world is its effect, applied once per round however often it is delivered.
  */
 /datum/netdm_research_shadow
 	parent_type = /datum/netdm_integration
@@ -66,31 +62,22 @@
 	var/list/treasuries = list()
 	var/list/treasury_web = list()
 	var/serial = 0
-	/// Depth of a console purchase in progress: its spend and unlock are mirrored as the purchase itself.
-	var/console_purchase = 0
 	/// Depth of commit_income: its internal add_point_list is part of the committed income.
 	var/committing = 0
 	/// Mirror events get a sequence; the Host confirms them in order up to confirmed_seq.
 	var/event_seq = 0
 	var/confirmed_seq = 0
-	/// Purchases waiting for the mirror to confirm every event made before them: the legacy web
-	/// had those points when it bought, so the treasury must have them before the purchase arrives.
-	var/list/waiting = list()
 	/// Idempotency key -> purchase record; operation ID -> idempotency key.
 	var/list/purchases = list()
 	var/list/purchase_keys = list()
 	var/list/latencies = list()
 	var/next_compare = 0
-	var/compare_inflight = FALSE
-	/// Mirror events counted when the comparison was asked; any newer one makes its answer inconclusive.
-	var/compare_events = 0
-	var/last_drift
-	var/max_drift = 0
+	var/state_inflight = FALSE
 	var/list/counters = list("events" = 0, "confirmed" = 0, "rejected" = 0, "coalesced" = 0, "dropped" = 0,
-		"unmirrored" = 0, "purchases" = 0, "matched" = 0, "mismatched" = 0, "unanswered" = 0, "refused" = 0,
-		"legacy_refused" = 0, "aligned" = 0, "compares" = 0, "drifts" = 0, "knowledge_drifts" = 0, "treasuries" = 0,
+		"unmirrored" = 0, "purchases" = 0, "researched" = 0, "unanswered" = 0, "refused" = 0, "treasuries" = 0,
 		"projected" = 0, "server_queries" = 0, "server_by_query" = 0)
-	var/list/mismatch_reasons = list()
+	/// Ledger answers by outcome: how often a purchase ended "researched", "insufficient_points" and so on.
+	var/list/purchase_outcomes = list()
 	var/list/notes = list()
 	/// A mirror event of a web the ledger will take over was refused or lost. The mirror is then
 	/// incomplete and authority must not switch this round: the projection would erase points it never
@@ -99,7 +86,7 @@
 	var/mirror_lost_reported = FALSE
 	/// TRUE after the migration (P5 canary): the Host ledger decides research, the legacy web is its projection.
 	var/authoritative = FALSE
-	/// NETDM_RESEARCH_MODE=authoritative switches over as soon as the mirror is synchronized.
+	/// TRUE once this world asked the ledger to take research over; the switch itself is authorize().
 	var/authority_requested = FALSE
 	/// Catalog costs as exported, before legacy get_price could change them: node ID -> whole points.
 	var/list/catalog_costs = list()
@@ -166,7 +153,7 @@
 	if(sending)
 		outbox.Insert(1, list(sending))
 		sending = null
-	compare_inflight = FALSE
+	state_inflight = FALSE
 	// This runs every fire while there is no session (a Host restart): each storage is queued once,
 	// or minutes without a Host would fill the outbox with registrations and push income out of it.
 	var/list/queued_registers = list()
@@ -183,8 +170,7 @@
 		var/list/purchase = purchases[key]
 		counters["unanswered"]++
 		note("purchase [purchase["node"]] lost with the session")
-		if(purchase["authoritative"])
-			finish_purchase(purchase, "no_answer", null, key)
+		finish_purchase(purchase, "no_answer", null, key)
 	purchases.Cut()
 	purchase_keys.Cut()
 	status_keys.Cut()
@@ -350,8 +336,6 @@
 
 /// remove_point_list and modify_point_list: what actually changed, both ways.
 /datum/netdm_research_shadow/proc/legacy_changed(datum/techweb/web, list/before)
-	if(console_purchase)
-		return
 	var/storage = treasury_of(web)
 	if(!storage)
 		return
@@ -372,7 +356,7 @@
 
 /// A node unlocked outside a console purchase: forced research, disks, admin.
 /datum/netdm_research_shadow/proc/legacy_unlock(datum/techweb/web, node_id)
-	if(console_purchase || applying_projection)
+	if(applying_projection)
 		return
 	var/storage = treasury_of(web)
 	if(!storage)
@@ -385,44 +369,6 @@
 	if(storage)
 		send_boost(storage, node.id, "b-[copytext(md5("[itempath]"), 1, 13)]", whole_points(node.boost_item_paths[itempath]), "boost")
 
-/// The legacy console finished a purchase attempt; a successful one is repeated over netDM.
-/datum/netdm_research_shadow/proc/console_purchased(obj/machinery/computer/rdconsole/console, datum/techweb/web, node_id, success, list/before)
-	if(!success)
-		counters["legacy_refused"]++
-		return
-	counters["purchases"]++
-	var/type = TECHWEB_POINT_TYPE_GENERIC
-	// What the legacy web actually deducted: get_price changes node costs as a side effect, so it is not asked again.
-	var/price = max(0, round((before[type] || 0) - (web.research_points[type] || 0)))
-	var/storage = treasury_of(web)
-	var/datum/component/netdm_node/node = console.GetComponent(/datum/component/netdm_node)
-	if(!storage || !node || !consoles[WEAKREF(console)])
-		counters["unmirrored"]++
-		note("purchase [node_id]: [storage ? "console has no node" : "web has no treasury"]")
-		return
-	var/key = "rc-[++serial]"
-	waiting[key] = list("node" = node_id, "price" = price, "storage" = storage, "queued_us" = netdm_now_us(),
-		"created" = world.time, "barrier" = event_seq, "console" = WEAKREF(console))
-
-/// Sends the purchases whose earlier mirror events the Host has confirmed.
-/datum/netdm_research_shadow/proc/send_purchases()
-	for(var/key in waiting)
-		var/list/purchase = waiting[key]
-		if(purchase["barrier"] > confirmed_seq)
-			break
-		waiting -= key
-		var/datum/weakref/console_ref = purchase["console"]
-		var/obj/machinery/computer/rdconsole/console = console_ref.resolve()
-		var/datum/component/netdm_node/node = console?.GetComponent(/datum/component/netdm_node)
-		var/list/entry = node && SSnetdm_observe.services.invoke(node, "research.[purchase["storage"]]", "research", key,
-			list("node" = purchase["node"], "quote" = purchase["price"]), CALLBACK(src, PROC_REF(purchase_accepted), key))
-		if(!entry)
-			counters["unmirrored"]++
-			lost_mirror("purchase [purchase["node"]]: console not attached")
-			note("purchase [purchase["node"]]: console not attached")
-			continue
-		purchases[key] = purchase
-
 /datum/netdm_research_shadow/proc/purchase_accepted(key, list/entry, list/reply)
 	var/list/purchase = purchases[key]
 	if(!purchase)
@@ -433,10 +379,7 @@
 	if(!reply["ok"] || isnull(operation))
 		purchases -= key
 		counters["refused"]++
-		if(purchase["authoritative"])
-			finish_purchase(purchase, "host_[reply["error"] || "refused"]", null, key)
-		else
-			mismatch(purchase, "host_[reply["error"] || "refused"]", key)
+		finish_purchase(purchase, "host_[reply["error"] || "refused"]", null, key)
 		return
 	purchase_keys["[operation]"] = key
 
@@ -451,29 +394,8 @@
 	var/list/payload = item["payload"]
 	var/outcome = islist(payload) ? payload["outcome"] : (item["outcome"] || "no_result")
 	push(latencies, netdm_now_us() - purchase["queued_us"])
-	if(purchase["authoritative"])
-		finish_purchase(purchase, outcome, payload, key)
-		return TRUE
-	if(outcome == "researched")
-		counters["matched"]++
-		return TRUE
-	mismatch(purchase, outcome, key, islist(payload) ? payload["price"] : null)
+	finish_purchase(purchase, outcome, payload, key)
 	return TRUE
-
-/// Counts a purchase the Host decided differently, then aligns the treasury with the legacy web.
-/datum/netdm_research_shadow/proc/mismatch(list/purchase, reason, key, core_price)
-	counters["mismatched"]++
-	mismatch_reasons[reason]++
-	note("purchase [purchase["node"]] for [purchase["price"]]: [reason][isnull(core_price) ? "" : " (ledger price [core_price])"]")
-	var/storage = purchase["storage"]
-	if(!storages[storage] || reason == "already_researched")
-		return
-	counters["aligned"]++
-	enqueue(list("op" = "research_import", "payload" = list("storage" = storage, "generation" = 1, "source" = "align-[key]",
-		"nodes" = list(purchase["node"])), "what" = "align"))
-	if(purchase["price"] > 0)
-		enqueue(list("op" = "research_debit", "payload" = list("storage" = storage, "generation" = 1, "source" = "align-[key]",
-			"kind" = "legacy", "points" = milli_points(list(TECHWEB_POINT_TYPE_GENERIC = purchase["price"]))), "what" = "align"))
 
 // ---- Sending ---------------------------------------------------------------------------------
 
@@ -521,7 +443,6 @@
 		build_catalog()
 	register_pending()
 	assign_treasuries()
-	send_purchases()
 	expire_purchases()
 	if(authority_requested && !authoritative)
 		if(!authorize() && mirror_lost && !mirror_lost_reported)
@@ -541,14 +462,13 @@
 	else if(length(outbox))
 		sending = outbox[1]
 		outbox.Cut(1, 2)
-	else if(world.time >= next_compare && !compare_inflight && length(treasuries) && (authoritative || (!length(waiting) && !length(purchases))))
-		// Shadow: compare the treasury with the web. Ledger: project the server wallets onto the legacy web.
-		next_compare = world.time + (authoritative ? NETDM_RESEARCH_PROJECTION : NETDM_RESEARCH_COMPARE)
-		compare_inflight = TRUE
-		compare_events = counters["events"]
-		var/datum/callback/on_state = authoritative ? CALLBACK(src, PROC_REF(projected)) : CALLBACK(src, PROC_REF(compared))
+	else if(world.time >= next_compare && !state_inflight && authoritative)
+		// The legacy balance is the sum of the servers' wallets: shown, never spent.
+		next_compare = world.time + NETDM_RESEARCH_PROJECTION
+		state_inflight = TRUE
+		var/datum/callback/on_state = CALLBACK(src, PROC_REF(projected))
 		if(!lane.control("research_state", list("scope" = "all"), on_state))
-			compare_inflight = FALSE
+			state_inflight = FALSE
 		return
 	else
 		return
@@ -597,58 +517,14 @@
 		lost_mirror("[entry["what"]] refused: [error || status]")
 	note("[entry["what"]] refused: [error || status]")
 
-/// Balance and knowledge of each treasury against its legacy web, while nothing is waiting to be mirrored.
-/datum/netdm_research_shadow/proc/compared(list/reply)
-	compare_inflight = FALSE
-	var/list/result = reply["result"]
-	var/list/rows = islist(result) ? result["storages"] : null
-	// A purchase in flight is spent in the web and not yet in the treasury: no verdict then either.
-	if(!reply["ok"] || !islist(rows) || length(outbox) || sending || counters["events"] != compare_events || length(waiting) || length(purchases))
-		// The legacy web changed while the answer travelled; ask again soon.
-		next_compare = min(next_compare, world.time + 1 SECONDS)
-		return
-	counters["compares"]++
-	var/drift = 0
-	for(var/list/row in rows)
-		var/web_key = treasury_web[row["storage"]]
-		if(!web_key)
-			continue
-		var/datum/techweb/web = locate(web_key)
-		if(!istype(web))
-			continue
-		var/list/available = row["availableMilli"]
-		var/legacy = web.research_points[TECHWEB_POINT_TYPE_GENERIC] || 0
-		// Milli-points arrive as text (DM numbers are 32-bit floats); whole points would be truncated.
-		var/core = netdm_number(islist(available) ? available[TECHWEB_POINT_TYPE_GENERIC] : 0) / NETDM_RESEARCH_MILLI
-		drift = max(drift, abs(legacy - core))
-		// The legacy balance is a 32-bit float summed thousands of times: its own error grows with it.
-		if(abs(legacy - core) > max(0.1, abs(legacy) * 0.0001))
-			counters["drifts"]++
-			note("treasury [row["storage"]] holds [core], the web [round(legacy, 0.01)]")
-		if(netdm_number(row["unlocked"]) != length(web.researched_nodes))
-			counters["knowledge_drifts"]++
-			note("treasury [row["storage"]] knows [row["unlocked"]] nodes, the web [length(web.researched_nodes)]")
-	last_drift = drift
-	max_drift = max(max_drift, drift)
-
 /datum/netdm_research_shadow/proc/expire_purchases()
-	for(var/key in waiting)
-		var/list/held = waiting[key]
-		if(world.time < held["created"] + NETDM_RESEARCH_ANSWER_TIMEOUT)
-			break
-		waiting -= key
-		counters["unanswered"]++
-		mismatch(held, "mirror_behind", key)
 	for(var/key in purchases)
 		var/list/purchase = purchases[key]
 		if(world.time < purchase["created"] + NETDM_RESEARCH_ANSWER_TIMEOUT)
 			continue
 		purchases -= key
 		counters["unanswered"]++
-		if(purchase["authoritative"])
-			finish_purchase(purchase, "no_answer", null, key)
-		else
-			mismatch(purchase, "no_answer", key)
+		finish_purchase(purchase, "no_answer", null, key)
 
 // ---- Ledger authority (P5 canary) ------------------------------------------------------------
 //
@@ -672,7 +548,7 @@
 /datum/netdm_research_shadow/proc/authorize()
 	if(authoritative)
 		return TRUE
-	if(!synchronized() || length(waiting) || length(purchases) || !length(treasuries))
+	if(!synchronized() || length(purchases) || !length(treasuries))
 		return FALSE
 	authoritative = TRUE
 	last_mine = world.time
@@ -1114,12 +990,12 @@
 		binding["available"] = netdm_number(payload["available"])
 		binding["revision"] = netdm_number(payload["revision"])
 		binding["updated"] = world.time
-	mismatch_reasons["ledger_[outcome]"]++
+	purchase_outcomes[outcome]++
 	var/datum/techweb/web = locate(purchase["web"])
 	var/node_id = purchase["node"]
 	switch(outcome)
 		if("researched")
-			counters["matched"]++
+			counters["researched"]++
 			settle_effect("[purchase["storage"]]/[key]", purchase["storage"], node_id, netdm_number(payload?["price"]), key, purchase)
 			console?.say("Successfully researched [purchase["name"]].")
 		if("already_researched")
@@ -1135,7 +1011,7 @@
 			console?.say("Сервер не знает предпосылок [purchase["name"]].")
 		if("no_answer")
 			var/settled = settled_effects["[purchase["storage"]]/[key]"]
-			if(settled && settled != "shadow")
+			if(settled)
 				// The outbox was faster than the answer that then got lost: the purchase is already in the world.
 				console?.say("Сервер подтвердил исследование [purchase["name"]].")
 				return
@@ -1157,9 +1033,9 @@
 
 /**
  * Applies the effect of a committed purchase unless this world already did, and queues the report.
- * Results: "paid" and "unpaid" (applied, with or without a bounty), "shadow" (the legacy web applied
- * the purchase itself), "void" (the world has no web left to apply it to) and "failed" (applying it
- * raised a runtime error).
+ * Results: "paid" and "unpaid" (applied, with or without a bounty), "void" (the world has no web left
+ * to apply it to), "foreign" (an effect of a purchase this world did not make) and "failed" (applying
+ * it raised a runtime error).
  */
 /datum/netdm_research_shadow/proc/settle_effect(id, storage, node_id, price, key, list/purchase)
 	if(settled_effects[id])
@@ -1177,10 +1053,9 @@
 	return TRUE
 
 /datum/netdm_research_shadow/proc/apply_effect(storage, node_id, price, key, list/purchase)
-	// Only a purchase this world started under the ledger ("ra-" keys) changes the world; a mirrored
-	// legacy purchase ("rc-") was applied and paid by the legacy web when it was made.
-	if(!authoritative || copytext("[key]", 1, 4) != "ra-")
-		return "shadow"
+	// Only a purchase of this round's ledger ("ra-" keys) changes the world.
+	if(copytext("[key]", 1, 4) != "ra-")
+		return "foreign"
 	var/datum/techweb/web = locate(purchase ? purchase["web"] : storage_webs[storage])
 	if(!istype(web))
 		return "void"
@@ -1267,13 +1142,13 @@
 		note("purchase [effect["node"]] settled from the outbox: [settled_effects[id]]")
 		var/datum/weakref/console_ref = lost["console"]
 		var/obj/machinery/computer/rdconsole/console = console_ref?.resolve()
-		if(settled_effects[id] != "shadow")
+		if(settled_effects[id] != "foreign")
 			console?.say("Сервер подтвердил исследование [lost["name"]]: ответ был потерян, покупка учтена.")
 	next_effects = (length(effect_acks) || netdm_number(result["pending"]) > length(owed)) ? 0 : world.time + NETDM_RESEARCH_EFFECTS
 
 /// The legacy balance of each web becomes the sum of its servers' wallets: shown, never spent.
 /datum/netdm_research_shadow/proc/projected(list/reply)
-	compare_inflight = FALSE
+	state_inflight = FALSE
 	var/list/result = reply["result"]
 	var/list/rows = islist(result) ? result["storages"] : null
 	if(!reply["ok"] || !islist(rows))
@@ -1613,18 +1488,17 @@
 	return catalog_ready && !sending && !length(outbox) && !mirror_lost
 
 /datum/netdm_research_shadow/proc/state()
-	var/list/reasons = list()
-	for(var/reason in mismatch_reasons)
-		reasons += "[reason]:[mismatch_reasons[reason]]"
-	return "research mode=[authoritative ? "ledger" : "shadow"] mirror=[mirror_lost ? "incomplete" : "complete"] \
+	var/list/outcomes = list()
+	for(var/outcome in purchase_outcomes)
+		outcomes += "[outcome]:[purchase_outcomes[outcome]]"
+	return "research mode=[authoritative ? "ledger" : "mirror"] mirror=[mirror_lost ? "incomplete" : "complete"] \
 		catalog=[catalog_error ? "refused" : (catalog_ready ? copytext(catalog_hash, 1, 13) : "[catalog_next - 1]/[length(catalog_chunks)]")] \
 		storages=[length(storages)] treasuries=[length(treasuries)] outbox=[length(outbox)] events=[counters["events"]] \
 		confirmed=[counters["confirmed"]] rejected=[counters["rejected"]] dropped=[counters["dropped"]] unmirrored=[counters["unmirrored"]] \
-		purchases=[counters["purchases"]] matched=[counters["matched"]] mismatched=[counters["mismatched"]] unanswered=[counters["unanswered"]] \
+		purchases=[counters["purchases"]] researched=[counters["researched"]] unanswered=[counters["unanswered"]] answers=[jointext(outcomes, ",")] \
 		effects=[length(settled_effects)]/applied:[effect_counters["applied"]]/recovered:[effect_counters["recovered"]]/unreported:[length(effect_acks)] \
 		knowledge=projected:[counters["projected"]]/due:[length(knowledge_due)] \
-		p50=[percentile_of(0.5)]ms drift=[isnull(last_drift) ? "-" : round(last_drift, 0.01)] max_drift=[round(max_drift, 0.01)] \
-		reasons=[jointext(reasons, ",")]"
+		p50=[percentile_of(0.5)]ms"
 
 /datum/netdm_research_shadow/proc/percentile_of(fraction)
 	if(!length(latencies))
@@ -1666,7 +1540,6 @@
 #undef NETDM_RESEARCH_MILLI
 #undef NETDM_RESEARCH_OUTBOX
 #undef NETDM_RESEARCH_CHUNK_BYTES
-#undef NETDM_RESEARCH_COMPARE
 #undef NETDM_RESEARCH_ANSWER_TIMEOUT
 #undef NETDM_RESEARCH_RETRY
 #undef NETDM_RESEARCH_PROJECTION
