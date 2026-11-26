@@ -49,6 +49,7 @@
 	deadline = world.time + 30 SECONDS
 	while(world.time < deadline && window.notice == null)
 		sleep(5)
+	log_world("netDM netrun life create: [window.notice]")
 	TEST_ASSERT(window.notice, "The Host answers the core request.")
 	var/answered = FALSE
 	for(var/word as anything in expected)
@@ -80,7 +81,32 @@
 	deadline = world.time + 30 SECONDS
 	while(world.time < deadline && window.notice == null)
 		sleep(5)
+	log_world("netDM netrun enter: [window.notice]")
 	TEST_ASSERT(window.notice, "Entering answers with a state or a reason: [window.notice]")
+
+	// The move needs a fresh projection: the presence appeared after the last read.
+	window.next_poll = 0
+	window.request_panel()
+	deadline = world.time + 30 SECONDS
+	while(world.time < deadline && !islist(window.panel?["presence"]))
+		sleep(5)
+	var/other_host = 0
+	for(var/datum/node as anything in adapter.devices)
+		var/host = adapter.host_of(adapter.devices[node])
+		if(!host)
+			continue
+		var/id = text2num(host["id"])
+		if(id && id != host_id)
+			other_host = id
+			break
+	if(other_host)
+		window.notice = null
+		window.travel(list("mode" = "move", "target" = other_host))
+		deadline = world.time + 30 SECONDS
+		while(world.time < deadline && window.notice == null)
+			sleep(5)
+		log_world("netDM netrun move: [window.notice]")
+		TEST_ASSERT(window.notice, "A move answers with a route or a reason: [window.notice]")
 
 	qdel(window)
 	qdel(operator)

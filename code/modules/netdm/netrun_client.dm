@@ -121,7 +121,6 @@
 	if(!network.services.control("netrun_execute", payload, CALLBACK(src, PROC_REF(on_action))))
 		notice = "Канал занят, повторю позже."
 		return TRUE
-	notice = "Действие отправлено: [action_id]"
 	return TRUE
 
 /**
@@ -164,7 +163,6 @@
 	if(!SSnetdm_observe.services.control("netrun_life", payload, CALLBACK(src, PROC_REF(on_life))))
 		notice = "Канал занят, повторю позже."
 		return TRUE
-	notice = verb == "create" ? "Создаю ядро..." : (verb == "migrate" ? "Переношу ядро..." : "Работаю с копией...")
 	return TRUE
 
 /datum/netrun_client/proc/on_life(list/reply)
@@ -208,13 +206,15 @@
 		if(!execution)
 			notice = "Вход невозможен: терминал не привязан к цифровому хосту."
 			return TRUE
+		var/presence_core = panel?["lives"]?[1]
+		if(text2num(presence_core?["identity"]))
+			payload["identity"] = text2num(presence_core?["identity"])
 		payload["host"] = execution["id"]
 	else
 		payload["destination"] = destination
 	if(!SSnetdm_observe.services.control("netrun_presence", payload, CALLBACK(src, PROC_REF(on_presence))))
 		notice = "Канал занят, повторю позже."
 		return TRUE
-	notice = verb == "enter" ? "Вхожу на терминал..." : (verb == "leave" ? "Выхожу..." : "Иду к цели...")
 	return TRUE
 
 /datum/netrun_client/proc/on_presence(list/reply)
@@ -287,7 +287,6 @@
 	if(!network.services.control("netrun_program", payload, CALLBACK(src, PROC_REF(on_program))))
 		notice = "Канал занят, повторю позже."
 		return TRUE
-	notice = "Программа отправлена."
 	return TRUE
 
 /datum/netrun_client/proc/on_program(list/reply)
