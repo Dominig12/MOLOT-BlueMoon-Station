@@ -18,14 +18,14 @@
 1. Здесь живёт **DM-адаптер** и физический мир. Игровое состояние, питание, повреждения, mind и персонаж принадлежат DM; сетевые факты — NETDM; цифровое состояние — NETRUN.
 2. `code/modules/netdm/netdm_bridge.dm` — вендоренная копия `netDM-core/dm/netdm_bridge.dm`. При изменении протокола обновляются обе копии согласованно, версия моста и хоста проверяется вместе (§18.1).
 3. `code/modules/netdm/netdm_services.dm` содержит локальные расширения относительно ядра (слабые ссылки реестра и обработка событий без зарегистрированного обработчика). Это единственное место расхождения, оно описано в аудите §4.2.
-4. Живой мир сейчас **не проверяется**: нативного моста нет, C/C++ тулчейна нет, Docker не используется (см. `status.md`, раздел «Ограничения стенда»). Компиляция DM и все C#-проверки доступны.
+4. Живой мир **проверяется**: мост `netdm_byond.dll` собирается MinGW-тулчейном (`native/byond/build.ps1`), герметичный профиль компилируется и запускает набор из 24 тестов в `dd.exe`. Текущий результат — 23 из 24, единственное падение `door_station` (в герметичном мире нет кнопок blast-дверей). Docker на стенде не используется.
 
 ## Команды
 
 ```powershell
 # C#: сборка и домен NETRUN
 dotnet build src/NetDM.Host -c Release            # в netDM-core
-dotnet run --project tests/NetRun.Tests -c Release   # 140 утверждений
+dotnet run --project tests/NetRun.Tests -c Release   # 479 утверждений
 
 # Живой Host через IPC (без BYOND)
 pwsh -NoProfile -File tests/host-ipc.ps1         # ожидается NETDM_IPC_PASS
@@ -34,6 +34,6 @@ pwsh -NoProfile -File tests/host-ipc.ps1         # ожидается NETDM_IPC_
 pwsh -File scripts/Export-Source.ps1 -Destination <dir>
 pwsh -File scripts/build-bluemoon-unit-dmb.ps1 -GameRepository <этот репозиторий> -BuildDirectory <dir>
 
-# DM: живой мир (заблокировано без моста)
+# DM: живой мир (мост собран, 23 из 24)
 pwsh -File scripts/test-bluemoon-unit.ps1 -BuildDirectory <dir> -BridgeDll <dll> -TestList scripts/bluemoon-netdm-tests.txt
 ```
