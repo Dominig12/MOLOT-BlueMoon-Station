@@ -217,7 +217,10 @@ GLOBAL_VAR_INIT(last_churn_alert, 0)
 		nuke_chat()
 	if(href_list["statbrowser_pick_color"])
 		var/color_key = href_list["statbrowser_pick_color"]
-		var/static/list/color_keys = list("--bg-primary", "--bg-secondary", "--text-primary", "--text-secondary", "--text-muted", "--accent", "--border", "--health-good", "--health-warn", "--health-bad")
+		var/static/list/color_keys = list(
+			"--bg-primary", "--bg-secondary", "--text-primary", "--text-secondary", "--text-muted", "--accent", "--border", "--health-good", "--health-warn", "--health-bad",
+			"--emote-button-bg", "--emote-button-hover", "--emote-button-text", "--emote-button-border", "--emote-button-custom-bg", "--emote-button-me-bg", "--emote-accent",
+		)
 		if(!(color_key in color_keys))
 			return
 		var/new_color = tgui_input_color(src, "Выберите цвет оформления панели.", "Цвет панели", href_list["color"])
@@ -236,6 +239,17 @@ GLOBAL_VAR_INIT(last_churn_alert, 0)
 	log_href("[src] (usr:[usr]\[[COORD(usr)]\]) : [hsrc ? "[hsrc] " : ""][href]")
 
 	last_activity = world.time
+
+	if(href_list["open_statpanel_emotes"])
+		if(statbrowser_ready)
+			src << output("", "statbrowser:open_emote_tab")
+		return
+
+	var/emote_action = href_list["statpanel_emotes"]
+	if(emote_action)
+		if(statbrowser_ready && prefs && (emote_action == "emotes/resetOrder" || (stat_tab == STATPANEL_EMOTES_TAB && text2num(href_list["slot"]) == prefs.default_slot)))
+			tgui_panel?.emotes_handle_stat_action(href_list)
+		return
 
 	//byond bug ID:2256651
 	if (asset_cache_job && (asset_cache_job in completed_asset_jobs))
@@ -612,7 +626,8 @@ GLOBAL_VAR_INIT(last_churn_alert, 0)
 			var/datum/admin_rank/localhost_rank = new("!localhost!", R_EVERYTHING, R_DBRANKS, R_EVERYTHING) //+EVERYTHING -DBRANKS *EVERYTHING
 			new /datum/admins(localhost_rank, ckey, 1, 1)
 
-	if(fexists(roundend_report_file()))
+	// tgui-снимок может существовать без старого HTML-отчёта (и наоборот).
+	if(fexists(roundend_report_file()) || fexists(roundend_report_tgui_file()))
 		add_verb(src, /client/proc/show_previous_roundend_report)
 
 	var/full_version = "[byond_version].[byond_build ? byond_build : "xxx"]"
@@ -1148,7 +1163,8 @@ GLOBAL_VAR_INIT(last_churn_alert, 0)
 /client/Del()
 	var/screen_count = length(screen)
 	var/image_count = length(images)
-	var/mob_type = mob ? "[mob.type]" : "нет"
+	var/mob/logout_mob = mob
+	var/destroy_started = TICK_USAGE_REAL
 	if(!gc_destroyed)
 		// Клиента удаляет сам BYOND, минуя qdel() - а COMSIG_PARENT_QDELETING рассылает
 		// именно qdel(). Без этой рассылки при обычном дисконнекте не срабатывала ни одна
@@ -1156,18 +1172,18 @@ GLOBAL_VAR_INIT(last_churn_alert, 0)
 		// клиентом, а держатели экранных объектов не успевали снять их до screen.Cut().
 		SEND_SIGNAL(src, COMSIG_PARENT_QDELETING, FALSE)
 		Destroy() //Clean up signals and timers.
-	// Логаут пишется всегда: BYOND ищет уцелевшие ссылки на клиента уже после выхода из Del(),
-	// этот столл в замер del() не попадает, а refcount после Destroy показывает, будет ли поиск.
-	var/leftover_refs = refcount(src)
-	var/deletion_started = TICK_USAGE
+	var/destroy_cost_ms = TICK_DELTA_TO_MS(TICK_USAGE_REAL - destroy_started)
+	var/refs_before_logout = refcount(src)
 	. = ..()
-	// Встроенный ..() зовёт mob.Logout(), и тот отпускает ещё часть ссылок (окна tgui, экраны).
-	// Поиск BYOND платит только за то, что дожило до этой строки.
-	var/refs_after_logout = refcount(src)
 	if(!SStick_spikes)
 		return
-	var/deletion_cost_ms = TICK_DELTA_TO_MS(TICK_USAGE - deletion_started)
-	SStick_spikes.record_slow_work("логаут", "[ckey]: refcount после Destroy [leftover_refs], del() [round(deletion_cost_ms, 0.1)]мс, моб [mob_type], экран [screen_count], картинок [image_count], refcount после Logout [refs_after_logout]", deletion_cost_ms)
+	var/report = "[ckey]: Destroy [round(destroy_cost_ms, 0.1)]мс, refcount до Logout [refs_before_logout], моб [logout_mob ? logout_mob.type : "нет"], экран [screen_count], картинок [image_count]"
+	// Встроенный ..() mob.Logout() не зовёт: BYOND вызывает его уже после выхода из Del(), сразу за ним
+	// освобождает клиента и уцелевшие ссылки на него ищет обходом мира. Итог подводит /mob/Logout().
+	if(logout_mob)
+		logout_mob.logout_report = list("\ref[src]", report, destroy_cost_ms)
+	else
+		SStick_spikes.record_slow_work("логаут", report, destroy_cost_ms)
 
 /client/Destroy()
 	QDEL_NULL(fractional_movement)
@@ -1186,8 +1202,8 @@ GLOBAL_VAR_INIT(last_churn_alert, 0)
 	// Отложенные одиночные записи префов ждут таймера склейки. Игрок уходит - дописываем
 	// их сейчас: датум префов переживёт логаут и таймер бы отработал, но настройка,
 	// изменённая в последние секунды, иначе доедет до диска только если сервер доживёт до
-	// срабатывания. Пустой буфер до диска не доходит, так что обычный логаут бесплатен.
-	prefs?.flush_single_prefs()
+	// срабатывания.
+	prefs?.flush_single_prefs(TRUE)
 	// Tear down listed-turf signals and any queued icon work so we don't leak refs through the signal subsystem.
 	if(listed_turf_watched || mob?.listed_turf)
 		clear_listed_turf(send_output = FALSE)
@@ -1207,6 +1223,9 @@ GLOBAL_VAR_INIT(last_churn_alert, 0)
 		SSblackbox.exp_update_queue -= src
 	if(SSparallax?.currentrun)
 		SSparallax.currentrun -= src
+	// Окно голосования снимает клиента в ui_close() через user.client, а в Logout он уже null:
+	// вышедший посреди автоголосования оставался в списке, и BYOND искал эту ссылку обходом мира.
+	SSvote?.voting -= src
 	SSping_diag?.forget_client(src)
 	QDEL_NULL(ping_diag_ui)
 	if(GLOB.ahelp_tickets)
@@ -1699,6 +1718,9 @@ GLOBAL_VAR_INIT(last_churn_alert, 0)
 		ip_intel = res.intel
 
 /client/Click(atom/object, atom/location, control, params, ignore_spam = FALSE, extra_info, ignore_last_click = FALSE)
+	// боковые кнопки мыши - это бинды из MouseDown, а не ЛКМ
+	if(mouse_event_side_button_key(params))
+		return
 	if(!ignore_last_click && last_click > world.time - world.tick_lag)
 		return
 	last_activity = world.time
@@ -1769,6 +1791,11 @@ GLOBAL_VAR_INIT(last_churn_alert, 0)
 	SEND_SIGNAL(src, COMSIG_CLIENT_CLICK, object, location, control, params, usr)
 
 	..()
+
+/client/DblClick(object, location, control, params)
+	if(mouse_event_side_button_key(params))
+		return
+	return ..()
 
 /client/proc/add_verbs_from_config()
 	if(CONFIG_GET(flag/see_own_notes))
@@ -1928,6 +1955,10 @@ GLOBAL_VAR_INIT(last_churn_alert, 0)
 ///Redirect proc that makes it easier to get the status of an achievement. Achievement type is the typepath to the award.
 /client/proc/get_award_status(achievement_type, mob/user, value = 1)
 	return	player_details.achievements.get_achievement_status(achievement_type)
+
+/// Перенеправляем ачивку в статус
+/client/proc/set_award_status(achievement_type, value)
+	return	player_details.achievements.set_achievement_status(achievement_type, value)
 
 ///Redirect proc that makes it easier to get the status of an achievement. Achievement type is the typepath to the award.
 /client/proc/award_heart(heart_reason)

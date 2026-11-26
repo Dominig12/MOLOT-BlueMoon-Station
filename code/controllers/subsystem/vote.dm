@@ -25,6 +25,9 @@ SUBSYSTEM_DEF(vote)
 	var/list/saved = list()
 	var/list/generated_actions = list()
 	var/roundtype_prime_runoff_ballot = FALSE
+	var/roundtype_hard_team_runoff_ballot = FALSE
+	// Флаг для второго тура Хард/Тим-База: переживает reset() внутри initiate_vote().
+	var/roundtype_hard_team_runoff_pending = FALSE
 	// BLUEMOON MAP VOTE RUNOFF ADD
 	var/map_runoff_active = FALSE
 	var/map_runoff_initiated = FALSE
@@ -71,7 +74,7 @@ SUBSYSTEM_DEF(vote)
 		// Prime-time Extended → Dynamic (Light) runoff must not hit this branch: while timeLeft is in the
 		// penalty window, result() would run every SS tick, often with no winner, then reset() wipes the
 		// runoff and players get a fresh Dynamic (Random) vs Extended vote (looks like recursion).
-		if(mode == "roundtype" && !roundtype_prime_runoff_ballot && SSticker.timeLeft - ROUNDTYPE_VOTE_END_PENALTY <= 0)
+		if(mode == "roundtype" && !roundtype_prime_runoff_ballot && !roundtype_hard_team_runoff_ballot && SSticker.timeLeft - ROUNDTYPE_VOTE_END_PENALTY <= 0)
 			result()
 			if(!mode)
 				reset()
@@ -97,6 +100,7 @@ SUBSYSTEM_DEF(vote)
 	_clear_custom_setup()
 	remove_action_buttons()
 	roundtype_prime_runoff_ballot = FALSE
+	roundtype_hard_team_runoff_ballot = FALSE
 	map_runoff_active = FALSE
 	map_runoff_initiated = FALSE
 
@@ -457,6 +461,16 @@ SUBSYSTEM_DEF(vote)
 					reset()
 					return .
 
+				if(roundtype_hard_team_runoff_ballot)
+					// Второй тур Хард/Тим-База всегда завершается Медиум-Динамиком.
+					var/winner_pick = ROUNDTYPE_DYNAMIC_MEDIUM
+					roundtype_hard_team_runoff_ballot = FALSE
+					SSpersistence.RecordDynamicType(winner_pick)
+					GLOB.round_type = winner_pick
+					GLOB.master_mode = winner_pick
+					reset()
+					return .
+
 				if(use_dynamic_light_roundtype_vote_window() && . == ROUNDTYPE_EXTENDED)
 					var/runoff_vote_ds = prepare_prime_roundtype_runoff_lobby_time()
 					var/prior_initiator = initiator
@@ -467,6 +481,38 @@ SUBSYSTEM_DEF(vote)
 						return .
 					message_admins("Roundtype runoff (Extended vs Dynamic Light) failed to start (cooldown or guard); finalizing Extended for this round.")
 					. = ROUNDTYPE_EXTENDED
+					SSpersistence.RecordDynamicType(.)
+					GLOB.round_type = .
+					GLOB.master_mode = .
+					reset()
+					return .
+
+// BLUEMOON ADD: второй тур Хард-Динамик vs Тим-База
+				if(. == ROUNDTYPE_DYNAMIC_HARD || . == ROUNDTYPE_DYNAMIC_TEAMBASED)
+					var/first_pick = .
+					if((ROUNDTYPE_DYNAMIC_TEAMBASED in SSpersistence.saved_round_types) || (ROUNDTYPE_DYNAMIC_TEAMBASED in SSpersistence.saved_modes))
+						// Тим-База не предлагается, если она была в предыдущих режимах
+						if(first_pick == ROUNDTYPE_DYNAMIC_TEAMBASED)
+							. = ROUNDTYPE_DYNAMIC_MEDIUM
+						else
+							. = ROUNDTYPE_DYNAMIC_HARD
+						SSpersistence.RecordDynamicType(.)
+						GLOB.round_type = .
+						GLOB.master_mode = .
+						reset()
+						return .
+					var/runoff_vote_ds = prepare_prime_roundtype_runoff_lobby_time()
+					var/prior_initiator = initiator
+					log_vote("Roundtype runoff: второй тур Хард-Динамик vs Тим-База. До конца — [DisplayTimeText(runoff_vote_ds)].")
+					roundtype_hard_team_runoff_pending = TRUE
+					if(initiate_vote("roundtype", prior_initiator ? prior_initiator : "server", display = SHOW_RESULTS|SHOW_WINNER, votesystem = PLURALITY_VOTING, forced = TRUE, vote_time = runoff_vote_ds, replacing_active_vote = TRUE))
+						return .
+					roundtype_hard_team_runoff_pending = FALSE
+					message_admins("Roundtype runoff (Hard vs TeamBased) failed to start; finalizing [first_pick] for this round.")
+					if(first_pick == ROUNDTYPE_DYNAMIC_TEAMBASED)
+						. = ROUNDTYPE_DYNAMIC_MEDIUM
+					else
+						. = first_pick
 					SSpersistence.RecordDynamicType(.)
 					GLOB.round_type = .
 					GLOB.master_mode = .
@@ -659,6 +705,8 @@ SUBSYSTEM_DEF(vote)
 		reset()
 		display_votes = display
 		roundtype_prime_runoff_ballot = roundtype_runoff_second_ballot
+		roundtype_hard_team_runoff_ballot = roundtype_hard_team_runoff_pending
+		roundtype_hard_team_runoff_pending = FALSE
 		switch(vote_type)
 			if("restart")
 				choices.Add("Restart Round","Continue Playing")
@@ -710,7 +758,9 @@ SUBSYSTEM_DEF(vote)
 			if("transfer") // austation begin -- Crew autotranfer vote
 				choices.Add(VOTE_TRANSFER,VOTE_CONTINUE) // austation end
 			if("roundtype")
-				if(roundtype_prime_runoff_ballot)
+				if(roundtype_hard_team_runoff_ballot)
+					choices |= list(ROUNDTYPE_DYNAMIC_HARD, ROUNDTYPE_DYNAMIC_TEAMBASED)
+				else if(roundtype_prime_runoff_ballot)
 					choices |= list(ROUNDTYPE_DYNAMIC_LIGHT, ROUNDTYPE_EXTENDED)
 				else
 					var/rotation_applies = update_round_rotation_eligibility()
@@ -891,12 +941,12 @@ SUBSYSTEM_DEF(vote)
 	if(!mode)
 		return 0
 	var/remaining = end_time - world.time
-	if(mode == "roundtype" && !roundtype_prime_runoff_ballot)
+	if(mode == "roundtype" && !roundtype_prime_runoff_ballot && !roundtype_hard_team_runoff_ballot)
 		remaining = min(remaining, SSticker.timeLeft - ROUNDTYPE_VOTE_END_PENALTY)
 	return max(0, remaining)
 
 /datum/controller/subsystem/vote/proc/sanitize_roundtype_vote_choices()
-	if(roundtype_prime_runoff_ballot)
+	if(roundtype_prime_runoff_ballot || roundtype_hard_team_runoff_ballot)
 		return
 	if(use_dynamic_light_roundtype_vote_window())
 		return
@@ -971,7 +1021,8 @@ SUBSYSTEM_DEF(vote)
 	return GLOB.always_state
 
 /datum/controller/subsystem/vote/ui_close(mob/user, datum/tgui/ui)
-	voting -= user?.client
+	// В Logout при смене моба user.client уже пуст, а клиент жив: его знает окно.
+	voting -= user?.client || ui?.window?.client
 
 /datum/controller/subsystem/vote/ui_static_data(mob/user)
 	var/list/data = list()

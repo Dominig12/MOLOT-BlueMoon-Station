@@ -132,6 +132,11 @@
 
 				for (var/_A in mind.antag_datums)
 					var/datum/antagonist/A = _A
+					if(istype(A, /datum/antagonist/warmonger))
+						was_special = TRUE
+						serialized["antag"] = A.name
+						antagonists += list(serialized)
+						break
 					if(istype(A, /datum/antagonist/ghost_role))
 						was_special = TRUE
 						serialized["role"] = A.name
@@ -149,6 +154,8 @@
 					var/obj/item/card/id/card = M.get_idcard()
 					if(card)
 						assignment = "[ckey(card.get_job_name())]"
+						if(assignment in list("domainrunner", "netrunner", "quantumrunner"))
+							assignment = "bitrunner"
 
 				else if(issilicon(M) || isdrone(M)) // Для отображения иконок силиконов в orbit
 					if(iscyborg(M))

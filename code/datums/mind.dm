@@ -105,6 +105,8 @@
 
 	///Weakref to the character we spawned in as- either at roundstart or latejoin, so we know for persistent scars if we ended as the same person or not
 	var/datum/weakref/original_character
+	/// Preference slot the original character was loaded from, unaffected by later slot switches in the UI.
+	var/original_character_slot
 
 	/// A lazy list of statuses to add next to this mind in the traitor panel
 	var/list/special_statuses
@@ -200,8 +202,9 @@
 	SIGNAL_HANDLER
 	set_enslaved_to(null)
 
-/datum/mind/proc/set_original_character(new_original_character)
+/datum/mind/proc/set_original_character(new_original_character, character_slot)
 	original_character = WEAKREF(new_original_character)
+	original_character_slot = character_slot
 	if(ishuman(new_original_character))
 		var/mob/living/carbon/human/original_human = new_original_character
 		set_naga_locomotion(HAS_TRAIT(original_human, TRAIT_NAGA_ANATOMY))
@@ -590,7 +593,7 @@
 		output += "<B>Текущие цели:</B>"
 		var/obj_count = 1
 		for(var/datum/objective/objective in all_objectives)
-			output += "<br><B>Цель #[obj_count++]</B>: [objective.explanation_text]"
+			output += "<br><B>Цель #[obj_count++]</B>: [objective.current_explanation()]"
 			var/list/datum/mind/other_owners = objective.get_owners() - src
 			if(other_owners.len)
 				output += "<ul>"
@@ -782,6 +785,8 @@ GLOBAL_LIST(objective_choices)
 	for(var/t in allowed_types)
 		var/datum/objective/type_cast = t
 		GLOB.objective_choices[initial(type_cast.name)] = t
+	for(var/datum/objective/economy/economic as anything in subtypesof(/datum/objective/economy))
+		GLOB.objective_choices["economy: [initial(economic.name)]"] = economic
 
 
 /datum/mind/proc/on_objectives_request_cd_end(datum/source)
@@ -1386,6 +1391,8 @@ GLOBAL_LIST(objective_choices)
 					request_target.explanation_text = requested_obj_change["text"]
 				else
 					request_target.admin_edit(usr)
+				if(QDELETED(request_target))
+					return
 				antag_datum.objectives += request_target
 				message_admins("[key_name_admin(usr)] approved a requested objective from [current]: [request_target.explanation_text]")
 				log_admin("[key_name(usr)] approved a requested objective from [current]: [request_target.explanation_text]")
@@ -1611,6 +1618,8 @@ GLOBAL_LIST(objective_choices)
 			new_objective = new selected_type
 			new_objective.owner = src
 			new_objective.admin_edit(usr)
+			if(QDELETED(new_objective))
+				return
 			target_antag.objectives += new_objective
 
 			message_admins("[key_name_admin(usr)] added a new objective for [current]: [new_objective.explanation_text]")
@@ -1619,12 +1628,16 @@ GLOBAL_LIST(objective_choices)
 			if(old_objective.type == selected_type)
 				//Edit the old
 				old_objective.admin_edit(usr)
+				if(QDELETED(old_objective))
+					return
 				new_objective = old_objective
 			else
 				//Replace the old
 				new_objective = new selected_type
 				new_objective.owner = src
 				new_objective.admin_edit(usr)
+				if(QDELETED(new_objective))
+					return
 				target_antag.objectives -= old_objective
 				target_antag.objectives.Insert(objective_pos, new_objective)
 			message_admins("[key_name_admin(usr)] edited [current]'s objective to [new_objective.explanation_text]")

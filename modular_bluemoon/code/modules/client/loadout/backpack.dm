@@ -168,3 +168,37 @@
 	name = "adjustable hip pads box"
 	path = /obj/item/storage/box/hippads
 	cost = 0
+
+/datum/gear/backpack/prescription
+	var/base_price = PRICE_EXPENSIVE // базовая цена покупки рецепта в вендомате
+	var/list/base_valid_traits = list() // список трейтов валидных для законного использования воучера
+	var/base_fortune_delivery = 5 // шанс с которым вместо рецепта при спавне будет выдан сразу продукт
+	var/received_product // путь выдаваемого предмета при активации в мед вендомате
+	/// NVD - Non Valid User
+	var/NVD_price = PRICE_REALLY_EXPENSIVE // цена покупки рецепта не имея правильных квирков
+	var/NVD_suspicious = 5 // шанс, что не имея правильных квирков рецепт при использовании выдаст штраф за кантробанду (подделку документов)
+	subcategory = LOADOUT_SUBCATEGORY_BACKPACK_GENERAL
+	path = /obj/item/card/voucher_blank
+
+/datum/gear/backpack/prescription/on_spawn(mob/living/carbon/human/user, obj/item/card/voucher_blank/I)
+	if(!istype(user))
+		return
+	addtimer(CALLBACK(I, TYPE_PROC_REF(/obj/item/card/voucher_blank, handle_registration), user, base_price, base_valid_traits, base_fortune_delivery, received_product, NVD_price, NVD_suspicious), 30 SECONDS)
+
+/datum/gear/backpack/prescription/psicodine
+	name = "Psicodine pill bottle prescription"
+	description = "Рецептурный воучер на покупку в NanoMed Plus резервной банки псикодина за 325 кредитов. Воучер взятый без квирков депрессии или монофобии стоит 700 кредитов, а вместе с тем может быть и вовсе поддельным, активируя автоматизированную систему записи нарушений."
+	cost = 1
+
+	base_valid_traits = list(TRAIT_DEPRESSION, TRAIT_MONOPHOBIA)
+	received_product = /obj/item/storage/pill_bottle/psicodine
+	NVD_suspicious = 20
+
+/datum/gear/backpack/prescription/lsd
+	name = "LSD pill bottle prescription"
+	description = "Рецептурный воучер на покупку в NanoMed Plus резервной банки ЛСД за 325 кредитов. Воучер взятый без квирка на диссоциативное расстройство стоит 700 кредитов, а вместе с тем может быть и вовсе поддельным, активируя автоматизированную систему записи нарушений."
+	cost = 1
+
+	base_valid_traits = list(TRAIT_INSANITY)
+	received_product = /obj/item/storage/pill_bottle/lsdpsych
+	NVD_suspicious = 40

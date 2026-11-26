@@ -852,7 +852,7 @@ GLOBAL_VAR_INIT(exploit_warn_spam_prevention, 0)
 	var/datum/component/two_handed/comp = held_item.GetComponent(/datum/component/two_handed)
 	if(comp)
 		if(comp.require_twohands && !calculate_emply_hand_slots())
-			to_chat(src, "<span class='warning'>Your other hand is too busy holding [held_item].</span>")
+			to_chat(src, "<span class='warning'>Вторая рука слишком занята, удерживая [held_item].</span>")
 			return FALSE
 	return TRUE
 
@@ -892,7 +892,8 @@ GLOBAL_VAR_INIT(exploit_warn_spam_prevention, 0)
 	if(client)
 		client << output(null, "statbrowser:check_spells")
 
-/mob/proc/anti_magic_check(magic = TRUE, holy = FALSE, tinfoil = FALSE, chargecost = 1, self = FALSE)
+/// Проба защиты: по умолчанию не тратит заряды. Удар, который должен их тратить, зовёт check_magic_resistance().
+/mob/proc/anti_magic_check(magic = TRUE, holy = FALSE, tinfoil = FALSE, chargecost = 0, self = FALSE)
 	return check_magic_resistance(magic, holy, tinfoil, chargecost, self)
 
 /mob/proc/check_magic_resistance(magic = TRUE, holy = FALSE, tinfoil = FALSE, chargecost = 1, self = FALSE)

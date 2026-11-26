@@ -725,7 +725,7 @@
 	can_have_ai = FALSE
 
 /mob/living/simple_animal/update_sight(forced = TRUE)
-	if(!client)
+	if(!GET_CLIENT(src))
 		return
 	if(stat == DEAD)
 		sight = (SEE_TURFS|SEE_MOBS|SEE_OBJS)
@@ -738,11 +738,12 @@
 		see_in_dark = initial(see_in_dark)
 		sight = initial(sight)
 
-	if(client.eye != src)
+	if(client?.eye && client.eye != src)
 		var/atom/A = client.eye
 		if(A.update_remote_sight(src)) //returns 1 if we override all other sight updates.
+			SEND_SIGNAL(src, COMSIG_MOB_UPDATE_SIGHT)
 			return
-	sync_lighting_plane_alpha()
+	return ..()
 
 /mob/living/simple_animal/get_idcard(hand_first = TRUE)
 	return ..() || access_card
@@ -1069,3 +1070,12 @@
 		else
 			dat += span_warning("[p_they_ru(TRUE)] в царапинах.")
 	return dat
+
+/mob/living/basic/alien/drone
+	parent_type = /mob/living/simple_animal/hostile/alien/drone
+
+/mob/living/basic/alien/queen/large
+	parent_type = /mob/living/simple_animal/hostile/alien/queen
+
+/mob/living/basic/pet/dog/corgi
+	parent_type = /mob/living/simple_animal/pet/dog/corgi

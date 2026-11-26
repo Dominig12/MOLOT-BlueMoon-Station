@@ -113,6 +113,15 @@
 	///If the object being hit can pass ths damage on to something else, it should not do it for this bullet
 	var/force_hit = FALSE
 
+	// Ballistic processor
+	/// Снаряд настроен имплантом владельца при выстреле.
+	var/ballistic_processor = FALSE
+	var/ballistic_processor_ricochet_chance = 70
+	var/ballistic_processor_max_ricochets = 2
+	var/ballistic_processor_homing_angle = 15
+	var/ballistic_processor_homing_range = 7
+	var/ballistic_processor_ricochets_done = 0
+
 	//Hitscan
 	var/hitscan = FALSE		//Whether this is hitscan. If it is, speed is basically ignored.
 	/// Подшаги луча внутри одного тайла считаются на месте, без вызовов траектории. FALSE - старый пошаговый проход, эталон для тестов.
@@ -157,6 +166,8 @@
 
 	var/damage = 10
 	var/simple_mob_damage_multiplier = 1
+	/// Плоский бонус урона по симпл-мобам без разума (ИИ)
+	var/simple_mob_no_mind_damage_bonus = 0
 	var/damage_type = BRUTE //BRUTE, BURN, TOX, OXY, CLONE are the only things that should be in here
 	var/nodamage = 0 //Determines if the projectile will skip any damage inflictions
 	var/flag = BULLET //Defines what armor to use when it hits things.  Must be set to bullet, laser, energy,or bomb
@@ -363,14 +374,18 @@
 		return 50 //if the projectile doesn't do damage, play its hitsound at 50% volume
 
 /obj/item/projectile/proc/on_ricochet(atom/A)
-	if(!ricochet_auto_aim_angle || !ricochet_auto_aim_range)
+	// Лазеры и прочие небаллистические снаряды сохраняют собственные настройки наведения.
+	var/use_processor_homing = ballistic_processor && flag == BULLET
+	var/auto_aim_angle = use_processor_homing ? ballistic_processor_homing_angle : ricochet_auto_aim_angle
+	var/auto_aim_range = use_processor_homing ? ballistic_processor_homing_range : ricochet_auto_aim_range
+	if(!auto_aim_angle || !auto_aim_range)
 		return
 
 	var/mob/living/unlucky_sob
-	var/best_angle = ricochet_auto_aim_angle
+	var/best_angle = auto_aim_angle
 	if(firer && HAS_TRAIT(firer, TRAIT_NICE_SHOT))
 		best_angle += NICE_SHOT_RICOCHET_BONUS
-	for(var/mob/living/L in range(ricochet_auto_aim_range, src.loc))
+	for(var/mob/living/L in range(auto_aim_range, src.loc))
 		if(L.stat == DEAD || !isInSight(src, L))
 			continue
 		var/our_angle = abs(closer_angle_difference(Angle, get_projectile_angle(src.loc, L.loc)))
@@ -410,19 +425,35 @@
 	if(impacted[A]) // NEVER doublehit - Silly-Cons
 		return FALSE
 	var/turf/T = get_turf(A)
-	if(check_ricochet_flag(A) && check_ricochet(A)) //if you can ricochet, attempt to ricochet off the object
-		ricochets++
-		if(A.handle_ricochet(src))
-			on_ricochet(A) //if allowed, use autoaim to ricochet into someone, otherwise default to ricocheting off the object from above
-			impacted = list() // Shoot a x-ray laser at a pair of mirrors I dare you
-			ignore_source_check = TRUE // Firer is no longer immune
-			decayedRange = max(0, decayedRange - reflect_range_decrease)
-			ricochet_chance *= ricochet_decay_chance
-			damage *= ricochet_decay_damage
-			range = decayedRange
-			if(hitscan)
-				store_hitscan_collision(trajectory.copy_to())
-			return TRUE
+	if(check_ricochet_flag(A))
+		var/processor_ricochet = flag == BULLET && firer && HAS_TRAIT(firer, TRAIT_BALLISTIC_PROCESSOR) && ballistic_processor_ricochets_done < ballistic_processor_max_ricochets
+		if(processor_ricochet && prob(ballistic_processor_ricochet_chance))
+			ballistic_processor_ricochets_done++
+			ricochets++
+			if(A.handle_ricochet(src))
+				on_ricochet(A)
+				impacted = list()
+				ignore_source_check = TRUE
+				decayedRange = max(0, decayedRange - reflect_range_decrease)
+				ricochet_chance *= ricochet_decay_chance
+				damage *= ricochet_decay_damage
+				range = decayedRange
+				if(hitscan)
+					store_hitscan_collision(trajectory.copy_to())
+				return TRUE
+		if(check_ricochet(A))
+			ricochets++
+			if(A.handle_ricochet(src))
+				on_ricochet(A) //if allowed, use autoaim to ricochet into someone, otherwise default to ricocheting off the object from above
+				impacted = list() // Shoot a x-ray laser at a pair of mirrors I dare you
+				ignore_source_check = TRUE // Firer is no longer immune
+				decayedRange = max(0, decayedRange - reflect_range_decrease)
+				ricochet_chance *= ricochet_decay_chance
+				damage *= ricochet_decay_damage
+				range = decayedRange
+				if(hitscan)
+					store_hitscan_collision(trajectory.copy_to())
+				return TRUE
 
 	var/distance = get_dist(T, starting) // Get the distance between the turf shot from and the mob we hit and use that for the calculations.
 	if(def_zone && check_zone(def_zone) != BODY_ZONE_CHEST)

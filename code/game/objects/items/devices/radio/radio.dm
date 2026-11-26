@@ -3,7 +3,7 @@
 	name = "station bounced radio"
 	icon_state = "walkietalkie"
 	item_state = "walkietalkie"
-	desc = "A basic handheld radio that communicates with local telecommunication networks."
+	desc = "Простая портативная рация, связывающаяся с локальными телекоммуникационными сетями."
 	dog_fashion = /datum/dog_fashion/back
 	var/list/extra_channels = list() //Allows indivudal channels, used for borgs
 
@@ -251,7 +251,7 @@
 	if(!on)
 		return // the device has to be on
 	var/area/radio_area = get_area(src)
-	if(radio_area?.area_flags & RADIO_BLACKOUT)
+	if(radio_area?.area_flags & RADIO_BLACKOUT || is_virtual_domain(src))
 		return
 	if(!M || !message)
 		return
@@ -329,7 +329,7 @@
 
 /obj/item/radio/proc/backup_transmission(datum/signal/subspace/vocal/signal)
 	var/area/radio_area = get_area(src)
-	if(radio_area?.area_flags & RADIO_BLACKOUT)
+	if(radio_area?.area_flags & RADIO_BLACKOUT || is_virtual_domain(src))
 		return
 	var/turf/T = get_turf(src)
 	if (signal.data["done"] && T && (T.z in signal.levels))
@@ -363,7 +363,7 @@
 // Checks if this radio can receive on the given frequency.
 /obj/item/radio/proc/can_receive(freq, level)
 	var/area/radio_area = get_area(src)
-	if(radio_area?.area_flags & RADIO_BLACKOUT)
+	if(radio_area?.area_flags & RADIO_BLACKOUT || is_virtual_domain(src))
 		return FALSE
 	// deny checks
 	if (!on || !listening || wires.is_cut(WIRE_RX))

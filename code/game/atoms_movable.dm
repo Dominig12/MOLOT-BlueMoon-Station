@@ -210,6 +210,8 @@
 			AA.remove_from_hud(src)
 
 	QDEL_NULL(proximity_monitor)
+	//контроллер на предмете (одержимые вещи) иначе живёт в ai_controllers_by_zlevel и держит нас в pawn
+	QDEL_NULL(ai_controller)
 	orbiters = null // The component is attached to us normaly and will be deleted elsewhere
 	QDEL_NULL(language_holder)
 	if(em_block)
@@ -476,6 +478,8 @@
 
 /atom/movable/proc/start_pulling(atom/movable/AM, state, force = move_force, supress_message = FALSE)
 	if(QDELETED(AM))
+		return FALSE
+	if(ismob(src) && src.GetComponent(/datum/component/virtual_entity) && is_protected_bitrunning_objective(AM, src))
 		return FALSE
 	if(!(AM.can_be_pulled(src, state, force)))
 		return FALSE
