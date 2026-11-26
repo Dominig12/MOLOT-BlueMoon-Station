@@ -320,6 +320,25 @@ const HostContext = ({
   </Section>
 );
 
+/** The host's own alert level (§9.3). Older projections do not send it, so it stays optional. */
+const alertText: Record<string, string> = {
+  Normal: 'обычно',
+  Suspicious: 'насторожен',
+  Alert: 'тревога',
+  Hostile: 'враждебно',
+  Lockdown: 'блокировка',
+};
+
+const alertColor = (alert?: string) => {
+  if (!alert || alert === 'Normal') {
+    return 'label';
+  }
+  if (alert === 'Lockdown' || alert === 'Hostile') {
+    return 'bad';
+  }
+  return 'average';
+};
+
 const HostsTab = ({
   hosts,
   selected,
@@ -336,6 +355,7 @@ const HostsTab = ({
       <Table.Cell>Знание</Table.Cell>
       <Table.Cell>Данные</Table.Cell>
       <Table.Cell>Буфер</Table.Cell>
+      <Table.Cell>Тревога</Table.Cell>
     </Table.Row>
     {hosts.map(host => (
       <Table.Row key={host.host} className="candystripe">
@@ -348,11 +368,14 @@ const HostsTab = ({
         <Table.Cell>{levelText[host.level] ?? host.level}</Table.Cell>
         <Table.Cell color={host.stale ? 'average' : 'good'}>{formatAge(host.ageMs)}</Table.Cell>
         <Table.Cell>{host.bufferCu.toFixed(1)} CU</Table.Cell>
+        <Table.Cell color={alertColor(host.alert)}>
+          {alertText[host.alert ?? 'Normal'] ?? host.alert}
+        </Table.Cell>
       </Table.Row>
     ))}
     {hosts.length === 0 && (
       <Table.Row>
-        <Table.Cell colSpan={5} color="label">
+        <Table.Cell colSpan={6} color="label">
           Наблюдаемых хостов нет.
         </Table.Cell>
       </Table.Row>
