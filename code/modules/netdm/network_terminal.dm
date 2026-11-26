@@ -1061,11 +1061,20 @@
 /obj/machinery/computer/rdconsole/netdm_operator_access(mob/living/user)
 	return !locked && ..()
 
+/// Every console is a network node from spawn, not from the moment someone opens the network space.
+/// Power and repair are states of the node, not conditions of its existence (NET-001): a console the
+/// player has never touched is still part of the graph the map and the defence see.
+/obj/machinery/computer/Initialize(mapload)
+	. = ..()
+	if(. != INITIALIZE_HINT_QDEL)
+		netdm_make_node(src)
+
 /obj/machinery/computer/proc/netdm_open_space(mob/living/user)
 	var/datum/netdm_diagnostics/diagnostics = SSnetdm_observe?.diagnostics
 	if(!SSnetdm_observe?.observing() || !SSnetdm_observe.services || !diagnostics || !netdm_operator_access(user))
 		return FALSE
-	if(!netdm_make_node(src))
+	// A console built before Observe started has no node yet: register it here instead of refusing.
+	if(!GetComponent(/datum/component/netdm_node) && !netdm_make_node(src))
 		return FALSE
 	var/datum/netdm_terminal_operator/console/operator = diagnostics.terminal_operator(/datum/netdm_terminal_operator/console, src, user)
 	if(!operator)
